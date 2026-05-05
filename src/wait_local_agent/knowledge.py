@@ -35,6 +35,7 @@ class KnowledgeIngestionService:
         files = self._document_files(target)
         documents: list[KnowledgeDocumentWrite] = []
         for file_path in files:
+            self._validate_allowed_path(file_path.resolve())
             extracted = extract_document(file_path)
             chunks = chunk_text(extracted.text)
             if not chunks:
@@ -58,19 +59,20 @@ class KnowledgeIngestionService:
             message = f"{target} is outside allowed document root {self.allowed_root}"
             raise ValueError(message) from exc
 
-    @staticmethod
-    def _document_files(target: Path) -> list[Path]:
+    def _document_files(self, target: Path) -> list[Path]:
         if target.is_file():
             if target.suffix.lower() not in SUPPORTED_SUFFIXES:
                 raise ValueError(f"{target} is not a supported document type")
             return [target]
         if not target.is_dir():
             raise ValueError(f"{target} does not exist")
-        return sorted(
-            path
-            for path in target.rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
-        )
+        files: list[Path] = []
+        for candidate in sorted(target.rglob("*")):
+            if not candidate.is_file() or candidate.suffix.lower() not in SUPPORTED_SUFFIXES:
+                continue
+            self._validate_allowed_path(candidate.resolve())
+            files.append(candidate)
+        return files
 
 
 def extract_document(path: Path) -> ExtractedDocument:

@@ -70,6 +70,25 @@ def test_rejects_paths_outside_allowed_root(settings, tmp_path) -> None:
         service.ingest_path(target)
 
 
+def test_directory_ingest_rejects_symlink_escape(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    outside = tmp_path / "outside"
+    doc_root.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("outside secret", encoding="utf-8")
+    (doc_root / "valid.md").write_text("# Valid\n\nAllowed content.", encoding="utf-8")
+    (doc_root / "leak.txt").symlink_to(secret)
+    active_settings = replace(settings, allowed_doc_root=doc_root)
+    store = Store(active_settings.data_path)
+    service = KnowledgeIngestionService(store, active_settings.allowed_doc_root)
+
+    with pytest.raises(ValueError, match="outside allowed document root"):
+        service.ingest_path(doc_root)
+
+    assert store.list_knowledge_documents() == []
+
+
 def test_reingest_replaces_chunks_without_duplicates(settings, tmp_path) -> None:
     doc_root = tmp_path / "docs"
     doc_root.mkdir()
@@ -299,6 +318,22 @@ def test_store_knowledge_helpers_cover_empty_and_missing_paths(settings) -> None
     assert store.upsert_knowledge_documents([]) == []
     assert store.get_knowledge_document(404) is None
     assert store.search_knowledge_chunks("") == []
+
+
+def test_search_limit_is_clamped(settings) -> None:
+    store = Store(settings.data_path)
+    for index in range(3):
+        store.upsert_knowledge_document(
+            path=f"local-{index}.md",
+            title=f"Local {index}",
+            kind="md",
+            checksum=f"abc-{index}",
+            modified_at="2026-01-01T00:00:00+00:00",
+            chunks=["shared local chunk"],
+        )
+
+    assert len(store.search_knowledge_chunks("shared", limit=-1)) == 1
+    assert len(store.search_knowledge_chunks("shared", limit=100)) == 3
 
 
 def test_single_document_upsert_path(settings) -> None:

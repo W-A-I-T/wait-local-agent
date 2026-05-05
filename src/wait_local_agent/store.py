@@ -320,6 +320,9 @@ class Store:
         return int(row["count"])
 
     def search_knowledge_chunks(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+        if limit < 1:
+            limit = 1
+        limit = min(limit, 25)
         fts_query = _fts_query(query)
         if not fts_query:
             return []
