@@ -4,8 +4,8 @@
 
 - Local Docker install
 - PSA ticket reader
-- Documentation ingestion
-- Vector search
+- Documentation ingestion for local files
+- SQLite FTS5 retrieval
 - Local SLM support
 - Ticket summary
 - Ticket classification
@@ -40,4 +40,3 @@
 - Custom workflow building
 - White-label deployment
 - Hardening and operational support
-

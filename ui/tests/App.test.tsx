@@ -9,6 +9,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Ticket Intelligence" })).toBeInTheDocument();
     expect(screen.getByText("TCK-1001")).toBeInTheDocument();
     expect(screen.getByText("Safe defaults active")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Knowledge Index" })).toBeInTheDocument();
+    expect(screen.getAllByText("Shared Mailbox Runbook").length).toBeGreaterThan(0);
   });
 });
-

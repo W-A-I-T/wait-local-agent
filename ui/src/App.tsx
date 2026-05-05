@@ -1,4 +1,12 @@
-import { Activity, CheckCircle2, ClipboardList, Database, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  BookOpenText,
+  CheckCircle2,
+  ClipboardList,
+  Database,
+  Search,
+  ShieldCheck
+} from "lucide-react";
 
 const tickets = [
   {
@@ -7,7 +15,10 @@ const tickets = [
     subject: "User cannot complete MFA after phone replacement",
     classification: "identity-access",
     priority: "High",
-    status: "Pending approval"
+    status: "Pending approval",
+    source: "MFA Reset Runbook",
+    excerpt:
+      "Use identity-provider admin tools to verify the requester and require the user to register the new device."
   },
   {
     id: "TCK-1002",
@@ -15,7 +26,36 @@ const tickets = [
     subject: "Shared mailbox request for new matter intake",
     classification: "collaboration-change",
     priority: "Medium",
-    status: "Draft ready"
+    status: "Draft ready",
+    source: "Shared Mailbox Runbook",
+    excerpt:
+      "Confirm business owner approval, requested mailbox name, required members, and whether send-as permissions are needed."
+  }
+];
+
+const documents = [
+  {
+    id: 1,
+    title: "MFA Reset Runbook",
+    kind: "md",
+    chunks: 1,
+    path: "examples/sample_docs/mfa-reset.md"
+  },
+  {
+    id: 2,
+    title: "Shared Mailbox Runbook",
+    kind: "md",
+    chunks: 1,
+    path: "examples/sample_docs/shared-mailbox.md"
+  }
+];
+
+const searchResults = [
+  {
+    title: "Shared Mailbox Runbook",
+    path: "examples/sample_docs/shared-mailbox.md",
+    excerpt:
+      "Confirm business owner approval, requested mailbox name, required members, and whether send-as permissions are needed."
   }
 ];
 
@@ -44,6 +84,10 @@ export function App() {
           <a href="#audit">
             <Activity size={18} aria-hidden="true" />
             Audit
+          </a>
+          <a href="#knowledge">
+            <BookOpenText size={18} aria-hidden="true" />
+            Knowledge
           </a>
           <a href="#settings">
             <Database size={18} aria-hidden="true" />
@@ -82,12 +126,50 @@ export function App() {
                   <strong>{ticket.priority}</strong>
                   <em>{ticket.status}</em>
                 </div>
+                <div className="ticket-source">
+                  <strong>Cited source</strong>
+                  <span>{ticket.source}</span>
+                  <p>{ticket.excerpt}</p>
+                </div>
               </article>
             ))}
           </div>
         </section>
 
         <section className="grid">
+          <article id="knowledge" className="panel knowledge-panel">
+            <div className="panel-heading">
+              <h2>Knowledge Index</h2>
+              <span>{documents.length} documents</span>
+            </div>
+            <div className="search-box">
+              <Search size={18} aria-hidden="true" />
+              <span>mailbox permissions</span>
+            </div>
+            <div className="document-list">
+              {documents.map((document) => (
+                <div className="document-row" key={document.id}>
+                  <div>
+                    <strong>{document.title}</strong>
+                    <span>{document.path}</span>
+                  </div>
+                  <em>
+                    {document.kind} / {document.chunks} chunk
+                  </em>
+                </div>
+              ))}
+            </div>
+            <div className="source-results">
+              {searchResults.map((result) => (
+                <article key={result.path}>
+                  <strong>{result.title}</strong>
+                  <span>{result.path}</span>
+                  <p>{result.excerpt}</p>
+                </article>
+              ))}
+            </div>
+          </article>
+
           <article id="audit" className="panel">
             <div className="panel-heading">
               <h2>Audit Log</h2>
@@ -125,4 +207,3 @@ export function App() {
     </main>
   );
 }
-

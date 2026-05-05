@@ -16,7 +16,10 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
       - run: ruff check .
-      - run: python -m pytest
+      - run: mypy src tests
+      - run: bandit -r src
+      - run: pip-audit --skip-editable
+      - run: python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
       - run: python scripts/public_surface_audit.py
 
   ui:
@@ -34,4 +37,3 @@ jobs:
       - run: npm install
       - run: npm run test
       - run: npm run build
-

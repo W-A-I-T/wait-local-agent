@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from wait_local_agent.config import Settings, load_settings
+from wait_local_agent.knowledge import KnowledgeIngestionService
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
@@ -14,6 +16,10 @@ from wait_local_agent.store import Store
 
 class ApprovalRequest(BaseModel):
     status: Literal["approved", "rejected", "pending"]
+
+
+class KnowledgeIngestRequest(BaseModel):
+    path: str
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -66,5 +72,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/audit")
     def audit() -> list[dict[str, object]]:
         return [asdict(event) for event in store.list_audit_events()]
+
+    @app.post("/knowledge/ingest")
+    def ingest_knowledge(request: KnowledgeIngestRequest) -> list[dict[str, object]]:
+        try:
+            service = KnowledgeIngestionService(store, active_settings.allowed_doc_root)
+            documents = service.ingest_path(Path(request.path))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [asdict(document) for document in documents]
+
+    @app.get("/knowledge/documents")
+    def knowledge_documents() -> list[dict[str, object]]:
+        return [asdict(document) for document in store.list_knowledge_documents()]
+
+    @app.get("/knowledge/search")
+    def knowledge_search(q: str, limit: int = 3) -> list[dict[str, object]]:
+        return [asdict(chunk) for chunk in store.search_knowledge_chunks(q, limit=limit)]
 
     return app

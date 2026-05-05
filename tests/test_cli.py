@@ -27,3 +27,40 @@ def test_ingest_and_summarize_commands(monkeypatch, tmp_path) -> None:
     assert summary.exit_code == 0
     assert "classification=identity-access" in summary.output
 
+
+def test_audit_list_command(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    runner.invoke(app, ["ingest", "examples/sample_tickets"])
+    result = runner.invoke(app, ["audit", "list"])
+
+    assert result.exit_code == 0
+    assert "ticket.ingested" in result.output
+
+
+def test_knowledge_commands(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_ALLOWED_DOC_ROOT", "examples/sample_docs")
+    runner = CliRunner()
+
+    ingest = runner.invoke(app, ["knowledge", "ingest", "examples/sample_docs"])
+    listing = runner.invoke(app, ["knowledge", "list"])
+    search = runner.invoke(app, ["knowledge", "search", "mailbox permissions"])
+
+    assert ingest.exit_code == 0
+    assert "documents=3" in ingest.output
+    assert listing.exit_code == 0
+    assert "Shared Mailbox Runbook" in listing.output
+    assert search.exit_code == 0
+    assert "Shared Mailbox Runbook" in search.output
+
+
+def test_knowledge_search_without_results_exits_cleanly(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["knowledge", "search", "nothing"])
+
+    assert result.exit_code == 0
+    assert result.output == ""

@@ -3,9 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from wait_local_agent.models import SourceReference, Ticket
+from wait_local_agent.store import Store
 
 
-def retrieve_sources(ticket: Ticket, doc_root: Path) -> list[SourceReference]:
+def retrieve_sources(
+    ticket: Ticket, doc_root: Path, store: Store | None = None
+) -> list[SourceReference]:
+    if store is not None and store.knowledge_chunk_count() > 0:
+        chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
+        if chunks:
+            return [
+                SourceReference(
+                    title=chunk.title,
+                    path=chunk.path,
+                    excerpt=chunk.excerpt,
+                    document_id=chunk.document_id,
+                    chunk_id=chunk.id,
+                )
+                for chunk in chunks
+            ]
+
     if not doc_root.exists():
         return []
 
