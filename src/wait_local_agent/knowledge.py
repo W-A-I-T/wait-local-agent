@@ -33,14 +33,18 @@ class KnowledgeIngestionService:
         target = path.resolve()
         self._validate_allowed_path(target)
         files = self._document_files(target)
-        documents: list[KnowledgeDocumentWrite] = []
+        pending_documents = self._prepare_documents(files)
+        return self.store.upsert_knowledge_documents(pending_documents)
+
+    def _prepare_documents(self, files: list[Path]) -> list[KnowledgeDocumentWrite]:
+        pending_documents: list[KnowledgeDocumentWrite] = []
         for file_path in files:
             self._validate_allowed_path(file_path.resolve())
             extracted = extract_document(file_path)
             chunks = chunk_text(extracted.text)
             if not chunks:
                 raise ValueError(f"{file_path} does not contain extractable text")
-            documents.append(
+            pending_documents.append(
                 KnowledgeDocumentWrite(
                     path=str(extracted.path),
                     title=extracted.title,
@@ -50,7 +54,7 @@ class KnowledgeIngestionService:
                     chunks=chunks,
                 )
             )
-        return self.store.upsert_knowledge_documents(documents)
+        return pending_documents
 
     def _validate_allowed_path(self, target: Path) -> None:
         try:

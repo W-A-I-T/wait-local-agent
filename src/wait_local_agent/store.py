@@ -13,6 +13,8 @@ from wait_local_agent.models import (
     utc_now,
 )
 
+MAX_SEARCH_LIMIT = 25
+
 
 class Store:
     def __init__(self, path: Path) -> None:
@@ -320,9 +322,7 @@ class Store:
         return int(row["count"])
 
     def search_knowledge_chunks(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
-        if limit < 1:
-            limit = 1
-        limit = min(limit, 25)
+        bounded_limit = _bounded_search_limit(limit)
         fts_query = _fts_query(query)
         if not fts_query:
             return []
@@ -345,7 +345,7 @@ class Store:
                 order by rank, d.title, c.chunk_index
                 limit ?
                 """,
-                (fts_query, limit),
+                (fts_query, bounded_limit),
             ).fetchall()
         return [
             KnowledgeChunk(
@@ -367,3 +367,7 @@ def _fts_query(query: str) -> str:
     tokens = re.findall(r"[A-Za-z0-9_]{2,}", query.lower())
     unique_tokens = list(dict.fromkeys(tokens))
     return " OR ".join(f"{token}*" for token in unique_tokens[:12])
+
+
+def _bounded_search_limit(limit: int) -> int:
+    return min(max(limit, 1), MAX_SEARCH_LIMIT)

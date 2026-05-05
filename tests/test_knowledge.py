@@ -17,7 +17,7 @@ from wait_local_agent.models import Ticket
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.services import TicketIntelligenceService
-from wait_local_agent.store import Store
+from wait_local_agent.store import MAX_SEARCH_LIMIT, Store, _bounded_search_limit
 
 
 def write_text_pdf(path: Path, text: str) -> None:
@@ -334,6 +334,13 @@ def test_search_limit_is_clamped(settings) -> None:
 
     assert len(store.search_knowledge_chunks("shared", limit=-1)) == 1
     assert len(store.search_knowledge_chunks("shared", limit=100)) == 3
+
+
+def test_bounded_search_limit_helper() -> None:
+    assert _bounded_search_limit(-1) == 1
+    assert _bounded_search_limit(0) == 1
+    assert _bounded_search_limit(3) == 3
+    assert _bounded_search_limit(999) == MAX_SEARCH_LIMIT
 
 
 def test_single_document_upsert_path(settings) -> None:
