@@ -14,6 +14,7 @@ WAIT Local Agent is a local-first runtime composed of five layers.
 - Local file ingestion
 - Documentation chunks with stable source references
 - Citation-first retrieval contracts
+- SQLite FTS5 keyword retrieval
 - Planned vector backends: Qdrant and pgvector
 
 ## Model Providers
@@ -38,4 +39,3 @@ WAIT Local Agent is a local-first runtime composed of five layers.
 - Immutable audit events
 - Policy gates for write actions
 - Release hygiene checks before publishing
-

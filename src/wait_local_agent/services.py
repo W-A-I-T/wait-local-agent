@@ -28,7 +28,7 @@ class TicketIntelligenceService:
         ticket = self.store.get_ticket(ticket_id)
         if ticket is None:
             raise KeyError(ticket_id)
-        sources = retrieve_sources(ticket, self.settings.allowed_doc_root)
+        sources = retrieve_sources(ticket, self.settings.allowed_doc_root, self.store)
         summary = TicketSummary(
             ticket_id=ticket.id,
             classification=classify_ticket(ticket.subject, ticket.body),
@@ -39,4 +39,3 @@ class TicketIntelligenceService:
         )
         self.store.add_audit_event("ticket.summarized", ticket.id, summary.classification)
         return summary
-

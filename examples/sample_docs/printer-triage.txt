@@ -1,0 +1,4 @@
+Printer Triage Runbook
+
+Confirm whether the issue affects one workstation or multiple users. Check queue status, restart the print spooler when appropriate, confirm driver availability, and record the approved next step before making changes.
+

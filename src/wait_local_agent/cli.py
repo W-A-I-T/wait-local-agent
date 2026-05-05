@@ -7,6 +7,7 @@ import uvicorn
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.config import load_settings
+from wait_local_agent.knowledge import KnowledgeIngestionService
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
@@ -14,8 +15,10 @@ from wait_local_agent.store import Store
 app = typer.Typer(help="WAIT Local Agent command line interface.")
 tickets_app = typer.Typer(help="Ticket intelligence commands.")
 audit_app = typer.Typer(help="Audit log commands.")
+knowledge_app = typer.Typer(help="Local knowledge base commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
+app.add_typer(knowledge_app, name="knowledge")
 
 
 def _store() -> Store:
@@ -63,7 +66,34 @@ def list_audit_events() -> None:
         typer.echo(f"{event.id} {event.event_type} {event.subject_id} {event.detail}")
 
 
+@knowledge_app.command("ingest")
+def ingest_knowledge(path: Path) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = KnowledgeIngestionService(store, settings.allowed_doc_root)
+    documents = service.ingest_path(path)
+    typer.echo(f"documents={len(documents)}")
+    for document in documents:
+        typer.echo(
+            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
+        )
+
+
+@knowledge_app.command("list")
+def list_knowledge_documents() -> None:
+    for document in _store().list_knowledge_documents():
+        typer.echo(
+            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
+        )
+
+
+@knowledge_app.command("search")
+def search_knowledge(query: str, limit: int = 3) -> None:
+    for chunk in _store().search_knowledge_chunks(query, limit=limit):
+        typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
+        typer.echo(chunk.excerpt)
+
+
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
     uvicorn.run(create_app(), host=host, port=port)
-

@@ -17,9 +17,11 @@ The first product focus is **WAIT Local Agent for MSPs**: ticket intelligence, d
 - FastAPI operator API
 - Typer CLI
 - SQLite audit and ticket store
+- SQLite FTS5 knowledge index
 - Local model provider abstraction
 - Ollama and vLLM configuration placeholders
-- Deterministic sample ticket summarization with source citations
+- Markdown, text, and text-based PDF ingestion
+- Deterministic sample ticket summarization with indexed source citations
 - Approval and audit-log workflow
 - React/Vite dashboard scaffold
 - Public-surface audit script for release hygiene
@@ -47,6 +49,8 @@ pip install -e ".[dev]"
 
 wait-local-agent doctor
 wait-local-agent ingest examples/sample_tickets
+wait-local-agent knowledge ingest examples/sample_docs
+wait-local-agent knowledge search "mailbox permissions"
 wait-local-agent tickets summarize TCK-1001
 wait-local-agent audit list
 wait-local-agent serve --host 127.0.0.1 --port 8788
@@ -66,6 +70,8 @@ npm run dev
 curl http://127.0.0.1:8788/health
 curl http://127.0.0.1:8788/tickets
 curl http://127.0.0.1:8788/tickets/TCK-1001/summary
+curl http://127.0.0.1:8788/knowledge/documents
+curl "http://127.0.0.1:8788/knowledge/search?q=mailbox%20permissions"
 curl http://127.0.0.1:8788/audit
 ```
 
@@ -84,4 +90,3 @@ npm run build
 ## Roadmap
 
 See [docs/status.md](docs/status.md) and [docs/roadmap.md](docs/roadmap.md).
-

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from wait_local_agent.models import AuditEvent, Ticket, utc_now
+from wait_local_agent.models import AuditEvent, KnowledgeChunk, KnowledgeDocument, Ticket, utc_now
 
 
 class Store:
@@ -50,6 +50,39 @@ class Store:
                     detail text not null,
                     created_at text not null
                 )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists knowledge_documents (
+                    id integer primary key autoincrement,
+                    path text not null unique,
+                    title text not null,
+                    kind text not null,
+                    checksum text not null,
+                    modified_at text not null,
+                    chunk_count integer not null,
+                    indexed_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists knowledge_chunks (
+                    id integer primary key autoincrement,
+                    document_id integer not null
+                      references knowledge_documents(id) on delete cascade,
+                    chunk_index integer not null,
+                    text text not null,
+                    excerpt text not null,
+                    unique(document_id, chunk_index)
+                )
+                """
+            )
+            connection.execute(
+                """
+                create virtual table if not exists knowledge_chunks_fts
+                using fts5(chunk_id unindexed, title, path unindexed, text)
                 """
             )
 
@@ -137,3 +170,139 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute("select * from audit_events order by id desc").fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
+
+    def upsert_knowledge_document(
+        self,
+        *,
+        path: str,
+        title: str,
+        kind: str,
+        checksum: str,
+        modified_at: str,
+        chunks: list[str],
+    ) -> KnowledgeDocument:
+        now = utc_now()
+        with self._connect() as connection:
+            existing = connection.execute(
+                "select id from knowledge_documents where path = ?", (path,)
+            ).fetchone()
+            if existing:
+                document_id = int(existing["id"])
+                chunk_rows = connection.execute(
+                    "select id from knowledge_chunks where document_id = ?", (document_id,)
+                ).fetchall()
+                for row in chunk_rows:
+                    connection.execute(
+                        "delete from knowledge_chunks_fts where chunk_id = ?", (str(row["id"]),)
+                    )
+                connection.execute(
+                    "delete from knowledge_chunks where document_id = ?", (document_id,)
+                )
+                connection.execute(
+                    """
+                    update knowledge_documents
+                    set title = ?, kind = ?, checksum = ?, modified_at = ?,
+                        chunk_count = ?, indexed_at = ?
+                    where id = ?
+                    """,
+                    (title, kind, checksum, modified_at, len(chunks), now, document_id),
+                )
+            else:
+                cursor = connection.execute(
+                    """
+                    insert into knowledge_documents
+                      (path, title, kind, checksum, modified_at, chunk_count, indexed_at)
+                    values (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (path, title, kind, checksum, modified_at, len(chunks), now),
+                )
+                document_id = int(cursor.lastrowid)
+
+            for index, text in enumerate(chunks):
+                excerpt = " ".join(text.split()[:36])
+                cursor = connection.execute(
+                    """
+                    insert into knowledge_chunks (document_id, chunk_index, text, excerpt)
+                    values (?, ?, ?, ?)
+                    """,
+                    (document_id, index, text, excerpt),
+                )
+                chunk_id = int(cursor.lastrowid)
+                connection.execute(
+                    """
+                    insert into knowledge_chunks_fts (chunk_id, title, path, text)
+                    values (?, ?, ?, ?)
+                    """,
+                    (str(chunk_id), title, path, text),
+                )
+            self._add_audit_event(connection, "knowledge.ingested", path, f"Indexed {title}")
+
+        document = self.get_knowledge_document(document_id)
+        if document is None:
+            raise RuntimeError("knowledge document was not persisted")
+        return document
+
+    def get_knowledge_document(self, document_id: int) -> KnowledgeDocument | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from knowledge_documents where id = ?", (document_id,)
+            ).fetchone()
+        return KnowledgeDocument(**dict(row)) if row else None
+
+    def list_knowledge_documents(self) -> list[KnowledgeDocument]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from knowledge_documents order by title, path"
+            ).fetchall()
+        return [KnowledgeDocument(**dict(row)) for row in rows]
+
+    def knowledge_chunk_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("select count(*) as count from knowledge_chunks").fetchone()
+        return int(row["count"])
+
+    def search_knowledge_chunks(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select
+                  c.id,
+                  c.document_id,
+                  d.title,
+                  d.path,
+                  c.chunk_index,
+                  c.text,
+                  c.excerpt,
+                  bm25(knowledge_chunks_fts) as rank
+                from knowledge_chunks_fts
+                join knowledge_chunks c on c.id = cast(knowledge_chunks_fts.chunk_id as integer)
+                join knowledge_documents d on d.id = c.document_id
+                where knowledge_chunks_fts match ?
+                order by rank, d.title, c.chunk_index
+                limit ?
+                """,
+                (fts_query, limit),
+            ).fetchall()
+        return [
+            KnowledgeChunk(
+                id=int(row["id"]),
+                document_id=int(row["document_id"]),
+                title=str(row["title"]),
+                path=str(row["path"]),
+                chunk_index=int(row["chunk_index"]),
+                text=str(row["text"]),
+                excerpt=str(row["excerpt"]),
+            )
+            for row in rows
+        ]
+
+
+def _fts_query(query: str) -> str:
+    import re
+
+    tokens = re.findall(r"[A-Za-z0-9_]{2,}", query.lower())
+    unique_tokens = list(dict.fromkeys(tokens))
+    return " OR ".join(f"{token}*" for token in unique_tokens[:12])

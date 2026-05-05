@@ -42,3 +42,27 @@ def test_missing_ticket_returns_404(settings) -> None:
 
     assert response.status_code == 404
 
+
+def test_knowledge_api_ingest_list_and_search(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    ingest = client.post("/knowledge/ingest", json={"path": "examples/sample_docs"})
+    documents = client.get("/knowledge/documents")
+    search = client.get("/knowledge/search", params={"q": "mailbox permissions"})
+
+    assert ingest.status_code == 200
+    assert len(ingest.json()) == 3
+    assert documents.status_code == 200
+    assert len(documents.json()) == 3
+    assert search.status_code == 200
+    assert search.json()[0]["title"] == "Shared Mailbox Runbook"
+
+
+def test_knowledge_api_rejects_outside_allowed_root(settings, tmp_path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    client = TestClient(create_app(settings))
+
+    response = client.post("/knowledge/ingest", json={"path": str(outside)})
+
+    assert response.status_code == 400
