@@ -6,7 +6,8 @@
 - PSA ticket reader
 - Documentation ingestion for local files
 - SQLite FTS5 retrieval
-- Local SLM support
+- Optional local OpenAI-compatible model invocation
+- Deterministic fallback for unavailable or malformed local model responses
 - Ticket summary
 - Ticket classification
 - Suggested technician response
@@ -16,6 +17,8 @@
 
 ## Phase 2: MSP Actions
 
+- Provider-specific local model setup guides
+- Local endpoint diagnostics and health checks
 - Microsoft 365 and Entra lookup
 - License recommendation
 - Group and mailbox change drafts
