@@ -1238,6 +1238,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pypdf" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1246,7 +1247,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "bandit" },
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pytest" },
@@ -1259,7 +1259,7 @@ dev = [
 requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7,<2.0" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1.0" },
+    { name = "httpx", specifier = ">=0.27,<1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13,<2.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3.0" },
     { name = "pypdf", specifier = ">=6.10.2,<7.0" },

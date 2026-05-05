@@ -15,9 +15,10 @@ def settings(tmp_path: Path) -> Settings:
         allow_write_actions=False,
         allow_http_probing=False,
         allow_cloud_fallback=False,
-        local_model_provider="ollama",
+        allow_llm_inference=False,
+        local_model_provider="deterministic",
         local_model_base_url="http://127.0.0.1:11434/v1",
         local_model_name="llama3.1",
+        local_model_timeout_seconds=20.0,
         vector_backend="sqlite",
     )
-

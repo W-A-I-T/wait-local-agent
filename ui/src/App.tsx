@@ -62,7 +62,7 @@ const searchResults = [
 const auditEvents = [
   "Ticket TCK-1001 summarized from local runbook context",
   "Approval state pending for identity-access workflow",
-  "Provider profile loaded for local endpoint"
+  "Deterministic provider active with local inference disabled"
 ];
 
 export function App() {
@@ -190,7 +190,19 @@ export function App() {
             <dl className="settings-list">
               <div>
                 <dt>Model runtime</dt>
-                <dd>Ollama-compatible endpoint</dd>
+                <dd>Deterministic default</dd>
+              </div>
+              <div>
+                <dt>Local inference</dt>
+                <dd>Disabled until configured</dd>
+              </div>
+              <div>
+                <dt>Local endpoint</dt>
+                <dd>OpenAI-compatible when enabled</dd>
+              </div>
+              <div>
+                <dt>Timeout</dt>
+                <dd>20 seconds</dd>
               </div>
               <div>
                 <dt>Vector backend</dt>
