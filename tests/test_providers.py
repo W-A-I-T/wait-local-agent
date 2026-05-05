@@ -279,6 +279,43 @@ def test_openai_provider_falls_back_on_empty_and_non_2xx_responses(tmp_path: Pat
         assert "Acme Dental needs help" in provider.summarize_ticket(_ticket(), _sources())
 
 
+def test_openai_provider_does_not_cache_fallback_after_transient_failure(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Recovered model summary",
+                                    "suggested_response": "Recovered model response",
+                                }
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert "Acme Dental needs help" in provider.summarize_ticket(_ticket(), _sources())
+    assert provider.summarize_ticket(_ticket(), _sources()) == "Recovered model summary"
+    assert len(requests) == 2
+
+
 def test_openai_provider_falls_back_on_connection_error(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)

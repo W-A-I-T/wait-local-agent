@@ -87,7 +87,7 @@ class OpenAICompatibleLocalProvider:
 
         completion = self._request_completion(ticket, sources)
         if completion is None:
-            completion = ModelCompletion(
+            return ModelCompletion(
                 summary=self._fallback.summarize_ticket(ticket, sources),
                 suggested_response=self._fallback.draft_response(ticket, sources),
             )
