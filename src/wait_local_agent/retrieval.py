@@ -10,20 +10,26 @@ def retrieve_sources(ticket: Ticket, doc_root: Path) -> list[SourceReference]:
         return []
 
     keywords = f"{ticket.subject} {ticket.body}".lower()
-    candidates: list[SourceReference] = []
+    scored_sources: list[tuple[int, SourceReference]] = []
     for path in sorted(doc_root.glob("*.md")):
         content = path.read_text(encoding="utf-8").strip()
         if not content:
             continue
         title = content.splitlines()[0].removeprefix("# ").strip()
-        score = sum(1 for token in path.stem.replace("-", " ").split() if token in keywords)
-        if score or not candidates:
-            candidates.append(
+        tokens = path.stem.replace("-", " ").split()
+        score = sum(1 for token in tokens if token in keywords)
+        scored_sources.append(
+            (
+                score,
                 SourceReference(
                     title=title,
                     path=str(path),
                     excerpt=" ".join(content.split()[0:28]),
-                )
+                ),
             )
-    return candidates[:3]
+        )
 
+    positive_matches = [item for item in scored_sources if item[0] > 0]
+    ranked = positive_matches or scored_sources
+    ranked.sort(key=lambda item: (-item[0], item[1].title))
+    return [source for _, source in ranked[:3]]

@@ -68,7 +68,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [asdict(event) for event in store.list_audit_events()]
 
     return app
-
-
-app = create_app()
-

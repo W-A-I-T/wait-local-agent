@@ -6,19 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PARTS = {".git", ".venv", "node_modules", "dist", "__pycache__", ".pytest_cache"}
-TEXT_SUFFIXES = {
-    ".css",
-    ".html",
-    ".json",
-    ".md",
-    ".py",
-    ".toml",
-    ".ts",
-    ".tsx",
-    ".txt",
-    ".yml",
-    ".yaml",
-}
+TEXT_BYTES = 4096
 
 
 def tracked_files() -> list[Path]:
@@ -45,8 +33,34 @@ def blocked_terms() -> list[str]:
     return ["".join(piece).lower() for piece in pieces]
 
 
+def allowed_legal_phrases() -> list[str]:
+    pieces = [
+        ("generated", " by the derivative works"),
+    ]
+    return ["".join(piece).lower() for piece in pieces]
+
+
 def is_text_file(path: Path) -> bool:
-    return path.suffix in TEXT_SUFFIXES and not any(part in SKIP_PARTS for part in path.parts)
+    if any(part in SKIP_PARTS for part in path.parts):
+        return False
+    try:
+        chunk = path.read_bytes()[:TEXT_BYTES]
+    except OSError:
+        return False
+    if b"\0" in chunk:
+        return False
+    try:
+        chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def normalized_content(path: Path) -> str:
+    content = path.read_text(encoding="utf-8").lower()
+    for phrase in allowed_legal_phrases():
+        content = content.replace(phrase, "")
+    return content
 
 
 def main() -> int:
@@ -55,7 +69,7 @@ def main() -> int:
     for path in tracked_files():
         if not is_text_file(path):
             continue
-        content = path.read_text(encoding="utf-8").lower()
+        content = normalized_content(path)
         for term in terms:
             if term in content:
                 failures.append(f"{path.relative_to(ROOT)} contains a blocked public-surface term")
@@ -71,4 +85,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
