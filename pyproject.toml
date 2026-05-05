@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wait-local-agent"
+version = "0.1.0"
+description = "Local-first AI copilot runtime for MSPs and SMBs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "WAIT" }]
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "typer>=0.12,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1.0",
+  "pytest>=8.0,<9.0",
+  "pytest-cov>=5.0,<6.0",
+  "ruff>=0.6,<1.0",
+]
+
+[project.scripts]
+wait-local-agent = "wait_local_agent.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wait_local_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
