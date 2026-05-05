@@ -19,6 +19,19 @@ def test_health_reports_safe_defaults(settings) -> None:
     assert response.json()["cloud_fallback_enabled"] is False
 
 
+def test_provider_settings_and_tickets_list(settings) -> None:
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    providers = client.get("/settings/providers")
+    tickets = client.get("/tickets")
+
+    assert providers.status_code == 200
+    assert providers.json()["vector_backend"] == "sqlite"
+    assert tickets.status_code == 200
+    assert len(tickets.json()) == 2
+
+
 def test_ticket_summary_and_approval_flow(settings) -> None:
     Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
@@ -33,6 +46,14 @@ def test_ticket_summary_and_approval_flow(settings) -> None:
     assert approval.json()["status"] == "approved"
     assert audit.status_code == 200
     assert any(event["event_type"] == "approval.updated" for event in audit.json())
+
+
+def test_approval_missing_ticket_returns_404(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    response = client.post("/tickets/NOPE/approvals", json={"status": "approved"})
+
+    assert response.status_code == 404
 
 
 def test_missing_ticket_returns_404(settings) -> None:
@@ -64,5 +85,13 @@ def test_knowledge_api_rejects_outside_allowed_root(settings, tmp_path) -> None:
     client = TestClient(create_app(settings))
 
     response = client.post("/knowledge/ingest", json={"path": str(outside)})
+
+    assert response.status_code == 400
+
+
+def test_knowledge_api_missing_path_returns_400(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    response = client.post("/knowledge/ingest", json={"path": "examples/sample_docs/missing.md"})
 
     assert response.status_code == 400

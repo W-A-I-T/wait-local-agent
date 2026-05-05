@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from wait_local_agent.models import KnowledgeDocument
+from wait_local_agent.models import KnowledgeDocument, KnowledgeDocumentWrite
 from wait_local_agent.store import Store
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf"}
@@ -33,14 +33,14 @@ class KnowledgeIngestionService:
         target = path.resolve()
         self._validate_allowed_path(target)
         files = self._document_files(target)
-        documents: list[KnowledgeDocument] = []
+        documents: list[KnowledgeDocumentWrite] = []
         for file_path in files:
             extracted = extract_document(file_path)
             chunks = chunk_text(extracted.text)
             if not chunks:
                 raise ValueError(f"{file_path} does not contain extractable text")
             documents.append(
-                self.store.upsert_knowledge_document(
+                KnowledgeDocumentWrite(
                     path=str(extracted.path),
                     title=extracted.title,
                     kind=extracted.kind,
@@ -49,7 +49,7 @@ class KnowledgeIngestionService:
                     chunks=chunks,
                 )
             )
-        return documents
+        return self.store.upsert_knowledge_documents(documents)
 
     def _validate_allowed_path(self, target: Path) -> None:
         try:

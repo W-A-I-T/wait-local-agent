@@ -11,16 +11,17 @@ def retrieve_sources(
 ) -> list[SourceReference]:
     if store is not None and store.knowledge_chunk_count() > 0:
         chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
-        return [
-            SourceReference(
-                title=chunk.title,
-                path=chunk.path,
-                excerpt=chunk.excerpt,
-                document_id=chunk.document_id,
-                chunk_id=chunk.id,
-            )
-            for chunk in chunks
-        ]
+        if chunks:
+            return [
+                SourceReference(
+                    title=chunk.title,
+                    path=chunk.path,
+                    excerpt=chunk.excerpt,
+                    document_id=chunk.document_id,
+                    chunk_id=chunk.id,
+                )
+                for chunk in chunks
+            ]
 
     if not doc_root.exists():
         return []

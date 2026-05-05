@@ -4,7 +4,14 @@ import json
 import sqlite3
 from pathlib import Path
 
-from wait_local_agent.models import AuditEvent, KnowledgeChunk, KnowledgeDocument, Ticket, utc_now
+from wait_local_agent.models import (
+    AuditEvent,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentWrite,
+    Ticket,
+    utc_now,
+)
 
 
 class Store:
@@ -181,66 +188,117 @@ class Store:
         modified_at: str,
         chunks: list[str],
     ) -> KnowledgeDocument:
+        return self.upsert_knowledge_documents(
+            [
+                KnowledgeDocumentWrite(
+                    path=path,
+                    title=title,
+                    kind=kind,
+                    checksum=checksum,
+                    modified_at=modified_at,
+                    chunks=chunks,
+                )
+            ]
+        )[0]
+
+    def upsert_knowledge_documents(
+        self, documents: list[KnowledgeDocumentWrite]
+    ) -> list[KnowledgeDocument]:
+        if not documents:
+            return []
         now = utc_now()
+        document_ids: list[int] = []
         with self._connect() as connection:
-            existing = connection.execute(
-                "select id from knowledge_documents where path = ?", (path,)
-            ).fetchone()
-            if existing:
-                document_id = int(existing["id"])
-                chunk_rows = connection.execute(
-                    "select id from knowledge_chunks where document_id = ?", (document_id,)
-                ).fetchall()
-                for row in chunk_rows:
+            for document in documents:
+                existing = connection.execute(
+                    "select id from knowledge_documents where path = ?", (document.path,)
+                ).fetchone()
+                if existing:
+                    document_id = int(existing["id"])
+                    chunk_rows = connection.execute(
+                        "select id from knowledge_chunks where document_id = ?", (document_id,)
+                    ).fetchall()
+                    for row in chunk_rows:
+                        connection.execute(
+                            "delete from knowledge_chunks_fts where chunk_id = ?",
+                            (str(row["id"]),),
+                        )
                     connection.execute(
-                        "delete from knowledge_chunks_fts where chunk_id = ?", (str(row["id"]),)
+                        "delete from knowledge_chunks where document_id = ?", (document_id,)
                     )
-                connection.execute(
-                    "delete from knowledge_chunks where document_id = ?", (document_id,)
-                )
-                connection.execute(
-                    """
-                    update knowledge_documents
-                    set title = ?, kind = ?, checksum = ?, modified_at = ?,
-                        chunk_count = ?, indexed_at = ?
-                    where id = ?
-                    """,
-                    (title, kind, checksum, modified_at, len(chunks), now, document_id),
-                )
-            else:
-                cursor = connection.execute(
-                    """
-                    insert into knowledge_documents
-                      (path, title, kind, checksum, modified_at, chunk_count, indexed_at)
-                    values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (path, title, kind, checksum, modified_at, len(chunks), now),
-                )
-                document_id = int(cursor.lastrowid)
+                    connection.execute(
+                        """
+                        update knowledge_documents
+                        set title = ?, kind = ?, checksum = ?, modified_at = ?,
+                            chunk_count = ?, indexed_at = ?
+                        where id = ?
+                        """,
+                        (
+                            document.title,
+                            document.kind,
+                            document.checksum,
+                            document.modified_at,
+                            len(document.chunks),
+                            now,
+                            document_id,
+                        ),
+                    )
+                else:
+                    cursor = connection.execute(
+                        """
+                        insert into knowledge_documents
+                          (path, title, kind, checksum, modified_at, chunk_count, indexed_at)
+                        values (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            document.path,
+                            document.title,
+                            document.kind,
+                            document.checksum,
+                            document.modified_at,
+                            len(document.chunks),
+                            now,
+                        ),
+                    )
+                    if cursor.lastrowid is None:
+                        raise RuntimeError("knowledge document insert did not return an id")
+                    document_id = cursor.lastrowid
 
-            for index, text in enumerate(chunks):
-                excerpt = " ".join(text.split()[:36])
-                cursor = connection.execute(
-                    """
-                    insert into knowledge_chunks (document_id, chunk_index, text, excerpt)
-                    values (?, ?, ?, ?)
-                    """,
-                    (document_id, index, text, excerpt),
+                for index, text in enumerate(document.chunks):
+                    excerpt = " ".join(text.split()[:36])
+                    cursor = connection.execute(
+                        """
+                        insert into knowledge_chunks (document_id, chunk_index, text, excerpt)
+                        values (?, ?, ?, ?)
+                        """,
+                        (document_id, index, text, excerpt),
+                    )
+                    if cursor.lastrowid is None:
+                        raise RuntimeError("knowledge chunk insert did not return an id")
+                    chunk_id = cursor.lastrowid
+                    connection.execute(
+                        """
+                        insert into knowledge_chunks_fts (chunk_id, title, path, text)
+                        values (?, ?, ?, ?)
+                        """,
+                        (str(chunk_id), document.title, document.path, text),
+                    )
+                self._add_audit_event(
+                    connection,
+                    "knowledge.ingested",
+                    document.path,
+                    f"Indexed {document.title}",
                 )
-                chunk_id = int(cursor.lastrowid)
-                connection.execute(
-                    """
-                    insert into knowledge_chunks_fts (chunk_id, title, path, text)
-                    values (?, ?, ?, ?)
-                    """,
-                    (str(chunk_id), title, path, text),
-                )
-            self._add_audit_event(connection, "knowledge.ingested", path, f"Indexed {title}")
+                document_ids.append(document_id)
 
-        document = self.get_knowledge_document(document_id)
-        if document is None:
+        persisted: list[KnowledgeDocument] = []
+        for document_id in document_ids:
+            persisted_document = self.get_knowledge_document(document_id)
+            if persisted_document is not None:
+                persisted.append(persisted_document)
+        if len(persisted) != len(document_ids):
             raise RuntimeError("knowledge document was not persisted")
-        return document
+        return persisted
 
     def get_knowledge_document(self, document_id: int) -> KnowledgeDocument | None:
         with self._connect() as connection:

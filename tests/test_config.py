@@ -14,3 +14,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.allow_http_probing is False
     assert settings.allow_cloud_fallback is False
 
+
+def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "false")
+
+    settings = load_settings()
+
+    assert settings.allow_write_actions is False

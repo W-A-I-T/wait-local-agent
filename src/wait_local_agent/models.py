@@ -58,6 +58,16 @@ class KnowledgeDocument:
 
 
 @dataclass(frozen=True)
+class KnowledgeDocumentWrite:
+    path: str
+    title: str
+    kind: str
+    checksum: str
+    modified_at: str
+    chunks: list[str]
+
+
+@dataclass(frozen=True)
 class KnowledgeChunk:
     id: int
     document_id: int
