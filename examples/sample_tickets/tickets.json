@@ -1,0 +1,19 @@
+[
+  {
+    "id": "TCK-1001",
+    "client": "Northwind Dental",
+    "subject": "User cannot complete MFA after phone replacement",
+    "body": "The office manager replaced her phone and cannot complete Microsoft 365 MFA. She can access email on her old desktop session but cannot approve new sign-ins.",
+    "priority": "high",
+    "status": "new"
+  },
+  {
+    "id": "TCK-1002",
+    "client": "Contoso Legal",
+    "subject": "Shared mailbox request for new matter intake",
+    "body": "Create or update a shared mailbox for matter intake and confirm which paralegals should have access before changes are made.",
+    "priority": "medium",
+    "status": "new"
+  }
+]
+
