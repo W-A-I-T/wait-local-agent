@@ -28,6 +28,8 @@ def test_provider_settings_and_tickets_list(settings) -> None:
 
     assert providers.status_code == 200
     assert providers.json()["vector_backend"] == "sqlite"
+    assert providers.json()["llm_inference_enabled"] is False
+    assert providers.json()["local_model_timeout_seconds"] == 20.0
     assert tickets.status_code == 200
     assert len(tickets.json()) == 2
 

@@ -12,6 +12,10 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     result = runner.invoke(app, ["doctor"])
 
     assert result.exit_code == 0
+    assert "provider=deterministic" in result.output
+    assert "base_url=http://127.0.0.1:11434/v1" in result.output
+    assert "timeout_seconds=20" in result.output
+    assert "llm_inference_enabled=False" in result.output
     assert "write_actions_enabled=False" in result.output
 
 

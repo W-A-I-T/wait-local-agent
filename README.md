@@ -29,6 +29,7 @@ Many service teams want AI assistance without making a mandatory SaaS agent the 
 - SQLite FTS5 local knowledge search
 - Markdown, plain text, and text-based PDF ingestion
 - Ticket classification and deterministic summary drafting
+- Optional local OpenAI-compatible model invocation for Ollama, vLLM, or similar endpoints
 - Source citations with document paths and excerpts
 - React/Vite dashboard scaffold with ticket, audit, provider, and knowledge views
 - Safe defaults for local-only operation
@@ -37,16 +38,16 @@ Many service teams want AI assistance without making a mandatory SaaS agent the 
 
 - PDF support is text extraction only. Scanned PDFs and OCR are not supported yet.
 - PSA, RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint connectors are not live yet.
-- Local model provider settings are scaffolded; real model invocation is a later step.
+- Local model invocation is opt-in and calls only the configured local OpenAI-compatible endpoint.
 - Cloud fallback is disabled by default and not required for the current demo.
-- Approval-gated execution exists as a product direction; this PR focuses on ticket intelligence and knowledge retrieval.
+- Approval-gated execution exists as a product direction; the current runtime focuses on ticket intelligence and knowledge retrieval.
 
 ## Requirements
 
 - Python 3.12
 - Node.js 22 for the dashboard
 - Local filesystem access to the documents you want to ingest
-- Optional later: Ollama, vLLM, or another OpenAI-compatible local model endpoint
+- Optional: Ollama, vLLM, or another OpenAI-compatible local model endpoint
 
 ## Quick Start
 
@@ -125,13 +126,29 @@ WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
 WAIT_ALLOW_WRITE_ACTIONS=false
 WAIT_ALLOW_HTTP_PROBING=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
-WAIT_LOCAL_MODEL_PROVIDER=ollama
+WAIT_ALLOW_LLM_INFERENCE=false
+WAIT_LOCAL_MODEL_PROVIDER=deterministic
 WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
 WAIT_LOCAL_MODEL_NAME=llama3.1
+WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 WAIT_VECTOR_BACKEND=sqlite
 ```
 
-No write actions, external probing, or cloud fallback are enabled unless explicitly configured.
+No write actions, external probing, local model inference, or cloud fallback are enabled unless explicitly configured.
+
+### Local Model Invocation
+
+The default provider is deterministic so tests, demos, and offline installs are repeatable. To try a local OpenAI-compatible endpoint, run Ollama, vLLM, or another compatible server on infrastructure you control, then opt in:
+
+```bash
+WAIT_ALLOW_LLM_INFERENCE=true
+WAIT_LOCAL_MODEL_PROVIDER=ollama
+WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
+WAIT_LOCAL_MODEL_NAME=llama3.1
+WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
+```
+
+`WAIT_LOCAL_MODEL_PROVIDER` accepts `deterministic`, `openai-compatible`, `ollama`, or `vllm`. The runtime posts to `{WAIT_LOCAL_MODEL_BASE_URL}/chat/completions` and expects JSON with `summary` and `suggested_response`. If inference is disabled, the endpoint is unavailable, the request times out, the response is non-successful, or the model returns malformed JSON, WAIT Local Agent falls back to the deterministic provider and keeps the ticket summary response stable.
 
 ## Development Checks
 

@@ -12,6 +12,17 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
 @dataclass(frozen=True)
 class Settings:
     data_path: Path
@@ -19,9 +30,11 @@ class Settings:
     allow_write_actions: bool
     allow_http_probing: bool
     allow_cloud_fallback: bool
+    allow_llm_inference: bool
     local_model_provider: str
     local_model_base_url: str
     local_model_name: str
+    local_model_timeout_seconds: float
     vector_backend: str
 
 
@@ -32,9 +45,10 @@ def load_settings() -> Settings:
         allow_write_actions=_bool_env("WAIT_ALLOW_WRITE_ACTIONS"),
         allow_http_probing=_bool_env("WAIT_ALLOW_HTTP_PROBING"),
         allow_cloud_fallback=_bool_env("WAIT_ALLOW_CLOUD_FALLBACK"),
-        local_model_provider=os.getenv("WAIT_LOCAL_MODEL_PROVIDER", "ollama"),
+        allow_llm_inference=_bool_env("WAIT_ALLOW_LLM_INFERENCE"),
+        local_model_provider=os.getenv("WAIT_LOCAL_MODEL_PROVIDER", "deterministic"),
         local_model_base_url=os.getenv("WAIT_LOCAL_MODEL_BASE_URL", "http://127.0.0.1:11434/v1"),
         local_model_name=os.getenv("WAIT_LOCAL_MODEL_NAME", "llama3.1"),
+        local_model_timeout_seconds=_float_env("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", 20.0),
         vector_backend=os.getenv("WAIT_VECTOR_BACKEND", "sqlite"),
     )
-

@@ -48,6 +48,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_model_provider": active_settings.local_model_provider,
             "local_model_base_url": active_settings.local_model_base_url,
             "local_model_name": active_settings.local_model_name,
+            "local_model_timeout_seconds": active_settings.local_model_timeout_seconds,
+            "llm_inference_enabled": active_settings.allow_llm_inference,
             "vector_backend": active_settings.vector_backend,
         }
 
