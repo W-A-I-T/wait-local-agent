@@ -5,11 +5,14 @@ import sqlite3
 from pathlib import Path
 
 from wait_local_agent.models import (
+    ApprovalRequest,
     AuditEvent,
+    EventHistoryEntry,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
     Ticket,
+    WorkflowRun,
     utc_now,
 )
 
@@ -46,10 +49,12 @@ class Store:
                 create table if not exists approvals (
                     ticket_id text primary key,
                     status text not null,
+                    comment text not null default '',
                     updated_at text not null
                 )
                 """
             )
+            self._ensure_column(connection, "approvals", "comment", "text not null default ''")
             connection.execute(
                 """
                 create table if not exists audit_events (
@@ -58,6 +63,47 @@ class Store:
                     subject_id text not null,
                     detail text not null,
                     created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists approval_requests (
+                    id integer primary key autoincrement,
+                    subject_id text not null,
+                    action_type text not null,
+                    payload_json text not null,
+                    status text not null,
+                    comment text not null,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists event_history (
+                    id integer primary key autoincrement,
+                    event_type text not null,
+                    subject_id text not null,
+                    status text not null,
+                    message text not null,
+                    payload_json text not null,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists workflow_runs (
+                    id integer primary key autoincrement,
+                    template_id text not null,
+                    ticket_id text not null,
+                    status text not null,
+                    message text not null,
+                    approval_request_id integer,
+                    created_at text not null,
+                    updated_at text not null
                 )
                 """
             )
@@ -94,6 +140,14 @@ class Store:
                 using fts5(chunk_id unindexed, title, path unindexed, text)
                 """
             )
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection, table_name: str, column_name: str, definition: str
+    ) -> None:
+        rows = connection.execute(f"pragma table_info({table_name})").fetchall()
+        if column_name not in {str(row["name"]) for row in rows}:
+            connection.execute(f"alter table {table_name} add column {column_name} {definition}")
 
     def ingest_ticket_file(self, path: Path) -> int:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -138,19 +192,21 @@ class Store:
             row = connection.execute("select * from tickets where id = ?", (ticket_id,)).fetchone()
         return Ticket(**dict(row)) if row else None
 
-    def set_approval(self, ticket_id: str, status: str) -> None:
+    def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                insert into approvals (ticket_id, status, updated_at)
-                values (?, ?, ?)
+                insert into approvals (ticket_id, status, comment, updated_at)
+                values (?, ?, ?, ?)
                 on conflict(ticket_id) do update set
                   status=excluded.status,
+                  comment=excluded.comment,
                   updated_at=excluded.updated_at
                 """,
-                (ticket_id, status, utc_now()),
+                (ticket_id, status, comment, utc_now()),
             )
-        self.add_audit_event("approval.updated", ticket_id, status)
+        detail = status if not comment else f"{status}: {comment}"
+        self.add_audit_event("approval.updated", ticket_id, detail)
 
     def get_approval(self, ticket_id: str) -> str:
         with self._connect() as connection:
@@ -159,9 +215,120 @@ class Store:
             ).fetchone()
         return str(row["status"]) if row else "pending"
 
+    def get_approval_comment(self, ticket_id: str) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select comment from approvals where ticket_id = ?", (ticket_id,)
+            ).fetchone()
+        return str(row["comment"]) if row else ""
+
+    def create_approval_request(
+        self, subject_id: str, action_type: str, payload: dict[str, object]
+    ) -> ApprovalRequest:
+        now = utc_now()
+        payload_json = json.dumps(payload, sort_keys=True)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into approval_requests
+                  (subject_id, action_type, payload_json, status, comment, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (subject_id, action_type, payload_json, "pending", "", now, now),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("approval request insert did not return an id")
+            request_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "approval.requested",
+                subject_id,
+                f"{action_type} approval requested",
+            )
+            self._add_event_history(
+                connection,
+                "approval.requested",
+                subject_id,
+                "pending",
+                f"{action_type} waiting for technician approval",
+                payload_json,
+            )
+        request = self.get_approval_request(request_id)
+        if request is None:
+            raise RuntimeError("approval request was not persisted")
+        return request
+
+    def update_approval_request(
+        self, request_id: int, status: str, comment: str = ""
+    ) -> ApprovalRequest:
+        now = utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from approval_requests where id = ?", (request_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            connection.execute(
+                """
+                update approval_requests
+                set status = ?, comment = ?, updated_at = ?
+                where id = ?
+                """,
+                (status, comment, now, request_id),
+            )
+            workflow_status = _workflow_status_for_approval(status)
+            connection.execute(
+                """
+                update workflow_runs
+                set status = ?, updated_at = ?
+                where approval_request_id = ?
+                """,
+                (workflow_status, now, request_id),
+            )
+            self._add_audit_event(
+                connection,
+                "approval_request.updated",
+                str(row["subject_id"]),
+                f"{row['action_type']} {status}",
+            )
+            self._add_event_history(
+                connection,
+                "approval_request.updated",
+                str(row["subject_id"]),
+                status,
+                comment or f"{row['action_type']} {status}",
+                str(row["payload_json"]),
+            )
+        request = self.get_approval_request(request_id)
+        if request is None:
+            raise RuntimeError("approval request was not persisted")
+        return request
+
+    def get_approval_request(self, request_id: int) -> ApprovalRequest | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from approval_requests where id = ?", (request_id,)
+            ).fetchone()
+        return ApprovalRequest(**dict(row)) if row else None
+
+    def list_approval_requests(self) -> list[ApprovalRequest]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from approval_requests order by id desc"
+            ).fetchall()
+        return [ApprovalRequest(**dict(row)) for row in rows]
+
     def add_audit_event(self, event_type: str, subject_id: str, detail: str) -> None:
         with self._connect() as connection:
             self._add_audit_event(connection, event_type, subject_id, detail)
+            self._add_event_history(
+                connection,
+                event_type,
+                subject_id,
+                "completed",
+                detail,
+                "{}",
+            )
 
     @staticmethod
     def _add_audit_event(
@@ -175,10 +342,89 @@ class Store:
             (event_type, subject_id, detail, utc_now()),
         )
 
+    @staticmethod
+    def _add_event_history(
+        connection: sqlite3.Connection,
+        event_type: str,
+        subject_id: str,
+        status: str,
+        message: str,
+        payload_json: str,
+    ) -> None:
+        connection.execute(
+            """
+            insert into event_history
+              (event_type, subject_id, status, message, payload_json, created_at)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (event_type, subject_id, status, message, payload_json, utc_now()),
+        )
+
     def list_audit_events(self) -> list[AuditEvent]:
         with self._connect() as connection:
             rows = connection.execute("select * from audit_events order by id desc").fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
+
+    def list_event_history(self) -> list[EventHistoryEntry]:
+        with self._connect() as connection:
+            rows = connection.execute("select * from event_history order by id desc").fetchall()
+        return [EventHistoryEntry(**dict(row)) for row in rows]
+
+    def create_workflow_run(
+        self,
+        template_id: str,
+        ticket_id: str,
+        status: str,
+        message: str,
+        approval_request_id: int | None = None,
+    ) -> WorkflowRun:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into workflow_runs
+                  (template_id, ticket_id, status, message, approval_request_id,
+                   created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (template_id, ticket_id, status, message, approval_request_id, now, now),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("workflow run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+            self._add_audit_event(connection, "workflow.run_created", ticket_id, message)
+            payload = json.dumps(
+                {
+                    "template_id": template_id,
+                    "ticket_id": ticket_id,
+                    "approval_request_id": approval_request_id,
+                },
+                sort_keys=True,
+            )
+            self._add_event_history(
+                connection,
+                "workflow.execution",
+                ticket_id,
+                status,
+                message,
+                payload,
+            )
+        run = self.get_workflow_run(run_id)
+        if run is None:
+            raise RuntimeError("workflow run was not persisted")
+        return run
+
+    def get_workflow_run(self, run_id: int) -> WorkflowRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from workflow_runs where id = ?", (run_id,)
+            ).fetchone()
+        return WorkflowRun(**dict(row)) if row else None
+
+    def list_workflow_runs(self) -> list[WorkflowRun]:
+        with self._connect() as connection:
+            rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
+        return [WorkflowRun(**dict(row)) for row in rows]
 
     def upsert_knowledge_document(
         self,
@@ -371,3 +617,11 @@ def _fts_query(query: str) -> str:
 
 def _bounded_search_limit(limit: int) -> int:
     return min(max(limit, 1), MAX_SEARCH_LIMIT)
+
+
+def _workflow_status_for_approval(status: str) -> str:
+    if status == "approved":
+        return "approved"
+    if status == "rejected":
+        return "rejected"
+    return "pending_approval"

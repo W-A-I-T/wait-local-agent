@@ -1,25 +1,36 @@
 # Status
 
-WAIT Local Agent is in bootstrap status.
+WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
-## Done
+## Ready Now
 
-- Product skeleton
-- Backend API and CLI surface
-- SQLite-backed ticket and audit store
-- SQLite FTS5 knowledge indexing
-- Markdown, text, and text-based PDF ingestion
-- Deterministic ticket intelligence flow with indexed citations
-- Optional local OpenAI-compatible model invocation
-- Safe deterministic fallback for disabled or failed local inference
-- Provider settings exposed through CLI and API
-- React dashboard scaffold
-- Release hygiene audit
+- FastAPI operator API and Typer CLI.
+- SQLite-backed tickets, approvals, approval requests, workflow runs, audit
+  events, event history, documents, and FTS5 chunks.
+- Markdown, text, and text-based PDF ingestion.
+- Deterministic ticket intelligence with indexed citations.
+- Optional local OpenAI-compatible provider with deterministic fallback.
+- Dashboard scaffold for tickets, approval queue, event history, knowledge,
+  workflows, connectors, and provider health.
+- Docker Compose appliance scaffold with API, UI, health check, and persistent
+  SQLite volume.
+- Local backup and restore commands.
+- HaloPSA safe write draft surface that creates approval requests before any
+  live connector write exists.
 
 ## Next
 
-- Real PSA connector adapters
-- Documentation ingestion adapters for Hudu, IT Glue, and SharePoint
-- Provider-specific setup guides and live local model smoke examples
-- Approval-gated workflow execution
-- WAIT MSP Pack playbook catalog
+- Live HaloPSA read connector.
+- Approved HaloPSA write execution after draft review.
+- Richer workflow filters and run details.
+- Hudu documentation connector.
+- Connector credential validation and encrypted local secret storage.
+- RBAC and audit export.
+
+## Not Ready Yet
+
+- Live PSA, RMM, M365, Hudu, IT Glue, or SharePoint synchronization.
+- Scanned PDF OCR.
+- Multi-tenant hosted control plane.
+- Ungated side effects. All live writes remain disabled unless explicitly
+  implemented, configured, and approved.

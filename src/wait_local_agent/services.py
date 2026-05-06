@@ -36,6 +36,7 @@ class TicketIntelligenceService:
             suggested_response=self.provider.draft_response(ticket, sources),
             sources=sources,
             approval_status=self.store.get_approval(ticket.id),  # type: ignore[arg-type]
+            approval_comment=self.store.get_approval_comment(ticket.id),
         )
         self.store.add_audit_event("ticket.summarized", ticket.id, summary.classification)
         return summary

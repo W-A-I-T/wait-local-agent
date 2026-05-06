@@ -1,0 +1,32 @@
+services:
+  api:
+    build: .
+    env_file:
+      - .env.example
+    environment:
+      WAIT_DATA_PATH: /data/state.db
+      WAIT_ALLOWED_DOC_ROOT: /app/examples/sample_docs
+    ports:
+      - "8788:8788"
+    volumes:
+      - wait-local-agent-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ui:
+    image: node:22-slim
+    working_dir: /app/ui
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  wait-local-agent-data:

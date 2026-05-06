@@ -36,6 +36,10 @@ class Settings:
     local_model_name: str
     local_model_timeout_seconds: float
     vector_backend: str
+    halopsa_base_url: str = ""
+    halopsa_client_id: str = ""
+    halopsa_client_secret: str = ""
+    halopsa_tenant: str = ""
 
 
 def load_settings() -> Settings:
@@ -51,4 +55,8 @@ def load_settings() -> Settings:
         local_model_name=os.getenv("WAIT_LOCAL_MODEL_NAME", "llama3.1"),
         local_model_timeout_seconds=_float_env("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", 20.0),
         vector_backend=os.getenv("WAIT_VECTOR_BACKEND", "sqlite"),
+        halopsa_base_url=os.getenv("WAIT_HALOPSA_BASE_URL", ""),
+        halopsa_client_id=os.getenv("WAIT_HALOPSA_CLIENT_ID", ""),
+        halopsa_client_secret=os.getenv("WAIT_HALOPSA_CLIENT_SECRET", ""),
+        halopsa_tenant=os.getenv("WAIT_HALOPSA_TENANT", ""),
     )
