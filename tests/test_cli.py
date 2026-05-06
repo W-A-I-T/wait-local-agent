@@ -4,7 +4,8 @@ from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
-from wait_local_agent.models import HaloClient, HaloReadResult, HaloTicket
+from wait_local_agent.models import HaloClient, HaloReadResult, HaloTicket, HaloWriteResult
+from wait_local_agent.store import Store
 
 
 def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
@@ -159,6 +160,9 @@ def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -
         def health(self):
             return HaloReadResult("ready", "ok", 0)
 
+        def write_health(self):
+            return HaloReadResult("ready", "write ok", 0)
+
         def list_tickets(self, page: int = 1, page_size: int = 50):
             assert page == 2
             assert page_size == 5
@@ -182,7 +186,7 @@ def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -
             return _read_response([])
 
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
-    monkeypatch.setattr(cli_module, "HaloPSAReadClient", FakeHaloClient)
+    monkeypatch.setattr(cli_module, "HaloPSAClient", FakeHaloClient)
     runner = CliRunner()
 
     health = runner.invoke(app, ["connectors", "halopsa-health"])
@@ -195,6 +199,7 @@ def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -
     clients = runner.invoke(app, ["connectors", "halopsa-clients"])
     assets = runner.invoke(app, ["connectors", "halopsa-assets", "C-1"])
     categories = runner.invoke(app, ["connectors", "halopsa-categories"])
+    write_health = runner.invoke(app, ["connectors", "halopsa-write-health"])
 
     assert health.exit_code == 0
     assert "ready count=0 ok" in health.output
@@ -207,6 +212,67 @@ def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -
     assert "Contoso" in clients.output
     assert assets.exit_code == 0
     assert categories.exit_code == 0
+    assert write_health.exit_code == 0
+    assert "write ok" in write_health.output
+
+
+def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def execute_write(self, request):
+            return HaloWriteResult(
+                "succeeded",
+                "posted",
+                request.action_type,
+                request.ticket_id,
+                endpoint="Actions",
+                status_code=200,
+                remote_id="A-1",
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "HaloPSAClient", FakeHaloClient)
+    runner = CliRunner()
+
+    draft = runner.invoke(
+        app,
+        [
+            "connectors",
+            "draft-halopsa",
+            "HALO-42",
+            "add_note",
+            "--field",
+            "note=Remote note",
+        ],
+    )
+    request_id = draft.output.split("approval_request_id=")[1].split()[0]
+    approved = runner.invoke(app, ["approvals", "update", request_id, "approved"])
+
+    assert draft.exit_code == 0
+    assert approved.exit_code == 0
+    assert "execution_status=succeeded" in approved.output
+
+
+def test_halopsa_cli_execute_reports_blocked_and_rejects_pending(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-1", "action_type": "add_note", "fields": {}},
+    )
+    runner = CliRunner()
+
+    pending = runner.invoke(app, ["connectors", "execute-halopsa", str(approval.id)])
+    store.update_approval_request(approval.id or 0, "approved")
+    blocked = runner.invoke(app, ["connectors", "execute-halopsa", str(approval.id)])
+
+    assert pending.exit_code != 0
+    assert "approved approval requests" in pending.output
+    assert blocked.exit_code == 0
+    assert "execution_status=blocked" in blocked.output
 
 
 def _read_response(items):

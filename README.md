@@ -26,7 +26,8 @@ cloud platform. WAIT Local Agent starts from a different premise:
 ## Current Capabilities
 
 - FastAPI operator API and Typer CLI.
-- React/Vite dashboard scaffold.
+- React/Vite dashboard for HaloPSA tickets, approvals, connector health, and
+  execution history.
 - Docker Compose appliance with API, UI, health check, and SQLite volume.
 - Local backup and restore commands.
 - SQLite ticket, approval, approval request, workflow run, event, document, and
@@ -41,15 +42,16 @@ cloud platform. WAIT Local Agent starts from a different premise:
   ticket follow-up, P1 alert, and documentation-assisted response.
 - HaloPSA read-only connector surface for health, tickets, notes, clients,
   assets, and categories when explicitly enabled.
-- HaloPSA safe draft surface for add-note, status update, assignment, and
-  response draft actions.
+- HaloPSA safe draft and approved live-write surface for add-note,
+  client-safe response, status/category updates, ticket fields, and technician
+  assignment.
 - Safe defaults for local-only operation.
 
 ## Current Limits
 
 - HaloPSA reads require `WAIT_ALLOW_HTTP_PROBING=true` and credentials.
-- HaloPSA write execution is not enabled yet; the current write surface creates
-  safe approval drafts.
+- HaloPSA live writes require `WAIT_ALLOW_HTTP_PROBING=true`,
+  `WAIT_ALLOW_WRITE_ACTIONS=true`, credentials, and an approved draft.
 - RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint live connectors are
   staged roadmap work.
 - PDF support is text extraction only. Scanned PDFs and OCR are not supported
@@ -57,8 +59,8 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - Local model invocation is opt-in and calls only the configured local
   OpenAI-compatible endpoint.
 - Cloud fallback is disabled by default and not required for the current demo.
-- Live write execution remains disabled unless explicitly implemented,
-  configured, and approved.
+- Live write execution remains disabled unless explicitly configured and
+  approved.
 
 ## Requirements
 
@@ -137,6 +139,7 @@ curl http://127.0.0.1:8788/tickets
 curl http://127.0.0.1:8788/workflows/templates
 curl http://127.0.0.1:8788/connectors
 curl http://127.0.0.1:8788/connectors/halopsa/health
+curl http://127.0.0.1:8788/connectors/halopsa/write-health
 curl http://127.0.0.1:8788/connectors/halopsa/tickets
 curl http://127.0.0.1:8788/approval-requests
 curl http://127.0.0.1:8788/event-history
@@ -152,7 +155,7 @@ scripts/backup_state.sh
 scripts/restore_state.sh .wait-local-agent/backups/state.db
 ```
 
-## HaloPSA Drafts
+## HaloPSA Live Writes
 
 Set the connector environment values when you are ready to configure HaloPSA:
 
@@ -162,27 +165,45 @@ WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
 WAIT_HALOPSA_TENANT=
 WAIT_HALOPSA_TOKEN_URL=
+WAIT_HALOPSA_TICKET_WRITE_ENDPOINT=Ticket
+WAIT_HALOPSA_ACTION_WRITE_ENDPOINT=Actions
 ```
 
-HaloPSA reads stay blocked until `WAIT_ALLOW_HTTP_PROBING=true`. The current
-write surface drafts actions and creates approval requests. It does not execute
-live writes yet.
+HaloPSA reads stay blocked until `WAIT_ALLOW_HTTP_PROBING=true`. Live writes
+also require `WAIT_ALLOW_WRITE_ACTIONS=true` and an approved draft. Approving a
+HaloPSA approval request auto-executes the write when both flags are enabled;
+approved requests can also be retried manually.
 
 ```bash
 wait-local-agent connectors list
 wait-local-agent connectors secrets
 wait-local-agent connectors halopsa-health
+wait-local-agent connectors halopsa-write-health
 wait-local-agent connectors halopsa-tickets
 wait-local-agent connectors halopsa-ticket TCK-1002
 wait-local-agent connectors halopsa-notes TCK-1002
 wait-local-agent connectors halopsa-clients
 wait-local-agent connectors halopsa-assets CLIENT-1
 wait-local-agent connectors halopsa-categories
-wait-local-agent connectors draft-halopsa TCK-1002 add_note \
-  --field note="Drafted response ready for review" \
-  --field visibility=internal
+wait-local-agent connectors draft-halopsa HALO-1002 add_note \
+  --field note="Internal note ready for review"
+wait-local-agent connectors draft-halopsa HALO-1002 draft_response \
+  --field response="Client-safe response ready to post"
+wait-local-agent connectors draft-halopsa HALO-1002 update_status \
+  --field status_id=9
+wait-local-agent connectors draft-halopsa HALO-1002 assign_technician \
+  --field technician_id=42
+wait-local-agent connectors draft-halopsa HALO-1002 update_ticket_fields \
+  --field category_id=5 \
+  --field priority=High
 wait-local-agent approvals list
+wait-local-agent approvals update 1 approved "approved by technician"
+wait-local-agent connectors execute-halopsa 1
 ```
+
+Remote HaloPSA payloads and secrets are not stored in local state. WAIT records
+only sanitized execution metadata: request id, action type, status, endpoint,
+HTTP status code, remote id when available, and a concise result message.
 
 ## Configuration
 
@@ -205,6 +226,8 @@ WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
 WAIT_HALOPSA_TENANT=
 WAIT_HALOPSA_TOKEN_URL=
+WAIT_HALOPSA_TICKET_WRITE_ENDPOINT=Ticket
+WAIT_HALOPSA_ACTION_WRITE_ENDPOINT=Actions
 ```
 
 No write actions, external probing, local model inference, cloud fallback, or

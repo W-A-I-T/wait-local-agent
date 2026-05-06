@@ -10,10 +10,11 @@ from pydantic import BaseModel
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    execute_halopsa_approval_request,
     list_connector_statuses,
     list_secret_records,
 )
-from wait_local_agent.halopsa import HaloPSAReadClient, HaloReadResponse
+from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.knowledge import KnowledgeIngestionService
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
@@ -31,7 +32,13 @@ class KnowledgeIngestRequest(BaseModel):
 
 
 class HaloDraftRequest(BaseModel):
-    action_type: Literal["add_note", "update_status", "assign_technician", "draft_response"]
+    action_type: Literal[
+        "add_note",
+        "update_status",
+        "assign_technician",
+        "draft_response",
+        "update_ticket_fields",
+    ]
     fields: dict[str, object]
 
 
@@ -47,7 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=active_settings,
         provider=provider_from_settings(active_settings),
     )
-    halopsa_client = HaloPSAReadClient(active_settings)
+    halopsa_client = HaloPSAClient(active_settings)
 
     app = FastAPI(title="WAIT Local Agent", version="0.1.0")
 
@@ -103,6 +110,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def update_approval_request(request_id: int, request: ApprovalRequest) -> dict[str, object]:
         try:
             approval = store.update_approval_request(request_id, request.status, request.comment)
+            if request.status == "approved" and approval.action_type.startswith("halopsa."):
+                try:
+                    approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
             return asdict(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
@@ -125,22 +137,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
     def create_halopsa_draft(ticket_id: str, request: HaloDraftRequest) -> dict[str, object]:
-        if store.get_ticket(ticket_id) is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
-        return asdict(
-            draft_halopsa_ticket_action(
+        try:
+            draft = draft_halopsa_ticket_action(
                 store,
                 ticket_id,
                 request.action_type,
                 request.fields,
             )
-        )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(draft)
 
     @app.get("/connectors/halopsa/health")
     def halopsa_health() -> dict[str, object]:
         result = halopsa_client.health()
         _audit_halopsa_read("health", result.status, result.count)
         return asdict(result)
+
+    @app.get("/connectors/halopsa/write-health")
+    def halopsa_write_health() -> dict[str, object]:
+        result = halopsa_client.write_health()
+        store.add_audit_event("halopsa.write_health", "halopsa", result.status)
+        return asdict(result)
+
+    @app.post("/connectors/halopsa/approval-requests/{request_id}/execute")
+    def execute_halopsa_approval(request_id: int) -> dict[str, object]:
+        try:
+            return asdict(execute_halopsa_approval_request(store, halopsa_client, request_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/connectors/halopsa/tickets")
     def halopsa_tickets(page: int = 1, page_size: int = 50) -> dict[str, object]:

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import HaloReadResult, HaloTicket
+from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteResult
 from wait_local_agent.store import Store
 
 
@@ -175,9 +175,9 @@ def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
         "/workflows/templates/nope/runs",
         json={"ticket_id": "TCK-1002"},
     )
-    missing_ticket = client.post(
+    unsupported_action = client.post(
         "/connectors/halopsa/tickets/NOPE/drafts",
-        json={"action_type": "add_note", "fields": {"note": "Draft"}},
+        json={"action_type": "unsupported", "fields": {"note": "Draft"}},
     )
     missing_approval = client.post(
         "/approval-requests/999",
@@ -185,7 +185,7 @@ def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     )
 
     assert missing_template.status_code == 404
-    assert missing_ticket.status_code == 404
+    assert unsupported_action.status_code == 422
     assert missing_approval.status_code == 404
 
 
@@ -254,6 +254,9 @@ def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> N
         def health(self):
             return HaloReadResult("ready", "ok", 0)
 
+        def write_health(self):
+            return HaloReadResult("ready", "write ok", 0)
+
         def list_tickets(self, page: int = 1, page_size: int = 50):
             assert page == 2
             assert page_size == 10
@@ -285,7 +288,7 @@ def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> N
         def list_categories(self):
             return _read_response([])
 
-    monkeypatch.setattr(app_module, "HaloPSAReadClient", FakeHaloClient)
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
     client = TestClient(app_module.create_app(settings))
 
     health = client.get("/connectors/halopsa/health")
@@ -303,6 +306,117 @@ def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> N
     assert clients.json()["result"]["status"] == "ready"
     assert assets.json()["result"]["status"] == "ready"
     assert categories.json()["result"]["status"] == "ready"
+
+
+def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(
+    settings, monkeypatch
+) -> None:
+    executed = []
+
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def execute_write(self, request):
+            executed.append(request)
+            return HaloWriteResult(
+                "succeeded",
+                "posted",
+                request.action_type,
+                request.ticket_id,
+                endpoint="Actions",
+                status_code=200,
+                remote_id="A-1",
+            )
+
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    client = TestClient(app_module.create_app(settings))
+
+    draft = client.post(
+        "/connectors/halopsa/tickets/HALO-42/drafts",
+        json={"action_type": "add_note", "fields": {"note": "Remote ticket note"}},
+    )
+    approved = client.post(
+        f"/approval-requests/{draft.json()['approval_request_id']}",
+        json={"status": "approved", "comment": "ship"},
+    )
+    events = client.get("/event-history")
+
+    assert draft.status_code == 200
+    assert approved.status_code == 200
+    assert approved.json()["execution_status"] == "succeeded"
+    assert approved.json()["execution_result_json"]
+    assert executed[0].ticket_id == "HALO-42"
+    assert any(event["event_type"] == "halopsa.write" for event in events.json())
+
+
+def test_halopsa_manual_execute_rejects_non_approved_and_non_halopsa(settings) -> None:
+    store = Store(settings.data_path)
+    halo = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-1", "action_type": "add_note", "fields": {}},
+    )
+    other = store.create_approval_request("TCK-1", "ticket.draft_response", {"ticket_id": "TCK-1"})
+    client = TestClient(create_app(settings))
+
+    pending = client.post(f"/connectors/halopsa/approval-requests/{halo.id}/execute")
+    store.update_approval_request(other.id or 0, "approved")
+    non_halo = client.post(f"/connectors/halopsa/approval-requests/{other.id}/execute")
+    missing = client.post("/connectors/halopsa/approval-requests/999/execute")
+
+    assert pending.status_code == 409
+    assert non_halo.status_code == 400
+    assert missing.status_code == 404
+
+
+def test_halopsa_manual_execute_records_blocked_and_rejects_repeat_success(
+    settings, monkeypatch
+) -> None:
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def execute_write(self, request):
+            return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+    store = Store(settings.data_path)
+    blocked = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-1", "action_type": "add_note", "fields": {}},
+    )
+    store.update_approval_request(blocked.id or 0, "approved")
+    client = TestClient(create_app(settings))
+
+    blocked_response = client.post(f"/connectors/halopsa/approval-requests/{blocked.id}/execute")
+
+    assert blocked_response.status_code == 200
+    assert blocked_response.json()["execution_status"] == "blocked"
+
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    success_store = Store(settings.data_path)
+    approval = success_store.create_approval_request(
+        "HALO-2",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-2", "action_type": "add_note", "fields": {}},
+    )
+    success_store.update_approval_request(approval.id or 0, "approved")
+    success_client = TestClient(app_module.create_app(settings))
+    first = success_client.post(f"/connectors/halopsa/approval-requests/{approval.id}/execute")
+    second = success_client.post(f"/connectors/halopsa/approval-requests/{approval.id}/execute")
+
+    assert first.json()["execution_status"] == "succeeded"
+    assert second.status_code == 400
+
+
+def test_halopsa_write_health_api(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    response = client.get("/connectors/halopsa/write-health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

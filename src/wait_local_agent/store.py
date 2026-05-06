@@ -76,9 +76,37 @@ class Store:
                     status text not null,
                     comment text not null,
                     created_at text not null,
-                    updated_at text not null
+                    updated_at text not null,
+                    execution_status text not null default 'not_started',
+                    execution_message text not null default '',
+                    executed_at text not null default '',
+                    execution_result_json text not null default '{}'
                 )
                 """
+            )
+            self._ensure_column(
+                connection,
+                "approval_requests",
+                "execution_status",
+                "text not null default 'not_started'",
+            )
+            self._ensure_column(
+                connection,
+                "approval_requests",
+                "execution_message",
+                "text not null default ''",
+            )
+            self._ensure_column(
+                connection,
+                "approval_requests",
+                "executed_at",
+                "text not null default ''",
+            )
+            self._ensure_column(
+                connection,
+                "approval_requests",
+                "execution_result_json",
+                "text not null default '{}'",
             )
             connection.execute(
                 """
@@ -298,6 +326,48 @@ class Store:
                 status,
                 comment or f"{row['action_type']} {status}",
                 str(row["payload_json"]),
+            )
+        request = self.get_approval_request(request_id)
+        if request is None:
+            raise RuntimeError("approval request was not persisted")
+        return request
+
+    def record_approval_execution(
+        self,
+        request_id: int,
+        *,
+        status: str,
+        message: str,
+        result: dict[str, object],
+    ) -> ApprovalRequest:
+        now = utc_now()
+        result_json = json.dumps(result, sort_keys=True)
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from approval_requests where id = ?", (request_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            connection.execute(
+                """
+                update approval_requests
+                set execution_status = ?, execution_message = ?,
+                    executed_at = ?, execution_result_json = ?, updated_at = ?
+                where id = ?
+                """,
+                (status, message, now, result_json, now, request_id),
+            )
+            action_type = str(row["action_type"])
+            subject_id = str(row["subject_id"])
+            detail = f"{action_type} execution {status}: {message}"
+            self._add_audit_event(connection, "halopsa.write", subject_id, detail)
+            self._add_event_history(
+                connection,
+                "halopsa.write",
+                subject_id,
+                status,
+                message,
+                result_json,
             )
         request = self.get_approval_request(request_id)
         if request is None:
