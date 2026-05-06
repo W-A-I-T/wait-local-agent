@@ -64,7 +64,7 @@ const approvalRequests = [
 ];
 
 const connectors = [
-  ["HaloPSA", "Draft mode", "Safe write drafts before live PSA execution"],
+  ["HaloPSA", "Read + draft mode", "Read-only connector with safe write drafts"],
   ["Hudu", "Planned", "Documentation sync after HaloPSA read path"],
   ["RMM", "Planned", "Read-only inventory before approved scripts"],
   ["M365 / Entra", "Planned", "Identity, group, license, and mailbox lookup"]

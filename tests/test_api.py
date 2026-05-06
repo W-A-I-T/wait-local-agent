@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
+from wait_local_agent.models import HaloReadResult, HaloTicket
 from wait_local_agent.store import Store
 
 
@@ -187,9 +189,129 @@ def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     assert missing_approval.status_code == 404
 
 
+def test_halopsa_api_read_surfaces_block_without_http_flag(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/halopsa/health")
+    tickets = client.get("/connectors/halopsa/tickets")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "blocked"
+    assert tickets.status_code == 200
+    assert tickets.json()["result"]["status"] == "blocked"
+    assert tickets.json()["items"] == []
+    assert any(event["event_type"] == "halopsa.read" for event in audit.json())
+
+
+def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
+    configured_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "allow_http_probing": True,
+            "halopsa_base_url": "https://halo.example.test",
+            "halopsa_client_id": "client-id",
+        }
+    )
+    client = TestClient(create_app(configured_settings))
+
+    response = client.get("/connectors/halopsa/tickets")
+
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == "not_configured"
+    assert "WAIT_HALOPSA_CLIENT_SECRET" in response.json()["result"]["message"]
+
+
+def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(settings) -> None:
+    blocked_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "halopsa_base_url": "https://halo.example.test",
+            "halopsa_client_id": "client-id",
+            "halopsa_client_secret": "secret",
+            "halopsa_tenant": "tenant",
+        }
+    )
+    enabled_settings = blocked_settings.__class__(
+        **{
+            **blocked_settings.__dict__,
+            "allow_http_probing": True,
+        }
+    )
+
+    blocked = TestClient(create_app(blocked_settings)).get("/connectors")
+    enabled = TestClient(create_app(enabled_settings)).get("/connectors")
+
+    assert blocked.json()[0]["status"] == "blocked"
+    assert enabled.json()[0]["status"] == "configured"
+
+
+def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> None:
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return HaloReadResult("ready", "ok", 0)
+
+        def list_tickets(self, page: int = 1, page_size: int = 50):
+            assert page == 2
+            assert page_size == 10
+            return _read_response(
+                [
+                    HaloTicket(
+                        id="TCK-1",
+                        summary="Printer offline",
+                        status="Open",
+                        priority="High",
+                        client_id="C-1",
+                        client_name="Contoso",
+                    )
+                ]
+            )
+
+        def get_ticket(self, ticket_id: str):
+            return _read_response([HaloTicket(ticket_id, "One", "Open", "Low", "C-1", "Contoso")])
+
+        def list_ticket_notes(self, ticket_id: str):
+            return _read_response([])
+
+        def list_clients(self, page: int = 1, page_size: int = 50):
+            return _read_response([])
+
+        def list_client_assets(self, client_id: str):
+            return _read_response([])
+
+        def list_categories(self):
+            return _read_response([])
+
+    monkeypatch.setattr(app_module, "HaloPSAReadClient", FakeHaloClient)
+    client = TestClient(app_module.create_app(settings))
+
+    health = client.get("/connectors/halopsa/health")
+    tickets = client.get("/connectors/halopsa/tickets", params={"page": 2, "page_size": 10})
+    ticket = client.get("/connectors/halopsa/tickets/TCK-1")
+    notes = client.get("/connectors/halopsa/tickets/TCK-1/notes")
+    clients = client.get("/connectors/halopsa/clients")
+    assets = client.get("/connectors/halopsa/clients/C-1/assets")
+    categories = client.get("/connectors/halopsa/categories")
+
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["id"] == "TCK-1"
+    assert ticket.json()["items"][0]["summary"] == "One"
+    assert notes.json()["result"]["status"] == "ready"
+    assert clients.json()["result"]["status"] == "ready"
+    assert assets.json()["result"]["status"] == "ready"
+    assert categories.json()["result"]["status"] == "ready"
+
+
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
     client = TestClient(create_app(settings))
 
     response = client.post("/knowledge/ingest", json={"path": "examples/sample_docs/missing.md"})
 
     assert response.status_code == 400
+
+
+def _read_response(items):
+    return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)

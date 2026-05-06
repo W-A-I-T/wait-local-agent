@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
+import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
+from wait_local_agent.models import HaloClient, HaloReadResult, HaloTicket
 
 
 def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
@@ -133,3 +135,79 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert backup.exit_code == 0
     assert backup_path.exists()
     assert restore.exit_code == 0
+
+
+def test_halopsa_cli_read_commands_block_without_http_flag(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "false")
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "halopsa-health"])
+    tickets = runner.invoke(app, ["connectors", "halopsa-tickets"])
+
+    assert health.exit_code == 0
+    assert "blocked count=0" in health.output
+    assert tickets.exit_code == 0
+    assert "blocked count=0" in tickets.output
+
+
+def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return HaloReadResult("ready", "ok", 0)
+
+        def list_tickets(self, page: int = 1, page_size: int = 50):
+            assert page == 2
+            assert page_size == 5
+            return _read_response(
+                [HaloTicket("TCK-1", "Printer", "Open", "High", "C-1", "Contoso")]
+            )
+
+        def get_ticket(self, ticket_id: str):
+            return _read_response([HaloTicket(ticket_id, "One", "Open", "Low", "C-1", "Contoso")])
+
+        def list_ticket_notes(self, ticket_id: str):
+            return _read_response([])
+
+        def list_clients(self, page: int = 1, page_size: int = 50):
+            return _read_response([HaloClient("C-1", "Contoso", "Active")])
+
+        def list_client_assets(self, client_id: str):
+            return _read_response([])
+
+        def list_categories(self):
+            return _read_response([])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "HaloPSAReadClient", FakeHaloClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "halopsa-health"])
+    tickets = runner.invoke(
+        app,
+        ["connectors", "halopsa-tickets", "--page", "2", "--page-size", "5"],
+    )
+    ticket = runner.invoke(app, ["connectors", "halopsa-ticket", "TCK-1"])
+    notes = runner.invoke(app, ["connectors", "halopsa-notes", "TCK-1"])
+    clients = runner.invoke(app, ["connectors", "halopsa-clients"])
+    assets = runner.invoke(app, ["connectors", "halopsa-assets", "C-1"])
+    categories = runner.invoke(app, ["connectors", "halopsa-categories"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert tickets.exit_code == 0
+    assert "TCK-1" in tickets.output
+    assert ticket.exit_code == 0
+    assert "One" in ticket.output
+    assert notes.exit_code == 0
+    assert clients.exit_code == 0
+    assert "Contoso" in clients.output
+    assert assets.exit_code == 0
+    assert categories.exit_code == 0
+
+
+def _read_response(items):
+    return cli_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)

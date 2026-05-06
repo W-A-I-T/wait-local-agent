@@ -31,7 +31,8 @@ layers.
 ## Connectors
 
 - HaloPSA is the first PSA wedge.
-- Connector status is exposed through API and CLI before live synchronization.
+- Connector status and read-only HaloPSA health/list/read calls are exposed
+  through API and CLI.
 - HaloPSA write operations start as safe drafts that create approval requests.
 - Hudu, IT Glue, SharePoint, RMM, and M365/Entra are staged after the PSA wedge.
 

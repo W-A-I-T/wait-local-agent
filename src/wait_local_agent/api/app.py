@@ -13,6 +13,7 @@ from wait_local_agent.connectors import (
     list_connector_statuses,
     list_secret_records,
 )
+from wait_local_agent.halopsa import HaloPSAReadClient, HaloReadResponse
 from wait_local_agent.knowledge import KnowledgeIngestionService
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=active_settings,
         provider=provider_from_settings(active_settings),
     )
+    halopsa_client = HaloPSAReadClient(active_settings)
 
     app = FastAPI(title="WAIT Local Agent", version="0.1.0")
 
@@ -134,6 +136,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         )
 
+    @app.get("/connectors/halopsa/health")
+    def halopsa_health() -> dict[str, object]:
+        result = halopsa_client.health()
+        _audit_halopsa_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/halopsa/tickets")
+    def halopsa_tickets(page: int = 1, page_size: int = 50) -> dict[str, object]:
+        response = halopsa_client.list_tickets(page=page, page_size=page_size)
+        return _halopsa_response("tickets.list", response)
+
+    @app.get("/connectors/halopsa/tickets/{ticket_id}")
+    def halopsa_ticket(ticket_id: str) -> dict[str, object]:
+        response = halopsa_client.get_ticket(ticket_id)
+        return _halopsa_response("tickets.get", response)
+
+    @app.get("/connectors/halopsa/tickets/{ticket_id}/notes")
+    def halopsa_ticket_notes(ticket_id: str) -> dict[str, object]:
+        response = halopsa_client.list_ticket_notes(ticket_id)
+        return _halopsa_response("tickets.notes", response)
+
+    @app.get("/connectors/halopsa/clients")
+    def halopsa_clients(page: int = 1, page_size: int = 50) -> dict[str, object]:
+        response = halopsa_client.list_clients(page=page, page_size=page_size)
+        return _halopsa_response("clients.list", response)
+
+    @app.get("/connectors/halopsa/clients/{client_id}/assets")
+    def halopsa_client_assets(client_id: str) -> dict[str, object]:
+        response = halopsa_client.list_client_assets(client_id)
+        return _halopsa_response("clients.assets", response)
+
+    @app.get("/connectors/halopsa/categories")
+    def halopsa_categories() -> dict[str, object]:
+        response = halopsa_client.list_categories()
+        return _halopsa_response("categories.list", response)
+
     @app.get("/workflows/templates")
     def workflow_templates() -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -167,5 +205,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/knowledge/search")
     def knowledge_search(q: str, limit: int = 3) -> list[dict[str, object]]:
         return [asdict(chunk) for chunk in store.search_knowledge_chunks(q, limit=limit)]
+
+    def _halopsa_response(read_type: str, response: HaloReadResponse) -> dict[str, object]:
+        _audit_halopsa_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+        }
+
+    def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
     return app

@@ -40,6 +40,7 @@ class Settings:
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
     halopsa_tenant: str = ""
+    halopsa_token_url: str = ""
 
 
 def load_settings() -> Settings:
@@ -59,4 +60,5 @@ def load_settings() -> Settings:
         halopsa_client_id=os.getenv("WAIT_HALOPSA_CLIENT_ID", ""),
         halopsa_client_secret=os.getenv("WAIT_HALOPSA_CLIENT_SECRET", ""),
         halopsa_tenant=os.getenv("WAIT_HALOPSA_TENANT", ""),
+        halopsa_token_url=os.getenv("WAIT_HALOPSA_TOKEN_URL", ""),
     )

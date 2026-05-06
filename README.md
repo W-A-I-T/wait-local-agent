@@ -39,16 +39,19 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - Source citations with document paths and excerpts.
 - Five initial workflow templates: ticket triage, assign technician, inactive
   ticket follow-up, P1 alert, and documentation-assisted response.
+- HaloPSA read-only connector surface for health, tickets, notes, clients,
+  assets, and categories when explicitly enabled.
 - HaloPSA safe draft surface for add-note, status update, assignment, and
   response draft actions.
 - Safe defaults for local-only operation.
 
 ## Current Limits
 
-- HaloPSA live synchronization is not enabled yet; the current connector surface
-  creates safe approval drafts.
-- PSA, RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint live connectors
-  are staged roadmap work.
+- HaloPSA reads require `WAIT_ALLOW_HTTP_PROBING=true` and credentials.
+- HaloPSA write execution is not enabled yet; the current write surface creates
+  safe approval drafts.
+- RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint live connectors are
+  staged roadmap work.
 - PDF support is text extraction only. Scanned PDFs and OCR are not supported
   yet.
 - Local model invocation is opt-in and calls only the configured local
@@ -133,6 +136,8 @@ curl http://127.0.0.1:8788/health
 curl http://127.0.0.1:8788/tickets
 curl http://127.0.0.1:8788/workflows/templates
 curl http://127.0.0.1:8788/connectors
+curl http://127.0.0.1:8788/connectors/halopsa/health
+curl http://127.0.0.1:8788/connectors/halopsa/tickets
 curl http://127.0.0.1:8788/approval-requests
 curl http://127.0.0.1:8788/event-history
 ```
@@ -156,14 +161,23 @@ WAIT_HALOPSA_BASE_URL=
 WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
 WAIT_HALOPSA_TENANT=
+WAIT_HALOPSA_TOKEN_URL=
 ```
 
-The current HaloPSA surface drafts write actions and creates approval requests.
-It does not execute live writes yet.
+HaloPSA reads stay blocked until `WAIT_ALLOW_HTTP_PROBING=true`. The current
+write surface drafts actions and creates approval requests. It does not execute
+live writes yet.
 
 ```bash
 wait-local-agent connectors list
 wait-local-agent connectors secrets
+wait-local-agent connectors halopsa-health
+wait-local-agent connectors halopsa-tickets
+wait-local-agent connectors halopsa-ticket TCK-1002
+wait-local-agent connectors halopsa-notes TCK-1002
+wait-local-agent connectors halopsa-clients
+wait-local-agent connectors halopsa-assets CLIENT-1
+wait-local-agent connectors halopsa-categories
 wait-local-agent connectors draft-halopsa TCK-1002 add_note \
   --field note="Drafted response ready for review" \
   --field visibility=internal
@@ -190,6 +204,7 @@ WAIT_HALOPSA_BASE_URL=
 WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
 WAIT_HALOPSA_TENANT=
+WAIT_HALOPSA_TOKEN_URL=
 ```
 
 No write actions, external probing, local model inference, cloud fallback, or
