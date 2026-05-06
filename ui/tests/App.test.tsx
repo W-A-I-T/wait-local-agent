@@ -11,6 +11,15 @@ const approvals = [
     comment: "",
     execution_status: "not_started",
     execution_message: ""
+  },
+  {
+    id: 2,
+    subject_id: "TCK-1001",
+    action_type: "ticket.assign",
+    status: "pending",
+    comment: "",
+    execution_status: "not_started",
+    execution_message: ""
   }
 ];
 
@@ -42,7 +51,7 @@ describe("App", () => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Approve/i })[0]);
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
@@ -52,13 +61,23 @@ describe("App", () => {
     });
   });
 
-  it("shows blocked state and disables live execution controls", async () => {
+  it("keeps non-Halo approvals approvable while Halo writes are blocked", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, true)));
     render(<App />);
 
     expect(await screen.findByText("blocked")).toBeInTheDocument();
     await screen.findByText("halopsa.add_note");
-    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /Approve/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /Approve/i })[1]).toBeEnabled();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Approve/i })[1]);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/approval-requests/2",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
   });
 });
 
@@ -105,6 +124,9 @@ async function mockFetch(input: RequestInfo | URL, blocked = false): Promise<Res
   }
   if (path.includes("/drafts") || path === "/approval-requests/1") {
     return json({ ...approvals[0], status: "approved", execution_status: "succeeded" });
+  }
+  if (path === "/approval-requests/2") {
+    return json({ ...approvals[1], status: "approved" });
   }
   return json({});
 }

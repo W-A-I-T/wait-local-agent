@@ -94,6 +94,7 @@ export function App() {
   const haloConnector = connectors.find((connector) => connector.id === "halopsa");
   const liveWritesReady = writeHealth.status === "ready";
   const targetTicketId = selectedTicketId || manualTicketId.trim();
+  const isHaloApproval = (request: ApprovalRequest) => request.action_type.startsWith("halopsa.");
 
   const pendingApprovals = useMemo(
     () => approvalRequests.filter((request) => request.status === "pending"),
@@ -354,7 +355,11 @@ export function App() {
                   <em>{request.status} / {request.execution_status}</em>
                   <div className="row-actions">
                     <button
-                      disabled={busyId === request.id || request.status !== "pending" || !liveWritesReady}
+                      disabled={
+                        busyId === request.id ||
+                        request.status !== "pending" ||
+                        (isHaloApproval(request) && !liveWritesReady)
+                      }
                       type="button"
                       onClick={() => void updateApproval(request.id, "approved")}
                     >
@@ -370,7 +375,12 @@ export function App() {
                       Reject
                     </button>
                     <button
-                      disabled={busyId === request.id || request.status !== "approved" || !liveWritesReady}
+                      disabled={
+                        busyId === request.id ||
+                        request.status !== "approved" ||
+                        !isHaloApproval(request) ||
+                        !liveWritesReady
+                      }
                       type="button"
                       onClick={() => void executeApproval(request.id)}
                     >
