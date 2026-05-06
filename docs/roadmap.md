@@ -1,45 +1,57 @@
 # Roadmap
 
-## Phase 1: Local Ticket Copilot
+WAIT Local Agent is the local-first MSP automation appliance: private ticket
+intelligence, cited local knowledge, HaloPSA-first workflow drafts, technician
+approval, and auditable local execution.
 
-- Local Docker install
-- PSA ticket reader
-- Documentation ingestion for local files
-- SQLite FTS5 retrieval
-- Optional local OpenAI-compatible model invocation
-- Deterministic fallback for unavailable or malformed local model responses
-- Ticket summary
-- Ticket classification
-- Suggested technician response
-- Source references
-- Human approval
-- Audit log
+## Phase 0: Product Packaging
 
-## Phase 2: MSP Actions
+- Docker Compose appliance with API, dashboard, SQLite volume, health checks, and
+  repeatable environment defaults.
+- Backup and restore commands for the local SQLite state store.
+- One-command demo path that ingests sample runbooks and tickets, runs ticket
+  intelligence, lists workflow templates, and shows event history.
+- Docs that clearly separate what is ready now from the staged MSP automation
+  roadmap.
 
-- Provider-specific local model setup guides
-- Local endpoint diagnostics and health checks
-- Microsoft 365 and Entra lookup
-- License recommendation
-- Group and mailbox change drafts
-- RMM script recommendation
-- Runbook execution with approval
-- Technician-in-the-loop mode
+## Phase 1: Sellable Local Ticket Copilot
 
-## Phase 3: WAIT Sync
+- Harden ticket summary, classification, citation, audit, local model fallback,
+  and dashboard flows.
+- Persist approval comments and support approval-with-edits style review before
+  any workflow or connector mutation.
+- Present technician-facing views for queue, sources, approval requests,
+  provider health, connector readiness, and event history.
 
-- Template updates
-- Connector updates
-- Playbook marketplace
-- Optional cloud model fallback
-- License validation
-- Reseller dashboard
+## Phase 2: HaloPSA Connector Wedge
 
-## Phase 4: Paid Adaptation
+- Add HaloPSA read path first: tickets, clients, contacts, categories, notes,
+  and asset/configuration context where available.
+- Draft every write before execution: internal note, status/category update,
+  technician assignment, and client-safe response.
+- Require explicit technician approval for every HaloPSA mutation and log the
+  request, approver decision, payload, result, and failure.
 
-- MSP onboarding package
-- Connector setup
-- Documentation cleanup
-- Custom workflow building
-- White-label deployment
-- Hardening and operational support
+## Phase 3: Workflow Engine
+
+- Keep the workflow engine minimal and inspectable: trigger, filter, action,
+  approval policy, run state, and event log.
+- Ship five MSP templates first: ticket triage, assign technician, inactive
+  ticket follow-up, P1 alert, and documentation-assisted response.
+- Prefer deterministic rules for routing and gating. Use local model inference
+  only for classification, summarization, drafting, and reasoning support.
+
+## Phase 4: MSP Stack Expansion
+
+- Documentation connectors: Hudu first, then IT Glue and SharePoint.
+- RMM: read-only inventory before approved script recommendation and execution.
+- Microsoft 365 and Entra: read-only identity, group, license, and mailbox
+  lookup before approved changes.
+- Scheduled workflows for audits and recurring admin tasks.
+
+## Phase 5: Commercial Readiness
+
+- RBAC roles for admin, technician, and viewer.
+- Tenant and client boundaries, encrypted secrets storage, connector setup
+  validation, audit export, and update channel.
+- WAIT MSP Pack templates plus paid deployment, hardening, and support packages.

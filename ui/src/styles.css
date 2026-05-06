@@ -1,6 +1,6 @@
 :root {
-  color: #1e2528;
-  background: #f4f7f6;
+  color: #1f2528;
+  background: #f3f5f2;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -25,8 +25,8 @@ a {
 }
 
 .sidebar {
-  background: #18282a;
-  color: #eef7f2;
+  background: #1c2b31;
+  color: #f3f7f4;
   padding: 24px 18px;
 }
 
@@ -64,7 +64,7 @@ nav a {
 
 nav a.active,
 nav a:hover {
-  background: #294144;
+  background: #31505a;
   color: #ffffff;
 }
 
@@ -78,6 +78,14 @@ nav a:hover {
   gap: 20px;
   align-items: flex-start;
   margin-bottom: 24px;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 h1,
@@ -118,6 +126,12 @@ p {
   font-weight: 700;
   padding: 8px 12px;
   white-space: nowrap;
+}
+
+.status-pill.secondary {
+  background: #eaf0ff;
+  border-color: #c4cff2;
+  color: #34447a;
 }
 
 .panel {
@@ -223,6 +237,10 @@ p {
   grid-column: 1 / -1;
 }
 
+.settings-panel {
+  grid-column: 1 / -1;
+}
+
 .search-box {
   display: flex;
   align-items: center;
@@ -235,13 +253,20 @@ p {
 }
 
 .document-list,
-.source-results {
+.source-results,
+.stack-list,
+.table-list,
+.event-list {
   display: grid;
   gap: 10px;
 }
 
 .document-row,
-.source-results article {
+.source-results article,
+.approval-row,
+.connector-row,
+.table-row,
+.event-row {
   border: 1px solid #e4ebe8;
   border-radius: 8px;
   padding: 12px;
@@ -253,25 +278,73 @@ p {
   gap: 14px;
 }
 
+.connector-row,
+.table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.table-row {
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 1fr) auto;
+}
+
 .document-row strong,
 .document-row span,
 .source-results strong,
-.source-results span {
+.source-results span,
+.approval-row strong,
+.approval-row span,
+.connector-row strong,
+.connector-row span,
+.table-row strong,
+.table-row span {
   display: block;
 }
 
 .document-row span,
-.source-results span {
+.source-results span,
+.approval-row span,
+.connector-row span,
+.table-row span {
   color: #60706a;
   font-size: 0.84rem;
   margin-top: 4px;
 }
 
-.document-row em {
+.document-row em,
+.approval-row em,
+.connector-row em,
+.table-row em,
+.event-row em {
   color: #246647;
   font-style: normal;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.approval-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(90px, 0.5fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.event-row p {
+  grid-column: 1 / -1;
+}
+
+.event-row span {
+  color: #40506b;
+  font-weight: 700;
 }
 
 .source-results {
@@ -311,10 +384,19 @@ dd {
   margin: 0;
 }
 
+dd svg {
+  margin-right: 6px;
+  vertical-align: text-bottom;
+}
+
 @media (max-width: 760px) {
   .shell,
   .grid,
-  .ticket-card {
+  .ticket-card,
+  .approval-row,
+  .connector-row,
+  .table-row,
+  .event-row {
     grid-template-columns: 1fr;
   }
 
@@ -323,6 +405,7 @@ dd {
   }
 
   .topbar,
+  .topbar-actions,
   .panel-heading,
   .document-row {
     align-items: flex-start;

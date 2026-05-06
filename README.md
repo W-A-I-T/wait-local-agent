@@ -1,53 +1,69 @@
 # WAIT Local Agent
 
-WAIT Local Agent is a local-first AI copilot runtime for MSPs, IT consultants, and privacy-sensitive SMB teams. It is designed to run on infrastructure the operator controls, index local operational knowledge, summarize service work with citations, and keep every action behind human approval and audit logs.
+WAIT Local Agent is a local-first MSP copilot appliance for tickets, runbooks,
+approval-gated workflow drafts, and auditable technician decisions. It is built
+for MSPs, IT consultants, and privacy-sensitive SMB teams that want useful
+automation without making a SaaS platform the mandatory home for client
+knowledge.
 
-The first product path is **WAIT Local Agent for MSPs**: a private ticket-intelligence layer that helps technicians find the right runbook, classify requests, draft client-safe responses, and preserve a clear local record of what happened.
+The first product wedge is **WAIT Local Agent for MSPs**: private ticket
+intelligence with cited local sources, HaloPSA-first connector drafts, local
+approval queues, and a clear event history.
 
 ## Why This Exists
 
-Many service teams want AI assistance without making a mandatory SaaS agent the center of their operational knowledge. WAIT Local Agent starts from a different premise:
+MSP teams want faster service desk work, but many do not want every runbook,
+client note, ticket detail, and technician decision routed through a closed
+cloud platform. WAIT Local Agent starts from a different premise:
 
 - Keep client and runbook knowledge local by default.
-- Cite the source material behind every summary or draft.
-- Require human approval before workflow execution.
-- Keep audit logs in a local SQLite store.
-- Let MSPs and consultants customize, inspect, and eventually resell vertical packs.
-
-## Who It Is For
-
-- MSPs that want a private technician-assist layer for tickets and runbooks.
-- IT consultants who deploy repeatable local copilots for multiple clients.
-- SMB operators with sensitive internal procedures, client files, or compliance pressure.
-- Builders who want an open local runtime for vertical copilots instead of a closed SaaS-only workflow.
+- Cite the source material behind summaries and drafts.
+- Draft connector writes before execution.
+- Require technician approval for sensitive actions.
+- Keep audit and workflow history in local SQLite.
+- Package the runtime as a Docker appliance that an MSP can inspect and support.
 
 ## Current Capabilities
 
-- FastAPI operator API
-- Typer CLI
-- SQLite ticket, approval, audit, document, and chunk storage
-- SQLite FTS5 local knowledge search
-- Markdown, plain text, and text-based PDF ingestion
-- Ticket classification and deterministic summary drafting
-- Optional local OpenAI-compatible model invocation for Ollama, vLLM, or similar endpoints
-- Source citations with document paths and excerpts
-- React/Vite dashboard scaffold with ticket, audit, provider, and knowledge views
-- Safe defaults for local-only operation
+- FastAPI operator API and Typer CLI.
+- React/Vite dashboard scaffold.
+- Docker Compose appliance with API, UI, health check, and SQLite volume.
+- Local backup and restore commands.
+- SQLite ticket, approval, approval request, workflow run, event, document, and
+  chunk storage.
+- SQLite FTS5 local knowledge search.
+- Markdown, plain text, and text-based PDF ingestion.
+- Deterministic ticket classification and summary drafting.
+- Optional local OpenAI-compatible model invocation for Ollama, vLLM, or similar
+  endpoints.
+- Source citations with document paths and excerpts.
+- Five initial workflow templates: ticket triage, assign technician, inactive
+  ticket follow-up, P1 alert, and documentation-assisted response.
+- HaloPSA safe draft surface for add-note, status update, assignment, and
+  response draft actions.
+- Safe defaults for local-only operation.
 
 ## Current Limits
 
-- PDF support is text extraction only. Scanned PDFs and OCR are not supported yet.
-- PSA, RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint connectors are not live yet.
-- Local model invocation is opt-in and calls only the configured local OpenAI-compatible endpoint.
+- HaloPSA live synchronization is not enabled yet; the current connector surface
+  creates safe approval drafts.
+- PSA, RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint live connectors
+  are staged roadmap work.
+- PDF support is text extraction only. Scanned PDFs and OCR are not supported
+  yet.
+- Local model invocation is opt-in and calls only the configured local
+  OpenAI-compatible endpoint.
 - Cloud fallback is disabled by default and not required for the current demo.
-- Approval-gated execution exists as a product direction; the current runtime focuses on ticket intelligence and knowledge retrieval.
+- Live write execution remains disabled unless explicitly implemented,
+  configured, and approved.
 
 ## Requirements
 
-- Python 3.12
-- Node.js 22 for the dashboard
-- Local filesystem access to the documents you want to ingest
-- Optional: Ollama, vLLM, or another OpenAI-compatible local model endpoint
+- Python 3.12.
+- Node.js 22 for the dashboard.
+- Docker and Docker Compose for the appliance path.
+- Local filesystem access to the documents you want to ingest.
+- Optional: Ollama, vLLM, or another OpenAI-compatible local model endpoint.
 
 ## Quick Start
 
@@ -62,33 +78,28 @@ pip install -e ".[dev]"
 wait-local-agent doctor
 ```
 
-If your Linux Python install does not include `venv`, you can use `uv` instead:
+If your Linux Python install does not include `venv`, use `uv`:
 
 ```bash
 uv run --extra dev wait-local-agent doctor
 ```
 
-## Replicate the Local Demo
-
-Ingest the sample knowledge base and sample tickets:
+## Run The Local Demo
 
 ```bash
 wait-local-agent knowledge ingest examples/sample_docs
 wait-local-agent ingest examples/sample_tickets
-```
-
-Search local knowledge:
-
-```bash
-wait-local-agent knowledge list
-wait-local-agent knowledge search "mailbox permissions"
-```
-
-Summarize a ticket with cited sources:
-
-```bash
 wait-local-agent tickets summarize TCK-1002
-wait-local-agent audit list
+wait-local-agent workflows templates
+wait-local-agent workflows run documentation-assisted-response TCK-1002
+wait-local-agent approvals list
+wait-local-agent events list
+```
+
+Or run the scripted demo:
+
+```bash
+scripts/demo_appliance.sh
 ```
 
 Serve the API:
@@ -97,23 +108,66 @@ Serve the API:
 wait-local-agent serve --host 127.0.0.1 --port 8788
 ```
 
-Use the API:
-
-```bash
-curl http://127.0.0.1:8788/health
-curl http://127.0.0.1:8788/tickets
-curl http://127.0.0.1:8788/tickets/TCK-1002/summary
-curl http://127.0.0.1:8788/knowledge/documents
-curl "http://127.0.0.1:8788/knowledge/search?q=mailbox%20permissions"
-curl http://127.0.0.1:8788/audit
-```
-
 Run the dashboard:
 
 ```bash
 cd ui
 npm install
 npm run dev
+```
+
+## Docker Appliance
+
+```bash
+docker compose up --build
+```
+
+- API: `http://127.0.0.1:8788`
+- Dashboard: `http://127.0.0.1:5173`
+- SQLite state: Docker volume `wait-local-agent-data`
+
+Health and product surfaces:
+
+```bash
+curl http://127.0.0.1:8788/health
+curl http://127.0.0.1:8788/tickets
+curl http://127.0.0.1:8788/workflows/templates
+curl http://127.0.0.1:8788/connectors
+curl http://127.0.0.1:8788/approval-requests
+curl http://127.0.0.1:8788/event-history
+```
+
+## Backup And Restore
+
+```bash
+wait-local-agent backup create .wait-local-agent/backups/state.db
+wait-local-agent backup restore .wait-local-agent/backups/state.db
+
+scripts/backup_state.sh
+scripts/restore_state.sh .wait-local-agent/backups/state.db
+```
+
+## HaloPSA Drafts
+
+Set the connector environment values when you are ready to configure HaloPSA:
+
+```bash
+WAIT_HALOPSA_BASE_URL=
+WAIT_HALOPSA_CLIENT_ID=
+WAIT_HALOPSA_CLIENT_SECRET=
+WAIT_HALOPSA_TENANT=
+```
+
+The current HaloPSA surface drafts write actions and creates approval requests.
+It does not execute live writes yet.
+
+```bash
+wait-local-agent connectors list
+wait-local-agent connectors secrets
+wait-local-agent connectors draft-halopsa TCK-1002 add_note \
+  --field note="Drafted response ready for review" \
+  --field visibility=internal
+wait-local-agent approvals list
 ```
 
 ## Configuration
@@ -132,13 +186,20 @@ WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
 WAIT_LOCAL_MODEL_NAME=llama3.1
 WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 WAIT_VECTOR_BACKEND=sqlite
+WAIT_HALOPSA_BASE_URL=
+WAIT_HALOPSA_CLIENT_ID=
+WAIT_HALOPSA_CLIENT_SECRET=
+WAIT_HALOPSA_TENANT=
 ```
 
-No write actions, external probing, local model inference, or cloud fallback are enabled unless explicitly configured.
+No write actions, external probing, local model inference, cloud fallback, or
+live connector execution are enabled by default.
 
-### Local Model Invocation
+## Local Model Invocation
 
-The default provider is deterministic so tests, demos, and offline installs are repeatable. To try a local OpenAI-compatible endpoint, run Ollama, vLLM, or another compatible server on infrastructure you control, then opt in:
+The default provider is deterministic so tests, demos, and offline installs are
+repeatable. To try a local OpenAI-compatible endpoint, run Ollama, vLLM, or
+another compatible server on infrastructure you control, then opt in:
 
 ```bash
 WAIT_ALLOW_LLM_INFERENCE=true
@@ -148,7 +209,9 @@ WAIT_LOCAL_MODEL_NAME=llama3.1
 WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 ```
 
-`WAIT_LOCAL_MODEL_PROVIDER` accepts `deterministic`, `openai-compatible`, `ollama`, or `vllm`. The runtime posts to `{WAIT_LOCAL_MODEL_BASE_URL}/chat/completions` and expects JSON with `summary` and `suggested_response`. If inference is disabled, the endpoint is unavailable, the request times out, the response is non-successful, or the model returns malformed JSON, WAIT Local Agent falls back to the deterministic provider and keeps the ticket summary response stable.
+`WAIT_LOCAL_MODEL_PROVIDER` accepts `deterministic`, `openai-compatible`,
+`ollama`, or `vllm`. Timeouts, connection errors, non-success responses, empty
+responses, and malformed JSON all fall back to the deterministic provider.
 
 ## Development Checks
 
@@ -166,36 +229,18 @@ npm run test
 npm run build
 ```
 
-## Issues and Feature Requests
-
-Use GitHub issues for:
-
-- Bugs with clear reproduction steps
-- Documentation gaps
-- Connector requests for PSA, RMM, documentation, identity, email, or chat systems
-- Workflow/playbook ideas for MSP or SMB operations
-- Security hardening suggestions
-
-A useful issue usually includes:
-
-- What you tried to do
-- The command or API request you ran
-- Expected behavior
-- Actual behavior
-- Relevant logs or traceback
-- Operating system and Python/Node versions
-- Whether the issue uses sample data or your own local documents
-
-Do not include client secrets, private customer data, API keys, or production runbooks in public issues.
-
 ## Product Model
 
-- **WAIT**: parent platform for local vertical copilots
-- **WAIT Local Agent**: local runtime and API
-- **WAIT MSP Pack**: first vertical pack for MSP ticket intelligence
-- **WAIT Sync**: optional cloud coordination, updates, templates, and fallback services
-- **WAIT Adaptation**: paid deployment, customization, workflow design, and hardening
+- **WAIT**: parent platform for local vertical copilots.
+- **WAIT Local Agent**: local runtime, API, dashboard, and appliance package.
+- **WAIT MSP Pack**: first vertical pack for MSP ticket intelligence and
+  approval-gated workflows.
+- **WAIT Sync**: optional cloud coordination, updates, templates, and fallback
+  services.
+- **WAIT Adaptation**: paid deployment, customization, workflow design, and
+  hardening.
 
 ## Roadmap
 
-See [docs/status.md](docs/status.md) and [docs/roadmap.md](docs/roadmap.md).
+See [docs/status.md](docs/status.md), [docs/architecture.md](docs/architecture.md),
+and [docs/roadmap.md](docs/roadmap.md).

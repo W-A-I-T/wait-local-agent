@@ -21,4 +21,8 @@ def settings(tmp_path: Path) -> Settings:
         local_model_name="llama3.1",
         local_model_timeout_seconds=20.0,
         vector_backend="sqlite",
+        halopsa_base_url="",
+        halopsa_client_id="",
+        halopsa_client_secret="",
+        halopsa_tenant="",
     )

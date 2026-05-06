@@ -39,13 +39,17 @@ def test_ticket_summary_and_approval_flow(settings) -> None:
     client = TestClient(create_app(settings))
 
     summary = client.get("/tickets/TCK-1001/summary")
-    approval = client.post("/tickets/TCK-1001/approvals", json={"status": "approved"})
+    approval = client.post(
+        "/tickets/TCK-1001/approvals",
+        json={"status": "approved", "comment": "ship it"},
+    )
     audit = client.get("/audit")
 
     assert summary.status_code == 200
     assert summary.json()["classification"] == "identity-access"
     assert approval.status_code == 200
     assert approval.json()["status"] == "approved"
+    assert approval.json()["comment"] == "ship it"
     assert audit.status_code == 200
     assert any(event["event_type"] == "approval.updated" for event in audit.json())
 
@@ -89,6 +93,70 @@ def test_knowledge_api_rejects_outside_allowed_root(settings, tmp_path) -> None:
     response = client.post("/knowledge/ingest", json={"path": str(outside)})
 
     assert response.status_code == 400
+
+
+def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    connectors = client.get("/connectors")
+    secrets = client.get("/secrets")
+    templates = client.get("/workflows/templates")
+    run = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        json={"ticket_id": "TCK-1002"},
+    )
+    draft = client.post(
+        "/connectors/halopsa/tickets/TCK-1002/drafts",
+        json={"action_type": "add_note", "fields": {"note": "Draft ready"}},
+    )
+    approvals = client.get("/approval-requests")
+    update = client.post(
+        f"/approval-requests/{draft.json()['approval_request_id']}",
+        json={"status": "approved", "comment": "approve with edits"},
+    )
+    events = client.get("/event-history")
+    workflow_runs = client.get("/workflow-runs")
+
+    assert connectors.status_code == 200
+    assert connectors.json()[0]["id"] == "halopsa"
+    assert secrets.status_code == 200
+    assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
+    assert templates.status_code == 200
+    assert len(templates.json()) == 5
+    assert run.status_code == 200
+    assert run.json()["status"] == "pending_approval"
+    assert draft.status_code == 200
+    assert draft.json()["approval_required"] is True
+    assert approvals.status_code == 200
+    assert len(approvals.json()) == 2
+    assert update.status_code == 200
+    assert update.json()["comment"] == "approve with edits"
+    assert events.status_code == 200
+    assert any(event["event_type"] == "workflow.execution" for event in events.json())
+    assert workflow_runs.status_code == 200
+    assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
+
+
+def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    missing_template = client.post(
+        "/workflows/templates/nope/runs",
+        json={"ticket_id": "TCK-1002"},
+    )
+    missing_ticket = client.post(
+        "/connectors/halopsa/tickets/NOPE/drafts",
+        json={"action_type": "add_note", "fields": {"note": "Draft"}},
+    )
+    missing_approval = client.post(
+        "/approval-requests/999",
+        json={"status": "approved"},
+    )
+
+    assert missing_template.status_code == 404
+    assert missing_ticket.status_code == 404
+    assert missing_approval.status_code == 404
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
