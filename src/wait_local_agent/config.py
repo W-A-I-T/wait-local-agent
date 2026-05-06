@@ -41,6 +41,8 @@ class Settings:
     halopsa_client_secret: str = ""
     halopsa_tenant: str = ""
     halopsa_token_url: str = ""
+    halopsa_ticket_write_endpoint: str = "Ticket"
+    halopsa_action_write_endpoint: str = "Actions"
 
 
 def load_settings() -> Settings:
@@ -61,4 +63,6 @@ def load_settings() -> Settings:
         halopsa_client_secret=os.getenv("WAIT_HALOPSA_CLIENT_SECRET", ""),
         halopsa_tenant=os.getenv("WAIT_HALOPSA_TENANT", ""),
         halopsa_token_url=os.getenv("WAIT_HALOPSA_TOKEN_URL", ""),
+        halopsa_ticket_write_endpoint=os.getenv("WAIT_HALOPSA_TICKET_WRITE_ENDPOINT", "Ticket"),
+        halopsa_action_write_endpoint=os.getenv("WAIT_HALOPSA_ACTION_WRITE_ENDPOINT", "Actions"),
     )

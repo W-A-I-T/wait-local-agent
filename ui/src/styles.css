@@ -134,6 +134,56 @@ p {
   color: #34447a;
 }
 
+.status-pill.danger {
+  background: #fff0ed;
+  border-color: #f2c7bc;
+  color: #8a2f1d;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  align-items: center;
+  background: #1f6f55;
+  border: 1px solid #1b604b;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: center;
+  padding: 9px 12px;
+}
+
+button:disabled {
+  background: #e2e8e5;
+  border-color: #d2dbd7;
+  color: #71827b;
+  cursor: not-allowed;
+}
+
+.icon-button {
+  background: #ffffff;
+  border-color: #dce5e1;
+  color: #253633;
+}
+
+.notice {
+  background: #fff8e6;
+  border: 1px solid #ead49b;
+  border-radius: 8px;
+  color: #634c0f;
+  font-weight: 700;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #dce5e1;
@@ -261,6 +311,50 @@ p {
   gap: 10px;
 }
 
+.connector-summary,
+.flag-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.connector-summary {
+  align-items: center;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.connector-summary strong,
+.connector-summary span {
+  display: block;
+}
+
+.connector-summary span,
+.flag-grid span {
+  color: #60706a;
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+.connector-summary em {
+  color: #246647;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.flag-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.flag-grid span {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
 .document-row,
 .source-results article,
 .approval-row,
@@ -270,6 +364,57 @@ p {
   border: 1px solid #e4ebe8;
   border-radius: 8px;
   padding: 12px;
+}
+
+.ticket-select {
+  background: #ffffff;
+  border: 1px solid #e4ebe8;
+  color: #253633;
+  display: grid;
+  gap: 5px;
+  justify-content: stretch;
+  text-align: left;
+}
+
+.ticket-select.selected {
+  border-color: #1f8261;
+  box-shadow: inset 0 0 0 1px #1f8261;
+}
+
+.ticket-select span {
+  color: #60706a;
+  font-weight: 500;
+}
+
+.ticket-select em {
+  color: #246647;
+  font-style: normal;
+}
+
+.draft-form {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-form label {
+  color: #40504b;
+  display: grid;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.draft-form input,
+.draft-form select,
+.draft-form textarea {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.draft-form textarea {
+  resize: vertical;
 }
 
 .document-row {
@@ -329,6 +474,27 @@ p {
   grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr) auto;
   gap: 12px;
   align-items: center;
+}
+
+.approval-row.live {
+  grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1fr) auto;
+}
+
+.approvals-panel {
+  grid-column: 1 / -1;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.row-actions button:nth-child(2) {
+  background: #ffffff;
+  border-color: #d8aaa0;
+  color: #8a2f1d;
 }
 
 .event-row {
@@ -395,6 +561,8 @@ dd svg {
   .ticket-card,
   .approval-row,
   .connector-row,
+  .connector-summary,
+  .flag-grid,
   .table-row,
   .event-row {
     grid-template-columns: 1fr;

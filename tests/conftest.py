@@ -26,4 +26,6 @@ def settings(tmp_path: Path) -> Settings:
         halopsa_client_secret="",
         halopsa_tenant="",
         halopsa_token_url="",
+        halopsa_ticket_write_endpoint="Ticket",
+        halopsa_action_write_endpoint="Actions",
     )

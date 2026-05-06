@@ -33,7 +33,9 @@ layers.
 - HaloPSA is the first PSA wedge.
 - Connector status and read-only HaloPSA health/list/read calls are exposed
   through API and CLI.
-- HaloPSA write operations start as safe drafts that create approval requests.
+- HaloPSA write operations start as safe drafts, require approval, and then
+  execute through the connector only when both HTTP probing and write-action
+  flags are enabled.
 - Hudu, IT Glue, SharePoint, RMM, and M365/Entra are staged after the PSA wedge.
 
 ## Workflows
@@ -46,6 +48,7 @@ layers.
 ## Control Plane
 
 - Human approval queue for connector and workflow actions.
+- Sanitized HaloPSA write execution metadata on approval requests.
 - Event history for workflow executions, approval decisions, and audit-friendly
   troubleshooting.
 - Immutable audit events for local state transitions.

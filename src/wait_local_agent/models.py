@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 ApprovalStatus = Literal["pending", "approved", "rejected"]
+HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
 ActionKind = Literal[
     "ticket.triage",
     "ticket.assign",
@@ -66,6 +67,10 @@ class ApprovalRequest:
     comment: str
     created_at: str
     updated_at: str
+    execution_status: HaloWriteStatus = "not_started"
+    execution_message: str = ""
+    executed_at: str = ""
+    execution_result_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,25 @@ class HaloReadResult:
     status: ConnectorStatusValue
     message: str
     count: int = 0
+
+
+@dataclass(frozen=True)
+class HaloWriteRequest:
+    ticket_id: str
+    action_type: str
+    fields: dict[str, object]
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
+class HaloWriteResult:
+    status: HaloWriteStatus
+    message: str
+    action_type: str
+    ticket_id: str
+    endpoint: str = ""
+    status_code: int | None = None
+    remote_id: str = ""
 
 
 @dataclass(frozen=True)

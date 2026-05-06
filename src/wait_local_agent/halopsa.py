@@ -14,6 +14,8 @@ from wait_local_agent.models import (
     HaloNote,
     HaloReadResult,
     HaloTicket,
+    HaloWriteRequest,
+    HaloWriteResult,
 )
 
 DEFAULT_PAGE_SIZE = 50
@@ -31,7 +33,7 @@ class HaloReadResponse:
     items: list[HaloTicket | HaloClient | HaloNote | HaloAsset | HaloCategory]
 
 
-class HaloPSAReadClient:
+class HaloPSAClient:
     def __init__(
         self,
         settings: Settings,
@@ -42,7 +44,7 @@ class HaloPSAReadClient:
         self.transport = transport
 
     def health(self) -> HaloReadResult:
-        blocked = self._blocked_result()
+        blocked = self._read_blocked_result()
         if blocked is not None:
             return blocked
         missing = self._not_configured_result()
@@ -53,6 +55,19 @@ class HaloPSAReadClient:
         except HaloReadError as exc:
             return HaloReadResult("failed", exc.message)
         return HaloReadResult("ready", "HaloPSA token request succeeded.")
+
+    def write_health(self) -> HaloReadResult:
+        blocked = self._write_blocked_result()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_result()
+        if missing is not None:
+            return missing
+        try:
+            self._access_token()
+        except HaloReadError as exc:
+            return HaloReadResult("failed", exc.message)
+        return HaloReadResult("ready", "HaloPSA write prerequisites are ready.")
 
     def list_tickets(self, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE) -> HaloReadResponse:
         return self._list("Ticket", _normalize_ticket, page=page, page_size=page_size)
@@ -89,7 +104,7 @@ class HaloPSAReadClient:
         page_size: int = DEFAULT_PAGE_SIZE,
         params: dict[str, QueryValue] | None = None,
     ) -> HaloReadResponse:
-        blocked_response = self._blocked_response()
+        blocked_response = self._read_blocked_response()
         if blocked_response is not None:
             return blocked_response
         missing_response = self._not_configured_response()
@@ -104,7 +119,7 @@ class HaloPSAReadClient:
         return self._request_items(endpoint, normalizer, params=query)
 
     def _single(self, endpoint: str, normalizer: Normalizer) -> HaloReadResponse:
-        blocked_response = self._blocked_response()
+        blocked_response = self._read_blocked_response()
         if blocked_response is not None:
             return blocked_response
         missing_response = self._not_configured_response()
@@ -145,6 +160,81 @@ class HaloPSAReadClient:
         except ValueError as exc:
             raise HaloReadError(f"HaloPSA GET {endpoint} returned malformed JSON.") from exc
 
+    def execute_write(self, request: HaloWriteRequest) -> HaloWriteResult:
+        blocked = self._write_blocked_write_result(request)
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_write_result(request)
+        if missing is not None:
+            return missing
+        try:
+            endpoint, payload = self._write_endpoint_and_payload(request)
+            payload_object: object = payload
+            response_payload, status_code = self._post(endpoint, payload_object)
+        except HaloReadError as exc:
+            return HaloWriteResult(
+                "failed",
+                exc.message,
+                request.action_type,
+                request.ticket_id,
+            )
+        remote_id = _remote_id(response_payload)
+        return HaloWriteResult(
+            "succeeded",
+            f"HaloPSA {request.action_type} write succeeded.",
+            request.action_type,
+            request.ticket_id,
+            endpoint=endpoint,
+            status_code=status_code,
+            remote_id=remote_id,
+        )
+
+    def _post(self, endpoint: str, payload: object) -> tuple[object, int]:
+        token = self._access_token()
+        with self._client() as client:
+            response = client.post(
+                f"{_api_base_url(self.settings.halopsa_base_url)}/{endpoint.lstrip('/')}",
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+        if response.status_code >= 400:
+            raise HaloReadError(f"HaloPSA POST {endpoint} failed with HTTP {response.status_code}.")
+        if not response.content:
+            return {}, response.status_code
+        try:
+            return response.json(), response.status_code
+        except ValueError as exc:
+            raise HaloReadError(f"HaloPSA POST {endpoint} returned malformed JSON.") from exc
+
+    def _write_endpoint_and_payload(
+        self, request: HaloWriteRequest
+    ) -> tuple[str, dict[str, object] | list[dict[str, object]]]:
+        fields = dict(request.fields)
+        if request.action_type in {"add_note", "draft_response"}:
+            note = _first_present(fields, "note", "body", "message", "response")
+            if not note:
+                raise HaloReadError(f"HaloPSA {request.action_type} requires a note or response.")
+            hidden = _field_bool(fields, default=request.action_type == "add_note")
+            payload = {
+                "ticket_id": request.ticket_id,
+                "faultid": request.ticket_id,
+                "note": str(note),
+                "hiddenfromuser": hidden,
+            }
+            if request.approval_request_id is not None:
+                payload["wait_approval_request_id"] = request.approval_request_id
+            return self.settings.halopsa_action_write_endpoint, [payload]
+
+        ticket_fields = _ticket_update_fields(request)
+        if not ticket_fields:
+            raise HaloReadError(
+                f"HaloPSA {request.action_type} requires at least one ticket field."
+            )
+        payload = {"id": request.ticket_id, "faultid": request.ticket_id, **ticket_fields}
+        if request.approval_request_id is not None:
+            payload["wait_approval_request_id"] = request.approval_request_id
+        return self.settings.halopsa_ticket_write_endpoint, [payload]
+
     def _access_token(self) -> str:
         with self._client() as client:
             response = client.post(
@@ -170,12 +260,25 @@ class HaloPSAReadClient:
     def _client(self) -> httpx.Client:
         return httpx.Client(timeout=20.0, transport=self.transport)
 
-    def _blocked_result(self) -> HaloReadResult | None:
+    def _read_blocked_result(self) -> HaloReadResult | None:
         if self.settings.allow_http_probing:
             return None
         return HaloReadResult(
             "blocked",
             "HaloPSA live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+        )
+
+    def _write_blocked_result(self) -> HaloReadResult | None:
+        missing_flags = []
+        if not self.settings.allow_http_probing:
+            missing_flags.append("WAIT_ALLOW_HTTP_PROBING=true")
+        if not self.settings.allow_write_actions:
+            missing_flags.append("WAIT_ALLOW_WRITE_ACTIONS=true")
+        if not missing_flags:
+            return None
+        return HaloReadResult(
+            "blocked",
+            f"HaloPSA live writes are blocked until {' and '.join(missing_flags)}.",
         )
 
     def _not_configured_result(self) -> HaloReadResult | None:
@@ -196,13 +299,33 @@ class HaloPSAReadClient:
             f"HaloPSA credentials are incomplete: {', '.join(missing)}.",
         )
 
-    def _blocked_response(self) -> HaloReadResponse | None:
-        blocked = self._blocked_result()
+    def _read_blocked_response(self) -> HaloReadResponse | None:
+        blocked = self._read_blocked_result()
         return HaloReadResponse(blocked, []) if blocked else None
 
     def _not_configured_response(self) -> HaloReadResponse | None:
         missing = self._not_configured_result()
         return HaloReadResponse(missing, []) if missing else None
+
+    def _write_blocked_write_result(self, request: HaloWriteRequest) -> HaloWriteResult | None:
+        blocked = self._write_blocked_result()
+        if blocked is None:
+            return None
+        return HaloWriteResult("blocked", blocked.message, request.action_type, request.ticket_id)
+
+    def _not_configured_write_result(self, request: HaloWriteRequest) -> HaloWriteResult | None:
+        missing = self._not_configured_result()
+        if missing is None:
+            return None
+        return HaloWriteResult(
+            "not_configured",
+            missing.message,
+            request.action_type,
+            request.ticket_id,
+        )
+
+
+HaloPSAReadClient = HaloPSAClient
 
 
 class HaloReadError(Exception):
@@ -353,3 +476,80 @@ def _bool_value(row: Mapping[str, object], *keys: str) -> bool:
         if isinstance(value, int):
             return bool(value)
     return False
+
+
+def _field_bool(fields: Mapping[str, object], *, default: bool) -> bool:
+    for key in ("hiddenfromuser", "hidden_from_user", "is_private", "private"):
+        if key in fields:
+            value = fields[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            if isinstance(value, int):
+                return bool(value)
+    return default
+
+
+def _first_present(fields: Mapping[str, object], *keys: str) -> object:
+    for key in keys:
+        value = fields.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _ticket_update_fields(request: HaloWriteRequest) -> dict[str, object]:
+    fields = dict(request.fields)
+    if request.action_type == "update_status":
+        return _mapped_subset(fields, {"status": "status", "status_id": "status_id"})
+    if request.action_type == "assign_technician":
+        return _mapped_subset(
+            fields,
+            {
+                "technician_id": "agent_id",
+                "agent_id": "agent_id",
+                "assigned_agent_id": "agent_id",
+                "team_id": "team_id",
+            },
+        )
+    if request.action_type == "update_ticket_fields":
+        mapped = _mapped_subset(
+            fields,
+            {
+                "status": "status",
+                "status_id": "status_id",
+                "category": "category",
+                "category_id": "category_id",
+                "priority": "priority",
+                "priority_id": "priority_id",
+                "technician_id": "agent_id",
+                "agent_id": "agent_id",
+                "assigned_agent_id": "agent_id",
+                "team_id": "team_id",
+            },
+        )
+        for key, value in fields.items():
+            if key.startswith("custom_") and value not in (None, ""):
+                mapped[key] = value
+        return mapped
+    raise HaloReadError(
+        f"HaloPSA action type is not supported for live writes: {request.action_type}."
+    )
+
+
+def _mapped_subset(fields: Mapping[str, object], mapping: Mapping[str, str]) -> dict[str, object]:
+    return {
+        target: fields[source]
+        for source, target in mapping.items()
+        if source in fields and fields[source] not in (None, "")
+    }
+
+
+def _remote_id(payload: object) -> str:
+    rows = _payload_rows(payload)
+    if rows:
+        return _id_value(rows[0])
+    if isinstance(payload, dict):
+        return _id_value(payload)
+    return ""

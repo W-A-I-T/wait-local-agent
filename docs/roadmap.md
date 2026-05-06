@@ -27,8 +27,9 @@ approval, and auditable local execution.
 
 - Add HaloPSA read path first: tickets, clients, categories, notes, and
   asset/configuration context where available.
-- Draft every write before execution: internal note, status/category update,
-  technician assignment, and client-safe response.
+- Draft every write before execution, then allow approved live execution for
+  internal notes, status/category updates, ticket fields, technician assignment,
+  and client-safe responses.
 - Require explicit technician approval for every HaloPSA mutation and log the
   request, approver decision, payload, result, and failure.
 

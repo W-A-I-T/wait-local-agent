@@ -7,13 +7,14 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.halopsa import HaloPSAReadClient
-from wait_local_agent.models import HaloAsset, HaloCategory, HaloClient, HaloNote
+from wait_local_agent.models import HaloAsset, HaloCategory, HaloClient, HaloNote, HaloWriteRequest
 
 
 def _settings(
     tmp_path: Path,
     *,
     allow_http_probing: bool = True,
+    allow_write_actions: bool = False,
     base_url: str = "https://halo.example.test",
     client_id: str = "client-id",
     client_secret: str = "secret",
@@ -23,7 +24,7 @@ def _settings(
     return Settings(
         data_path=tmp_path / "state.db",
         allowed_doc_root=Path("examples/sample_docs"),
-        allow_write_actions=False,
+        allow_write_actions=allow_write_actions,
         allow_http_probing=allow_http_probing,
         allow_cloud_fallback=False,
         allow_llm_inference=False,
@@ -37,6 +38,8 @@ def _settings(
         halopsa_client_secret=client_secret,
         halopsa_tenant=tenant,
         halopsa_token_url=token_url,
+        halopsa_ticket_write_endpoint="Ticket",
+        halopsa_action_write_endpoint="Actions",
     )
 
 
@@ -277,3 +280,194 @@ def test_halopsa_single_payloads_and_boolean_variants(tmp_path: Path) -> None:
     assert assets.items[0].id == "a1"
     assert categories.items == []
     assert clients.items == []
+
+
+def test_halopsa_writes_require_both_side_effect_flags(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_http_probing=True, allow_write_actions=False),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.execute_write(HaloWriteRequest("TCK-1", "add_note", {"note": "hi"}, 1))
+
+    assert result.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS=true" in result.message
+    assert requests == []
+
+
+def test_halopsa_write_health_reports_missing_credentials(tmp_path: Path) -> None:
+    result = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True, client_secret=""),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    ).write_health()
+
+    assert result.status == "not_configured"
+    assert "WAIT_HALOPSA_CLIENT_SECRET" in result.message
+
+
+def test_halopsa_write_health_ready_and_failed(tmp_path: Path) -> None:
+    ready = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"access_token": "t"})
+        ),
+    ).write_health()
+    failed = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500, json={"error": "no"})),
+    ).write_health()
+
+    assert ready.status == "ready"
+    assert failed.status == "failed"
+
+
+def test_halopsa_write_reports_missing_credentials(tmp_path: Path) -> None:
+    result = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True, client_id=""),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    ).execute_write(HaloWriteRequest("TCK-1", "add_note", {"note": "hi"}, 1))
+
+    assert result.status == "not_configured"
+    assert "WAIT_HALOPSA_CLIENT_ID" in result.message
+
+
+def test_halopsa_add_note_and_response_payload_mapping(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        payload = json.loads(request.content.decode())
+        assert request.url.path == "/api/Actions"
+        assert payload[0]["ticket_id"] == "TCK-1"
+        assert payload[0]["faultid"] == "TCK-1"
+        assert payload[0]["note"] in {"Internal note", "Client response"}
+        return httpx.Response(200, json={"id": "A-1"})
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+
+    note = client.execute_write(HaloWriteRequest("TCK-1", "add_note", {"note": "Internal note"}, 7))
+    response = client.execute_write(
+        HaloWriteRequest("TCK-1", "draft_response", {"response": "Client response"}, 8)
+    )
+
+    assert note.status == "succeeded"
+    assert note.endpoint == "Actions"
+    assert note.remote_id == "A-1"
+    assert response.status == "succeeded"
+    assert len(requests) == 4
+
+
+def test_halopsa_write_bool_variants_and_empty_response(tmp_path: Path) -> None:
+    posted: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        posted.append(json.loads(request.content.decode())[0])
+        return httpx.Response(204)
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.execute_write(
+        HaloWriteRequest("TCK-1", "add_note", {"body": "Internal", "private": "false"})
+    )
+
+    assert result.status == "succeeded"
+    assert result.remote_id == ""
+    assert posted[0]["hiddenfromuser"] is False
+
+
+def test_halopsa_ticket_field_write_payload_mapping(tmp_path: Path) -> None:
+    posted: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        posted.append(json.loads(request.content.decode())[0])
+        assert request.url.path == "/api/Ticket"
+        return httpx.Response(200, json=[{"faultid": "TCK-1"}])
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+
+    status = client.execute_write(HaloWriteRequest("TCK-1", "update_status", {"status_id": 9}, 1))
+    assign = client.execute_write(
+        HaloWriteRequest("TCK-1", "assign_technician", {"technician_id": 42}, 2)
+    )
+    fields = client.execute_write(
+        HaloWriteRequest(
+            "TCK-1",
+            "update_ticket_fields",
+            {"category_id": 5, "priority": "High", "custom_reference": "WAIT"},
+            3,
+        )
+    )
+
+    assert status.status == "succeeded"
+    assert assign.status == "succeeded"
+    assert fields.status == "succeeded"
+    assert posted[0]["status_id"] == 9
+    assert posted[1]["agent_id"] == 42
+    assert posted[2]["category_id"] == 5
+    assert posted[2]["priority"] == "High"
+    assert posted[2]["custom_reference"] == "WAIT"
+
+
+def test_halopsa_write_failures_are_sanitized(tmp_path: Path) -> None:
+    def non_2xx(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        return httpx.Response(500, json={"client_secret": "secret", "body": "customer"})
+
+    result = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(non_2xx),
+    ).execute_write(HaloWriteRequest("TCK-1", "add_note", {"note": "secret"}, 1))
+
+    assert result.status == "failed"
+    assert "HTTP 500" in result.message
+    assert "secret" not in result.message
+
+
+def test_halopsa_write_validation_and_malformed_json_failures(tmp_path: Path) -> None:
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"access_token": "t"})
+        ),
+    )
+    missing_note = client.execute_write(HaloWriteRequest("TCK-1", "add_note", {}, 1))
+    missing_field = client.execute_write(HaloWriteRequest("TCK-1", "update_status", {}, 1))
+    unsupported = client.execute_write(HaloWriteRequest("TCK-1", "delete_ticket", {}, 1))
+
+    def malformed_post(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        return httpx.Response(200, content=b"nope")
+
+    malformed = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(malformed_post),
+    ).execute_write(HaloWriteRequest("TCK-1", "update_status", {"status": "Open"}, 1))
+
+    assert missing_note.status == "failed"
+    assert missing_field.status == "failed"
+    assert unsupported.status == "failed"
+    assert malformed.status == "failed"
+    assert "malformed JSON" in malformed.message
