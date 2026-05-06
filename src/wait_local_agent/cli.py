@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +15,7 @@ from wait_local_agent.connectors import (
     list_connector_statuses,
     list_secret_records,
 )
+from wait_local_agent.halopsa import HaloPSAReadClient, HaloReadResponse
 from wait_local_agent.knowledge import KnowledgeIngestionService
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
@@ -41,6 +43,10 @@ app.add_typer(backup_app, name="backup")
 
 def _store() -> Store:
     return Store(load_settings().data_path)
+
+
+def _halopsa_client() -> HaloPSAReadClient:
+    return HaloPSAReadClient(load_settings())
 
 
 @app.command()
@@ -164,6 +170,43 @@ def draft_halopsa(
     )
 
 
+@connectors_app.command("halopsa-health")
+def halopsa_health() -> None:
+    result = _halopsa_client().health()
+    _audit_halopsa_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("halopsa-tickets")
+def halopsa_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_halopsa_response("tickets.list", _halopsa_client().list_tickets(page, page_size))
+
+
+@connectors_app.command("halopsa-ticket")
+def halopsa_ticket(ticket_id: str) -> None:
+    _print_halopsa_response("tickets.get", _halopsa_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("halopsa-notes")
+def halopsa_notes(ticket_id: str) -> None:
+    _print_halopsa_response("tickets.notes", _halopsa_client().list_ticket_notes(ticket_id))
+
+
+@connectors_app.command("halopsa-clients")
+def halopsa_clients(page: int = 1, page_size: int = 50) -> None:
+    _print_halopsa_response("clients.list", _halopsa_client().list_clients(page, page_size))
+
+
+@connectors_app.command("halopsa-assets")
+def halopsa_assets(client_id: str) -> None:
+    _print_halopsa_response("clients.assets", _halopsa_client().list_client_assets(client_id))
+
+
+@connectors_app.command("halopsa-categories")
+def halopsa_categories() -> None:
+    _print_halopsa_response("categories.list", _halopsa_client().list_categories())
+
+
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
@@ -216,6 +259,17 @@ def create_backup(destination: Path) -> None:
 def restore_backup(source: Path) -> None:
     path = restore_state(_store(), source)
     typer.echo(f"restored={path}")
+
+
+def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:
+    _audit_halopsa_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(asdict(item))
+
+
+def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
 
 @app.command()

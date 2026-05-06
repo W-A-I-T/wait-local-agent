@@ -11,6 +11,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_LOCAL_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_HALOPSA_TOKEN_URL", raising=False)
 
     settings = load_settings()
 
@@ -21,6 +22,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.local_model_provider == "deterministic"
     assert settings.local_model_timeout_seconds == 20.0
     assert settings.halopsa_base_url == ""
+    assert settings.halopsa_token_url == ""
 
 
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:

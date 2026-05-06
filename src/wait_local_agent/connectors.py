@@ -19,7 +19,9 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         and settings.halopsa_client_secret
         and settings.halopsa_tenant
     )
-    halopsa_status: ConnectorStatusValue = "configured" if halopsa_configured else "not_configured"
+    halopsa_status: ConnectorStatusValue = "not_configured"
+    if halopsa_configured:
+        halopsa_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -28,7 +30,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             status=halopsa_status,
             message=(
                 "HaloPSA credentials are configured; live writes still require approval."
-                if halopsa_configured
+                if halopsa_status == "configured"
+                else (
+                    "HaloPSA credentials are configured; live reads require "
+                    "WAIT_ALLOW_HTTP_PROBING."
+                )
+                if halopsa_status == "blocked"
                 else "Set WAIT_HALOPSA_* values to enable the first PSA read path."
             ),
             write_actions_enabled=settings.allow_write_actions,
@@ -68,6 +75,7 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "halopsa",
         ),
         SecretRecord("WAIT_HALOPSA_TENANT", bool(settings.halopsa_tenant), "halopsa"),
+        SecretRecord("WAIT_HALOPSA_TOKEN_URL", bool(settings.halopsa_token_url), "halopsa"),
     ]
 
 

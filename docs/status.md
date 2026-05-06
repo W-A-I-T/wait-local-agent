@@ -15,12 +15,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent
   SQLite volume.
 - Local backup and restore commands.
+- HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface that creates approval requests before any
   live connector write exists.
 
 ## Next
 
-- Live HaloPSA read connector.
 - Approved HaloPSA write execution after draft review.
 - Richer workflow filters and run details.
 - Hudu documentation connector.
@@ -29,7 +29,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Not Ready Yet
 
-- Live PSA, RMM, M365, Hudu, IT Glue, or SharePoint synchronization.
+- Live HaloPSA write execution.
+- Live RMM, M365, Hudu, IT Glue, or SharePoint synchronization.
 - Scanned PDF OCR.
 - Multi-tenant hosted control plane.
 - Ungated side effects. All live writes remain disabled unless explicitly

@@ -25,8 +25,8 @@ approval, and auditable local execution.
 
 ## Phase 2: HaloPSA Connector Wedge
 
-- Add HaloPSA read path first: tickets, clients, contacts, categories, notes,
-  and asset/configuration context where available.
+- Add HaloPSA read path first: tickets, clients, categories, notes, and
+  asset/configuration context where available.
 - Draft every write before execution: internal note, status/category update,
   technician assignment, and client-safe response.
 - Require explicit technician approval for every HaloPSA mutation and log the

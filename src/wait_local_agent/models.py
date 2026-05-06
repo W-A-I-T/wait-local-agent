@@ -13,7 +13,7 @@ ActionKind = Literal[
     "ticket.draft_response",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
-ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready"]
+ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 
 
@@ -98,6 +98,55 @@ class HaloTicketDraft:
     approval_required: bool
     status: ApprovalStatus
     approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
+class HaloReadResult:
+    status: ConnectorStatusValue
+    message: str
+    count: int = 0
+
+
+@dataclass(frozen=True)
+class HaloTicket:
+    id: str
+    summary: str
+    status: str
+    priority: str
+    client_id: str
+    client_name: str
+
+
+@dataclass(frozen=True)
+class HaloClient:
+    id: str
+    name: str
+    status: str
+
+
+@dataclass(frozen=True)
+class HaloNote:
+    id: str
+    ticket_id: str
+    body: str
+    created_at: str
+    is_private: bool
+
+
+@dataclass(frozen=True)
+class HaloAsset:
+    id: str
+    client_id: str
+    name: str
+    asset_type: str
+    status: str
+
+
+@dataclass(frozen=True)
+class HaloCategory:
+    id: str
+    name: str
+    parent_id: str
 
 
 @dataclass(frozen=True)
