@@ -136,6 +136,34 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(event["event_type"] == "workflow.execution" for event in events.json())
     assert workflow_runs.status_code == 200
     assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
+    assert workflow_runs.json()[0]["status"] == "pending_approval"
+
+
+def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    run = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        json={"ticket_id": "TCK-1002"},
+    )
+    approval_request_id = run.json()["approval_request_id"]
+
+    approved = client.post(
+        f"/approval-requests/{approval_request_id}",
+        json={"status": "approved", "comment": "ready"},
+    )
+    approved_runs = client.get("/workflow-runs")
+    rejected = client.post(
+        f"/approval-requests/{approval_request_id}",
+        json={"status": "rejected", "comment": "needs changes"},
+    )
+    rejected_runs = client.get("/workflow-runs")
+
+    assert approved.status_code == 200
+    assert approved_runs.json()[0]["status"] == "approved"
+    assert rejected.status_code == 200
+    assert rejected_runs.json()[0]["status"] == "rejected"
 
 
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:

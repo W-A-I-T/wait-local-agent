@@ -19,6 +19,25 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "write_actions_enabled=False" in result.output
 
 
+def test_doctor_requires_all_halopsa_credentials(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_HALOPSA_BASE_URL", "https://halo.example.test")
+    monkeypatch.setenv("WAIT_HALOPSA_CLIENT_ID", "client-id")
+    monkeypatch.delenv("WAIT_HALOPSA_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_HALOPSA_TENANT", raising=False)
+    runner = CliRunner()
+
+    partial = runner.invoke(app, ["doctor"])
+    monkeypatch.setenv("WAIT_HALOPSA_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("WAIT_HALOPSA_TENANT", "tenant")
+    complete = runner.invoke(app, ["doctor"])
+
+    assert partial.exit_code == 0
+    assert "halopsa_configured=False" in partial.output
+    assert complete.exit_code == 0
+    assert "halopsa_configured=True" in complete.output
+
+
 def test_ingest_and_summarize_commands(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

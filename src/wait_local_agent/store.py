@@ -276,6 +276,15 @@ class Store:
                 """,
                 (status, comment, now, request_id),
             )
+            workflow_status = _workflow_status_for_approval(status)
+            connection.execute(
+                """
+                update workflow_runs
+                set status = ?, updated_at = ?
+                where approval_request_id = ?
+                """,
+                (workflow_status, now, request_id),
+            )
             self._add_audit_event(
                 connection,
                 "approval_request.updated",
@@ -608,3 +617,11 @@ def _fts_query(query: str) -> str:
 
 def _bounded_search_limit(limit: int) -> int:
     return min(max(limit, 1), MAX_SEARCH_LIMIT)
+
+
+def _workflow_status_for_approval(status: str) -> str:
+    if status == "approved":
+        return "approved"
+    if status == "rejected":
+        return "rejected"
+    return "pending_approval"

@@ -56,7 +56,12 @@ def doctor() -> None:
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
     typer.echo(f"cloud_fallback_enabled={settings.allow_cloud_fallback}")
-    halopsa_configured = bool(settings.halopsa_base_url and settings.halopsa_client_id)
+    halopsa_configured = bool(
+        settings.halopsa_base_url
+        and settings.halopsa_client_id
+        and settings.halopsa_client_secret
+        and settings.halopsa_tenant
+    )
     typer.echo(f"halopsa_configured={halopsa_configured}")
 
 
