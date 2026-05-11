@@ -486,9 +486,7 @@ export function App() {
                     <button
                       disabled={
                         busyId === request.id ||
-                        request.status !== "pending" ||
-                        (isHaloApproval(request) && !liveWritesReady)
-                        || request.can_execute === false
+                        request.status !== "pending"
                       }
                       type="button"
                       onClick={() => void updateApproval(request.id, "approved")}

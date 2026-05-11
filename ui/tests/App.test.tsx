@@ -87,20 +87,20 @@ describe("App", () => {
     });
   });
 
-  it("keeps non-Halo approvals approvable while Halo writes are blocked", async () => {
+  it("keeps approvals available while Halo execution is blocked", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, true)));
     render(<App />);
 
     expect(await screen.findByText("blocked")).toBeInTheDocument();
     await screen.findByText("halopsa.add_note");
-    expect(screen.getAllByRole("button", { name: /Approve/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /Approve/i })[0]).toBeEnabled();
     expect(screen.getAllByRole("button", { name: /Approve/i })[1]).toBeEnabled();
 
-    fireEvent.click(screen.getAllByRole("button", { name: /Approve/i })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Approve/i })[0]);
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        "/approval-requests/2",
+        "/approval-requests/1",
         expect.objectContaining({ method: "POST" })
       );
     });

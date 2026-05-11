@@ -244,6 +244,68 @@ def test_docling_parser_uses_lazy_document_converter(settings, tmp_path, monkeyp
     assert store.search_knowledge_chunks("OCR content")[0].title == "Mocked Docling"
 
 
+def test_docling_parser_wires_ocr_pipeline_options(settings, tmp_path, monkeypatch) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    pdf_path = doc_root / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF fake enough for mocked docling")
+    captured: dict[str, object] = {}
+
+    class FakeDocument:
+        def export_to_markdown(self) -> str:
+            return "# OCR\n\nScanned content"
+
+    class FakeResult:
+        document = FakeDocument()
+
+    class FakeDocumentConverter:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+        def convert(self, path: Path) -> FakeResult:
+            return FakeResult()
+
+    class FakePdfPipelineOptions:
+        def __init__(self) -> None:
+            self.do_ocr = False
+
+    class FakePdfFormatOption:
+        def __init__(self, pipeline_options: FakePdfPipelineOptions) -> None:
+            self.pipeline_options = pipeline_options
+
+    class FakeInputFormat:
+        PDF = "pdf"
+
+    converter_module = types.ModuleType("docling.document_converter")
+    cast(Any, converter_module).DocumentConverter = FakeDocumentConverter
+    cast(Any, converter_module).PdfFormatOption = FakePdfFormatOption
+    base_models_module = types.ModuleType("docling.datamodel.base_models")
+    cast(Any, base_models_module).InputFormat = FakeInputFormat
+    pipeline_module = types.ModuleType("docling.datamodel.pipeline_options")
+    cast(Any, pipeline_module).PdfPipelineOptions = FakePdfPipelineOptions
+    monkeypatch.setitem(sys.modules, "docling", types.ModuleType("docling"))
+    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
+    monkeypatch.setitem(sys.modules, "docling.datamodel", types.ModuleType("docling.datamodel"))
+    monkeypatch.setitem(sys.modules, "docling.datamodel.base_models", base_models_module)
+    monkeypatch.setitem(sys.modules, "docling.datamodel.pipeline_options", pipeline_module)
+    active_settings = replace(
+        settings,
+        allowed_doc_root=doc_root,
+        document_parser="docling",
+        allow_ocr=True,
+    )
+
+    documents = ingestion_service_from_settings(
+        Store(active_settings.data_path),
+        active_settings,
+    ).ingest_path(pdf_path)
+    format_options = cast(dict[str, Any], captured["format_options"])
+    pdf_option = format_options["pdf"]
+
+    assert documents[0].title == "OCR"
+    assert cast(Any, pdf_option).pipeline_options.do_ocr is True
+
+
 def test_docling_parser_empty_and_converter_error(settings, tmp_path, monkeypatch) -> None:
     doc_root = tmp_path / "docs"
     doc_root.mkdir()
