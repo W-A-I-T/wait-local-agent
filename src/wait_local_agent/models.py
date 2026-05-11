@@ -16,6 +16,7 @@ ActionKind = Literal[
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
+RiskLevel = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,9 @@ class HaloReadResult:
     count: int = 0
 
 
+ConnectorReadResult = HaloReadResult
+
+
 @dataclass(frozen=True)
 class HaloWriteRequest:
     ticket_id: str
@@ -174,6 +178,31 @@ class HaloCategory:
 
 
 @dataclass(frozen=True)
+class HuduCompany:
+    id: str
+    name: str
+    archived: bool
+
+
+@dataclass(frozen=True)
+class HuduArticle:
+    id: str
+    name: str
+    company_id: str
+    folder_id: str
+    updated_at: str
+    url: str
+
+
+@dataclass(frozen=True)
+class HuduFolder:
+    id: str
+    name: str
+    company_id: str
+    parent_folder_id: str
+
+
+@dataclass(frozen=True)
 class WorkflowTemplate:
     id: str
     name: str
@@ -181,6 +210,8 @@ class WorkflowTemplate:
     description: str
     action_type: ActionKind
     approval_required: bool
+    risk_level: RiskLevel = "low"
+    preview_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

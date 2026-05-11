@@ -4,7 +4,15 @@ from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
-from wait_local_agent.models import HaloClient, HaloReadResult, HaloTicket, HaloWriteResult
+from wait_local_agent.models import (
+    HaloClient,
+    HaloReadResult,
+    HaloTicket,
+    HaloWriteResult,
+    HuduArticle,
+    HuduCompany,
+    HuduFolder,
+)
 from wait_local_agent.store import Store
 
 
@@ -73,6 +81,10 @@ def test_knowledge_commands(monkeypatch, tmp_path) -> None:
     ingest = runner.invoke(app, ["knowledge", "ingest", "examples/sample_docs"])
     listing = runner.invoke(app, ["knowledge", "list"])
     search = runner.invoke(app, ["knowledge", "search", "mailbox permissions"])
+    search_with_backend = runner.invoke(
+        app,
+        ["knowledge", "search", "mailbox permissions", "--backend", "sqlite"],
+    )
 
     assert ingest.exit_code == 0
     assert "documents=3" in ingest.output
@@ -80,6 +92,8 @@ def test_knowledge_commands(monkeypatch, tmp_path) -> None:
     assert "Shared Mailbox Runbook" in listing.output
     assert search.exit_code == 0
     assert "Shared Mailbox Runbook" in search.output
+    assert search_with_backend.exit_code == 0
+    assert "Shared Mailbox Runbook" in search_with_backend.output
 
 
 def test_knowledge_search_without_results_exits_cleanly(monkeypatch, tmp_path) -> None:
@@ -216,6 +230,58 @@ def test_halopsa_cli_read_commands_print_mocked_results(monkeypatch, tmp_path) -
     assert "write ok" in write_health.output
 
 
+def test_hudu_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeHuduClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return HaloReadResult("ready", "ok", 0)
+
+        def list_companies(self, page: int = 1, page_size: int | None = None):
+            return _hudu_response([HuduCompany("C-1", "Contoso", False)])
+
+        def list_articles(
+            self,
+            company_id: str | None = None,
+            page: int = 1,
+            page_size: int | None = None,
+        ):
+            return _hudu_response([HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "")])
+
+        def get_article(self, article_id: str):
+            return _hudu_response([HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "")])
+
+        def list_folders(
+            self,
+            company_id: str | None = None,
+            page: int = 1,
+            page_size: int | None = None,
+        ):
+            return _hudu_response([HuduFolder("F-1", "Ops", "C-1", "")])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "HuduClient", FakeHuduClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "hudu-health"])
+    companies = runner.invoke(app, ["connectors", "hudu-companies"])
+    articles = runner.invoke(app, ["connectors", "hudu-articles"])
+    article = runner.invoke(app, ["connectors", "hudu-article", "A-1"])
+    folders = runner.invoke(app, ["connectors", "hudu-folders"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert companies.exit_code == 0
+    assert "Contoso" in companies.output
+    assert articles.exit_code == 0
+    assert "Runbook" in articles.output
+    assert article.exit_code == 0
+    assert "A-1" in article.output
+    assert folders.exit_code == 0
+    assert "Ops" in folders.output
+
+
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:
     class FakeHaloClient:
         def __init__(self, _settings) -> None:
@@ -275,5 +341,76 @@ def test_halopsa_cli_execute_reports_blocked_and_rejects_pending(monkeypatch, tm
     assert "execution_status=blocked" in blocked.output
 
 
+def test_approval_show_and_edit_field_commands(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "HALO-1",
+            "action_type": "add_note",
+            "fields": {"note": "Original"},
+        },
+    )
+    runner = CliRunner()
+
+    shown = runner.invoke(app, ["approvals", "show", str(approval.id)])
+    edited = runner.invoke(app, ["approvals", "edit-field", str(approval.id), "note=Edited"])
+    store.update_approval_request(approval.id or 0, "approved")
+    rejected = runner.invoke(app, ["approvals", "edit-field", str(approval.id), "note=Late"])
+
+    assert shown.exit_code == 0
+    assert "Original" in shown.output
+    assert edited.exit_code == 0
+    assert "payload_updated=True" in edited.output
+    assert rejected.exit_code != 0
+    assert "only be edited while pending" in rejected.output
+
+
+def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "HALO-1",
+            "action_type": "add_note",
+            "fields": {"note": "Original"},
+        },
+    )
+    runner = CliRunner()
+
+    missing_show = runner.invoke(app, ["approvals", "show", "999"])
+    bad_assignment = runner.invoke(app, ["approvals", "edit-field", str(approval.id), "bad"])
+    bad_draft_field = runner.invoke(
+        app,
+        ["connectors", "draft-halopsa", "HALO-1", "add_note", "--field", "bad"],
+    )
+    bad_draft_action = runner.invoke(
+        app,
+        ["connectors", "draft-halopsa", "HALO-1", "bad_action"],
+    )
+    missing_execute = runner.invoke(app, ["connectors", "execute-halopsa", "999"])
+
+    assert missing_show.exit_code != 0
+    assert "approval request not found" in missing_show.output
+    assert bad_assignment.exit_code != 0
+    assert "key=value" in bad_assignment.output
+    assert bad_draft_field.exit_code != 0
+    assert "key=value" in bad_draft_field.output
+    assert bad_draft_action.exit_code != 0
+    assert "unsupported HaloPSA" in bad_draft_action.output
+    assert missing_execute.exit_code != 0
+    assert "approval request not found" in missing_execute.output
+
+
 def _read_response(items):
     return cli_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _hudu_response(items):
+    return cli_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)

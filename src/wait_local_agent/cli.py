@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+import json
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Annotated
 
@@ -15,12 +16,15 @@ from wait_local_agent.connectors import (
     execute_halopsa_approval_request,
     list_connector_statuses,
     list_secret_records,
+    update_halopsa_approval_fields,
 )
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
-from wait_local_agent.knowledge import KnowledgeIngestionService
+from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
+from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
 
 app = typer.Typer(help="WAIT Local Agent command line interface.")
@@ -50,6 +54,10 @@ def _halopsa_client() -> HaloPSAClient:
     return HaloPSAClient(load_settings())
 
 
+def _hudu_client() -> HuduClient:
+    return HuduClient(load_settings())
+
+
 @app.command()
 def doctor() -> None:
     settings = load_settings()
@@ -59,10 +67,14 @@ def doctor() -> None:
     typer.echo(f"model={settings.local_model_name}")
     typer.echo(f"base_url={settings.local_model_base_url}")
     typer.echo(f"timeout_seconds={settings.local_model_timeout_seconds:g}")
+    typer.echo(f"connector_timeout_seconds={settings.connector_timeout_seconds:g}")
     typer.echo(f"llm_inference_enabled={settings.allow_llm_inference}")
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
     typer.echo(f"cloud_fallback_enabled={settings.allow_cloud_fallback}")
+    typer.echo(f"document_parser={settings.document_parser}")
+    typer.echo(f"ocr_enabled={settings.allow_ocr}")
+    typer.echo(f"vector_backend={settings.vector_backend}")
     halopsa_configured = bool(
         settings.halopsa_base_url
         and settings.halopsa_client_id
@@ -70,6 +82,8 @@ def doctor() -> None:
         and settings.halopsa_tenant
     )
     typer.echo(f"halopsa_configured={halopsa_configured}")
+    hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
+    typer.echo(f"hudu_configured={hudu_configured}")
 
 
 @app.command()
@@ -117,6 +131,37 @@ def list_approval_requests() -> None:
             f"{approval.id} {approval.status} {approval.subject_id} "
             f"{approval.action_type} {approval.comment}"
         )
+
+
+@approvals_app.command("show")
+def show_approval_request(request_id: int) -> None:
+    approval = _store().get_approval_request(request_id)
+    if approval is None:
+        raise typer.BadParameter("approval request not found")
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@approvals_app.command("edit-field")
+def edit_approval_field(request_id: int, assignment: str) -> None:
+    key, separator, value = assignment.partition("=")
+    if not separator or not key.strip():
+        raise typer.BadParameter("field edits must use key=value")
+    store = _store()
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise typer.BadParameter("approval request not found")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("approval payload is malformed")
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    fields[key.strip()] = value
+    try:
+        updated = update_halopsa_approval_fields(store, request_id, fields)
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"{updated.id} {updated.status} {updated.action_type} payload_updated=True")
 
 
 @approvals_app.command("update")
@@ -243,6 +288,50 @@ def halopsa_categories() -> None:
     _print_halopsa_response("categories.list", _halopsa_client().list_categories())
 
 
+@connectors_app.command("hudu-health")
+def hudu_health() -> None:
+    result = _hudu_client().health()
+    _audit_hudu_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("hudu-companies")
+def hudu_companies(page: int = 1, page_size: int | None = None) -> None:
+    _print_hudu_response(
+        "companies.list",
+        _hudu_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("hudu-articles")
+def hudu_articles(
+    company_id: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_hudu_response(
+        "articles.list",
+        _hudu_client().list_articles(company_id=company_id, page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("hudu-article")
+def hudu_article(article_id: str) -> None:
+    _print_hudu_response("articles.get", _hudu_client().get_article(article_id))
+
+
+@connectors_app.command("hudu-folders")
+def hudu_folders(
+    company_id: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_hudu_response(
+        "folders.list",
+        _hudu_client().list_folders(company_id=company_id, page=page, page_size=page_size),
+    )
+
+
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
@@ -258,10 +347,19 @@ def run_workflow(template_id: str, ticket_id: str) -> None:
 
 
 @knowledge_app.command("ingest")
-def ingest_knowledge(path: Path) -> None:
-    settings = load_settings()
+def ingest_knowledge(
+    path: Path,
+    parser: str | None = None,
+    ocr: bool | None = None,
+) -> None:
+    loaded_settings = load_settings()
+    settings = replace(
+        loaded_settings,
+        document_parser=parser or loaded_settings.document_parser,
+        allow_ocr=loaded_settings.allow_ocr if ocr is None else ocr,
+    )
     store = Store(settings.data_path)
-    service = KnowledgeIngestionService(store, settings.allowed_doc_root)
+    service = ingestion_service_from_settings(store, settings)
     documents = service.ingest_path(path)
     typer.echo(f"documents={len(documents)}")
     for document in documents:
@@ -279,8 +377,11 @@ def list_knowledge_documents() -> None:
 
 
 @knowledge_app.command("search")
-def search_knowledge(query: str, limit: int = 3) -> None:
-    for chunk in _store().search_knowledge_chunks(query, limit=limit):
+def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> None:
+    loaded_settings = load_settings()
+    settings = replace(loaded_settings, vector_backend=backend or loaded_settings.vector_backend)
+    store = Store(settings.data_path)
+    for chunk in search_backend_from_settings(settings, store).search(query, limit=limit):
         typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
         typer.echo(chunk.excerpt)
 
@@ -304,8 +405,27 @@ def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:
         typer.echo(asdict(item))
 
 
+def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
+    _audit_hudu_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(asdict(item))
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
+
+
+def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+
+def _approval_cli_view(approval) -> dict[str, object]:
+    payload = json.loads(approval.payload_json)
+    return {
+        **asdict(approval),
+        "payload": payload if isinstance(payload, dict) else {},
+    }
 
 
 @app.command()

@@ -1,15 +1,18 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   BookOpenText,
   CheckCircle2,
   ClipboardCheck,
   ClipboardList,
   Database,
+  FileJson,
   GitBranch,
   KeyRound,
   PlayCircle,
   RefreshCw,
+  Save,
   Send,
   ServerCog,
   ShieldCheck,
@@ -48,6 +51,13 @@ type ApprovalRequest = {
   comment: string;
   execution_status: string;
   execution_message: string;
+  payload?: {
+    fields?: Record<string, string | number | boolean | null>;
+    [key: string]: unknown;
+  };
+  can_execute?: boolean;
+  block_reason?: string;
+  workflow_run_id?: string | number | null;
 };
 
 type EventHistory = {
@@ -56,6 +66,16 @@ type EventHistory = {
   subject_id: string;
   status: string;
   message: string;
+};
+
+type WorkflowRun = {
+  id: string | number;
+  status: string;
+  goal?: string;
+  message?: string;
+  created_at?: string;
+  updated_at?: string;
+  approval_request_id?: number;
 };
 
 type HaloTicketsResponse = {
@@ -83,15 +103,19 @@ export function App() {
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [eventHistory, setEventHistory] = useState<EventHistory[]>([]);
+  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
+  const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
   const [selectedTicketId, setSelectedTicketId] = useState("");
   const [manualTicketId, setManualTicketId] = useState("");
   const [actionType, setActionType] = useState(actionTypes[0]);
   const [fieldText, setFieldText] = useState(defaultFieldText);
   const [statusMessage, setStatusMessage] = useState("");
+  const [refreshErrors, setRefreshErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
 
   const haloConnector = connectors.find((connector) => connector.id === "halopsa");
+  const huduConnector = connectors.find((connector) => connector.id === "hudu");
   const liveWritesReady = writeHealth.status === "ready";
   const targetTicketId = selectedTicketId || manualTicketId.trim();
   const isHaloApproval = (request: ApprovalRequest) => request.action_type.startsWith("halopsa.");
@@ -104,21 +128,41 @@ export function App() {
   async function refresh() {
     setLoading(true);
     try {
-      const [connectorRows, writeState, ticketResponse, approvals, events] = await Promise.all([
-        apiGet<ConnectorStatus[]>("/connectors", []),
-        apiGet<HaloReadResult>("/connectors/halopsa/write-health", writeHealth),
-        apiGet<HaloTicketsResponse>("/connectors/halopsa/tickets", {
-          result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
-          items: []
-        }),
-        apiGet<ApprovalRequest[]>("/approval-requests", []),
-        apiGet<EventHistory[]>("/event-history", [])
+      const results = await Promise.allSettled([
+        apiGet<ConnectorStatus[]>("/connectors"),
+        apiGet<HaloReadResult>("/connectors/halopsa/write-health"),
+        apiGet<HaloTicketsResponse>("/connectors/halopsa/tickets"),
+        apiGet<ApprovalRequest[]>("/approval-requests"),
+        apiGet<EventHistory[]>("/event-history"),
+        apiGet<WorkflowRun[]>("/workflow-runs")
       ]);
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
+      const connectorRows = asArray<ConnectorStatus>(
+        settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, [])
+      );
+      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, writeHealth);
+      const ticketResponse = settledValue(results[2] as PromiseSettledResult<HaloTicketsResponse>, {
+        result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
+        items: []
+      });
+      const approvals = asArray<ApprovalRequest>(
+        settledValue(results[3] as PromiseSettledResult<ApprovalRequest[]>, [])
+      );
+      const events = asArray<EventHistory>(
+        settledValue(results[4] as PromiseSettledResult<EventHistory[]>, [])
+      );
+      const runs = asArray<WorkflowRun>(
+        settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])
+      );
       setConnectors(connectorRows);
       setWriteHealth(writeState);
-      setHaloTickets(ticketResponse.items);
+      setHaloTickets(asArray<HaloTicket>(ticketResponse.items));
       setApprovalRequests(approvals);
       setEventHistory(events);
+      setWorkflowRuns(runs);
+      setRefreshErrors(errors);
       if (!selectedTicketId && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
@@ -188,6 +232,27 @@ export function App() {
     }
   }
 
+  async function savePayloadFields(request: ApprovalRequest) {
+    setBusyId(request.id);
+    try {
+      const fields = parseFields(draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields));
+      await apiPatch<ApprovalRequest>(`/approval-requests/${request.id}/payload`, { fields });
+      setStatusMessage(`Approval request ${request.id} payload updated.`);
+      await refresh();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Payload update failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function workflowFor(request: ApprovalRequest) {
+    if (request.workflow_run_id === undefined || request.workflow_run_id === null) {
+      return undefined;
+    }
+    return workflowRuns.find((run) => String(run.id) === String(request.workflow_run_id));
+  }
+
   return (
     <main className="shell">
       <aside className="sidebar" aria-label="Workspace navigation">
@@ -249,6 +314,12 @@ export function App() {
         </header>
 
         {statusMessage ? <div className="notice">{statusMessage}</div> : null}
+        {refreshErrors.length > 0 ? (
+          <div className="notice danger" role="alert">
+            <AlertTriangle size={17} aria-hidden="true" />
+            {refreshErrors.join(" ")}
+          </div>
+        ) : null}
 
         <section id="connectors" className="panel">
           <div className="panel-heading">
@@ -266,6 +337,13 @@ export function App() {
             <span>HTTP probing: {haloConnector?.http_probing_enabled ? "enabled" : "disabled"}</span>
             <span>Write actions: {haloConnector?.write_actions_enabled ? "enabled" : "disabled"}</span>
             <span>Write health: {writeHealth.message}</span>
+          </div>
+          <div className="connector-summary secondary">
+            <div>
+              <strong>Hudu</strong>
+              <span>{huduConnector?.message || "Hudu connector status unavailable."}</span>
+            </div>
+            <em>{huduConnector?.status || "unknown"}</em>
           </div>
         </section>
 
@@ -346,19 +424,69 @@ export function App() {
             </div>
             <div className="stack-list">
               {approvalRequests.map((request) => (
-                <div className="approval-row live" key={request.id}>
-                  <div>
-                    <strong>{request.action_type}</strong>
-                    <span>{request.subject_id}</span>
+                <div className="approval-card" key={request.id}>
+                  <div className="approval-main">
+                    <div>
+                      <strong>{request.action_type}</strong>
+                      <span>{request.subject_id}</span>
+                    </div>
+                    <em>{request.status} / {request.execution_status}</em>
                   </div>
                   <p>{request.execution_message || request.comment || "Waiting for review"}</p>
-                  <em>{request.status} / {request.execution_status}</em>
+                  {request.block_reason ? (
+                    <div className="blocked-reason">
+                      <AlertTriangle size={15} aria-hidden="true" />
+                      {request.block_reason}
+                    </div>
+                  ) : null}
+                  <div className="payload-grid">
+                    <div className="payload-preview">
+                      <h3>
+                        <FileJson size={16} aria-hidden="true" />
+                        Payload Preview
+                      </h3>
+                      <pre>{formatPayload(request.payload)}</pre>
+                    </div>
+                    <label className="payload-editor">
+                      Draft Fields
+                      <textarea
+                        disabled={request.status !== "pending"}
+                        rows={6}
+                        value={draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields)}
+                        onChange={(event) =>
+                          setDraftPayloadFields((current) => ({
+                            ...current,
+                            [request.id]: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="workflow-link">
+                    <Workflow size={15} aria-hidden="true" />
+                    {request.workflow_run_id ? (
+                      <span>
+                        Workflow run {request.workflow_run_id}
+                        {workflowFor(request) ? `: ${workflowFor(request)?.status}` : ""}
+                      </span>
+                    ) : (
+                      <span>No workflow run linked</span>
+                    )}
+                  </div>
                   <div className="row-actions">
+                    <button
+                      className="icon-button"
+                      disabled={busyId === request.id || request.status !== "pending"}
+                      type="button"
+                      onClick={() => void savePayloadFields(request)}
+                    >
+                      <Save size={16} aria-hidden="true" />
+                      Save Fields
+                    </button>
                     <button
                       disabled={
                         busyId === request.id ||
-                        request.status !== "pending" ||
-                        (isHaloApproval(request) && !liveWritesReady)
+                        request.status !== "pending"
                       }
                       type="button"
                       onClick={() => void updateApproval(request.id, "approved")}
@@ -390,6 +518,27 @@ export function App() {
                   </div>
                 </div>
               ))}
+              {approvalRequests.length === 0 ? (
+                <p>No approval requests yet.</p>
+              ) : null}
+            </div>
+          </article>
+
+          <article id="workflow-runs" className="panel">
+            <div className="panel-heading">
+              <h2>Workflow Runs</h2>
+              <span>{workflowRuns.length} visible</span>
+            </div>
+            <div className="event-list">
+              {workflowRuns.map((run) => (
+                <div className="event-row" key={run.id}>
+                  <span>{run.goal || `Run ${run.id}`}</span>
+                  <strong>{run.approval_request_id ? `Approval ${run.approval_request_id}` : String(run.id)}</strong>
+                  <em>{run.status}</em>
+                  <p>{run.message || run.updated_at || run.created_at || "No run detail available."}</p>
+                </div>
+              ))}
+              {workflowRuns.length === 0 ? <p>No workflow runs visible.</p> : null}
             </div>
           </article>
 
@@ -452,10 +601,10 @@ export function App() {
   );
 }
 
-async function apiGet<T>(path: string, fallback: T): Promise<T> {
+async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(path);
   if (!response.ok) {
-    return fallback;
+    throw new Error(`${path} failed with HTTP ${response.status}`);
   }
   return (await response.json()) as T;
 }
@@ -473,6 +622,33 @@ async function apiPost<T>(path: string, body: object): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function apiPatch<T>(path: string, body: object): Promise<T> {
+  const response = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
+  return result.status === "fulfilled" ? result.value : fallback;
+}
+
+function asArray<T>(value: T[] | { items?: T[] } | unknown): T[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === "object" && Array.isArray((value as { items?: T[] }).items)) {
+    return (value as { items: T[] }).items;
+  }
+  return [];
+}
+
 function parseFields(text: string): Record<string, string> {
   return Object.fromEntries(
     text
@@ -485,4 +661,20 @@ function parseFields(text: string): Record<string, string> {
       })
       .filter(([key]) => key)
   );
+}
+
+function fieldsToText(fields: Record<string, unknown> | undefined): string {
+  if (!fields || typeof fields !== "object") {
+    return "";
+  }
+  return Object.entries(fields as Record<string, unknown>)
+    .map(([key, value]) => `${key}=${value ?? ""}`)
+    .join("\n");
+}
+
+function formatPayload(payload: ApprovalRequest["payload"]): string {
+  if (!payload) {
+    return "No parsed payload.";
+  }
+  return JSON.stringify(payload, null, 2);
 }
