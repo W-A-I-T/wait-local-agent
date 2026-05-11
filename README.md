@@ -48,7 +48,8 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - HaloPSA safe draft and approved live-write surface for add-note,
   client-safe response, status/category updates, ticket fields, and technician
   assignment.
-- Hudu read-only connector configuration surface for documentation lookup work.
+- Hudu read-only connector surface for health, companies, articles, article
+  detail, and folders when explicitly enabled.
 - Approval requests expose the proposed connector payload before execution so a
   technician can review, edit through the draft flow, approve, or reject.
 - Safe defaults for local-only operation.
@@ -148,6 +149,9 @@ curl http://127.0.0.1:8788/connectors
 curl http://127.0.0.1:8788/connectors/halopsa/health
 curl http://127.0.0.1:8788/connectors/halopsa/write-health
 curl http://127.0.0.1:8788/connectors/halopsa/tickets
+curl http://127.0.0.1:8788/connectors/hudu/health
+curl http://127.0.0.1:8788/connectors/hudu/companies
+curl http://127.0.0.1:8788/connectors/hudu/articles
 curl http://127.0.0.1:8788/approval-requests
 curl http://127.0.0.1:8788/event-history
 ```
@@ -204,6 +208,8 @@ wait-local-agent connectors draft-halopsa HALO-1002 update_ticket_fields \
   --field category_id=5 \
   --field priority=High
 wait-local-agent approvals list
+wait-local-agent approvals show 1
+wait-local-agent approvals edit-field 1 note="Reviewed by technician"
 wait-local-agent approvals update 1 approved "approved by technician"
 wait-local-agent connectors execute-halopsa 1
 ```
@@ -235,6 +241,7 @@ WAIT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 WAIT_QDRANT_PATH=.wait-local-agent/qdrant
 WAIT_QDRANT_URL=
 WAIT_QDRANT_COLLECTION=wait_knowledge_chunks
+WAIT_CONNECTOR_TIMEOUT_SECONDS=20
 WAIT_HALOPSA_BASE_URL=
 WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
@@ -310,6 +317,14 @@ WAIT_HUDU_BASE_URL=
 WAIT_HUDU_API_KEY=
 WAIT_HUDU_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
+```
+
+```bash
+wait-local-agent connectors hudu-health
+wait-local-agent connectors hudu-companies
+wait-local-agent connectors hudu-articles --company-id CLIENT-1
+wait-local-agent connectors hudu-article ARTICLE-1
+wait-local-agent connectors hudu-folders --company-id CLIENT-1
 ```
 
 Hudu writes are not part of the public surface.
