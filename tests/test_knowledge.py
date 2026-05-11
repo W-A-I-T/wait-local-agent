@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sys
+import types
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pypdf import PdfWriter
@@ -12,12 +15,14 @@ from wait_local_agent.knowledge import (
     chunk_text,
     extract_document,
     extract_title,
+    ingestion_service_from_settings,
 )
-from wait_local_agent.models import Ticket
+from wait_local_agent.models import KnowledgeChunk, Ticket
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import MAX_SEARCH_LIMIT, Store, _bounded_search_limit
+from wait_local_agent.vector_search import search_backend_from_settings
 
 
 def write_text_pdf(path: Path, text: str) -> None:
@@ -193,6 +198,217 @@ def test_unsupported_document_extension_errors(settings, tmp_path) -> None:
 
     with pytest.raises(ValueError, match="not a supported document type"):
         service.ingest_path(unsupported)
+
+
+def test_docling_parser_missing_dependency_errors_cleanly(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    pdf_path = doc_root / "runbook.pdf"
+    write_text_pdf(pdf_path, "Text that Docling would parse")
+    active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
+    service = ingestion_service_from_settings(Store(active_settings.data_path), active_settings)
+
+    with pytest.raises(ValueError, match="Docling parser requires"):
+        service.ingest_path(pdf_path)
+
+
+def test_docling_parser_uses_lazy_document_converter(settings, tmp_path, monkeypatch) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    pdf_path = doc_root / "runbook.pdf"
+    pdf_path.write_bytes(b"%PDF fake enough for mocked docling")
+
+    class FakeDocument:
+        def export_to_markdown(self) -> str:
+            return "# Mocked Docling\n\nOCR content"
+
+    class FakeResult:
+        document = FakeDocument()
+
+    class FakeDocumentConverter:
+        def convert(self, path: Path) -> FakeResult:
+            assert path == pdf_path
+            return FakeResult()
+
+    docling_module = types.ModuleType("docling")
+    converter_module = types.ModuleType("docling.document_converter")
+    cast(Any, converter_module).DocumentConverter = FakeDocumentConverter
+    monkeypatch.setitem(sys.modules, "docling", docling_module)
+    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
+    active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
+    store = Store(active_settings.data_path)
+
+    documents = ingestion_service_from_settings(store, active_settings).ingest_path(pdf_path)
+
+    assert documents[0].title == "Mocked Docling"
+    assert store.search_knowledge_chunks("OCR content")[0].title == "Mocked Docling"
+
+
+def test_docling_parser_empty_and_converter_error(settings, tmp_path, monkeypatch) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    pdf_path = doc_root / "runbook.pdf"
+    pdf_path.write_bytes(b"%PDF fake enough for mocked docling")
+
+    class EmptyDocument:
+        def export_to_markdown(self) -> str:
+            return ""
+
+    class EmptyResult:
+        document = EmptyDocument()
+
+    class EmptyDocumentConverter:
+        def convert(self, path: Path) -> EmptyResult:
+            return EmptyResult()
+
+    converter_module = types.ModuleType("docling.document_converter")
+    cast(Any, converter_module).DocumentConverter = EmptyDocumentConverter
+    monkeypatch.setitem(sys.modules, "docling", types.ModuleType("docling"))
+    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
+    active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
+    service = ingestion_service_from_settings(Store(active_settings.data_path), active_settings)
+
+    with pytest.raises(ValueError, match="WAIT_ALLOW_OCR"):
+        service.ingest_path(pdf_path)
+
+    class BrokenDocumentConverter:
+        def convert(self, path: Path):
+            raise RuntimeError("broken")
+
+    cast(Any, converter_module).DocumentConverter = BrokenDocumentConverter
+    broken_service = ingestion_service_from_settings(
+        Store(active_settings.data_path),
+        active_settings,
+    )
+    with pytest.raises(ValueError, match="with OCR disabled"):
+        broken_service.ingest_path(pdf_path)
+
+
+def test_qdrant_remote_url_requires_http_probing(settings) -> None:
+    active_settings = replace(
+        settings,
+        vector_backend="qdrant",
+        qdrant_url="http://127.0.0.1:6333",
+        allow_http_probing=False,
+    )
+
+    with pytest.raises(ValueError, match="WAIT_ALLOW_HTTP_PROBING"):
+        search_backend_from_settings(active_settings, Store(active_settings.data_path))
+
+
+def test_qdrant_local_backend_missing_dependency_errors(settings) -> None:
+    active_settings = replace(settings, vector_backend="qdrant")
+
+    with pytest.raises(ValueError, match="optional dependencies"):
+        search_backend_from_settings(active_settings, Store(active_settings.data_path))
+
+
+def test_unsupported_vector_backend_and_validation_helper(settings) -> None:
+    from wait_local_agent.vector_search import validate_vector_settings
+
+    with pytest.raises(ValueError, match="unsupported vector backend"):
+        search_backend_from_settings(
+            replace(settings, vector_backend="weird"),
+            Store(settings.data_path),
+        )
+    with pytest.raises(ValueError, match="WAIT_ALLOW_HTTP_PROBING"):
+        validate_vector_settings(
+            replace(settings, vector_backend="qdrant", qdrant_url="http://qdrant.test")
+        )
+    validate_vector_settings(settings)
+
+
+def test_qdrant_backend_upserts_and_searches_with_fake_modules(
+    settings, tmp_path, monkeypatch
+) -> None:
+    points = []
+
+    class FakeTextEmbedding:
+        def __init__(self, model_name: str) -> None:
+            assert model_name == settings.embedding_model
+
+        def embed(self, texts):
+            for text in texts:
+                yield [float(len(text)), 1.0]
+
+    class FakeQdrantClient:
+        def __init__(self, **kwargs) -> None:
+            assert "path" in kwargs
+            self.created = False
+
+        def collection_exists(self, collection_name: str) -> bool:
+            assert collection_name == "wait_knowledge_chunks"
+            return self.created
+
+        def create_collection(self, collection_name: str, vectors_config) -> None:
+            self.created = True
+
+        def upsert(self, collection_name: str, points: list[object]) -> None:
+            assert collection_name == "wait_knowledge_chunks"
+
+        def search(self, collection_name: str, query_vector: list[float], limit: int):
+            assert collection_name == "wait_knowledge_chunks"
+            assert query_vector
+
+            class Hit:
+                payload = {
+                    "chunk_id": 1,
+                    "document_id": 2,
+                    "title": "Vector Runbook",
+                    "path": "docs/vector.md",
+                    "chunk_index": 0,
+                    "text": "vector text",
+                    "excerpt": "vector",
+                }
+
+            return [Hit()]
+
+    class FakeDistance:
+        COSINE = "cosine"
+
+    class FakeVectorParams:
+        def __init__(self, size: int, distance: str) -> None:
+            assert size == 2
+            assert distance == "cosine"
+
+    class FakePointStruct:
+        def __init__(self, id: str, vector: list[float], payload: dict[str, object]) -> None:
+            points.append((id, vector, payload))
+
+    fastembed_module = types.ModuleType("fastembed")
+    cast(Any, fastembed_module).TextEmbedding = FakeTextEmbedding
+    qdrant_module = types.ModuleType("qdrant_client")
+    cast(Any, qdrant_module).QdrantClient = FakeQdrantClient
+    models_module = types.ModuleType("qdrant_client.models")
+    cast(Any, models_module).Distance = FakeDistance
+    cast(Any, models_module).VectorParams = FakeVectorParams
+    cast(Any, models_module).PointStruct = FakePointStruct
+    monkeypatch.setitem(sys.modules, "fastembed", fastembed_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client", qdrant_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", models_module)
+    active_settings = replace(settings, vector_backend="qdrant", qdrant_path=tmp_path / "qdrant")
+    backend = search_backend_from_settings(active_settings, Store(active_settings.data_path))
+
+    backend.upsert_document_chunks(
+        [
+            KnowledgeChunk(
+                id=1,
+                document_id=2,
+                title="Vector Runbook",
+                path="docs/vector.md",
+                chunk_index=0,
+                text="vector text",
+                excerpt="vector",
+            )
+        ]
+    )
+    backend.upsert_document_chunks([])
+    empty = backend.search("   ", limit=1)
+    results = backend.search("vector", limit=1)
+
+    assert points[0][2]["title"] == "Vector Runbook"
+    assert empty == []
+    assert results[0].title == "Vector Runbook"
 
 
 def test_missing_ingest_path_errors(settings, tmp_path) -> None:

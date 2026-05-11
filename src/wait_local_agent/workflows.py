@@ -12,6 +12,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         description="Classify the ticket and prepare a technician-readable summary.",
         action_type="ticket.triage",
         approval_required=False,
+        risk_level="low",
+        preview_fields=("classification", "summary"),
     ),
     WorkflowTemplate(
         id="assign-technician",
@@ -20,6 +22,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         description="Draft an assignment based on priority, workload placeholders, and skills.",
         action_type="ticket.assign",
         approval_required=True,
+        risk_level="medium",
+        preview_fields=("ticket_id", "technician_id", "team_id"),
     ),
     WorkflowTemplate(
         id="inactive-ticket-follow-up",
@@ -28,6 +32,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         description="Find stale tickets and draft a safe client or internal follow-up.",
         action_type="ticket.follow_up",
         approval_required=True,
+        risk_level="medium",
+        preview_fields=("ticket_id", "message"),
     ),
     WorkflowTemplate(
         id="p1-alert",
@@ -36,6 +42,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         description="Detect urgent tickets and prepare an internal alert payload.",
         action_type="ticket.alert",
         approval_required=True,
+        risk_level="high",
+        preview_fields=("ticket_id", "priority", "message"),
     ),
     WorkflowTemplate(
         id="documentation-assisted-response",
@@ -44,6 +52,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         description="Use cited local knowledge to draft a client-safe response.",
         action_type="ticket.draft_response",
         approval_required=True,
+        risk_level="medium",
+        preview_fields=("ticket_id", "response", "sources"),
     ),
 )
 

@@ -179,9 +179,18 @@ button:disabled {
   border: 1px solid #ead49b;
   border-radius: 8px;
   color: #634c0f;
+  display: flex;
+  gap: 8px;
+  align-items: center;
   font-weight: 700;
   margin-bottom: 18px;
   padding: 12px 14px;
+}
+
+.notice.danger {
+  background: #fff0ed;
+  border-color: #f2c7bc;
+  color: #8a2f1d;
 }
 
 .panel {
@@ -326,6 +335,10 @@ button:disabled {
   padding: 12px;
 }
 
+.connector-summary.secondary {
+  margin: 12px 0 0;
+}
+
 .connector-summary strong,
 .connector-summary span {
   display: block;
@@ -358,6 +371,7 @@ button:disabled {
 .document-row,
 .source-results article,
 .approval-row,
+.approval-card,
 .connector-row,
 .table-row,
 .event-row {
@@ -441,6 +455,8 @@ button:disabled {
 .source-results span,
 .approval-row strong,
 .approval-row span,
+.approval-card strong,
+.approval-card span,
 .connector-row strong,
 .connector-row span,
 .table-row strong,
@@ -451,6 +467,7 @@ button:disabled {
 .document-row span,
 .source-results span,
 .approval-row span,
+.approval-card span,
 .connector-row span,
 .table-row span {
   color: #60706a;
@@ -460,6 +477,7 @@ button:disabled {
 
 .document-row em,
 .approval-row em,
+.approval-card em,
 .connector-row em,
 .table-row em,
 .event-row em {
@@ -478,6 +496,83 @@ button:disabled {
 
 .approval-row.live {
   grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1fr) auto;
+}
+
+.approval-card {
+  display: grid;
+  gap: 12px;
+}
+
+.approval-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.blocked-reason,
+.workflow-link {
+  align-items: center;
+  background: #fff8e6;
+  border: 1px solid #ead49b;
+  border-radius: 8px;
+  color: #634c0f;
+  display: flex;
+  gap: 8px;
+  padding: 9px 10px;
+}
+
+.workflow-link {
+  background: #f7faf8;
+  border-color: #e4ebe8;
+  color: #40504b;
+}
+
+.payload-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
+  gap: 12px;
+}
+
+.payload-preview,
+.payload-editor {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.payload-preview h3 {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.payload-preview pre {
+  color: #253633;
+  font-size: 0.84rem;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.payload-editor {
+  color: #40504b;
+  display: grid;
+  font-weight: 800;
+  gap: 8px;
+}
+
+.payload-editor textarea {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  min-height: 150px;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
 }
 
 .approvals-panel {
@@ -560,6 +655,8 @@ dd svg {
   .grid,
   .ticket-card,
   .approval-row,
+  .approval-main,
+  .payload-grid,
   .connector-row,
   .connector-summary,
   .flag-grid,

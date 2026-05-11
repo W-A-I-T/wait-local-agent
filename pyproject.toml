@@ -19,6 +19,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+docling = [
+  "docling>=2,<3",
+]
+qdrant = [
+  "fastembed>=0.4,<1",
+  "qdrant-client>=1.12,<2",
+]
+knowledge = [
+  "docling>=2,<3",
+  "fastembed>=0.4,<1",
+  "qdrant-client>=1.12,<2",
+]
 dev = [
   "bandit>=1.7,<2.0",
   "mypy>=1.13,<2.0",
@@ -62,5 +74,5 @@ disable_error_code = ["no-untyped-def"]
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["reportlab.*"]
+module = ["docling.*", "fastembed.*", "qdrant_client.*", "reportlab.*"]
 ignore_missing_imports = true

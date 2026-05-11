@@ -34,6 +34,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     halopsa_status: ConnectorStatusValue = "not_configured"
     if halopsa_configured:
         halopsa_status = "configured" if settings.allow_http_probing else "blocked"
+    hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
+    hudu_status: ConnectorStatusValue = "not_configured"
+    if hudu_configured:
+        hudu_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -57,8 +61,15 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             id="hudu",
             kind="documentation",
             name="Hudu",
-            status="not_configured",
-            message="Planned documentation connector after the HaloPSA wedge.",
+            status=hudu_status,
+            message=(
+                "Hudu credentials are configured for read-only documentation lookup."
+                if hudu_status == "configured"
+                else "Hudu credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if hudu_status == "blocked"
+                else "Set WAIT_HUDU_BASE_URL and WAIT_HUDU_API_KEY to enable documentation reads."
+            ),
+            http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
             id="m365",
@@ -98,6 +109,9 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             bool(settings.halopsa_action_write_endpoint),
             "halopsa",
         ),
+        SecretRecord("WAIT_HUDU_BASE_URL", bool(settings.hudu_base_url), "hudu"),
+        SecretRecord("WAIT_HUDU_API_KEY", bool(settings.hudu_api_key), "hudu"),
+        SecretRecord("WAIT_HUDU_PAGE_SIZE", bool(settings.hudu_page_size), "hudu"),
     ]
 
 
@@ -144,8 +158,16 @@ def execute_halopsa_approval_request(
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
         raise ValueError("approval payload is malformed")
+    if payload.get("connector") != "halopsa":
+        raise ValueError("approval payload connector does not match HaloPSA")
     action_type = str(payload.get("action_type") or approval.action_type.removeprefix("halopsa."))
+    if action_type not in HALOPSA_ACTION_TYPES:
+        raise ValueError(f"unsupported HaloPSA action type: {action_type}")
+    if approval.action_type != f"halopsa.{action_type}":
+        raise ValueError("approval payload action does not match approval request")
     ticket_id = str(payload.get("ticket_id") or approval.subject_id)
+    if ticket_id != approval.subject_id:
+        raise ValueError("approval payload ticket does not match approval request")
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         fields = {}
@@ -174,3 +196,53 @@ def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:
         "status_code": result.status_code,
         "remote_id": result.remote_id,
     }
+
+
+def update_halopsa_approval_fields(
+    store: Store,
+    request_id: int,
+    fields: dict[str, object],
+    comment: str = "Draft edited before approval",
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if not approval.action_type.startswith("halopsa."):
+        raise ValueError("approval request is not a HaloPSA action")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    action_type = str(payload.get("action_type") or approval.action_type.removeprefix("halopsa."))
+    validate_halopsa_action_fields(action_type, fields)
+    payload["fields"] = fields
+    return store.update_approval_request_payload(request_id, payload, comment)
+
+
+def validate_halopsa_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in HALOPSA_ACTION_TYPES:
+        raise ValueError(f"unsupported HaloPSA action type: {action_type}")
+    if action_type in {"add_note", "draft_response"}:
+        if not _first_present(fields, "note", "body", "message", "response"):
+            raise ValueError(f"HaloPSA {action_type} requires a note or response")
+        return
+    if action_type == "update_status" and not _first_present(fields, "status", "status_id"):
+        raise ValueError("HaloPSA update_status requires status or status_id")
+    if action_type == "assign_technician" and not _first_present(
+        fields,
+        "technician_id",
+        "agent_id",
+        "assigned_agent_id",
+        "team_id",
+    ):
+        raise ValueError("HaloPSA assign_technician requires technician, agent, or team id")
+    has_ticket_field = any(value not in (None, "") for value in fields.values())
+    if action_type == "update_ticket_fields" and not has_ticket_field:
+        raise ValueError("HaloPSA update_ticket_fields requires at least one field")
+
+
+def _first_present(fields: dict[str, object], *keys: str) -> object:
+    for key in keys:
+        value = fields.get(key)
+        if value not in (None, ""):
+            return value
+    return ""

@@ -14,10 +14,13 @@ layers.
 
 ## Knowledge
 
-- Local file ingestion for Markdown, plain text, and text-based PDFs.
+- Local file ingestion for Markdown, plain text, and PDFs.
+- Built-in parser path for text-based PDFs, with optional Docling parsing and
+  OCR enabled only when the optional dependency and runtime flag are present.
 - Stable source references with document paths and excerpts.
-- SQLite FTS5 retrieval.
-- Planned vector backends: Qdrant and pgvector.
+- SQLite FTS5 retrieval by default.
+- Optional Qdrant vector backend for local embedded storage or a configured
+  Qdrant service. SQLite remains the conservative fallback.
 
 ## Ticket Intelligence
 
@@ -36,7 +39,10 @@ layers.
 - HaloPSA write operations start as safe drafts, require approval, and then
   execute through the connector only when both HTTP probing and write-action
   flags are enabled.
-- Hudu, IT Glue, SharePoint, RMM, and M365/Entra are staged after the PSA wedge.
+- Hudu is the documentation wedge and is read-only: it can provide knowledge
+  lookup context when configured, but it does not expose write operations.
+- IT Glue, SharePoint, RMM, and M365/Entra are staged after the PSA and
+  documentation read paths.
 
 ## Workflows
 
@@ -48,6 +54,10 @@ layers.
 ## Control Plane
 
 - Human approval queue for connector and workflow actions.
+- Approval requests preserve the proposed connector payload for technician
+  preview before any live side effect.
+- Technicians can reject, approve, or revise a draft through the draft/edit
+  flow before execution is attempted.
 - Sanitized HaloPSA write execution metadata on approval requests.
 - Event history for workflow executions, approval decisions, and audit-friendly
   troubleshooting.

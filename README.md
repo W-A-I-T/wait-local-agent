@@ -33,7 +33,10 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - SQLite ticket, approval, approval request, workflow run, event, document, and
   chunk storage.
 - SQLite FTS5 local knowledge search.
-- Markdown, plain text, and text-based PDF ingestion.
+- Markdown, plain text, text-based PDF ingestion, and optional Docling-backed
+  document parsing/OCR when explicitly installed and enabled.
+- SQLite retrieval by default, with optional Qdrant vector storage for local or
+  configured Qdrant deployments.
 - Deterministic ticket classification and summary drafting.
 - Optional local OpenAI-compatible model invocation for Ollama, vLLM, or similar
   endpoints.
@@ -45,6 +48,9 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - HaloPSA safe draft and approved live-write surface for add-note,
   client-safe response, status/category updates, ticket fields, and technician
   assignment.
+- Hudu read-only connector configuration surface for documentation lookup work.
+- Approval requests expose the proposed connector payload before execution so a
+  technician can review, edit through the draft flow, approve, or reject.
 - Safe defaults for local-only operation.
 
 ## Current Limits
@@ -52,10 +58,11 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - HaloPSA reads require `WAIT_ALLOW_HTTP_PROBING=true` and credentials.
 - HaloPSA live writes require `WAIT_ALLOW_HTTP_PROBING=true`,
   `WAIT_ALLOW_WRITE_ACTIONS=true`, credentials, and an approved draft.
-- RMM, Microsoft 365, Entra, Hudu, IT Glue, and SharePoint live connectors are
-  staged roadmap work.
-- PDF support is text extraction only. Scanned PDFs and OCR are not supported
-  yet.
+- RMM, Microsoft 365, Entra, IT Glue, and SharePoint live connectors are staged
+  roadmap work.
+- OCR is optional and disabled by default. Install the Docling extra and set the
+  parser/OCR flags before using it for scanned PDFs.
+- Qdrant is optional. SQLite FTS5 remains the default retrieval backend.
 - Local model invocation is opt-in and calls only the configured local
   OpenAI-compatible endpoint.
 - Cloud fallback is disabled by default and not required for the current demo.
@@ -221,6 +228,13 @@ WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
 WAIT_LOCAL_MODEL_NAME=llama3.1
 WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 WAIT_VECTOR_BACKEND=sqlite
+WAIT_DOCUMENT_PARSER=basic
+WAIT_ALLOW_OCR=false
+WAIT_EMBEDDING_PROVIDER=none
+WAIT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+WAIT_QDRANT_PATH=.wait-local-agent/qdrant
+WAIT_QDRANT_URL=
+WAIT_QDRANT_COLLECTION=wait_knowledge_chunks
 WAIT_HALOPSA_BASE_URL=
 WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
@@ -228,6 +242,9 @@ WAIT_HALOPSA_TENANT=
 WAIT_HALOPSA_TOKEN_URL=
 WAIT_HALOPSA_TICKET_WRITE_ENDPOINT=Ticket
 WAIT_HALOPSA_ACTION_WRITE_ENDPOINT=Actions
+WAIT_HUDU_BASE_URL=
+WAIT_HUDU_API_KEY=
+WAIT_HUDU_PAGE_SIZE=25
 ```
 
 No write actions, external probing, local model inference, cloud fallback, or
@@ -251,7 +268,60 @@ WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 `ollama`, or `vllm`. Timeouts, connection errors, non-success responses, empty
 responses, and malformed JSON all fall back to the deterministic provider.
 
+## Knowledge Extras
+
+The default knowledge path uses built-in Markdown/text/PDF extraction and
+SQLite FTS5. Optional document and vector capabilities are installed only when
+needed:
+
+```bash
+pip install -e ".[docling]"    # Docling parser/OCR support
+pip install -e ".[qdrant]"     # Qdrant vector backend support
+pip install -e ".[knowledge]"  # Both optional knowledge extras
+```
+
+Docling OCR remains opt-in at runtime:
+
+```bash
+WAIT_DOCUMENT_PARSER=docling
+WAIT_ALLOW_OCR=true
+```
+
+Qdrant remains opt-in at runtime:
+
+```bash
+WAIT_VECTOR_BACKEND=qdrant
+WAIT_EMBEDDING_PROVIDER=fastembed
+WAIT_QDRANT_PATH=.wait-local-agent/qdrant
+# or point at an existing service:
+WAIT_QDRANT_URL=http://127.0.0.1:6333
+```
+
+If these extras are not installed or enabled, the appliance stays on the
+deterministic local SQLite path.
+
+## Hudu Read-Only Connector
+
+Hudu is treated as documentation context, not a live write surface. Configure it
+only when you want read-only documentation lookup through the connector layer:
+
+```bash
+WAIT_HUDU_BASE_URL=
+WAIT_HUDU_API_KEY=
+WAIT_HUDU_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Hudu writes are not part of the public surface.
+
 ## Development Checks
+
+```bash
+scripts/validate_release.sh
+```
+
+The release validation script runs the backend quality gates, public surface
+audit, UI tests, and UI production build. The individual commands are:
 
 ```bash
 ruff check .

@@ -332,6 +332,49 @@ class Store:
             raise RuntimeError("approval request was not persisted")
         return request
 
+    def update_approval_request_payload(
+        self, request_id: int, payload: dict[str, object], comment: str = ""
+    ) -> ApprovalRequest:
+        now = utc_now()
+        payload_json = json.dumps(payload, sort_keys=True)
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from approval_requests where id = ?", (request_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            if str(row["status"]) != "pending":
+                raise PermissionError("approval payload can only be edited while pending")
+            connection.execute(
+                """
+                update approval_requests
+                set payload_json = ?, comment = ?, updated_at = ?
+                where id = ?
+                """,
+                (payload_json, comment, now, request_id),
+            )
+            subject_id = str(row["subject_id"])
+            action_type = str(row["action_type"])
+            message = comment or f"{action_type} payload edited"
+            self._add_audit_event(
+                connection,
+                "approval_request.edited",
+                subject_id,
+                message,
+            )
+            self._add_event_history(
+                connection,
+                "approval_request.edited",
+                subject_id,
+                "pending",
+                message,
+                payload_json,
+            )
+        request = self.get_approval_request(request_id)
+        if request is None:
+            raise RuntimeError("approval request was not persisted")
+        return request
+
     def record_approval_execution(
         self,
         request_id: int,
@@ -495,6 +538,22 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from workflow_runs where approval_request_id = ?",
+                (approval_request_id,),
+            ).fetchone()
+        return WorkflowRun(**dict(row)) if row else None
+
+    def list_event_history_for_subject(self, subject_id: str) -> list[EventHistoryEntry]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from event_history where subject_id = ? order by id desc",
+                (subject_id,),
+            ).fetchall()
+        return [EventHistoryEntry(**dict(row)) for row in rows]
 
     def upsert_knowledge_document(
         self,
@@ -662,6 +721,38 @@ class Store:
                 limit ?
                 """,
                 (fts_query, bounded_limit),
+            ).fetchall()
+        return [
+            KnowledgeChunk(
+                id=int(row["id"]),
+                document_id=int(row["document_id"]),
+                title=str(row["title"]),
+                path=str(row["path"]),
+                chunk_index=int(row["chunk_index"]),
+                text=str(row["text"]),
+                excerpt=str(row["excerpt"]),
+            )
+            for row in rows
+        ]
+
+    def list_knowledge_chunks_for_document(self, document_id: int) -> list[KnowledgeChunk]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select
+                  c.id,
+                  c.document_id,
+                  d.title,
+                  d.path,
+                  c.chunk_index,
+                  c.text,
+                  c.excerpt
+                from knowledge_chunks c
+                join knowledge_documents d on d.id = c.document_id
+                where c.document_id = ?
+                order by c.chunk_index
+                """,
+                (document_id,),
             ).fetchall()
         return [
             KnowledgeChunk(

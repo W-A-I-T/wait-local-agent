@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from time import monotonic
 
 import httpx
 
@@ -42,6 +43,8 @@ class HaloPSAClient:
     ) -> None:
         self.settings = settings
         self.transport = transport
+        self._cached_token: str | None = None
+        self._cached_token_expires_at = 0.0
 
     def health(self) -> HaloReadResult:
         blocked = self._read_blocked_result()
@@ -148,11 +151,18 @@ class HaloPSAClient:
     def _get(self, endpoint: str, *, params: dict[str, QueryValue] | None = None) -> object:
         token = self._access_token()
         with self._client() as client:
-            response = client.get(
-                f"{_api_base_url(self.settings.halopsa_base_url)}/{endpoint.lstrip('/')}",
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
+            try:
+                response = client.get(
+                    f"{_api_base_url(self.settings.halopsa_base_url)}/{_safe_endpoint(endpoint)}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params=params,
+                )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                raise HaloReadError(
+                    "HaloPSA request failed before receiving a response."
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise HaloReadError("HaloPSA request failed.") from exc
         if response.status_code >= 400:
             raise HaloReadError(f"HaloPSA GET {endpoint} failed with HTTP {response.status_code}.")
         try:
@@ -192,11 +202,18 @@ class HaloPSAClient:
     def _post(self, endpoint: str, payload: object) -> tuple[object, int]:
         token = self._access_token()
         with self._client() as client:
-            response = client.post(
-                f"{_api_base_url(self.settings.halopsa_base_url)}/{endpoint.lstrip('/')}",
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload,
-            )
+            try:
+                response = client.post(
+                    f"{_api_base_url(self.settings.halopsa_base_url)}/{_safe_endpoint(endpoint)}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=payload,
+                )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                raise HaloReadError(
+                    "HaloPSA request failed before receiving a response."
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise HaloReadError("HaloPSA request failed.") from exc
         if response.status_code >= 400:
             raise HaloReadError(f"HaloPSA POST {endpoint} failed with HTTP {response.status_code}.")
         if not response.content:
@@ -236,16 +253,25 @@ class HaloPSAClient:
         return self.settings.halopsa_ticket_write_endpoint, [payload]
 
     def _access_token(self) -> str:
+        if self._cached_token is not None and monotonic() < self._cached_token_expires_at:
+            return self._cached_token
         with self._client() as client:
-            response = client.post(
-                _token_url(self.settings),
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": self.settings.halopsa_client_id,
-                    "client_secret": self.settings.halopsa_client_secret,
-                    "tenant": self.settings.halopsa_tenant,
-                },
-            )
+            try:
+                response = client.post(
+                    _token_url(self.settings),
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self.settings.halopsa_client_id,
+                        "client_secret": self.settings.halopsa_client_secret,
+                        "tenant": self.settings.halopsa_tenant,
+                    },
+                )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                raise HaloReadError(
+                    "HaloPSA token request failed before receiving a response."
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise HaloReadError("HaloPSA token request failed.") from exc
         if response.status_code >= 400:
             raise HaloReadError(f"HaloPSA token request failed with HTTP {response.status_code}.")
         try:
@@ -255,10 +281,15 @@ class HaloPSAClient:
         token = _string_value(payload, "access_token")
         if not token:
             raise HaloReadError("HaloPSA token response did not include access_token.")
+        self._cached_token = token
+        self._cached_token_expires_at = monotonic() + max(_int_value(payload, "expires_in") - 30, 0)
         return token
 
     def _client(self) -> httpx.Client:
-        return httpx.Client(timeout=20.0, transport=self.transport)
+        return httpx.Client(
+            timeout=self.settings.connector_timeout_seconds,
+            transport=self.transport,
+        )
 
     def _read_blocked_result(self) -> HaloReadResult | None:
         if self.settings.allow_http_probing:
@@ -337,6 +368,12 @@ class HaloReadError(Exception):
 def _api_base_url(base_url: str) -> str:
     stripped = base_url.rstrip("/")
     return stripped if stripped.endswith("/api") else f"{stripped}/api"
+
+
+def _safe_endpoint(endpoint: str) -> str:
+    if "://" in endpoint or endpoint.startswith("//"):
+        raise HaloReadError("HaloPSA endpoints must be relative paths.")
+    return endpoint.strip("/")
 
 
 def _token_url(settings: Settings) -> str:
@@ -464,6 +501,16 @@ def _string_value(row: object, key: str) -> str:
         value = row.get(key)
         return str(value) if value is not None else ""
     return ""
+
+
+def _int_value(row: object, key: str) -> int:
+    if isinstance(row, dict):
+        value = row.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return 0
 
 
 def _bool_value(row: Mapping[str, object], *keys: str) -> bool:

@@ -2,15 +2,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from wait_local_agent.config import Settings
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.store import Store
+from wait_local_agent.vector_search import search_backend_from_settings
 
 
 def retrieve_sources(
-    ticket: Ticket, doc_root: Path, store: Store | None = None
+    ticket: Ticket,
+    doc_root: Path,
+    store: Store | None = None,
+    settings: Settings | None = None,
 ) -> list[SourceReference]:
     if store is not None and store.knowledge_chunk_count() > 0:
-        chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
+        if settings is not None:
+            chunks = search_backend_from_settings(settings, store).search(
+                f"{ticket.subject} {ticket.body}",
+                limit=3,
+            )
+        else:
+            chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
         if chunks:
             return [
                 SourceReference(

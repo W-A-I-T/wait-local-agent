@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteResult
+from wait_local_agent.models import (
+    HaloReadResult,
+    HaloTicket,
+    HaloWriteResult,
+    HuduArticle,
+    HuduCompany,
+    HuduFolder,
+)
 from wait_local_agent.store import Store
 
 
@@ -122,8 +130,10 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
 
     assert connectors.status_code == 200
     assert connectors.json()[0]["id"] == "halopsa"
+    assert any(connector["id"] == "hudu" for connector in connectors.json())
     assert secrets.status_code == 200
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
+    assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
     assert len(templates.json()) == 5
     assert run.status_code == 200
@@ -139,6 +149,99 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert workflow_runs.status_code == 200
     assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
     assert workflow_runs.json()[0]["status"] == "pending_approval"
+
+
+def test_approval_detail_payload_edit_and_workflow_detail(settings) -> None:
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+    draft = client.post(
+        "/connectors/halopsa/tickets/TCK-1002/drafts",
+        json={"action_type": "add_note", "fields": {"note": "Original"}},
+    )
+    request_id = draft.json()["approval_request_id"]
+
+    detail = client.get(f"/approval-requests/{request_id}")
+    edited = client.patch(
+        f"/approval-requests/{request_id}/payload",
+        json={"fields": {"note": "Edited"}, "comment": "edited before approval"},
+    )
+    approved = client.post(
+        f"/approval-requests/{request_id}",
+        json={"status": "approved", "comment": "ready"},
+    )
+    rejected_edit = client.patch(
+        f"/approval-requests/{request_id}/payload",
+        json={"fields": {"note": "Too late"}},
+    )
+    events = client.get("/event-history")
+
+    assert detail.status_code == 200
+    assert detail.json()["payload"]["fields"]["note"] == "Original"
+    assert detail.json()["block_reason"] == "Approval must be approved before execution."
+    assert edited.status_code == 200
+    assert edited.json()["payload"]["fields"]["note"] == "Edited"
+    assert approved.status_code == 200
+    assert rejected_edit.status_code == 409
+    assert any(event["event_type"] == "approval_request.edited" for event in events.json())
+
+    workflow = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        json={"ticket_id": "TCK-1002"},
+    )
+    workflow_detail = client.get(f"/workflow-runs/{workflow.json()['id']}")
+
+    assert workflow_detail.status_code == 200
+    assert workflow_detail.json()["template"]["risk_level"] == "medium"
+    assert workflow_detail.json()["approval_request"]["workflow_run_id"] == workflow.json()["id"]
+
+
+def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
+    class ReadyHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return HaloReadResult("ready", "write ok", 0)
+
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "HALO-1",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "HALO-1",
+            "action_type": "add_note",
+            "fields": {"note": "Ready"},
+            "api_key": "secret",
+        },
+    )
+    store.update_approval_request(approval.id or 0, "approved")
+    monkeypatch.setattr(app_module, "HaloPSAClient", ReadyHaloClient)
+    client = TestClient(app_module.create_app(settings))
+
+    missing_approval = client.get("/approval-requests/999")
+    missing_edit = client.patch("/approval-requests/999/payload", json={"fields": {"note": "x"}})
+    bad_edit = client.patch(f"/approval-requests/{approval.id}/payload", json={"fields": {}})
+    ready = client.get(f"/approval-requests/{approval.id}")
+    missing_workflow = client.get("/workflow-runs/999")
+    bad_search = client.get("/knowledge/search", params={"q": "x", "backend": "nope"})
+    missing_ticket_workflow = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        json={"ticket_id": "NOPE"},
+    )
+
+    assert missing_approval.status_code == 404
+    assert missing_edit.status_code == 404
+    assert bad_edit.status_code == 400
+    assert ready.json()["can_execute"] is True
+    assert ready.json()["payload"]["api_key"] == "[redacted]"
+    assert missing_workflow.status_code == 404
+    assert bad_search.status_code == 400
+    assert missing_ticket_workflow.status_code == 404
+    assert app_module._safe_json_object("not-json") == {}
+    redacted = app_module._redact_payload({"nested": {"token": "x"}})
+    nested = cast(dict[str, object], redacted["nested"])
+    assert nested["token"] == "[redacted]"
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
@@ -419,6 +522,56 @@ def test_halopsa_write_health_api(settings) -> None:
     assert response.json()["status"] == "blocked"
 
 
+def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> None:
+    class FakeHuduClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return HaloReadResult("ready", "ok", 0)
+
+        def list_companies(self, page: int = 1, page_size: int | None = None):
+            return _hudu_response([HuduCompany("C-1", "Contoso", False)])
+
+        def list_articles(
+            self,
+            company_id: str | None = None,
+            page: int = 1,
+            page_size: int | None = None,
+        ):
+            return _hudu_response([HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "")])
+
+        def get_article(self, article_id: str):
+            return _hudu_response([HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "")])
+
+        def list_folders(
+            self,
+            company_id: str | None = None,
+            page: int = 1,
+            page_size: int | None = None,
+        ):
+            return _hudu_response([HuduFolder("F-1", "Ops", "C-1", "")])
+
+    blocked = TestClient(create_app(settings)).get("/connectors/hudu/health")
+    monkeypatch.setattr(app_module, "HuduClient", FakeHuduClient)
+    client = TestClient(app_module.create_app(settings))
+
+    health = client.get("/connectors/hudu/health")
+    companies = client.get("/connectors/hudu/companies")
+    articles = client.get("/connectors/hudu/articles")
+    article = client.get("/connectors/hudu/articles/A-1")
+    folders = client.get("/connectors/hudu/folders")
+    audit = client.get("/audit")
+
+    assert blocked.json()["status"] == "blocked"
+    assert health.json()["status"] == "ready"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert articles.json()["items"][0]["name"] == "Runbook"
+    assert article.json()["items"][0]["id"] == "A-1"
+    assert folders.json()["items"][0]["name"] == "Ops"
+    assert any(event["event_type"] == "hudu.read" for event in audit.json())
+
+
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
     client = TestClient(create_app(settings))
 
@@ -429,3 +582,7 @@ def test_knowledge_api_missing_path_returns_400(settings) -> None:
 
 def _read_response(items):
     return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _hudu_response(items):
+    return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)

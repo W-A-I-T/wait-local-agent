@@ -1,46 +1,54 @@
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
-from pypdf import PdfReader
-
+from wait_local_agent import document_parsing
+from wait_local_agent.config import Settings
+from wait_local_agent.document_parsing import (
+    BasicDocumentParser,
+    DocumentParser,
+    ExtractedDocument,
+    parser_for_name,
+)
 from wait_local_agent.models import KnowledgeDocument, KnowledgeDocumentWrite
 from wait_local_agent.store import Store
+from wait_local_agent.vector_search import KnowledgeSearchBackend, search_backend_from_settings
 
-SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf"}
+SUPPORTED_SUFFIXES = BasicDocumentParser.supported_suffixes
 MAX_CHUNK_CHARS = 900
 
 
-@dataclass(frozen=True)
-class ExtractedDocument:
-    path: Path
-    title: str
-    kind: str
-    text: str
-    checksum: str
-    modified_at: str
-
-
 class KnowledgeIngestionService:
-    def __init__(self, store: Store, allowed_root: Path) -> None:
+    def __init__(
+        self,
+        store: Store,
+        allowed_root: Path,
+        *,
+        parser: DocumentParser | None = None,
+        search_backend: KnowledgeSearchBackend | None = None,
+    ) -> None:
         self.store = store
         self.allowed_root = allowed_root.resolve()
+        self.parser = parser or BasicDocumentParser()
+        self.search_backend = search_backend
 
     def ingest_path(self, path: Path) -> list[KnowledgeDocument]:
         target = path.resolve()
         self._validate_allowed_path(target)
         files = self._document_files(target)
         pending_documents = self._prepare_documents(files)
-        return self.store.upsert_knowledge_documents(pending_documents)
+        documents = self.store.upsert_knowledge_documents(pending_documents)
+        if self.search_backend is not None:
+            for document in documents:
+                chunks = self.store.list_knowledge_chunks_for_document(document.id)
+                self.search_backend.upsert_document_chunks(chunks)
+        return documents
 
     def _prepare_documents(self, files: list[Path]) -> list[KnowledgeDocumentWrite]:
         pending_documents: list[KnowledgeDocumentWrite] = []
         for file_path in files:
             self._validate_allowed_path(file_path.resolve())
-            extracted = extract_document(file_path)
+            extracted = self.parser.extract(file_path)
             chunks = chunk_text(extracted.text)
             if not chunks:
                 raise ValueError(f"{file_path} does not contain extractable text")
@@ -65,62 +73,44 @@ class KnowledgeIngestionService:
 
     def _document_files(self, target: Path) -> list[Path]:
         if target.is_file():
-            if target.suffix.lower() not in SUPPORTED_SUFFIXES:
+            if target.suffix.lower() not in self.parser.supported_suffixes:
                 raise ValueError(f"{target} is not a supported document type")
             return [target]
         if not target.is_dir():
             raise ValueError(f"{target} does not exist")
         files: list[Path] = []
         for candidate in sorted(target.rglob("*")):
-            if not candidate.is_file() or candidate.suffix.lower() not in SUPPORTED_SUFFIXES:
+            if (
+                not candidate.is_file()
+                or candidate.suffix.lower() not in self.parser.supported_suffixes
+            ):
                 continue
             self._validate_allowed_path(candidate.resolve())
             files.append(candidate)
         return files
 
 
-def extract_document(path: Path) -> ExtractedDocument:
-    suffix = path.suffix.lower()
-    raw_bytes = path.read_bytes()
-    if suffix == ".pdf":
-        text = extract_pdf_text(path)
-        title = path.stem.replace("-", " ").replace("_", " ").strip().title()
-    else:
-        text = path.read_text(encoding="utf-8").strip()
-        title = extract_title(text, path)
-    if not text.strip():
-        raise ValueError(f"{path} does not contain extractable text")
-    return ExtractedDocument(
-        path=path,
-        title=title,
-        kind=suffix.removeprefix("."),
-        text=text,
-        checksum=hashlib.sha256(raw_bytes).hexdigest(),
-        modified_at=datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
+def ingestion_service_from_settings(store: Store, settings: Settings) -> KnowledgeIngestionService:
+    parser = parser_for_name(settings.document_parser, allow_ocr=settings.allow_ocr)
+    search_backend = search_backend_from_settings(settings, store)
+    return KnowledgeIngestionService(
+        store,
+        settings.allowed_doc_root,
+        parser=parser,
+        search_backend=search_backend,
     )
 
 
+def extract_document(path: Path) -> ExtractedDocument:
+    return BasicDocumentParser().extract(path)
+
+
 def extract_pdf_text(path: Path) -> str:
-    try:
-        reader = PdfReader(str(path))
-        page_text = [page.extract_text() or "" for page in reader.pages]
-    except Exception as exc:
-        raise ValueError(f"{path} could not be read as a text PDF") from exc
-    text = "\n\n".join(part.strip() for part in page_text if part.strip()).strip()
-    if not text:
-        raise ValueError(f"{path} does not contain extractable text")
-    return text
+    return document_parsing.extract_pdf_text(path)
 
 
 def extract_title(text: str, path: Path) -> str:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            return stripped.lstrip("#").strip() or path.stem
-        return stripped[:80]
-    return path.stem.replace("-", " ").replace("_", " ").strip().title()
+    return document_parsing.extract_title(text, path)
 
 
 def chunk_text(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:

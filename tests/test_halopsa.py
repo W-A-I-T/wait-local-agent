@@ -6,7 +6,13 @@ from pathlib import Path
 import httpx
 
 from wait_local_agent.config import Settings
-from wait_local_agent.halopsa import HaloPSAReadClient
+from wait_local_agent.halopsa import (
+    HaloPSAReadClient,
+    _normalize_client,
+    _normalize_note,
+    _remote_id,
+    _safe_endpoint,
+)
 from wait_local_agent.models import HaloAsset, HaloCategory, HaloClient, HaloNote, HaloWriteRequest
 
 
@@ -471,3 +477,70 @@ def test_halopsa_write_validation_and_malformed_json_failures(tmp_path: Path) ->
     assert unsupported.status == "failed"
     assert malformed.status == "failed"
     assert "malformed JSON" in malformed.message
+
+
+def test_halopsa_transport_errors_and_token_cache(tmp_path: Path) -> None:
+    token_calls = 0
+
+    def cached_token_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls
+        if request.url.path.endswith("/auth/token"):
+            token_calls += 1
+            return httpx.Response(200, json={"access_token": "token-123", "expires_in": 300})
+        return httpx.Response(200, json={"tickets": []})
+
+    cached = HaloPSAReadClient(
+        _settings(tmp_path),
+        transport=httpx.MockTransport(cached_token_handler),
+    )
+
+    cached.list_tickets()
+    cached.list_clients()
+
+    assert token_calls == 1
+
+    def get_connect_error(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        raise httpx.ConnectError("boom", request=request)
+
+    read_error = HaloPSAReadClient(
+        _settings(tmp_path),
+        transport=httpx.MockTransport(get_connect_error),
+    ).list_tickets()
+
+    def token_timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("slow", request=request)
+
+    token_error = HaloPSAReadClient(
+        _settings(tmp_path),
+        transport=httpx.MockTransport(token_timeout),
+    ).health()
+
+    def post_timeout(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        raise httpx.TimeoutException("slow", request=request)
+
+    write_error = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(post_timeout),
+    ).execute_write(HaloWriteRequest("TCK-1", "add_note", {"note": "hello"}, 1))
+
+    assert read_error.result.status == "failed"
+    assert "before receiving" in read_error.result.message
+    assert token_error.status == "failed"
+    assert "token request failed" in token_error.message
+    assert write_error.status == "failed"
+    assert "before receiving" in write_error.message
+
+
+def test_halopsa_helper_edges() -> None:
+    try:
+        _safe_endpoint("https://evil.test")
+    except Exception as exc:
+        assert "relative paths" in str(exc)
+    assert _normalize_client({}) is None
+    assert _normalize_note({}) is None
+    assert _remote_id({"faultid": "TCK-1"}) == "TCK-1"
+    assert _remote_id("bad") == ""
