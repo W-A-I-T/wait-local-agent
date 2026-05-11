@@ -56,3 +56,35 @@ approval, and auditable local execution.
 - Tenant and client boundaries, encrypted secrets storage, connector setup
   validation, audit export, and update channel.
 - WAIT MSP Pack templates plus paid deployment, hardening, and support packages.
+
+## Future Open-source Leverage
+
+WAIT Local Agent should remain the core local-first MSP appliance. When adding
+major capabilities, prefer focused, replaceable open-source modules over a
+large framework rewrite.
+
+| Need | Reference project | Use |
+| --- | --- | --- |
+| HaloPSA connector coverage | [`amplify-msp/py-halo`](https://github.com/amplify-msp/py-halo) | MIT Python wrapper to study for HaloPSA auth, endpoint coverage, and connector behavior. |
+| Hudu connector coverage | [`lwhitelock/HuduAPI`](https://github.com/lwhitelock/HuduAPI) | MIT PowerShell module to use as an endpoint/action map while keeping this project Python/httpx-native. |
+| Scanned PDF and OCR ingestion | [`docling-project/docling`](https://github.com/docling-project/docling) | MIT local document parsing, OCR, tables, layout, Markdown, and JSON export. |
+| Vector search backend | [`qdrant/qdrant`](https://github.com/qdrant/qdrant) | Apache-2.0 vector database for semantic MSP documentation search with metadata filters. |
+| Simpler local vector backend | [`chroma-core/chroma`](https://github.com/chroma-core/chroma) | Apache-2.0 option for quick local semantic-search prototypes. |
+| Human-in-loop workflow engine | [`langchain-ai/langgraph`](https://github.com/langchain-ai/langgraph) | MIT option to revisit only when workflows need branching, retries, timers, pause/resume, or multi-connector state. |
+| Ops/runbook automation patterns | [`StackStorm/st2`](https://github.com/StackStorm/st2) | Apache-2.0 architecture reference for future RMM, M365, trigger/action/rule/workflow, and audit patterns. |
+| MSP domain model reference | [`Nine-Minds/alga-psa`](https://github.com/Nine-Minds/alga-psa) | Useful PSA domain reference, but AGPL: do not copy code into this Apache-2.0 project without a license decision. |
+
+Open source does not automatically mean "no issue." Before copying code or
+adding a dependency, check the license and distribution obligations. MIT and
+Apache-2.0 are generally compatible with this repo's Apache-2.0 model. AGPL,
+fair-code, source-available, and similar licenses should be treated as product
+or architecture inspiration unless WAIT explicitly accepts the obligations.
+
+Priority order remains:
+
+1. Use Docling for document ingestion and OCR.
+2. Use py-halo as HaloPSA connector guidance.
+3. Use Qdrant for the planned vector backend.
+4. Consider LangGraph only when workflow state becomes too complex for the
+   current deterministic engine.
+5. Study StackStorm for future RMM, M365, and runbook automation patterns.
