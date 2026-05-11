@@ -12,7 +12,7 @@ const approvals = [
     execution_status: "not_started",
     execution_message: "",
     payload: { fields: { note: "Call customer", status: "In Progress" } },
-    can_execute: true,
+    can_execute: false,
     block_reason: "",
     workflow_run_id: "run-1"
   },
@@ -25,7 +25,7 @@ const approvals = [
     execution_status: "not_started",
     execution_message: "",
     payload: { fields: { technician: "Avery" } },
-    can_execute: true,
+    can_execute: false,
     block_reason: "",
     workflow_run_id: null
   }
@@ -77,6 +77,9 @@ describe("App", () => {
       );
     });
 
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /Approve/i })[0]).toBeEnabled();
+    });
     fireEvent.click(screen.getAllByRole("button", { name: /Approve/i })[0]);
 
     await waitFor(() => {

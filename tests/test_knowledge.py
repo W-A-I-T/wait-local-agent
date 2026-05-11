@@ -200,6 +200,39 @@ def test_unsupported_document_extension_errors(settings, tmp_path) -> None:
         service.ingest_path(unsupported)
 
 
+class FakeInputFormat:
+    PDF = "pdf"
+    IMAGE = "image"
+
+
+class FakePdfPipelineOptions:
+    def __init__(self, *, do_ocr: bool = True) -> None:
+        self.do_ocr = do_ocr
+
+
+class FakeFormatOption:
+    def __init__(self, *, pipeline_options: FakePdfPipelineOptions) -> None:
+        self.pipeline_options = pipeline_options
+
+
+def install_fake_docling(monkeypatch: pytest.MonkeyPatch, document_converter: type[Any]) -> None:
+    docling_module = types.ModuleType("docling")
+    datamodel_module = types.ModuleType("docling.datamodel")
+    base_models_module = types.ModuleType("docling.datamodel.base_models")
+    pipeline_options_module = types.ModuleType("docling.datamodel.pipeline_options")
+    converter_module = types.ModuleType("docling.document_converter")
+    cast(Any, base_models_module).InputFormat = FakeInputFormat
+    cast(Any, pipeline_options_module).PdfPipelineOptions = FakePdfPipelineOptions
+    cast(Any, converter_module).DocumentConverter = document_converter
+    cast(Any, converter_module).ImageFormatOption = FakeFormatOption
+    cast(Any, converter_module).PdfFormatOption = FakeFormatOption
+    monkeypatch.setitem(sys.modules, "docling", docling_module)
+    monkeypatch.setitem(sys.modules, "docling.datamodel", datamodel_module)
+    monkeypatch.setitem(sys.modules, "docling.datamodel.base_models", base_models_module)
+    monkeypatch.setitem(sys.modules, "docling.datamodel.pipeline_options", pipeline_options_module)
+    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
+
+
 def test_docling_parser_missing_dependency_errors_cleanly(settings, tmp_path) -> None:
     doc_root = tmp_path / "docs"
     doc_root.mkdir()
@@ -226,16 +259,19 @@ def test_docling_parser_uses_lazy_document_converter(settings, tmp_path, monkeyp
         document = FakeDocument()
 
     class FakeDocumentConverter:
+        def __init__(self, *, format_options: dict[Any, Any] | None = None) -> None:
+            assert format_options is not None
+            assert format_options[FakeInputFormat.PDF].pipeline_options.do_ocr is True
+            assert format_options[FakeInputFormat.IMAGE].pipeline_options.do_ocr is True
+
         def convert(self, path: Path) -> FakeResult:
             assert path == pdf_path
             return FakeResult()
 
-    docling_module = types.ModuleType("docling")
-    converter_module = types.ModuleType("docling.document_converter")
-    cast(Any, converter_module).DocumentConverter = FakeDocumentConverter
-    monkeypatch.setitem(sys.modules, "docling", docling_module)
-    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
-    active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
+    install_fake_docling(monkeypatch, FakeDocumentConverter)
+    active_settings = replace(
+        settings, allowed_doc_root=doc_root, document_parser="docling", allow_ocr=True
+    )
     store = Store(active_settings.data_path)
 
     documents = ingestion_service_from_settings(store, active_settings).ingest_path(pdf_path)
@@ -259,35 +295,15 @@ def test_docling_parser_wires_ocr_pipeline_options(settings, tmp_path, monkeypat
         document = FakeDocument()
 
     class FakeDocumentConverter:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
+        def __init__(self, *, format_options: dict[Any, Any] | None = None) -> None:
+            assert format_options is not None
+            captured["format_options"] = format_options
 
         def convert(self, path: Path) -> FakeResult:
+            assert path == pdf_path
             return FakeResult()
 
-    class FakePdfPipelineOptions:
-        def __init__(self) -> None:
-            self.do_ocr = False
-
-    class FakePdfFormatOption:
-        def __init__(self, pipeline_options: FakePdfPipelineOptions) -> None:
-            self.pipeline_options = pipeline_options
-
-    class FakeInputFormat:
-        PDF = "pdf"
-
-    converter_module = types.ModuleType("docling.document_converter")
-    cast(Any, converter_module).DocumentConverter = FakeDocumentConverter
-    cast(Any, converter_module).PdfFormatOption = FakePdfFormatOption
-    base_models_module = types.ModuleType("docling.datamodel.base_models")
-    cast(Any, base_models_module).InputFormat = FakeInputFormat
-    pipeline_module = types.ModuleType("docling.datamodel.pipeline_options")
-    cast(Any, pipeline_module).PdfPipelineOptions = FakePdfPipelineOptions
-    monkeypatch.setitem(sys.modules, "docling", types.ModuleType("docling"))
-    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
-    monkeypatch.setitem(sys.modules, "docling.datamodel", types.ModuleType("docling.datamodel"))
-    monkeypatch.setitem(sys.modules, "docling.datamodel.base_models", base_models_module)
-    monkeypatch.setitem(sys.modules, "docling.datamodel.pipeline_options", pipeline_module)
+    install_fake_docling(monkeypatch, FakeDocumentConverter)
     active_settings = replace(
         settings,
         allowed_doc_root=doc_root,
@@ -300,10 +316,10 @@ def test_docling_parser_wires_ocr_pipeline_options(settings, tmp_path, monkeypat
         active_settings,
     ).ingest_path(pdf_path)
     format_options = cast(dict[str, Any], captured["format_options"])
-    pdf_option = format_options["pdf"]
 
     assert documents[0].title == "OCR"
-    assert cast(Any, pdf_option).pipeline_options.do_ocr is True
+    assert format_options[FakeInputFormat.PDF].pipeline_options.do_ocr is True
+    assert format_options[FakeInputFormat.IMAGE].pipeline_options.do_ocr is True
 
 
 def test_docling_parser_empty_and_converter_error(settings, tmp_path, monkeypatch) -> None:
@@ -320,13 +336,15 @@ def test_docling_parser_empty_and_converter_error(settings, tmp_path, monkeypatc
         document = EmptyDocument()
 
     class EmptyDocumentConverter:
+        def __init__(self, *, format_options: dict[Any, Any] | None = None) -> None:
+            assert format_options is not None
+            assert format_options[FakeInputFormat.PDF].pipeline_options.do_ocr is False
+            assert format_options[FakeInputFormat.IMAGE].pipeline_options.do_ocr is False
+
         def convert(self, path: Path) -> EmptyResult:
             return EmptyResult()
 
-    converter_module = types.ModuleType("docling.document_converter")
-    cast(Any, converter_module).DocumentConverter = EmptyDocumentConverter
-    monkeypatch.setitem(sys.modules, "docling", types.ModuleType("docling"))
-    monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
+    install_fake_docling(monkeypatch, EmptyDocumentConverter)
     active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
     service = ingestion_service_from_settings(Store(active_settings.data_path), active_settings)
 
@@ -334,10 +352,13 @@ def test_docling_parser_empty_and_converter_error(settings, tmp_path, monkeypatc
         service.ingest_path(pdf_path)
 
     class BrokenDocumentConverter:
+        def __init__(self, *, format_options: dict[Any, Any] | None = None) -> None:
+            assert format_options is not None
+
         def convert(self, path: Path):
             raise RuntimeError("broken")
 
-    cast(Any, converter_module).DocumentConverter = BrokenDocumentConverter
+    install_fake_docling(monkeypatch, BrokenDocumentConverter)
     broken_service = ingestion_service_from_settings(
         Store(active_settings.data_path),
         active_settings,

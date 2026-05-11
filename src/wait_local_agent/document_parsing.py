@@ -69,7 +69,13 @@ class DoclingDocumentParser:
     def extract(self, path: Path) -> ExtractedDocument:
         raw_bytes = path.read_bytes()
         try:
-            from docling.document_converter import DocumentConverter
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import (
+                DocumentConverter,
+                ImageFormatOption,
+                PdfFormatOption,
+            )
         except ImportError as exc:
             raise ValueError(
                 "Docling parser requires the optional docling extra; "
@@ -77,7 +83,14 @@ class DoclingDocumentParser:
             ) from exc
 
         try:
-            result = _docling_converter(DocumentConverter, self.allow_ocr).convert(path)
+            pipeline_options = PdfPipelineOptions(do_ocr=self.allow_ocr)
+            converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                    InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline_options),
+                }
+            )
+            result = converter.convert(path)
             text = result.document.export_to_markdown().strip()
         except Exception as exc:
             mode = "with OCR enabled" if self.allow_ocr else "with OCR disabled"
@@ -98,29 +111,6 @@ def parser_for_name(name: str, *, allow_ocr: bool = False) -> DocumentParser:
     if normalized == "docling":
         return DoclingDocumentParser(allow_ocr=allow_ocr)
     raise ValueError(f"unsupported document parser: {name}")
-
-
-def _docling_converter(document_converter_type: type, allow_ocr: bool):
-    if not allow_ocr:
-        return document_converter_type()
-    try:
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import PdfFormatOption
-    except ImportError as exc:
-        raise ValueError(
-            "Docling OCR requires Docling PDF pipeline options; "
-            'install with pip install -e ".[docling]".'
-        ) from exc
-
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = True
-    return document_converter_type(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
-        }
-    )
-
 
 def extract_pdf_text(path: Path) -> str:
     try:
