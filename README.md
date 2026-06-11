@@ -1,14 +1,28 @@
 # WAIT Local Agent
 
-WAIT Local Agent is a local-first MSP copilot appliance for tickets, runbooks,
-approval-gated workflow drafts, and auditable technician decisions. It is built
-for MSPs, IT consultants, and privacy-sensitive SMB teams that want useful
-automation without making a SaaS platform the mandatory home for client
-knowledge.
+**Local-first AI copilot for MSPs and founders. Tickets, runbooks, approvals, and knowledge — on your hardware, with your rules.**
 
-The first product wedge is **WAIT Local Agent for MSPs**: private ticket
-intelligence with cited local sources, HaloPSA-first connector drafts, local
-approval queues, and a clear event history.
+WAIT Local Agent is an open-source, self-hosted AI automation appliance for MSPs and startup teams. It provides ticket intelligence, runbook search, PSA workflow drafts, and a technician approval queue — without sending client data or project files to a third-party cloud.
+
+Apache 2.0 · Self-hosted Docker · No mandatory cloud account · HaloPSA + Hudu built-in
+
+---
+
+> ⚠️ **Safety guarantee**: Live PSA writes require explicit operator opt-in (`WAIT_ALLOW_WRITE_ACTIONS=true`) and human approval in the approval queue. They are disabled in every fresh install and in the demo path.
+
+---
+
+## Why Local-First
+
+Every major MSP AI automation tool — NeoAgent ($1,000–$2,000/month), Atera Robin, SuperOps Monica, ConnectWise zofiQ — runs on a third-party cloud and requires routing client tickets, runbooks, and technician decisions through a vendor's infrastructure.
+
+WAIT Local Agent is the only open-source, self-hosted alternative:
+
+- **Privacy by design** — client data stays on your hardware by default
+- **Inspectable** — read every line; no black box
+- **Air-gap compatible** — runs fully offline with no cloud dependencies
+- **10–20× cheaper** — free open core; $99/month MSP Pack vs $1,000+/month cloud tools
+- **MSPs and founders** — two modes, two personas, one appliance
 
 ## Why This Exists
 
@@ -22,6 +36,8 @@ cloud platform. WAIT Local Agent starts from a different premise:
 - Require technician approval for sensitive actions.
 - Keep audit and workflow history in local SQLite.
 - Package the runtime as a Docker appliance that an MSP can inspect and support.
+
+**Also a WAIT Launch Passport companion**: If you use [WAIT Launch Passport](https://app.waittech.io) for technical launch audits, the Founder Pack lets you run a private preflight check locally and export a signed evidence bundle directly to your LP scan — without uploading source code.
 
 ## Current Capabilities
 
@@ -352,18 +368,69 @@ npm run test
 npm run build
 ```
 
-## Product Model
+## Product Tiers
 
-- **WAIT**: parent platform for local vertical copilots.
-- **WAIT Local Agent**: local runtime, API, dashboard, and appliance package.
-- **WAIT MSP Pack**: first vertical pack for MSP ticket intelligence and
-  approval-gated workflows.
-- **WAIT Sync**: optional cloud coordination, updates, templates, and fallback
-  services.
-- **WAIT Adaptation**: paid deployment, customization, workflow design, and
-  hardening.
+| Tier | Price | What's included |
+| --- | --- | --- |
+| **Open Core** | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 5 templates, approval queue, knowledge base, Docker Compose |
+| **WAIT MSP Pack** | $99/month | + IT Glue, ConnectWise, Autotask, NinjaOne, M365/Entra, scheduled workflows, QBR reports, ROI dashboard |
+| **WAIT Founder Pack** | $49/month | + Project scanner, evidence vault, LP preflight, LP bundle export, developer handoff |
+| **WAIT Sync** | $29/month | + Template marketplace, encrypted cloud backup, team coordination |
+| **WAIT Agent Appliance** | $499/month | + All packs, RBAC setup, Vault, TLS, air-gap, SLA support |
+
+See [docs/commercial-model.md](docs/commercial-model.md) for full pricing and open-core licensing details.
+
+## Competitor Comparison
+
+| | WAIT Local Agent | NeoAgent | Atera+Robin | SuperOps+Monica |
+|---|---|---|---|---|
+| **Price** | Free + $99/mo | $1,000–$2,000/mo | $129–$209/tech/mo | $89–$179/tech/mo |
+| **Self-hosted** | ✓ | ✗ | ✗ | ✗ |
+| **Open source** | ✓ (Apache 2.0) | ✗ | ✗ | ✗ |
+| **Air-gap** | ✓ | ✗ | ✗ | ✗ |
+| **PSA-agnostic** | ✓ | ✓ | ✗ (Atera-only) | ✗ (SuperOps-only) |
+| **Founder mode** | ✓ (Founder Pack) | ✗ | ✗ | ✗ |
+
+See [docs/competitive-analysis.md](docs/competitive-analysis.md) for the full 10-competitor analysis.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  WAIT Local Agent — Local-First AI Copilot Appliance     │
+│                                                         │
+│  ┌───────────────┐  ┌────────────────┐  ┌───────────┐  │
+│  │ WAIT MSP Pack │  │Founder Pack    │  │WAIT Sync  │  │
+│  │ $99/mo (paid) │  │$49/mo (paid)   │  │$29/mo     │  │
+│  └──────┬────────┘  └───────┬────────┘  └─────┬─────┘  │
+│         │                   │                  │        │
+│  ┌──────┴───────────────────┴──────────────────┴─────┐  │
+│  │    PUBLIC OPEN-SOURCE CORE (Apache 2.0, Free)      │  │
+│  │  FastAPI · Typer CLI · SQLite FTS5                 │  │
+│  │  HaloPSA · Hudu · Approval Engine · Dashboard      │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                           │ optional, user-triggered      │
+│  ┌────────────────────────▼───────────────────────────┐  │
+│  │  WAIT Ecosystem (all opt-in)                        │  │
+│  │  Launch Passport · Investor Diligence Passport      │  │
+│  └────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Documentation
+
+| Doc | Contents |
+| --- | --- |
+| [docs/product-architecture.md](docs/product-architecture.md) | Full product architecture, layers, MSP + founder mode design, security model |
+| [docs/build-plan.md](docs/build-plan.md) | Phases 0–8 with task-level detail |
+| [docs/competitive-analysis.md](docs/competitive-analysis.md) | 10-competitor comparison including NeoAgent, Atera, SuperOps, ConnectWise |
+| [docs/commercial-model.md](docs/commercial-model.md) | Pricing, open-core strategy, go-to-market |
+| [docs/ecosystem-integration.md](docs/ecosystem-integration.md) | LP/IDP/AER data contracts and CollectorBundle format |
+| [docs/security-model.md](docs/security-model.md) | Threat model, safe-by-default policy, RBAC |
+| [docs/architecture.md](docs/architecture.md) | Technical component architecture |
+| [docs/roadmap.md](docs/roadmap.md) | Phase-by-phase feature roadmap |
+| [docs/status.md](docs/status.md) | Current implementation status and commercial readiness |
 
 ## Roadmap
 
-See [docs/status.md](docs/status.md), [docs/architecture.md](docs/architecture.md),
-and [docs/roadmap.md](docs/roadmap.md).
+See [docs/roadmap.md](docs/roadmap.md) and [docs/status.md](docs/status.md).

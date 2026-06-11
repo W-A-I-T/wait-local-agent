@@ -57,6 +57,80 @@ approval, and auditable local execution.
   validation, audit export, and update channel.
 - WAIT MSP Pack templates plus paid deployment, hardening, and support packages.
 
+## Phase 6: Startup/Founder Pack
+
+- Project workspace scanner: reads file tree, manifests, CI presence, route
+  patterns — never reads file contents.
+- Evidence vault: Fernet-encrypted local storage for signed, hashed evidence
+  bundles.
+- Launch readiness preflight: deterministic check against WAIT Launch Passport
+  claim categories (auth, testing, dependency, deployment, secret). Works fully
+  offline with no LP account.
+- Developer handoff pack generator: structured Markdown with architecture
+  summary, dependency list, detected routes, env key inventory, gaps, and
+  next-steps.
+- WAIT Launch Passport CollectorBundle export + optional upload: produces LP-
+  compatible signed JSON bundle. Upload is user-triggered with diff preview and
+  explicit confirmation — never automatic.
+- "Ask my project" assistant: cited FTS5 Q&A over project docs.
+- Investor evidence preparation workflow.
+
+## Phase 7: WAIT Sync (Optional Cloud Coordination)
+
+- Template marketplace: pull workflow template packs from WAIT registry.
+- Encrypted cloud backup: client-side AES-256 before upload; WAIT server cannot
+  read content.
+- Multi-technician team coordination via Sync relay.
+- License and entitlement management for MSP Pack and Founder Pack.
+- Optional cloud model fallback: Ollama timeout + explicit opt-in → cloud model
+  with pre-upload redaction pass.
+- Telemetry: opt-in only; aggregated ticket counts; no client data.
+
+## Phase 8: Paid Packs + Enterprise Hardening
+
+- MSP Pack and Founder Pack packaged as installable signed tarballs.
+- HMAC-signed offline license key system.
+- Feature gating: paid features blocked without valid license.
+- White-label branding configuration.
+- N-able RMM connector (read-only).
+- Kaseya VSA connector (read-only).
+- Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
+  air-gap deployment.
+
+## Phase 9: Public Launch
+
+- Final README with architecture diagram, screenshots, and demo GIF.
+- Demo data in `demo/`: sample runbooks and sample tickets.
+- Demo script and video.
+- Install script (`scripts/install.sh`): one-liner Docker Compose install.
+- `CHANGELOG.md` with full release history.
+- GitHub issue templates: bug, connector request, template request, security.
+- Release tag `v1.0.0`.
+- WAIT website landing page with pricing, demo, and install path.
+
+## Product Layers
+
+See `docs/commercial-model.md` for the full product tier breakdown:
+
+| Tier | Price | Contents |
+| --- | --- | --- |
+| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 5 templates, approval queue |
+| WAIT MSP Pack | $99/month | + IT Glue, ConnectWise, Autotask, M365, RMM, QBR reports, ROI dashboard |
+| WAIT Founder Pack | $49/month | + Project scanner, evidence vault, LP preflight, LP bundle export |
+| WAIT Sync | $29/month | + Template marketplace, encrypted cloud backup, team sync |
+| WAIT Agent Appliance | $499/month | + All packs, RBAC, Vault, TLS, air-gap, SLA support |
+
+## Repo Strategy
+
+The open-core model uses two repos:
+
+- `W-A-I-T/wait-local-agent` (public, Apache 2.0): open core
+- `W-A-I-T/wait-local-agent-packs` (private, proprietary): paid connector packs
+  and Founder Pack code
+
+The `packs/` directory in the public repo is gitignored. Pack code never appears
+in the public repo. See `docs/commercial-model.md` for details.
+
 ## Future Open-source Leverage
 
 WAIT Local Agent should remain the core local-first MSP appliance. When adding
