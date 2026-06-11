@@ -152,7 +152,7 @@ Includes:
 - Encrypted cloud backup — client-side AES-256 before upload; WAIT server cannot read content
 - Team / multi-tech coordination — shared approval queue for multiple technicians
 - License/entitlement management
-- Optional cloud model fallback (Ollama timeout → Claude API with pre-upload redaction)
+- Optional cloud model fallback (Ollama timeout → cloud LLM API with pre-upload redaction)
 - Telemetry (opt-in only; aggregated ticket counts, no client data)
 
 ### Layer E — WAIT Agent Appliance ($499/month or custom)

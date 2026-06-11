@@ -486,7 +486,7 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 3. Encrypted cloud backup: `wait sync backup` — client-side AES-256 (WAIT server sees only ciphertext)
 4. License check: `wait sync status` — validates MSP Pack or Founder Pack entitlement
 5. Team coordination: shared approval queue via Sync relay for multi-technician setups
-6. Optional cloud model fallback: `WAIT_ALLOW_CLOUD_FALLBACK=true` + Ollama timeout → Claude API + redaction
+6. Optional cloud model fallback: `WAIT_ALLOW_CLOUD_FALLBACK=true` + Ollama timeout → cloud LLM API + redaction
 7. Telemetry: `WAIT_TELEMETRY_ENABLED=false` by default; opt-in sends aggregated ticket counts only
 
 **Exit criteria**: Template packs downloadable; cloud backup verified to be opaque to WAIT server; license gate working.
