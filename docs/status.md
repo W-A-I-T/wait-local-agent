@@ -42,3 +42,46 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Multi-tenant hosted control plane.
 - Ungated side effects. HaloPSA writes require explicit flags, credentials, and
   approval; other live writes remain disabled.
+
+## Commercial Readiness
+
+**Phase 1 (current) — 90% ready for public promotion after safety fixes:**
+
+Critical blockers before promoting the public repo:
+
+- [ ] API authentication — Bearer token middleware on all routes (`security.py`)
+- [ ] Encrypted secrets vault — Fernet-encrypted connector credentials (`vault.py`)
+- [ ] Redaction expansion — cover `apikey`, `auth_token`, `bearer` key variants
+
+**Phase 2 (needed for MSP commercial launch):**
+
+- [ ] RBAC enforcement (admin / technician / viewer roles with route-level checks)
+- [ ] Audit export (`GET /audit-events/export?format=csv|json`)
+- [ ] Approver identity in audit events (SHA-256 token pseudonym)
+- [ ] Encrypted backup option
+- [ ] Connector credential validation CLI command
+- [ ] Rate limiting
+
+**Gap vs NeoAgent (primary cloud competitor at $1,000–$2,000/month):**
+
+| Capability | Status |
+| --- | --- |
+| HaloPSA read + approval-gated write | ✓ Built |
+| Hudu read-only | ✓ Built |
+| Local/self-hosted | ✓ Built (unique — NeoAgent cloud-only) |
+| Open-source inspectable | ✓ Built (unique) |
+| Air-gap compatible | ✓ Built (unique) |
+| IT Glue connector | Phase 3 (MSP Pack) |
+| ConnectWise PSA connector | Phase 4 (MSP Pack) |
+| Autotask connector | Phase 4 (MSP Pack) |
+| NinjaOne / Datto RMM connectors | Phase 4 (MSP Pack) |
+| M365 / Entra read-only | Phase 4 (MSP Pack) |
+| Scheduled / proactive workflows | Phase 3 |
+| QBR / ROI reporting | Phase 3 (MSP Pack) |
+| Startup/founder mode | Phase 4 (Founder Pack) |
+| LP evidence bundle export | Phase 5 (Founder Pack) |
+| SOC 2 certification | Phase 7+ |
+
+See `docs/competitive-analysis.md` for the full 10-competitor analysis.
+See `docs/build-plan.md` for the phased implementation plan.
+See `docs/commercial-model.md` for pricing and go-to-market strategy.
