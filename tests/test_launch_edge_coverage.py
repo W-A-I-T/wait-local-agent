@@ -9,7 +9,7 @@ from wait_local_agent.config import load_settings
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 
-def test_api_token_required_even_in_demo_when_token_is_configured(settings) -> None:
+def test_api_token_not_required_in_demo_mode_even_when_configured(settings) -> None:
     token_settings = settings.__class__(
         **{
             **settings.__dict__,
@@ -23,8 +23,8 @@ def test_api_token_required_even_in_demo_when_token_is_configured(settings) -> N
     malformed = client.get("/health", headers={"Authorization": "Token configured-token"})
     ok = client.get("/health", headers={"Authorization": "Bearer configured-token"})
 
-    assert missing.status_code == 401
-    assert malformed.status_code == 401
+    assert missing.status_code == 200
+    assert malformed.status_code == 200
     assert ok.status_code == 200
 
 

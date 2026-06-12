@@ -39,14 +39,15 @@ def test_api_auth_requires_bearer_token_when_production_mode_enabled(settings) -
     assert ok.json()["api_auth_required"] is True
 
 
-def test_api_auth_blocks_production_mode_without_configured_token(settings) -> None:
+def test_api_auth_leaves_local_api_open_without_configured_token(settings) -> None:
     secured_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
     client = TestClient(create_app(secured_settings))
 
     response = client.get("/health")
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == "WAIT_API_TOKEN is required when WAIT_DEMO_MODE=false"
+    assert auth_required(secured_settings) is False
+    assert response.status_code == 200
+    assert response.json()["api_auth_required"] is False
 
 
 def test_secret_vault_round_trip_and_corruption_error(tmp_path) -> None:

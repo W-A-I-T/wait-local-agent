@@ -185,10 +185,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/audit/export")
     def audit_export(export_format: Literal["json", "csv"] = "json") -> Response:
-        events = [asdict(event) for event in store.list_event_history()]
+        events = [asdict(event) for event in store.list_audit_events()]
         if export_format == "csv":
             output = io.StringIO()
-            fieldnames = ["id", "event_type", "subject_id", "status", "message", "payload_json", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)

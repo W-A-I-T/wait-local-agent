@@ -132,14 +132,14 @@ def export_audit_events(
         typer.Option("--format", help="Audit export format: json or csv."),
     ] = "json",
 ) -> None:
-    events = [asdict(event) for event in _store().list_event_history()]
+    events = [asdict(event) for event in _store().list_audit_events()]
     if export_format == "json":
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(events, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     elif export_format == "csv":
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("w", encoding="utf-8", newline="") as handle:
-            fieldnames = ["id", "event_type", "subject_id", "status", "message", "payload_json", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)

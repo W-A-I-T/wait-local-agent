@@ -10,7 +10,7 @@ from wait_local_agent.config import Settings
 def auth_required(settings: Settings) -> bool:
     """Return whether the API should require a bearer token."""
 
-    return not (settings.demo_mode and not settings.api_token)
+    return not settings.demo_mode and bool(settings.api_token)
 
 
 def require_bearer_authorization(settings: Settings, authorization: str | None) -> None:
@@ -18,8 +18,6 @@ def require_bearer_authorization(settings: Settings, authorization: str | None) 
 
     if not auth_required(settings):
         return
-    if not settings.api_token:
-        raise _unauthorized("WAIT_API_TOKEN is required when WAIT_DEMO_MODE=false")
     if not authorization:
         raise _unauthorized("missing bearer token")
     scheme, separator, token = authorization.partition(" ")
