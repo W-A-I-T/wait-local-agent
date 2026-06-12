@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from wait_local_agent.config import Settings, load_settings
@@ -20,6 +22,7 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.security import auth_required, require_bearer_authorization
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -68,7 +71,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
 
-    app = FastAPI(title="WAIT Local Agent", version="0.1.0")
+    def require_api_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+        require_bearer_authorization(active_settings, authorization)
+
+    app = FastAPI(
+        title="WAIT Local Agent",
+        version="0.1.0",
+        dependencies=[Depends(require_api_auth)],
+    )
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -77,6 +87,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "write_actions_enabled": active_settings.allow_write_actions,
             "http_probing_enabled": active_settings.allow_http_probing,
             "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
+            "llm_inference_enabled": active_settings.allow_llm_inference,
+            "api_auth_required": auth_required(active_settings),
+            "demo_mode": active_settings.demo_mode,
+            "secrets_backend": active_settings.secrets_backend,
             "halopsa_configured": bool(
                 active_settings.halopsa_base_url
                 and active_settings.halopsa_client_id
@@ -168,6 +182,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/audit")
     def audit() -> list[dict[str, object]]:
         return [asdict(event) for event in store.list_audit_events()]
+
+    @app.get("/audit/export")
+    def audit_export(export_format: Literal["json", "csv"] = "json") -> Response:
+        events = [asdict(event) for event in store.list_event_history()]
+        if export_format == "csv":
+            output = io.StringIO()
+            fieldnames = ["id", "event_type", "subject_id", "status", "message", "payload_json", "created_at"]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(events)
+            return Response(
+                output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": 'attachment; filename="wait-audit-events.csv"'},
+            )
+        return Response(
+            json.dumps(events, sort_keys=True, indent=2) + "\n",
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="wait-audit-events.json"'},
+        )
 
     @app.get("/event-history")
     def event_history() -> list[dict[str, object]]:
@@ -424,13 +458,34 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+SENSITIVE_KEY_PARTS = (
+    "secret",
+    "token",
+    "api_key",
+    "password",
+    "apikey",
+    "auth_token",
+    "bearer",
+    "authorization",
+    "x-api-key",
+    "client_secret",
+    "access_token",
+)
+
+
 def _redact_payload(payload: dict[str, object]) -> dict[str, object]:
     redacted: dict[str, object] = {}
     for key, value in payload.items():
-        if any(secret in key.lower() for secret in ("secret", "token", "api_key", "password")):
+        if any(secret in key.lower() for secret in SENSITIVE_KEY_PARTS):
             redacted[key] = "[redacted]"
-        elif isinstance(value, dict):
-            redacted[key] = _redact_payload(value)
         else:
-            redacted[key] = value
+            redacted[key] = _redact_value(value)
     return redacted
+
+
+def _redact_value(value: object) -> object:
+    if isinstance(value, dict):
+        return _redact_payload(value)
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
