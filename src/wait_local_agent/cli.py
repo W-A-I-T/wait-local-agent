@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -22,8 +23,10 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
 
@@ -36,6 +39,7 @@ workflows_app = typer.Typer(help="Workflow template and run commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
+secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -44,6 +48,7 @@ app.add_typer(workflows_app, name="workflows")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
+app.add_typer(secrets_app, name="secrets")
 
 
 def _store() -> Store:
@@ -72,6 +77,10 @@ def doctor() -> None:
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
     typer.echo(f"cloud_fallback_enabled={settings.allow_cloud_fallback}")
+    typer.echo(f"api_auth_required={auth_required(settings)}")
+    typer.echo(f"demo_mode={settings.demo_mode}")
+    typer.echo(f"secrets_backend={settings.secrets_backend}")
+    typer.echo(f"vault_path={settings.vault_path}")
     typer.echo(f"document_parser={settings.document_parser}")
     typer.echo(f"ocr_enabled={settings.allow_ocr}")
     typer.echo(f"vector_backend={settings.vector_backend}")
@@ -113,6 +122,30 @@ def summarize_ticket(ticket_id: str) -> None:
 def list_audit_events() -> None:
     for event in _store().list_audit_events():
         typer.echo(f"{event.id} {event.event_type} {event.subject_id} {event.detail}")
+
+
+@audit_app.command("export")
+def export_audit_events(
+    destination: Path,
+    export_format: Annotated[
+        str,
+        typer.Option("--format", help="Audit export format: json or csv."),
+    ] = "json",
+) -> None:
+    events = [asdict(event) for event in _store().list_event_history()]
+    if export_format == "json":
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(events, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    elif export_format == "csv":
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8", newline="") as handle:
+            fieldnames = ["id", "event_type", "subject_id", "status", "message", "payload_json", "created_at"]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(events)
+    else:
+        raise typer.BadParameter("format must be json or csv")
+    typer.echo(f"audit_export={destination} format={export_format} events={len(events)}")
 
 
 @events_app.command("list")
@@ -396,6 +429,47 @@ def create_backup(destination: Path) -> None:
 def restore_backup(source: Path) -> None:
     path = restore_state(_store(), source)
     typer.echo(f"restored={path}")
+
+
+@secrets_app.command("init")
+def init_secret_vault() -> None:
+    settings = load_settings()
+    vault = SecretVault.initialize(settings.vault_path)
+    typer.echo(f"vault_initialized={vault.vault_path}")
+
+
+@secrets_app.command("set")
+def set_secret(key: str, value: str) -> None:
+    settings = load_settings()
+    vault = SecretVault.initialize(settings.vault_path)
+    try:
+        vault.set(key, value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"secret_stored={key}")
+
+
+@secrets_app.command("list")
+def list_vault_secrets() -> None:
+    settings = load_settings()
+    try:
+        keys = SecretVault(settings.vault_path).list_keys()
+    except SecretVaultError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for key in keys:
+        typer.echo(key)
+
+
+@secrets_app.command("get")
+def get_secret(key: str) -> None:
+    settings = load_settings()
+    try:
+        value = SecretVault(settings.vault_path).get(key)
+    except (SecretVaultError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if value is None:
+        raise typer.BadParameter("secret not found")
+    typer.echo(value)
 
 
 def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:
