@@ -27,6 +27,45 @@ def test_health_reports_safe_defaults(settings) -> None:
     assert response.json()["write_actions_enabled"] is False
     assert response.json()["http_probing_enabled"] is False
     assert response.json()["cloud_fallback_enabled"] is False
+    assert response.json()["demo_mode"] is True
+    assert response.json()["api_auth_required"] is False
+
+
+def test_api_auth_is_off_in_default_demo_mode(settings) -> None:
+    demo_settings = settings.__class__(
+        **{**settings.__dict__, "api_token": "local-secret", "demo_mode": True}
+    )
+    client = TestClient(create_app(demo_settings))
+
+    response = client.get("/health")
+    security = client.get("/settings/security")
+
+    assert response.status_code == 200
+    assert response.json()["api_auth_required"] is False
+    assert security.status_code == 200
+    assert security.json()["api_token_configured"] is True
+    assert security.json()["api_auth_required"] is False
+
+
+def test_api_auth_requires_bearer_token_when_demo_mode_disabled(settings) -> None:
+    secure_settings = settings.__class__(
+        **{**settings.__dict__, "api_token": "local-secret", "demo_mode": False}
+    )
+    client = TestClient(create_app(secure_settings))
+
+    missing = client.get("/health")
+    malformed = client.get("/health", headers={"Authorization": "Token local-secret"})
+    wrong = client.get("/health", headers={"Authorization": "Bearer wrong"})
+    good = client.get("/health", headers={"Authorization": "Bearer local-secret"})
+    security = client.get("/settings/security", headers={"Authorization": "Bearer local-secret"})
+
+    assert missing.status_code == 401
+    assert malformed.status_code == 401
+    assert wrong.status_code == 401
+    assert good.status_code == 200
+    assert good.json()["api_auth_required"] is True
+    assert security.status_code == 200
+    assert security.json()["api_auth_required"] is True
 
 
 def test_provider_settings_and_tickets_list(settings) -> None:
@@ -70,6 +109,29 @@ def test_approval_missing_ticket_returns_404(settings) -> None:
     response = client.post("/tickets/NOPE/approvals", json={"status": "approved"})
 
     assert response.status_code == 404
+
+
+def test_audit_event_export_json_and_csv(settings) -> None:
+    store = Store(settings.data_path)
+    store.add_audit_event("unit.test.earlier", "TCK-1", "first")
+    store.add_audit_event("unit.test.later", "TCK-2", "second")
+    client = TestClient(create_app(settings))
+
+    json_export = client.get("/audit-events/export")
+    csv_export = client.get("/audit-events/export", params={"format": "csv"})
+    future_filter = client.get("/audit-events/export", params={"from": "9999-01-01T00:00:00+00:00"})
+
+    assert json_export.status_code == 200
+    assert json_export.json()["count"] >= 2
+    assert any(event["event_type"] == "unit.test.earlier" for event in json_export.json()["events"])
+    assert any(event["event_type"] == "unit.test.later" for event in json_export.json()["events"])
+    assert csv_export.status_code == 200
+    assert csv_export.headers["content-type"].startswith("text/csv")
+    assert "id,event_type,subject_id,detail,created_at" in csv_export.text
+    assert "unit.test.earlier" in csv_export.text
+    assert "unit.test.later" in csv_export.text
+    assert future_filter.status_code == 200
+    assert future_filter.json() == {"count": 0, "events": []}
 
 
 def test_missing_ticket_returns_404(settings) -> None:
@@ -213,6 +275,9 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
             "action_type": "add_note",
             "fields": {"note": "Ready"},
             "api_key": "secret",
+            "authorization": "Bearer secret",
+            "nested": {"access_token": "secret"},
+            "list": [{"client_secret": "secret"}],
         },
     )
     store.update_approval_request(approval.id or 0, "approved")
@@ -235,13 +300,17 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert bad_edit.status_code == 400
     assert ready.json()["can_execute"] is True
     assert ready.json()["payload"]["api_key"] == "[redacted]"
+    assert ready.json()["payload"]["authorization"] == "[redacted]"
+    assert ready.json()["payload"]["nested"]["access_token"] == "[redacted]"
+    assert ready.json()["payload"]["list"][0]["client_secret"] == "[redacted]"
     assert missing_workflow.status_code == 404
     assert bad_search.status_code == 400
     assert missing_ticket_workflow.status_code == 404
     assert app_module._safe_json_object("not-json") == {}
-    redacted = app_module._redact_payload({"nested": {"token": "x"}})
+    redacted = app_module._redact_payload({"nested": {"token": "x"}, "items": [{"bearer": "x"}]})
     nested = cast(dict[str, object], redacted["nested"])
     assert nested["token"] == "[redacted]"
+    assert redacted["items"] == [{"bearer": "[redacted]"}]
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:

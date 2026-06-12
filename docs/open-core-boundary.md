@@ -25,7 +25,7 @@ Do not add paid or proprietary pack internals here. That includes:
 - paid license enforcement implementation beyond open-core interface stubs
 - proprietary templates, scripts, or client-specific automations
 
-Private pack work belongs in `W-A-I-T/wait-local-agent-packs` or another private repository.
+Private pack work belongs in `W-A-I-T/wait-local-agent-packs` (https://github.com/W-A-I-T/wait-local-agent-packs — private) or another private repository.
 
 ## Local install directory
 
