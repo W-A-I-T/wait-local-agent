@@ -1,161 +1,123 @@
 # Security Model
 
-> WAIT Local Agent is designed to be safe by default. All potentially dangerous capabilities require explicit operator opt-in and are disabled in fresh installs.
+WAIT Local Agent is designed to be safe by default. Potentially dangerous capabilities require explicit operator opt-in and are disabled in fresh installs.
 
----
-
-## Safe-by-Default Flags
-
-Every flag defaults to `false`. The operator must consciously choose to enable each one.
+## Safe-by-default flags
 
 | Flag | Default | Required for |
-|------|---------|-------------|
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Any outbound HTTP to PSA/RMM/KB systems |
-| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live writes to any connector (creates tickets, notes, etc.) |
-| `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls (Ollama/vLLM) |
-| `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls when local model times out |
+| --- | --- | --- |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Outbound HTTP calls to PSA, RMM, or knowledge systems |
+| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live connector mutations |
+| `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
+| `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 
-**Live writes require all three to be true**: `WAIT_ALLOW_HTTP_PROBING=true` AND `WAIT_ALLOW_WRITE_ACTIONS=true` AND an approved `ApprovalRequest` record.
+HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
 
----
+## API authentication
 
-## Authentication (Phase 1)
+Current implementation:
 
-**Current state (Phase 1 — must fix before public promotion)**:
+- `WAIT_DEMO_MODE=true` and empty `WAIT_API_TOKEN` keeps the local demo path open.
+- Setting `WAIT_DEMO_MODE=false` requires `WAIT_API_TOKEN`.
+- Any configured token requires `Authorization: Bearer <token>` for API requests.
+- Missing or invalid tokens return HTTP 401.
 
-The API has no authentication middleware. Any caller on the local network can invoke all endpoints. This is acceptable for a single-operator local demo but is not safe for multi-user MSP deployment.
+Production-like local installs should set:
 
-**Phase 1 fix**:
-
-- Add `WAIT_API_TOKEN` config (empty = demo mode, no auth required)
-- Add `WAIT_DEMO_MODE=true` default (explicit local-only mode)
-- Add Bearer token middleware (`security.py`) on all routes
-- When `WAIT_API_TOKEN` is set and `WAIT_DEMO_MODE=false`, all requests require `Authorization: Bearer {token}`
-- Unauthenticated requests return `HTTP 401`
-
-**Phase 2 extension** (RBAC):
-
-Three scoped tokens — `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT_VIEWER_TOKEN`:
-
-| Role | Approve queue | Read all | Configure connectors | Manage RBAC | Export audit |
-|------|--------------|---------|---------------------|-------------|-------------|
-| **Admin** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Technician** | ✓ (own queue) | ✓ | ✗ | ✗ | ✓ (own events) |
-| **Viewer** | ✗ | ✓ | ✗ | ✗ | ✗ |
-
----
-
-## Secrets Management (Phase 1)
-
-**Current state**: Connector credentials (`WAIT_HALOPSA_CLIENT_SECRET`, `WAIT_HUDU_API_KEY`, etc.) are stored in environment variables. This means secrets may appear in Docker logs, shell history, `.env` files committed accidentally, or process listings.
-
-**Phase 1 fix**:
-
-- Add `WAIT_SECRETS_BACKEND=env|fernet` config
-- Add `WAIT_VAULT_PATH=data/vault` config
-- Create `vault.py`: Fernet-encrypted local secrets store
-  - `wait secrets init` — generates vault key, stores at `data/vault.key.enc` (chmod 600)
-  - `wait secrets set HALOPSA_CLIENT_SECRET <value>` — encrypts and stores
-  - `wait secrets list` — shows key names only, never values
-- Connector credential loading: check vault first, fall back to env if `WAIT_SECRETS_BACKEND=env`
-- Document: backup the vault key; loss of vault key = permanent loss of stored secrets
-
-**Operator responsibility**: The operator must ensure `data/vault.key.enc` is not committed to version control and is backed up separately from the database.
-
----
-
-## Payload Redaction
-
-The `_redact_payload()` function in `api/app.py` strips sensitive keys from approval request payloads before returning them to the client.
-
-**Current coverage** (expand in Phase 1):
-- `secret`, `token`, `api_key`, `password`
-
-**Expanded coverage** (Phase 1):
-- Add: `apikey`, `auth_token`, `bearer`, `authorization`, `x-api-key`, `client_secret`, `access_token`
-
-Redaction is applied on all approval request reads. Stored execution results do not contain raw secrets — only sanitized metadata (action type, HTTP status code, remote ID, result message).
-
----
-
-## Approval Gate Design
-
-Every connector write follows this path — no shortcuts:
-
-```
-1. draft_*(ticket_id, action_type, fields) → ApprovalRequest (status=pending)
-2. Technician reviews payload in UI or CLI
-3. Technician optionally edits "fields" key (only; action_type and ticket_id locked)
-4. Technician approves with comment (comment persisted, approver identity in Phase 2)
-5. execute_*_approval_request(request_id) checks:
-   - WAIT_ALLOW_HTTP_PROBING=true
-   - WAIT_ALLOW_WRITE_ACTIONS=true
-   - request.status == "approved"
-6. PSA API call made
-7. Audit event written: request_id, action_type, payload_hash, result, http_status, timestamp
-8. No retry on failure without a new approval cycle
+```text
+WAIT_DEMO_MODE=false
+WAIT_API_TOKEN=<strong-local-token>
 ```
 
-There is no code path that executes a write without going through steps 1–7.
+## Secrets management
 
----
+Current implementation supports two backends:
 
-## Audit Trail
+| Backend | Setting | Notes |
+| --- | --- | --- |
+| Environment | `WAIT_SECRETS_BACKEND=env` | Default for demo and Docker Compose simplicity |
+| Fernet vault | `WAIT_SECRETS_BACKEND=fernet` | Local encrypted file store under `WAIT_VAULT_PATH` |
 
-All side effects are written to the immutable `event_history` table. The table is append-only; no update or delete operations exist on it.
+Vault commands:
 
-Each event records: `event_type`, `entity_type`, `entity_id`, `description`, `metadata_json`, `created_at`.
+```bash
+wait-local-agent secrets init
+wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
+wait-local-agent secrets list
+```
 
-Phase 2 adds `approver_id` (SHA-256 hash of the approving token — pseudonymous, not plaintext) to approval events.
+`secrets list` prints names only. `secrets get` prints a value for local operator recovery and should be treated as sensitive terminal output.
 
-Phase 2 also adds `GET /audit-events/export?format=csv|json&from=&to=` for compliance reporting.
+Operators must back up the vault key separately. Losing `vault.key` means stored secrets cannot be decrypted.
 
----
+## Payload redaction
 
-## Knowledge Base Safety
+Approval request API views redact sensitive key variants before returning payloads to the client. Covered key fragments include:
 
-Document ingestion is restricted by `WAIT_ALLOWED_DOC_ROOT`. The `_validate_allowed_path()` function in `knowledge.py`:
+```text
+secret, token, api_key, password, apikey, auth_token, bearer, authorization, x-api-key, client_secret, access_token
+```
 
-1. Resolves the full absolute path (follows symlinks)
-2. Verifies the resolved path is under `WAIT_ALLOWED_DOC_ROOT` via `Path.relative_to()`
-3. Rejects paths that escape the root (directory traversal, symlink attacks)
+Redaction recurses through nested dictionaries and lists. Stored execution results contain sanitized metadata only.
 
-No code in ingested documents is executed. Documents are parsed as text only (Markdown, plain text, PDF text extraction, optional Docling parsing — never `exec`, `eval`, or subprocess).
+## Approval gate design
 
----
+Every HaloPSA write follows this path:
 
-## Threat Model
+```text
+1. draft_* creates an ApprovalRequest with status=pending.
+2. Technician reviews payload in the UI or CLI.
+3. Technician may edit only the fields payload while pending.
+4. Technician approves or rejects with a comment.
+5. Execution checks connector, action type, ticket id, approval status, flags, and prior execution state.
+6. PSA API call is made only after the checks pass.
+7. Audit and event history rows are written.
+8. A succeeded approval cannot be executed again.
+```
 
-| Threat | Risk Level | Mitigation | Phase |
-|--------|-----------|-----------|-------|
-| Unauthenticated API | High (must fix) | Bearer token middleware | Phase 1 |
-| Plaintext connector secrets | High (must fix) | Fernet-encrypted vault | Phase 1 |
-| Prompt injection from ticket body | Medium | Structured delimiters; deterministic by default; approval queue | Always |
-| Unsafe automation (auto-execute) | High | Two-flag lock + human approval required; no auto-execution code path | Always |
-| Cross-client data leakage | Medium (Phase 3+) | `client_id` enforcement on all queries | Phase 3 |
-| Accidental cloud upload (Founder) | Low | Explicit user trigger + diff preview; no background sync | Phase 4 |
-| Poisoned documentation | Low | Path validation; no code execution from KB | Always |
-| Bad model output executed | Medium | All model outputs are drafts; human approval required | Always |
-| Destructive M365/RMM write | Medium (Phase 4+) | Read-only first; writes only after approval + flag | Phase 4 |
-| Malicious local user bypassing approval | Low | Immutable audit trail; Phase 2 approver identity logging | Phase 2 |
-| Secrets in environment variables | High (current) | Fernet vault replaces env secrets in Phase 1 | Phase 1 |
-| Rate limiting / DoS via connector | Low | `slowapi` rate limiting added in Phase 2 | Phase 2 |
-| Compromised connector token | Medium | Approval gate still required; write flags can be disabled immediately | Always |
+Hudu is read-only in the public repo.
 
----
+## Audit trail and export
 
-## Pre-Promotion Security Checklist
+The event history table is append-only through application code. It records event type, subject id, status, message, payload JSON, and timestamp.
 
-These items must be complete before actively promoting the public repo:
+API export:
 
-- [ ] `gitleaks detect --source . --log-opts HEAD` — no secrets in git history
-- [ ] `pip-audit` clean — no critical CVEs
-- [ ] `pip-licenses` — all deps Apache 2.0 or MIT
-- [ ] API authentication implemented (Phase 1)
-- [ ] Fernet secrets vault implemented (Phase 1)
-- [ ] Redaction expansion to cover all key variants (Phase 1)
-- [ ] `SECURITY.md` updated with auth setup and vault setup guidance
-- [ ] Live-write disclaimer prominently in README: "Live PSA writes require explicit opt-in, human approval, and approved flags — they are never enabled by default"
-- [ ] All existing tests updated to include auth headers (Phase 1)
-- [ ] New auth + vault tests passing (Phase 1)
+```bash
+curl http://127.0.0.1:8788/audit/export
+curl 'http://127.0.0.1:8788/audit/export?export_format=csv'
+```
+
+CLI export:
+
+```bash
+wait-local-agent audit export .wait-local-agent/audit.json
+wait-local-agent audit export .wait-local-agent/audit.csv --format csv
+```
+
+## Knowledge base safety
+
+Document ingestion is restricted by `WAIT_ALLOWED_DOC_ROOT`. The ingestion service resolves the full path and rejects paths outside the configured root. Ingested documents are parsed as text; no document code is executed.
+
+## Threat model summary
+
+| Threat | Mitigation | Status |
+| --- | --- | --- |
+| Unauthenticated shared API | Bearer token gate outside demo mode | Implemented |
+| Plaintext local connector secrets | Optional Fernet vault | Implemented |
+| Unsafe connector mutation | Two flags plus human approval | Implemented |
+| Credential leakage in approval views | Expanded recursive redaction | Implemented |
+| Accidental HTTP calls | HTTP probing disabled by default | Implemented |
+| Accidental model calls | Inference and cloud fallback disabled by default | Implemented |
+| Cross-client data leakage | Tenant/client query enforcement | Future RBAC phase |
+| Rate limiting | Route-level rate limits | Future hardening phase |
+
+## Pre-promotion checklist
+
+- [ ] `gitleaks detect --source . --log-opts HEAD` reports no secrets.
+- [ ] `pip-audit --skip-editable` has no critical findings.
+- [ ] License inventory confirms dependency compatibility.
+- [ ] `scripts/validate_release.sh` passes.
+- [ ] Docker Compose health check passes on a clean host.
+- [ ] README and launch docs match current behavior.

@@ -1,0 +1,33 @@
+name: Workflow template request
+description: Request an open-core MSP workflow template.
+title: "template: "
+labels: ["template-request"]
+body:
+  - type: input
+    id: template-name
+    attributes:
+      label: Template name
+      placeholder: Documentation-assisted response
+    validations:
+      required: true
+  - type: textarea
+    id: trigger
+    attributes:
+      label: Trigger and filter
+      description: Describe the ticket condition, queue, priority, or connector event.
+    validations:
+      required: true
+  - type: textarea
+    id: draft
+    attributes:
+      label: Drafted action
+      description: What should WAIT draft before technician approval?
+    validations:
+      required: true
+  - type: textarea
+    id: approval
+    attributes:
+      label: Approval and audit requirements
+      description: What must be reviewed, edited, approved, rejected, and logged?
+    validations:
+      required: true
