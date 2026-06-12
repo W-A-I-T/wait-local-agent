@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from wait_local_agent.config import load_settings
+from wait_local_agent.vault import SecretVault
 
 
 def test_safe_defaults_are_disabled(monkeypatch) -> None:
@@ -8,6 +9,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_ALLOW_HTTP_PROBING", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_CLOUD_FALLBACK", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_LLM_INFERENCE", raising=False)
+    monkeypatch.delenv("WAIT_API_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_DEMO_MODE", raising=False)
+    monkeypatch.delenv("WAIT_SECRETS_BACKEND", raising=False)
+    monkeypatch.delenv("WAIT_VAULT_PATH", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
@@ -27,6 +32,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.allow_http_probing is False
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
+    assert settings.api_token == ""
+    assert settings.demo_mode is True
+    assert settings.secrets_backend == "env"
+    assert str(settings.vault_path) == ".wait-local-agent/vault"
     assert settings.local_model_provider == "deterministic"
     assert settings.local_model_timeout_seconds == 20.0
     assert settings.halopsa_base_url == ""
@@ -45,11 +54,13 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "false")
     monkeypatch.setenv("WAIT_ALLOW_LLM_INFERENCE", "true")
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
 
     settings = load_settings()
 
     assert settings.allow_write_actions is False
     assert settings.allow_llm_inference is True
+    assert settings.demo_mode is False
 
 
 def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:
@@ -78,6 +89,33 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+
+
+def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> None:
+    vault_path = tmp_path / "vault"
+    vault = SecretVault.initialize(vault_path)
+    vault.set("WAIT_HALOPSA_CLIENT_SECRET", "vault-secret")
+    vault.set("WAIT_HUDU_API_KEY", "vault-hudu-key")
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
+    monkeypatch.setenv("WAIT_VAULT_PATH", str(vault_path))
+    monkeypatch.setenv("WAIT_HALOPSA_CLIENT_SECRET", "env-secret")
+    monkeypatch.setenv("WAIT_HUDU_API_KEY", "env-hudu-key")
+
+    settings = load_settings()
+
+    assert settings.secrets_backend == "fernet"
+    assert settings.halopsa_client_secret == "vault-secret"
+    assert settings.hudu_api_key == "vault-hudu-key"
+
+
+def test_invalid_secrets_backend_falls_back_to_env(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "sqlite")
+    monkeypatch.setenv("WAIT_HUDU_API_KEY", "env-key")
+
+    settings = load_settings()
+
+    assert settings.secrets_backend == "env"
+    assert settings.hudu_api_key == "env-key"
 
 
 def test_non_positive_timeout_env_falls_back_to_default(monkeypatch) -> None:
