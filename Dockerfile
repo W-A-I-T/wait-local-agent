@@ -3,7 +3,10 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     WAIT_DATA_PATH=/data/state.db \
-    WAIT_ALLOWED_DOC_ROOT=/app/examples/sample_docs
+    WAIT_ALLOWED_DOC_ROOT=/app/examples/sample_docs \
+    WAIT_DEMO_MODE=true \
+    WAIT_SECRETS_BACKEND=env \
+    WAIT_VAULT_PATH=/data/vault
 
 WORKDIR /app
 
