@@ -1,0 +1,26 @@
+[
+  {
+    "id": "DEMO-1001",
+    "client": "Northwind Dental",
+    "subject": "Shared mailbox access request",
+    "body": "Operations manager needs access to billing@northwind.example for statement review. Please confirm permissions and avoid granting full tenant admin rights.",
+    "priority": "Medium",
+    "status": "New"
+  },
+  {
+    "id": "DEMO-1002",
+    "client": "Fabrikam Legal",
+    "subject": "VPN connects but line-of-business app will not load",
+    "body": "Attorney can connect to VPN from home, but the case management app times out. DNS and route checks are needed before escalation.",
+    "priority": "High",
+    "status": "New"
+  },
+  {
+    "id": "DEMO-1003",
+    "client": "Contoso Logistics",
+    "subject": "P1 alert: warehouse label printers offline",
+    "body": "Multiple shipping label printers in the warehouse are offline after a switch reboot. Dispatch needs a short internal note and a client-safe update draft.",
+    "priority": "Critical",
+    "status": "Open"
+  }
+]
