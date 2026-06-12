@@ -1,0 +1,37 @@
+name: Connector request
+description: Request or scope a connector for the open-core framework.
+title: "connector: "
+labels: ["connector-request"]
+body:
+  - type: input
+    id: product
+    attributes:
+      label: Product or service
+      description: Name the PSA, documentation system, RMM, identity, or service desk product.
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Requested surface
+      options:
+        - Read-only discovery or context
+        - Draft-only write proposal
+        - Approval-gated live write
+        - Not sure yet
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: MSP use case
+      description: Describe the workflow and which data should remain local.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and credential constraints
+      description: List required scopes, write risks, approval requirements, and any tenant/client boundaries.
+    validations:
+      required: false
