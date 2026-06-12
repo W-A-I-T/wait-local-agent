@@ -1,0 +1,37 @@
+name: Security report
+description: Use this only for non-sensitive security hardening requests.
+title: "security: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not post secrets, tokens, client data, exploit chains, or unpatched vulnerability details in a public issue. For sensitive reports, follow SECURITY.md.
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Safe defaults
+        - Authentication or authorization
+        - Secrets storage
+        - Connector write safety
+        - Audit trail
+        - Dependency or license risk
+        - Documentation gap
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the non-sensitive hardening request or documentation gap.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected safe behavior
+      description: State the desired safe default or guardrail.
+    validations:
+      required: true
