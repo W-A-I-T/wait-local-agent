@@ -22,6 +22,9 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.renderers import report_as_dict
+from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required, require_bearer_authorization
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
@@ -70,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    report_service = ReportService(store)
 
     def require_api_auth(authorization: Annotated[str | None, Header()] = None) -> None:
         require_bearer_authorization(active_settings, authorization)
@@ -178,6 +182,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
+
+    @app.get("/reports")
+    def reports(
+        report_type: ReportType | None = None,
+        client_id: str = "",
+        project_id: str = "",
+    ) -> list[dict[str, object]]:
+        stored = report_service.list_reports(
+            report_type=report_type,
+            client_id=client_id,
+            project_id=project_id,
+        )
+        return [report_as_dict(report) for report in stored]
+
+    @app.get("/reports/{report_id}")
+    def report_detail(report_id: str) -> dict[str, object]:
+        report = report_service.get_report(report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        return report_as_dict(report)
+
+    @app.get("/reports/{report_id}/export")
+    def report_export(
+        report_id: str, export_format: Literal["json", "markdown"] = "json"
+    ) -> Response:
+        try:
+            rendered = report_service.export_report(report_id, ReportFormat(export_format))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="report not found") from exc
+        media_type = "application/json" if export_format == "json" else "text/markdown"
+        extension = "json" if export_format == "json" else "md"
+        return Response(
+            rendered,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'
+            },
+        )
 
     @app.get("/audit")
     def audit() -> list[dict[str, object]]:
