@@ -23,6 +23,9 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.renderers import render_json
+from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
@@ -40,6 +43,7 @@ approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
+reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -49,6 +53,7 @@ app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
 app.add_typer(secrets_app, name="secrets")
+app.add_typer(reports_app, name="reports")
 
 
 def _store() -> Store:
@@ -417,6 +422,62 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
     for chunk in search_backend_from_settings(settings, store).search(query, limit=limit):
         typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
         typer.echo(chunk.excerpt)
+
+
+@reports_app.command("list")
+def list_reports(
+    report_type: Annotated[str, typer.Option(help="Filter by report type value.")] = "",
+    client_id: Annotated[str, typer.Option(help="Filter by client id.")] = "",
+    project_id: Annotated[str, typer.Option(help="Filter by project id.")] = "",
+) -> None:
+    service = ReportService(_store())
+    try:
+        type_filter = ReportType(report_type) if report_type else None
+    except ValueError as exc:
+        typer.echo(f"unknown report type: {report_type}")
+        raise typer.Exit(code=1) from exc
+    stored = service.list_reports(
+        report_type=type_filter, client_id=client_id, project_id=project_id
+    )
+    for report in stored:
+        typer.echo(
+            f"{report.id} type={report.report_type.value} title={report.title} "
+            f"created_at={report.created_at}"
+        )
+    typer.echo(f"count={len(stored)}")
+
+
+@reports_app.command("show")
+def show_report(report_id: str) -> None:
+    service = ReportService(_store())
+    report = service.get_report(report_id)
+    if report is None:
+        typer.echo(f"report {report_id} not found")
+        raise typer.Exit(code=1)
+    typer.echo(render_json(report))
+
+
+@reports_app.command("export")
+def export_report(
+    report_id: str,
+    export_format: Annotated[str, typer.Option(help="json or markdown.")] = "json",
+    output: Annotated[Path | None, typer.Option(help="Write to this file path.")] = None,
+) -> None:
+    service = ReportService(_store())
+    try:
+        rendered = service.export_report(report_id, ReportFormat(export_format))
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    except KeyError as exc:
+        typer.echo(f"report {report_id} not found")
+        raise typer.Exit(code=1) from exc
+    if output is None:
+        typer.echo(rendered)
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
+    typer.echo(f"exported={output}")
 
 
 @backup_app.command("create")
