@@ -4,10 +4,11 @@ import csv
 import io
 import json
 from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from wait_local_agent.config import Settings, load_settings
@@ -104,6 +105,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "hudu_configured": bool(
                 active_settings.hudu_base_url and active_settings.hudu_api_key
             ),
+        }
+
+    @app.get("/settings/security")
+    def security_settings() -> dict[str, object]:
+        return {
+            "api_token_configured": bool(active_settings.api_token),
+            "api_auth_required": auth_required(active_settings),
+            "demo_mode": active_settings.demo_mode,
         }
 
     @app.get("/settings/providers")
@@ -243,6 +252,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             json.dumps(events, sort_keys=True, indent=2) + "\n",
             media_type="application/json",
             headers={"Content-Disposition": 'attachment; filename="wait-audit-events.json"'},
+        )
+
+    @app.get("/audit-events/export")
+    def audit_events_export(
+        format: Literal["json", "csv"] = "json",
+        from_: Annotated[datetime | None, Query(alias="from")] = None,
+        to_: Annotated[datetime | None, Query(alias="to")] = None,
+    ) -> Response:
+        all_events = store.list_audit_events()
+        filtered = [
+            e for e in all_events
+            if (from_ is None or datetime.fromisoformat(e.created_at) >= from_.astimezone(UTC))
+            and (to_ is None or datetime.fromisoformat(e.created_at) <= to_.astimezone(UTC))
+        ]
+        events = [asdict(e) for e in filtered]
+        if format == "csv":
+            output = io.StringIO()
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(events)
+            return Response(
+                output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": 'attachment; filename="wait-audit-events.csv"'},
+            )
+        return Response(
+            json.dumps({"count": len(events), "events": events}),
+            media_type="application/json",
         )
 
     @app.get("/event-history")

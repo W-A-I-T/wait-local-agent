@@ -39,4 +39,6 @@ def settings(tmp_path: Path) -> Settings:
         hudu_base_url="",
         hudu_api_key="",
         hudu_page_size=25,
+        demo_mode=True,
+        api_token="",
     )
