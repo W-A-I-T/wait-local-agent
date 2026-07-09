@@ -9,7 +9,7 @@ from wait_local_agent.config import Settings
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
-BACKUP_KEY_SECRET_NAME = "WAIT_BACKUP_FERNET_KEY"
+BACKUP_KEY_SECRET_NAME = "WAIT_BACKUP_FERNET_KEY"  # nosec B105: secret name constant, not a secret value
 
 
 class BackupEncryptionError(RuntimeError):
