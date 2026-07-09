@@ -13,19 +13,19 @@ The update-channel document is JSON with exactly these fields:
 
 ```json
 {
-  "version": "0.1.1",
+  "version": "99.0.0",
   "released": "2026-07-08T12:00:00Z",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "signature": "ImwmOimD1d4gcaqfbQtFNuFvFV0I5DsInP9JkJ_gG7Tn4G-3hMgZ9zlzamsVlkxp3tixMnrLbDXFwLVK1eSIBA",
-  "min_supported": "0.1.0",
-  "notes_url": "https://updates.wait.example.test/releases/0.1.1"
+  "signature": "DQvd_7OrgaUCTdFJw3LIn_Z1Zm51MizeA5WM2Gl-muRuYn4InMntdiXezkxsdQOZXmmyhmSmNDjFKF6mBr4xDA",
+  "min_supported": "1.0.0",
+  "notes_url": "https://updates.wait.example.test/releases/99.0.0"
 }
 ```
 
 Public example key for the signed example above:
 
 ```text
-rXDiKqNRWypA4fPkhLUzlTc7xIwzlgGuGdy8f8JAt4I
+MSBcQFtCKN1AW2Ek6aNeeJRD9UzvlWP4gztIRRwjLD8
 ```
 
 Field requirements:
@@ -54,7 +54,7 @@ Verification input:
 Canonical example bytes for the document above:
 
 ```json
-{"min_supported":"0.1.0","notes_url":"https://updates.wait.example.test/releases/0.1.1","released":"2026-07-08T12:00:00Z","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"0.1.1"}
+{"min_supported":"1.0.0","notes_url":"https://updates.wait.example.test/releases/99.0.0","released":"2026-07-08T12:00:00Z","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","version":"99.0.0"}
 ```
 
 ## Client Behavior

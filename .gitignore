@@ -18,3 +18,4 @@ ui/*.tsbuildinfo
 data/vault/
 vault.key
 secrets.json.enc
+ui/node_modules.stale*/

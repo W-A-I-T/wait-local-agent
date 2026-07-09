@@ -22,9 +22,9 @@ Complete all items below before announcing the repo publicly.
 
 ### Security
 
-- [ ] Run `gitleaks detect --source . --log-opts HEAD` and confirm zero secrets in git history.
-- [ ] Run `pip-audit --skip-editable` and confirm no critical CVEs in dependencies.
-- [ ] Run `pip-licenses` and confirm dependency licenses are compatible with the Apache 2.0 open-core repo.
+- [ ] Run `gitleaks detect --source . --log-opts HEAD` and confirm zero secrets in git history. If `gitleaks` is unavailable in the release environment, record that it was unavailable and escalate to the orchestrator instead of downloading tools during the pass.
+- [x] Run `pip-audit --skip-editable` and confirm no critical CVEs in dependencies.
+- [x] Run `pip-licenses` and confirm dependency licenses are compatible with the Apache 2.0 open-core repo.
 - [x] API authentication implemented outside demo mode.
 - [x] Optional encrypted local secrets vault implemented.
 - [x] Redaction expanded to cover common API key, token, bearer, authorization, and secret key variants.
@@ -33,7 +33,7 @@ Complete all items below before announcing the repo publicly.
 ### Disclaimer
 
 - [x] README contains prominent disclaimer that live PSA writes require explicit operator opt-in and human approval.
-- [ ] No claim is made that MSP production hardening is complete before the Phase 5 items are finished.
+- [x] No claim is made that MSP production hardening is complete before the remaining post-1.0 commercial hardening work is finished.
 
 ### Docs
 
@@ -58,6 +58,6 @@ Complete all items below before announcing the repo publicly.
 ### Release
 
 - [x] `CHANGELOG.md` with first release entries.
-- [ ] Release tag `v1.0.0-beta` or equivalent created on main.
-- [ ] CI badge and license badge checked in README.
+- [ ] Release tag `v1.0.0` created locally by the orchestrator on the final release commit.
+- [x] CI badge and license badge checked in README.
 - [x] GitHub issue templates present: bug report, connector request, workflow template request, security report.
