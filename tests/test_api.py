@@ -397,6 +397,58 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
     assert [job["id"] for job in filtered.json()] == [created.json()["id"]]
 
 
+def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_id(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": True,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1001"),
+        )
+    client = TestClient(create_app(secure_settings))
+
+    blank = client.post(
+        "/scheduled-jobs",
+        headers=_auth("tech-token"),
+        json={
+            "template_id": "documentation-assisted-response",
+            "cron": "0 9 * * *",
+            "params": {"ticket_id": "TCK-1001", "client_id": ""},
+        },
+    )
+    nullish = client.post(
+        "/scheduled-jobs",
+        headers=_auth("tech-token"),
+        json={
+            "template_id": "documentation-assisted-response",
+            "cron": "15 9 * * *",
+            "params": {"ticket_id": "TCK-1001", "client_id": None},
+        },
+    )
+    filtered = client.get(
+        "/scheduled-jobs",
+        params={"client_id": "acme"},
+        headers=_auth("viewer-token"),
+    )
+
+    assert blank.status_code == 200
+    assert nullish.status_code == 200
+    assert blank.json()["client_id"] == "acme"
+    assert blank.json()["params"]["client_id"] == "acme"
+    assert nullish.json()["client_id"] == "acme"
+    assert nullish.json()["params"]["client_id"] == "acme"
+    assert [job["id"] for job in filtered.json()] == [nullish.json()["id"], blank.json()["id"]]
+
+
 def test_invalid_halopsa_draft_returns_400(settings, monkeypatch) -> None:
     client = TestClient(create_app(settings))
 
