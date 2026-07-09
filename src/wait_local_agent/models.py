@@ -88,6 +88,7 @@ class EventHistoryEntry:
     message: str
     payload_json: str
     created_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)

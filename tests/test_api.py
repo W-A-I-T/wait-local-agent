@@ -192,6 +192,11 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token"))
     filtered_documents = client.get("/knowledge/documents", params={"client_id": "acme"}, headers=_auth("viewer-token"))
     filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    ticket_approval = client.post(
+        "/tickets/TCK-ACME/approvals",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "ship it"},
+    )
     approved = client.post(
         f"/approval-requests/{approval.id}",
         headers=_auth("tech-token"),
@@ -207,12 +212,19 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     assert all(event["client_id"] == "acme" for event in filtered_audit.json())
     assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
     assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
+    assert ticket_approval.status_code == 200
     assert approved.status_code == 200
     assert approved.json()["approver_id"] == expected_approver_id
+    assert any(
+        event["event_type"] == "approval.updated" and event["client_id"] == "acme"
+        for event in client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token")).json()
+    )
     assert any(
         event["event_type"] == "approval_request.updated" and event["approver_id"] == expected_approver_id
         for event in export.json()["events"]
     )
+
+
 def test_missing_ticket_returns_404(settings) -> None:
     client = TestClient(create_app(settings))
 
@@ -343,6 +355,46 @@ def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) 
     assert run.json()["client_id"] == "acme"
     assert [request["subject_id"] for request in approvals.json()] == ["TCK-1002"]
     assert [item["ticket_id"] for item in runs.json()] == ["TCK-1002"]
+
+
+def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": True,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1001"),
+        )
+    client = TestClient(create_app(secure_settings))
+
+    created = client.post(
+        "/scheduled-jobs",
+        headers=_auth("tech-token"),
+        json={
+            "template_id": "documentation-assisted-response",
+            "cron": "0 9 * * *",
+            "params": {"ticket_id": "TCK-1001"},
+        },
+    )
+    filtered = client.get(
+        "/scheduled-jobs",
+        params={"client_id": "acme"},
+        headers=_auth("viewer-token"),
+    )
+
+    assert created.status_code == 200
+    assert created.json()["client_id"] == "acme"
+    assert created.json()["params"]["client_id"] == "acme"
+    assert [job["id"] for job in filtered.json()] == [created.json()["id"]]
 
 
 def test_invalid_halopsa_draft_returns_400(settings, monkeypatch) -> None:
@@ -818,6 +870,43 @@ def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(
     assert approved.json()["execution_result_json"]
     assert executed[0].ticket_id == "HALO-42"
     assert any(event["event_type"] == "halopsa.write" for event in events.json())
+
+
+def test_event_history_filters_by_client_id(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "viewer_token": "viewer-token",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-ACME', 'Acme', 'Subject', 'Body', 'High', 'Open', 'acme')
+            """
+        )
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-BETA', 'Beta', 'Subject', 'Body', 'Low', 'Open', 'beta')
+            """
+        )
+    store.create_approval_request("TCK-ACME", "ticket.assign", {"ticket_id": "TCK-ACME"}, client_id="acme")
+    store.create_approval_request("TCK-BETA", "ticket.assign", {"ticket_id": "TCK-BETA"}, client_id="beta")
+    client = TestClient(create_app(secure_settings))
+
+    filtered = client.get("/event-history", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    blank = client.get("/event-history", params={"client_id": ""}, headers=_auth("viewer-token"))
+    all_events = client.get("/event-history", headers=_auth("viewer-token"))
+
+    assert filtered.status_code == 200
+    assert filtered.json()
+    assert all(event["client_id"] == "acme" for event in filtered.json())
+    assert len(blank.json()) == len(all_events.json())
 
 
 def test_halopsa_manual_execute_rejects_non_approved_and_non_halopsa(settings) -> None:

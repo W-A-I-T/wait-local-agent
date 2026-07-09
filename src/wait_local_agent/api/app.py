@@ -401,8 +401,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/event-history")
-    def event_history(_: ViewerAccess) -> list[dict[str, object]]:
-        return [asdict(event) for event in store.list_event_history()]
+    def event_history(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [asdict(event) for event in store.list_event_history(client_id=client_id)]
 
     @app.get("/connectors")
     def connectors(_: ViewerAccess) -> list[dict[str, object]]:
@@ -583,13 +586,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if get_workflow_template(request.template_id) is None:
             raise HTTPException(status_code=404, detail="workflow template not found")
         ticket_id = _scheduled_ticket_id(request.params)
-        if store.get_ticket(ticket_id) is None:
+        ticket = store.get_ticket(ticket_id)
+        if ticket is None:
             raise HTTPException(status_code=404, detail="ticket not found")
+        params = dict(request.params)
+        if "client_id" not in params and ticket.client_id:
+            params["client_id"] = ticket.client_id
         try:
             scheduled_job = scheduler.register(
                 request.template_id,
                 request.cron,
-                request.params,
+                params,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

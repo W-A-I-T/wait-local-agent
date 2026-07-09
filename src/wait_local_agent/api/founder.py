@@ -133,7 +133,7 @@ def json_object(value: object, *, operation: str) -> dict[str, object]:
 
 def json_value(value: object, *, operation: str) -> object:
     if not isinstance(value, type) and is_dataclass(value):
-        return asdict(cast(Any, value))
+        return json_value(asdict(cast(Any, value)), operation=operation)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):

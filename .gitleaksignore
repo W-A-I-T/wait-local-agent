@@ -1,4 +1,4 @@
 # false positives: deterministic test vectors and docs placeholder token
-2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:25
-2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:27
-06cda2615941c229cd2b4e808508b9e140245179:docs/local-demo.md:curl-auth-header:83
+52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:27
+52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:29
+06cda2615941c229cd2b4e808508b9e140245179:docs/local-demo.md:curl-auth-header:99

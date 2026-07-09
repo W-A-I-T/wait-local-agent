@@ -127,10 +127,12 @@ class Store:
                     status text not null,
                     message text not null,
                     payload_json text not null,
-                    created_at text not null
+                    created_at text not null,
+                    client_id text
                 )
                 """
             )
+            self._ensure_column(connection, "event_history", "client_id", "text")
             connection.execute(
                 """
                 create table if not exists workflow_runs (
@@ -263,13 +265,14 @@ class Store:
         return len(tickets)
 
     def list_tickets(self, client_id: str | None = None) -> list[Ticket]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute("select * from tickets order by id").fetchall()
             else:
                 rows = connection.execute(
                     "select * from tickets where client_id = ? order by id",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
 
@@ -279,6 +282,7 @@ class Store:
         return Ticket(**dict(row)) if row else None
 
     def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
+        ticket = self.get_ticket(ticket_id)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -292,7 +296,12 @@ class Store:
                 (ticket_id, status, comment, utc_now()),
             )
         detail = status if not comment else f"{status}: {comment}"
-        self.add_audit_event("approval.updated", ticket_id, detail)
+        self.add_audit_event(
+            "approval.updated",
+            ticket_id,
+            detail,
+            client_id=ticket.client_id if ticket is not None else None,
+        )
 
     def get_approval(self, ticket_id: str) -> str:
         with self._connect() as connection:
@@ -354,6 +363,7 @@ class Store:
                 "pending",
                 f"{action_type} waiting for technician approval",
                 payload_json,
+                normalized_client_id,
             )
         request = self.get_approval_request(request_id)
         if request is None:
@@ -407,6 +417,7 @@ class Store:
                 status,
                 comment or f"{row['action_type']} {status}",
                 str(row["payload_json"]),
+                str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
         if request is None:
@@ -451,6 +462,7 @@ class Store:
                 "pending",
                 message,
                 payload_json,
+                str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
         if request is None:
@@ -500,6 +512,7 @@ class Store:
                 status,
                 message,
                 result_json,
+                str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
         if request is None:
@@ -514,15 +527,16 @@ class Store:
         return ApprovalRequest(**dict(row)) if row else None
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute(
                     "select * from approval_requests order by id desc"
                 ).fetchall()
             else:
                 rows = connection.execute(
                     "select * from approval_requests where client_id = ? order by id desc",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [ApprovalRequest(**dict(row)) for row in rows]
 
@@ -551,6 +565,7 @@ class Store:
                 "completed",
                 detail,
                 "{}",
+                client_id,
             )
 
     @staticmethod
@@ -587,30 +602,47 @@ class Store:
         status: str,
         message: str,
         payload_json: str,
+        client_id: str | None = None,
     ) -> None:
         connection.execute(
             """
             insert into event_history
-              (event_type, subject_id, status, message, payload_json, created_at)
-            values (?, ?, ?, ?, ?, ?)
+              (event_type, subject_id, status, message, payload_json, created_at, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
             """,
-            (event_type, subject_id, status, message, payload_json, utc_now()),
+            (
+                event_type,
+                subject_id,
+                status,
+                message,
+                payload_json,
+                utc_now(),
+                _normalize_client_id(client_id),
+            ),
         )
 
     def list_audit_events(self, client_id: str | None = None) -> list[AuditEvent]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute("select * from audit_events order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from audit_events where client_id = ? order by id desc",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
 
-    def list_event_history(self) -> list[EventHistoryEntry]:
+    def list_event_history(self, client_id: str | None = None) -> list[EventHistoryEntry]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            rows = connection.execute("select * from event_history order by id desc").fetchall()
+            if normalized_client_id is None:
+                rows = connection.execute("select * from event_history order by id desc").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from event_history where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
         return [EventHistoryEntry(**dict(row)) for row in rows]
 
     def create_workflow_run(
@@ -691,13 +723,14 @@ class Store:
         return WorkflowRun(**dict(row)) if row else None
 
     def list_workflow_runs(self, client_id: str | None = None) -> list[WorkflowRun]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from workflow_runs where client_id = ? order by id desc",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
 
@@ -763,6 +796,7 @@ class Store:
                 "paused" if paused else "scheduled",
                 f"{template_id} scheduled with cron {cron}",
                 params_json,
+                normalized_client_id,
             )
         job = self.get_scheduled_job(job_id)
         if job is None:
@@ -778,15 +812,16 @@ class Store:
         return _scheduled_job_from_row(row) if row else None
 
     def list_scheduled_jobs(self, client_id: str | None = None) -> list[ScheduledJob]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute(
                     "select * from scheduled_jobs order by id desc"
                 ).fetchall()
             else:
                 rows = connection.execute(
                     "select * from scheduled_jobs where client_id = ? order by id desc",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [_scheduled_job_from_row(row) for row in rows]
 
@@ -823,6 +858,7 @@ class Store:
                 detail,
                 f"{template_id} {detail}",
                 str(row["params_json"]),
+                str(row["client_id"]) if row["client_id"] is not None else None,
             )
         job = self.get_scheduled_job(job_id)
         if job is None:
@@ -852,6 +888,7 @@ class Store:
                 "deleted",
                 f"{row['template_id']} removed",
                 str(row["params_json"]),
+                str(row["client_id"]) if row["client_id"] is not None else None,
             )
         return _scheduled_job_from_row(row)
 
@@ -1011,15 +1048,16 @@ class Store:
         return KnowledgeDocument(**dict(row)) if row else None
 
     def list_knowledge_documents(self, client_id: str | None = None) -> list[KnowledgeDocument]:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            if client_id is None:
+            if normalized_client_id is None:
                 rows = connection.execute(
                     "select * from knowledge_documents order by title, path"
                 ).fetchall()
             else:
                 rows = connection.execute(
                     "select * from knowledge_documents where client_id = ? order by title, path",
-                    (_normalize_client_id(client_id),),
+                    (normalized_client_id,),
                 ).fetchall()
         return [KnowledgeDocument(**dict(row)) for row in rows]
 
