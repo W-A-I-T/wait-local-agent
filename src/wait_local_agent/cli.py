@@ -27,6 +27,7 @@ from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
+from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
@@ -41,6 +42,7 @@ approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
+update_app = typer.Typer(help="Signed update channel commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -50,6 +52,7 @@ app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
 app.add_typer(secrets_app, name="secrets")
+app.add_typer(update_app, name="update")
 
 
 def _store() -> Store:
@@ -74,6 +77,8 @@ def doctor() -> None:
     typer.echo(f"base_url={settings.local_model_base_url}")
     typer.echo(f"timeout_seconds={settings.local_model_timeout_seconds:g}")
     typer.echo(f"connector_timeout_seconds={settings.connector_timeout_seconds:g}")
+    typer.echo(f"update_channel_url={settings.update_channel_url or '(disabled)'}")
+    typer.echo(f"update_pubkeys={len(settings.update_pubkeys)}")
     typer.echo(f"llm_inference_enabled={settings.allow_llm_inference}")
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
@@ -517,6 +522,16 @@ def get_secret(key: str) -> None:
     typer.echo(value)
 
 
+@update_app.command("check")
+def update_check() -> None:
+    try:
+        status = check_for_updates(load_settings())
+    except Exception as exc:
+        typer.echo(f"status=error detail=internal_error message={exc}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(_format_update_status(status))
+
+
 def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:
     _audit_halopsa_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
@@ -545,6 +560,25 @@ def _approval_cli_view(approval) -> dict[str, object]:
         **asdict(approval),
         "payload": payload if isinstance(payload, dict) else {},
     }
+
+
+def _format_update_status(status: UpdateStatus) -> str:
+    if status.status == "update_available":
+        return (
+            "status=update_available "
+            f"current_version={status.current_version} "
+            f"remote_version={status.remote_version} "
+            f"notes_url={status.notes_url}"
+        )
+    if status.status == "up_to_date":
+        return (
+            "status=up_to_date "
+            f"current_version={status.current_version} "
+            f"remote_version={status.remote_version}"
+        )
+    if status.status == "invalid_signature":
+        return "status=invalid_signature warning=update_metadata_signature_invalid"
+    return f"status=unknown detail={status.detail}"
 
 
 @app.command()

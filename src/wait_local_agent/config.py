@@ -83,6 +83,8 @@ class Settings:
     rate_limit_enabled: bool = True
     rate_limit_general: str = "100/minute"
     rate_limit_connector: str = "10/minute"
+    update_channel_url: str = ""
+    update_pubkeys: tuple[str, ...] = ()
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -129,6 +131,12 @@ def load_settings() -> Settings:
         rate_limit_enabled=_bool_env("WAIT_RATE_LIMIT_ENABLED", True),
         rate_limit_general=os.getenv("WAIT_RATE_LIMIT_GENERAL", "100/minute"),
         rate_limit_connector=os.getenv("WAIT_RATE_LIMIT_CONNECTOR", "10/minute"),
+        update_channel_url=os.getenv("WAIT_UPDATE_CHANNEL_URL", "").strip(),
+        update_pubkeys=tuple(
+            value.strip()
+            for value in os.getenv("WAIT_UPDATE_PUBKEYS", "").split(",")
+            if value.strip()
+        ),
         halopsa_base_url=_secret_value(
             "WAIT_HALOPSA_BASE_URL",
             os.getenv("WAIT_HALOPSA_BASE_URL", ""),

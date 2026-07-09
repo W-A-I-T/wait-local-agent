@@ -41,6 +41,8 @@ def settings(tmp_path: Path) -> Settings:
         rate_limit_enabled=False,
         rate_limit_general="100/minute",
         rate_limit_connector="10/minute",
+        update_channel_url="",
+        update_pubkeys=(),
         halopsa_base_url="",
         halopsa_client_id="",
         halopsa_client_secret="",
