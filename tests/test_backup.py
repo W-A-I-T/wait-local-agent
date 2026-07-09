@@ -82,3 +82,73 @@ def test_encrypted_backup_restore_cli_fails_cleanly_without_key(monkeypatch, tmp
     assert create.exit_code == 0
     assert restore.exit_code != 0
     assert BACKUP_KEY_SECRET_NAME in restore.output
+
+
+def test_plain_backup_bootstraps_missing_store_and_restore_requires_existing_source(
+    settings, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "missing-state.db")
+    backup_path = tmp_path / "backup" / "state.db"
+
+    result = backup_state(store, backup_path)
+
+    assert result == backup_path
+    assert backup_path.exists()
+    assert store.path.exists()
+
+    with pytest.raises(FileNotFoundError):
+        restore_state(store, tmp_path / "missing.db")
+
+
+def test_encrypted_backup_rejects_uninitialized_vault_and_invalid_keys(
+    settings, tmp_path: Path
+) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "secrets_backend": "fernet",
+            "vault_path": tmp_path / "vault",
+        }
+    )
+
+    with pytest.raises(BackupEncryptionError, match=BACKUP_KEY_SECRET_NAME):
+        backup_state(
+            Store(secure_settings.data_path),
+            tmp_path / "state.db.enc",
+            encrypt=True,
+            settings=secure_settings,
+        )
+
+    SecretVault.initialize(secure_settings.vault_path).set(BACKUP_KEY_SECRET_NAME, "not-a-fernet-key")
+
+    with pytest.raises(BackupEncryptionError, match="not a valid Fernet key"):
+        backup_state(
+            Store(secure_settings.data_path),
+            tmp_path / "state-invalid.db.enc",
+            encrypt=True,
+            settings=secure_settings,
+        )
+
+
+def test_encrypted_restore_rejects_invalid_ciphertext(settings, tmp_path: Path) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "secrets_backend": "fernet",
+            "vault_path": tmp_path / "vault",
+        }
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        BACKUP_KEY_SECRET_NAME,
+        Fernet.generate_key().decode("utf-8"),
+    )
+    encrypted_backup = tmp_path / "broken.enc"
+    encrypted_backup.write_bytes(b"not encrypted")
+
+    with pytest.raises(BackupEncryptionError, match="could not be decrypted"):
+        restore_state(
+            Store(tmp_path / "restored.db"),
+            encrypted_backup,
+            encrypted=True,
+            settings=secure_settings,
+        )

@@ -422,6 +422,78 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
     assert rejected_runs.json()[0]["status"] == "rejected"
 
 
+def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registration(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": True,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    Store(secure_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    app = create_app(secure_settings)
+
+    with TestClient(app) as client:
+        viewer_create = client.post(
+            "/scheduled-jobs",
+            headers=_auth("viewer-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "0 9 * * *",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        invalid_cron = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "bad cron",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        created = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "0 9 * * *",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        listed = client.get("/scheduled-jobs", headers=_auth("viewer-token"))
+        job_id = created.json()["id"]
+
+        assert viewer_create.status_code == 403
+        assert invalid_cron.status_code == 422
+        assert "invalid cron expression" in invalid_cron.json()["detail"]
+        assert created.status_code == 200
+        assert created.json()["next_run_at"] is not None
+        assert created.json()["params"]["ticket_id"] == "TCK-1001"
+        assert app.state.scheduler._scheduler is not None
+        assert len(app.state.scheduler._scheduler.get_jobs()) == 1
+        assert listed.status_code == 200
+        assert listed.json()[0]["id"] == job_id
+
+        paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
+        resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
+        deleted = client.delete(f"/scheduled-jobs/{job_id}", headers=_auth("tech-token"))
+
+        assert paused.status_code == 200
+        assert paused.json()["paused"] is True
+        assert paused.json()["next_run_at"] is None
+        assert resumed.status_code == 200
+        assert resumed.json()["paused"] is False
+        assert resumed.json()["next_run_at"] is not None
+        assert deleted.status_code == 200
+        assert deleted.json()["id"] == job_id
+        assert len(app.state.scheduler._scheduler.get_jobs()) == 0
+        assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
+
+
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     client = TestClient(create_app(settings))
 

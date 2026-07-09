@@ -233,6 +233,19 @@ class WorkflowRun:
 
 
 @dataclass(frozen=True)
+class ScheduledJob:
+    id: int | None
+    template_id: str
+    cron: str
+    params_json: str
+    paused: bool
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+    next_run_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SecretRecord:
     key: str
     configured: bool

@@ -19,6 +19,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         approval_columns = _columns(connection, "approval_requests")
         audit_columns = _columns(connection, "audit_events")
         workflow_columns = _columns(connection, "workflow_runs")
+        scheduled_columns = _columns(connection, "scheduled_jobs")
         knowledge_columns = _columns(connection, "knowledge_documents")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
@@ -32,6 +33,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in audit_columns
     assert "approver_id" in audit_columns
     assert "client_id" in workflow_columns
+    assert "client_id" in scheduled_columns
     assert "client_id" in knowledge_columns
     assert ticket is not None and ticket["client_id"] is None
     assert approval is not None and approval["client_id"] is None and approval["approver_id"] is None
@@ -95,6 +97,33 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     assert len(store.list_approval_requests()) == 2
     assert len(store.list_workflow_runs()) == 2
     assert len(store.list_knowledge_documents()) == 2
+
+
+def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    acme = store.create_scheduled_job(
+        "documentation-assisted-response",
+        "0 9 * * *",
+        {"ticket_id": "TCK-1", "client_id": "acme"},
+        client_id="acme",
+    )
+    beta = store.create_scheduled_job(
+        "documentation-assisted-response",
+        "15 10 * * 1",
+        {"ticket_id": "TCK-2", "client_id": "beta"},
+        client_id="beta",
+    )
+    paused = store.update_scheduled_job_paused(acme.id or 0, True)
+    resumed = store.update_scheduled_job_paused(acme.id or 0, False)
+    deleted = store.delete_scheduled_job(beta.id or 0)
+
+    assert acme.id is not None
+    assert paused.paused is True
+    assert resumed.paused is False
+    assert deleted.id == beta.id
+    assert [job.id for job in store.list_scheduled_jobs(client_id="acme")] == [acme.id]
+    assert store.get_scheduled_job(beta.id or 0) is None
 
 
 def _seed_prechange_schema(path: Path) -> None:
