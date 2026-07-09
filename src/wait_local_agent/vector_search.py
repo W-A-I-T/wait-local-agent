@@ -12,7 +12,12 @@ class KnowledgeSearchBackend(Protocol):
     def upsert_document_chunks(self, chunks: list[KnowledgeChunk]) -> None:
         """Persist searchable chunks in the backend."""
 
-    def search(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+    def search(
+        self,
+        query: str,
+        limit: int = 3,
+        client_id: str | None = None,
+    ) -> list[KnowledgeChunk]:
         """Return matching chunks."""
 
 
@@ -23,8 +28,13 @@ class SQLiteKnowledgeSearch:
     def upsert_document_chunks(self, chunks: list[KnowledgeChunk]) -> None:
         return None
 
-    def search(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
-        return self.store.search_knowledge_chunks(query, limit)
+    def search(
+        self,
+        query: str,
+        limit: int = 3,
+        client_id: str | None = None,
+    ) -> list[KnowledgeChunk]:
+        return self.store.search_knowledge_chunks(query, limit, client_id=client_id)
 
 
 class QdrantKnowledgeSearch:
@@ -81,6 +91,7 @@ class QdrantKnowledgeSearch:
                         "document_id": chunk.document_id,
                         "title": chunk.title,
                         "path": chunk.path,
+                        "client_id": chunk.client_id or "",
                         "chunk_index": chunk.chunk_index,
                         "text": chunk.text,
                         "excerpt": chunk.excerpt,
@@ -89,7 +100,12 @@ class QdrantKnowledgeSearch:
             )
         self._client.upsert(collection_name=self.settings.qdrant_collection, points=points)
 
-    def search(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+    def search(
+        self,
+        query: str,
+        limit: int = 3,
+        client_id: str | None = None,
+    ) -> list[KnowledgeChunk]:
         bounded_limit = _bounded_search_limit(limit)
         if not query.strip():
             return []
@@ -97,9 +113,13 @@ class QdrantKnowledgeSearch:
         hits = self._client.search(
             collection_name=self.settings.qdrant_collection,
             query_vector=query_vector,
-            limit=bounded_limit,
+            limit=bounded_limit * 4 if client_id else bounded_limit,
         )
-        return [_chunk_from_payload(hit.payload or {}) for hit in hits]
+        chunks = [_chunk_from_payload(hit.payload or {}) for hit in hits]
+        if client_id is not None:
+            normalized_client_id = client_id.strip()
+            chunks = [chunk for chunk in chunks if (chunk.client_id or "") == normalized_client_id]
+        return chunks[:bounded_limit]
 
 
 def search_backend_from_settings(settings: Settings, store: Store) -> KnowledgeSearchBackend:
@@ -147,4 +167,5 @@ def _chunk_from_payload(payload: dict[str, object]) -> KnowledgeChunk:
         chunk_index=_int_payload(payload, "chunk_index"),
         text=_str_payload(payload, "text"),
         excerpt=_str_payload(payload, "excerpt"),
+        client_id=_str_payload(payload, "client_id") or None,
     )

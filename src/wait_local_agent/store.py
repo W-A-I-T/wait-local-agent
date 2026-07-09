@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from wait_local_agent.models import (
     ApprovalRequest,
@@ -16,6 +17,9 @@ from wait_local_agent.models import (
     WorkflowRun,
     utc_now,
 )
+
+if TYPE_CHECKING:
+    from wait_local_agent.reports.models import GeneratedReport
 
 MAX_SEARCH_LIMIT = 25
 
@@ -196,6 +200,21 @@ class Store:
                 """
                 create virtual table if not exists knowledge_chunks_fts
                 using fts5(chunk_id unindexed, title, path unindexed, text)
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists reports (
+                    id text primary key,
+                    report_type text not null,
+                    title text not null,
+                    created_at text not null,
+                    created_by text not null default '',
+                    client_id text not null default '',
+                    project_id text not null default '',
+                    sections_json text not null,
+                    metadata_json text not null default '{}'
+                )
                 """
             )
 
@@ -1009,11 +1028,17 @@ class Store:
             row = connection.execute("select count(*) as count from knowledge_chunks").fetchone()
         return int(row["count"])
 
-    def search_knowledge_chunks(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+    def search_knowledge_chunks(
+        self,
+        query: str,
+        limit: int = 3,
+        client_id: str | None = None,
+    ) -> list[KnowledgeChunk]:
         bounded_limit = _bounded_search_limit(limit)
         fts_query = _fts_query(query)
         if not fts_query:
             return []
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -1022,6 +1047,7 @@ class Store:
                   c.document_id,
                   d.title,
                   d.path,
+                  d.client_id,
                   c.chunk_index,
                   c.text,
                   c.excerpt,
@@ -1030,10 +1056,11 @@ class Store:
                 join knowledge_chunks c on c.id = cast(knowledge_chunks_fts.chunk_id as integer)
                 join knowledge_documents d on d.id = c.document_id
                 where knowledge_chunks_fts match ?
+                  and (? is null or d.client_id = ?)
                 order by rank, d.title, c.chunk_index
                 limit ?
                 """,
-                (fts_query, bounded_limit),
+                (fts_query, normalized_client_id, normalized_client_id, bounded_limit),
             ).fetchall()
         return [
             KnowledgeChunk(
@@ -1044,6 +1071,7 @@ class Store:
                 chunk_index=int(row["chunk_index"]),
                 text=str(row["text"]),
                 excerpt=str(row["excerpt"]),
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
             )
             for row in rows
         ]
@@ -1057,6 +1085,7 @@ class Store:
                   c.document_id,
                   d.title,
                   d.path,
+                  d.client_id,
                   c.chunk_index,
                   c.text,
                   c.excerpt
@@ -1076,9 +1105,81 @@ class Store:
                 chunk_index=int(row["chunk_index"]),
                 text=str(row["text"]),
                 excerpt=str(row["excerpt"]),
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
             )
             for row in rows
         ]
+
+    def save_report(self, report: GeneratedReport) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into reports
+                  (id, report_type, title, created_at, created_by,
+                   client_id, project_id, sections_json, metadata_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(id) do update set
+                  report_type=excluded.report_type,
+                  title=excluded.title,
+                  created_at=excluded.created_at,
+                  created_by=excluded.created_by,
+                  client_id=excluded.client_id,
+                  project_id=excluded.project_id,
+                  sections_json=excluded.sections_json,
+                  metadata_json=excluded.metadata_json
+                """,
+                (
+                    report.id,
+                    report.report_type.value,
+                    report.title,
+                    report.created_at,
+                    report.created_by,
+                    report.client_id,
+                    report.project_id,
+                    report.sections_json(),
+                    report.metadata_json(),
+                ),
+            )
+
+    def get_report(self, report_id: str) -> GeneratedReport | None:
+        with self._connect() as connection:
+            row = connection.execute("select * from reports where id = ?", (report_id,)).fetchone()
+        return _report_from_row(row) if row else None
+
+    def list_reports(
+        self,
+        report_type: str = "",
+        client_id: str = "",
+        project_id: str = "",
+    ) -> list[GeneratedReport]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from reports
+                where (? = '' or report_type = ?)
+                  and (? = '' or client_id = ?)
+                  and (? = '' or project_id = ?)
+                order by created_at desc, id
+                """,
+                (report_type, report_type, client_id, client_id, project_id, project_id),
+            ).fetchall()
+        return [_report_from_row(row) for row in rows]
+
+
+def _report_from_row(row: sqlite3.Row) -> GeneratedReport:
+    from wait_local_agent.reports.models import GeneratedReport, ReportType, sections_from_json
+
+    return GeneratedReport(
+        id=str(row["id"]),
+        report_type=ReportType(str(row["report_type"])),
+        title=str(row["title"]),
+        created_at=str(row["created_at"]),
+        created_by=str(row["created_by"]),
+        client_id=str(row["client_id"]),
+        project_id=str(row["project_id"]),
+        sections=sections_from_json(str(row["sections_json"])),
+        metadata=json.loads(str(row["metadata_json"])),
+    )
 
 
 def _fts_query(query: str) -> str:

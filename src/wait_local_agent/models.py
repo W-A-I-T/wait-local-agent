@@ -284,6 +284,7 @@ class KnowledgeChunk:
     chunk_index: int
     text: str
     excerpt: str
+    client_id: str | None = None
 
 
 def utc_now() -> str:

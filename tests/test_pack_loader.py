@@ -64,7 +64,12 @@ def test_pack_routes_mount_and_cli_register_for_unlocked_pack(settings, monkeypa
     monkeypatch.setattr(
         app_module,
         "configure_pack_routes",
-        lambda app, active_settings: configure_pack_routes(app, active_settings, candidates),
+        lambda app, active_settings, route_dependencies=None: configure_pack_routes(
+            app,
+            active_settings,
+            candidates,
+            route_dependencies=route_dependencies,
+        ),
     )
     cli_module.sync_pack_cli(candidates)
     client = TestClient(app_module.create_app(settings))
@@ -80,13 +85,47 @@ def test_pack_routes_mount_and_cli_register_for_unlocked_pack(settings, monkeypa
     assert get_pack("demo") is not None
 
 
+def test_pack_routes_inherit_viewer_auth(settings, monkeypatch) -> None:
+    candidates = _install_fake_pack_modules()
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "viewer_token": "viewer-token",
+        }
+    )
+    monkeypatch.setattr(loader_module, "_discover_candidate_modules", lambda _: candidates)
+    monkeypatch.setattr(
+        app_module,
+        "configure_pack_routes",
+        lambda app, active_settings, route_dependencies=None: configure_pack_routes(
+            app,
+            active_settings,
+            candidates,
+            route_dependencies=route_dependencies,
+        ),
+    )
+    client = TestClient(app_module.create_app(secure_settings))
+
+    unauthorized = client.get("/packs/demo/ping")
+    authorized = client.get("/packs/demo/ping", headers={"Authorization": "Bearer viewer-token"})
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+
+
 def test_locked_pack_is_listed_but_not_mounted(settings, monkeypatch) -> None:
     candidates = _install_fake_pack_modules(licensed=True)
     monkeypatch.setattr(loader_module, "_discover_candidate_modules", lambda _: candidates)
     monkeypatch.setattr(
         app_module,
         "configure_pack_routes",
-        lambda app, active_settings: configure_pack_routes(app, active_settings, candidates),
+        lambda app, active_settings, route_dependencies=None: configure_pack_routes(
+            app,
+            active_settings,
+            candidates,
+            route_dependencies=route_dependencies,
+        ),
     )
     cli_module.sync_pack_cli(candidates)
     client = TestClient(app_module.create_app(settings))

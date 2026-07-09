@@ -97,7 +97,12 @@ def test_founder_surfaces_delegate_to_fake_pack_and_enforce_preview_gating(monke
     monkeypatch.setattr(
         app_module,
         "configure_pack_routes",
-        lambda app, active_settings: configure_pack_routes(app, active_settings, candidates),
+        lambda app, active_settings, route_dependencies=None: configure_pack_routes(
+            app,
+            active_settings,
+            candidates,
+            route_dependencies=route_dependencies,
+        ),
     )
     monkeypatch.setattr(
         cli_module,

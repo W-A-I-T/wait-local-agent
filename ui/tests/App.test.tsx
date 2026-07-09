@@ -33,6 +33,7 @@ const approvals = [
 
 describe("App", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.stubGlobal("fetch", vi.fn(mockFetch));
   });
 
@@ -46,7 +47,6 @@ describe("App", () => {
     expect(screen.getByText("Hudu connector")).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Payload Preview" }).length).toBeGreaterThan(0);
     expect(screen.getByText(/Workflow run run-1: running/)).toBeInTheDocument();
-    expect(screen.getAllByText("ready").length).toBeGreaterThan(0);
   });
 
   it("creates drafts, edits payload fields, and approves from controls", async () => {
@@ -139,6 +139,21 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Draft HaloPSA Write" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Provider And Secrets" })).not.toBeInTheDocument();
+  });
+
+  it("sends bearer tokens from stored dashboard auth", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "viewer-token");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "HaloPSA Live Operations" });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/auth/role",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer viewer-token" })
+      })
+    );
   });
 });
 

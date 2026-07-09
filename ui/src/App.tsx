@@ -98,8 +98,10 @@ const actionTypes = [
 ];
 
 const defaultFieldText = "note=Reviewed by WAIT Local Agent";
+const apiTokenStorageKey = "wait-local-agent-api-token";
 
 export function App() {
+  const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>({
@@ -182,6 +184,19 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function saveApiToken() {
+    persistApiToken(apiToken);
+    setStatusMessage("API token saved for dashboard requests.");
+    await refresh();
+  }
+
+  async function clearApiToken() {
+    setApiToken("");
+    persistApiToken("");
+    setStatusMessage("API token cleared.");
+    await refresh();
   }
 
   useEffect(() => {
@@ -312,6 +327,22 @@ export function App() {
             <button className="icon-button" type="button" onClick={() => void refresh()}>
               <RefreshCw size={17} aria-hidden="true" />
               Refresh
+            </button>
+            <label className="token-input">
+              <span className="sr-only">API token</span>
+              <input
+                type="password"
+                placeholder="Bearer token"
+                value={apiToken}
+                onChange={(event) => setApiToken(event.target.value)}
+              />
+            </label>
+            <button className="icon-button" type="button" onClick={() => void saveApiToken()}>
+              <KeyRound size={17} aria-hidden="true" />
+              Save Token
+            </button>
+            <button className="icon-button" type="button" onClick={() => void clearApiToken()}>
+              Clear Token
             </button>
             <div className="status-pill">
               Role: {role}
@@ -622,7 +653,7 @@ export function App() {
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  const response = await fetch(path, { headers: buildApiHeaders() });
   if (!response.ok) {
     throw new Error(`${path} failed with HTTP ${response.status}`);
   }
@@ -632,7 +663,7 @@ async function apiGet<T>(path: string): Promise<T> {
 async function apiPost<T>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(true),
     body: JSON.stringify(body)
   });
   if (!response.ok) {
@@ -645,7 +676,7 @@ async function apiPost<T>(path: string, body: object): Promise<T> {
 async function apiPatch<T>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(true),
     body: JSON.stringify(body)
   });
   if (!response.ok) {
@@ -697,4 +728,36 @@ function formatPayload(payload: ApprovalRequest["payload"]): string {
     return "No parsed payload.";
   }
   return JSON.stringify(payload, null, 2);
+}
+
+function buildApiHeaders(includeJsonContentType = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  const token = loadStoredApiToken().trim();
+  if (includeJsonContentType) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function loadStoredApiToken(): string {
+  try {
+    return window.localStorage.getItem(apiTokenStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function persistApiToken(token: string): void {
+  try {
+    if (token.trim()) {
+      window.localStorage.setItem(apiTokenStorageKey, token.trim());
+      return;
+    }
+    window.localStorage.removeItem(apiTokenStorageKey);
+  } catch {
+    return;
+  }
 }

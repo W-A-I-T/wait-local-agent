@@ -19,8 +19,10 @@ from wait_local_agent.api.founder import (
     build_upload_preview,
     invoke_founder,
     json_object,
-    render_json,
     require_founder_pack,
+)
+from wait_local_agent.api.founder import (
+    render_json as render_founder_json,
 )
 from wait_local_agent.api.packs.loader import (
     PackInstallError,
@@ -42,6 +44,9 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.renderers import render_json as render_report_json
+from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
@@ -63,6 +68,7 @@ secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
 founder_app = typer.Typer(help="Founder pack commands.")
+reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -75,9 +81,9 @@ app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
 app.add_typer(packs_app, name="packs")
 app.add_typer(founder_app, name="founder")
-
 LOGGER = logging.getLogger(__name__)
 _PACK_CLI_NAMES: set[str] = set()
+app.add_typer(reports_app, name="reports")
 
 
 def _store() -> Store:
@@ -190,13 +196,13 @@ def install_pack(
 @founder_app.command("scan")
 def founder_scan(path: Path) -> None:
     response = json_object(_invoke_founder_cli("scan", path), operation="scan")
-    typer.echo(render_json(response))
+    typer.echo(render_founder_json(response))
 
 
 @founder_app.command("preflight")
 def founder_preflight() -> None:
     response = json_object(_invoke_founder_cli("preflight_latest"), operation="preflight_latest")
-    typer.echo(render_json(response))
+    typer.echo(render_founder_json(response))
 
 
 @founder_app.command("handoff")
@@ -206,7 +212,7 @@ def founder_handoff(output: Annotated[Path, typer.Option("--output")]) -> None:
     if isinstance(response, str):
         output.write_text(response, encoding="utf-8")
     else:
-        output.write_text(render_json(response) + "\n", encoding="utf-8")
+        output.write_text(render_founder_json(response) + "\n", encoding="utf-8")
     typer.echo(f"handoff={output}")
 
 
@@ -217,7 +223,7 @@ def founder_export_bundle(
 ) -> None:
     bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_json(bundle) + "\n", encoding="utf-8")
+    output.write_text(render_founder_json(bundle) + "\n", encoding="utf-8")
     typer.echo(f"bundle={output} artifact_id={artifact_id}")
 
 
@@ -227,12 +233,12 @@ def founder_upload(
     yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
 ) -> None:
     bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
-    typer.echo(render_json(build_upload_preview(artifact_id, bundle)))
+    typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
     if not yes:
         typer.echo("re-run with --yes to confirm upload")
         raise typer.Exit(code=1)
     response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
-    typer.echo(render_json(response))
+    typer.echo(render_founder_json(response))
 
 
 @app.command()
@@ -575,6 +581,62 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
     for chunk in search_backend_from_settings(settings, store).search(query, limit=limit):
         typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
         typer.echo(chunk.excerpt)
+
+
+@reports_app.command("list")
+def list_reports(
+    report_type: Annotated[str, typer.Option(help="Filter by report type value.")] = "",
+    client_id: Annotated[str, typer.Option(help="Filter by client id.")] = "",
+    project_id: Annotated[str, typer.Option(help="Filter by project id.")] = "",
+) -> None:
+    service = ReportService(_store())
+    try:
+        type_filter = ReportType(report_type) if report_type else None
+    except ValueError as exc:
+        typer.echo(f"unknown report type: {report_type}")
+        raise typer.Exit(code=1) from exc
+    stored = service.list_reports(
+        report_type=type_filter, client_id=client_id, project_id=project_id
+    )
+    for report in stored:
+        typer.echo(
+            f"{report.id} type={report.report_type.value} title={report.title} "
+            f"created_at={report.created_at}"
+        )
+    typer.echo(f"count={len(stored)}")
+
+
+@reports_app.command("show")
+def show_report(report_id: str) -> None:
+    service = ReportService(_store())
+    report = service.get_report(report_id)
+    if report is None:
+        typer.echo(f"report {report_id} not found")
+        raise typer.Exit(code=1)
+    typer.echo(render_report_json(report))
+
+
+@reports_app.command("export")
+def export_report(
+    report_id: str,
+    export_format: Annotated[str, typer.Option(help="json or markdown.")] = "json",
+    output: Annotated[Path | None, typer.Option(help="Write to this file path.")] = None,
+) -> None:
+    service = ReportService(_store())
+    try:
+        rendered = service.export_report(report_id, ReportFormat(export_format))
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    except KeyError as exc:
+        typer.echo(f"report {report_id} not found")
+        raise typer.Exit(code=1) from exc
+    if output is None:
+        typer.echo(rendered)
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
+    typer.echo(f"exported={output}")
 
 
 @backup_app.command("create")

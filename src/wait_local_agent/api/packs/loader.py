@@ -110,6 +110,7 @@ def configure_pack_routes(
     app: FastAPI,
     settings: Settings,
     candidate_module_names: Iterable[str] | None = None,
+    route_dependencies: list[Any] | None = None,
 ) -> PackRegistry:
     registry = load_pack_registry(settings, candidate_module_names)
     updated_statuses: list[PackStatus] = []
@@ -120,7 +121,11 @@ def configure_pack_routes(
             try:
                 loaded_pack = registry.loaded[status.name]
                 router = _resolve_router(loaded_pack.manifest["api_router_factory"])
-                app.include_router(router, prefix=f"/packs/{status.name}")
+                app.include_router(
+                    router,
+                    prefix=f"/packs/{status.name}",
+                    dependencies=route_dependencies,
+                )
                 mounted_router = True
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Skipping pack router for %s: %s", status.name, exc)

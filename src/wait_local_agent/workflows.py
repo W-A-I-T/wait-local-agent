@@ -79,6 +79,7 @@ def run_workflow_template(
     ticket = store.get_ticket(ticket_id)
     if ticket is None:
         raise LookupError(ticket_id)
+    effective_client_id = client_id if client_id is not None else ticket.client_id
 
     message = _workflow_message(template, ticket)
     approval_request_id = None
@@ -92,7 +93,7 @@ def run_workflow_template(
                 "ticket_id": ticket.id,
                 "message": message,
             },
-            client_id=client_id,
+            client_id=effective_client_id,
         )
         approval_request_id = approval.id
         status = "pending_approval"
@@ -103,7 +104,7 @@ def run_workflow_template(
         status=status,
         message=message,
         approval_request_id=approval_request_id,
-        client_id=client_id,
+        client_id=effective_client_id,
     )
 
 
