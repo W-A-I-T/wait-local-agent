@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from wait_local_agent.config import Settings
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 @pytest.fixture()
@@ -25,10 +30,19 @@ def settings(tmp_path: Path) -> Settings:
         allow_ocr=False,
         embedding_provider="none",
         embedding_model="BAAI/bge-small-en-v1.5",
+        admin_token="",
+        tech_token="",
+        viewer_token="",
         qdrant_path=tmp_path / "qdrant",
         qdrant_url="",
         qdrant_collection="wait_knowledge_chunks",
         connector_timeout_seconds=20.0,
+        scheduler_enabled=False,
+        rate_limit_enabled=False,
+        rate_limit_general="100/minute",
+        rate_limit_connector="10/minute",
+        update_channel_url="",
+        update_pubkeys=(),
         halopsa_base_url="",
         halopsa_client_id="",
         halopsa_client_secret="",
@@ -39,6 +53,9 @@ def settings(tmp_path: Path) -> Settings:
         hudu_base_url="",
         hudu_api_key="",
         hudu_page_size=25,
+        license_key="",
+        license_secret="",
+        pack_signing_secret="",
         demo_mode=True,
         api_token="",
     )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Annotated
@@ -10,7 +12,25 @@ import typer
 import uvicorn
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.backup import backup_state, restore_state
+from wait_local_agent.api.founder import (
+    FOUNDER_INSTALL_HINT,
+    FounderPackContractError,
+    FounderPackUnavailableError,
+    build_upload_preview,
+    invoke_founder,
+    json_object,
+    require_founder_pack,
+)
+from wait_local_agent.api.founder import (
+    render_json as render_founder_json,
+)
+from wait_local_agent.api.packs.loader import (
+    PackInstallError,
+    configure_pack_cli,
+    install_pack_tarball,
+    load_pack_registry,
+)
+from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -18,17 +38,19 @@ from wait_local_agent.connectors import (
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
+    validate_connector_credentials,
 )
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.renderers import render_json
+from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
+from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
@@ -43,6 +65,9 @@ approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
+update_app = typer.Typer(help="Signed update channel commands.")
+packs_app = typer.Typer(help="Installed pack commands.")
+founder_app = typer.Typer(help="Founder pack commands.")
 reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
@@ -53,6 +78,11 @@ app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
 app.add_typer(secrets_app, name="secrets")
+app.add_typer(update_app, name="update")
+app.add_typer(packs_app, name="packs")
+app.add_typer(founder_app, name="founder")
+LOGGER = logging.getLogger(__name__)
+_PACK_CLI_NAMES: set[str] = set()
 app.add_typer(reports_app, name="reports")
 
 
@@ -68,9 +98,19 @@ def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
 
 
+def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
+    app.registered_groups = [
+        group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
+    ]
+    _PACK_CLI_NAMES.clear()
+    registry = configure_pack_cli(app, load_settings(), candidate_module_names)
+    _PACK_CLI_NAMES.update(status.name for status in registry.statuses if status.mounted_cli)
+
+
 @app.command()
 def doctor() -> None:
     settings = load_settings()
+    sync_pack_cli()
     typer.echo("WAIT Local Agent")
     typer.echo(f"data_path={settings.data_path}")
     typer.echo(f"provider={settings.local_model_provider}")
@@ -78,6 +118,8 @@ def doctor() -> None:
     typer.echo(f"base_url={settings.local_model_base_url}")
     typer.echo(f"timeout_seconds={settings.local_model_timeout_seconds:g}")
     typer.echo(f"connector_timeout_seconds={settings.connector_timeout_seconds:g}")
+    typer.echo(f"update_channel_url={settings.update_channel_url or '(disabled)'}")
+    typer.echo(f"update_pubkeys={len(settings.update_pubkeys)}")
     typer.echo(f"llm_inference_enabled={settings.allow_llm_inference}")
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
@@ -98,6 +140,105 @@ def doctor() -> None:
     typer.echo(f"halopsa_configured={halopsa_configured}")
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
+    typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
+    typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
+
+
+@packs_app.command("list")
+def list_packs() -> None:
+    sync_pack_cli()
+    registry = load_pack_registry(load_settings())
+    if not registry.statuses:
+        typer.echo("no packs discovered")
+        return
+    for status in registry.statuses:
+        typer.echo(f"{status.name} {status.version} {'locked' if status.locked else 'unlocked'}")
+
+
+@packs_app.command("status")
+def status_packs() -> None:
+    sync_pack_cli()
+    registry = load_pack_registry(load_settings())
+    if not registry.statuses:
+        typer.echo("no packs discovered")
+        return
+    for status in registry.statuses:
+        typer.echo(
+            f"{status.name} version={status.version} state={'locked' if status.locked else 'unlocked'} "
+            f"router={status.router_available} cli={status.cli_available}"
+        )
+
+
+@packs_app.command("install")
+def install_pack(
+    tarball: Path,
+    license_key: Annotated[
+        str | None,
+        typer.Option("--license", help="Pack license key to store after install."),
+    ] = None,
+) -> None:
+    try:
+        result = install_pack_tarball(
+            tarball,
+            license_key=license_key,
+            settings=load_settings(),
+        )
+    except PackInstallError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"installed={result.pack_name} version={result.version} files={len(result.extracted_files)} "
+        f"license_stored_in_vault={result.license_stored_in_vault}"
+    )
+    if license_key and not result.license_stored_in_vault:
+        typer.echo("set WAIT_LICENSE_KEY in the environment to unlock licensed packs")
+
+
+@founder_app.command("scan")
+def founder_scan(path: Path) -> None:
+    response = json_object(_invoke_founder_cli("scan", path), operation="scan")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("preflight")
+def founder_preflight() -> None:
+    response = json_object(_invoke_founder_cli("preflight_latest"), operation="preflight_latest")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("handoff")
+def founder_handoff(output: Annotated[Path, typer.Option("--output")]) -> None:
+    response = _invoke_founder_cli("handoff")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(response, str):
+        output.write_text(response, encoding="utf-8")
+    else:
+        output.write_text(render_founder_json(response) + "\n", encoding="utf-8")
+    typer.echo(f"handoff={output}")
+
+
+@founder_app.command("export-bundle")
+def founder_export_bundle(
+    artifact_id: Annotated[str, typer.Option("--artifact-id")],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(render_founder_json(bundle) + "\n", encoding="utf-8")
+    typer.echo(f"bundle={output} artifact_id={artifact_id}")
+
+
+@founder_app.command("upload")
+def founder_upload(
+    artifact_id: Annotated[str, typer.Option("--artifact-id")],
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
+) -> None:
+    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
+    typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
+    if not yes:
+        typer.echo("re-run with --yes to confirm upload")
+        raise typer.Exit(code=1)
+    response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
+    typer.echo(render_founder_json(response))
 
 
 @app.command()
@@ -144,7 +285,7 @@ def export_audit_events(
     elif export_format == "csv":
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("w", encoding="utf-8", newline="") as handle:
-            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)
@@ -237,6 +378,24 @@ def list_secrets() -> None:
             f"{secret.key} configured={secret.configured} "
             f"required_for={secret.required_for}"
         )
+
+
+@connectors_app.command("validate")
+def validate_connector(connector: Annotated[str, typer.Argument(help="Connector id: halopsa or hudu.")]) -> None:
+    settings = load_settings()
+    try:
+        result = validate_connector_credentials(
+            connector,
+            settings,
+            halopsa_client=_halopsa_client(),
+            hudu_client=_hudu_client(),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    status = "PASS" if result.passed else "FAIL"
+    typer.echo(f"{status} connector={result.connector} layer={result.layer} {result.message}")
+    if not result.passed:
+        raise typer.Exit(code=1)
 
 
 @connectors_app.command("draft-halopsa")
@@ -454,7 +613,7 @@ def show_report(report_id: str) -> None:
     if report is None:
         typer.echo(f"report {report_id} not found")
         raise typer.Exit(code=1)
-    typer.echo(render_json(report))
+    typer.echo(render_report_json(report))
 
 
 @reports_app.command("export")
@@ -481,14 +640,40 @@ def export_report(
 
 
 @backup_app.command("create")
-def create_backup(destination: Path) -> None:
-    path = backup_state(_store(), destination)
+def create_backup(
+    destination: Path,
+    encrypt: Annotated[
+        bool,
+        typer.Option(
+            "--encrypt",
+            help="Encrypt the backup using the local Fernet vault key.",
+        ),
+    ] = False,
+) -> None:
+    settings = load_settings()
+    try:
+        path = backup_state(_store(), destination, encrypt=encrypt, settings=settings)
+    except BackupEncryptionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"backup={path}")
 
 
 @backup_app.command("restore")
-def restore_backup(source: Path) -> None:
-    path = restore_state(_store(), source)
+def restore_backup(
+    source: Path,
+    encrypted: Annotated[
+        bool,
+        typer.Option(
+            "--encrypted",
+            help="Restore from an encrypted backup created with --encrypt.",
+        ),
+    ] = False,
+) -> None:
+    settings = load_settings()
+    try:
+        path = restore_state(_store(), source, encrypted=encrypted, settings=settings)
+    except BackupEncryptionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"restored={path}")
 
 
@@ -533,6 +718,40 @@ def get_secret(key: str) -> None:
     typer.echo(value)
 
 
+@update_app.command("check")
+def update_check() -> None:
+    try:
+        status = check_for_updates(load_settings())
+    except Exception as exc:
+        typer.echo(f"status=error detail=internal_error message={exc}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(_format_update_status(status))
+
+
+def _doctor_founder_lp_status() -> str:
+    try:
+        payload = json_object(invoke_founder(require_founder_pack(), "lp_status"), operation="lp_status")
+    except FounderPackUnavailableError:
+        return "not_installed"
+    except FounderPackContractError:
+        return "contract_error"
+    status = payload.get("status")
+    if isinstance(status, str):
+        return status
+    return json.dumps(payload, sort_keys=True)
+
+
+def _invoke_founder_cli(operation: str, *args: object) -> object:
+    try:
+        pack = require_founder_pack()
+        return invoke_founder(pack, operation, *args)
+    except FounderPackUnavailableError:
+        typer.echo(FOUNDER_INSTALL_HINT)
+        raise typer.Exit(code=1) from None
+    except FounderPackContractError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:
     _audit_halopsa_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
@@ -563,6 +782,31 @@ def _approval_cli_view(approval) -> dict[str, object]:
     }
 
 
+def _format_update_status(status: UpdateStatus) -> str:
+    if status.status == "update_available":
+        return (
+            "status=update_available "
+            f"current_version={status.current_version} "
+            f"remote_version={status.remote_version} "
+            f"notes_url={status.notes_url}"
+        )
+    if status.status == "up_to_date":
+        return (
+            "status=up_to_date "
+            f"current_version={status.current_version} "
+            f"remote_version={status.remote_version}"
+        )
+    if status.status == "invalid_signature":
+        return "status=invalid_signature warning=update_metadata_signature_invalid"
+    return f"status=unknown detail={status.detail}"
+
+
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
     uvicorn.run(create_app(), host=host, port=port)
+
+
+try:
+    sync_pack_cli()
+except Exception as exc:  # noqa: BLE001
+    LOGGER.warning("Pack CLI discovery failed during startup: %s", exc)

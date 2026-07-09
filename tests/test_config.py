@@ -25,6 +25,14 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
+    monkeypatch.delenv("WAIT_UPDATE_CHANNEL_URL", raising=False)
+    monkeypatch.delenv("WAIT_UPDATE_PUBKEYS", raising=False)
+    monkeypatch.delenv("WAIT_LICENSE_KEY", raising=False)
+    monkeypatch.delenv("WAIT_LICENSE_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_PACK_SIGNING_SECRET", raising=False)
 
     settings = load_settings()
 
@@ -33,6 +41,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
     assert settings.api_token == ""
+    assert settings.admin_token == ""
+    assert settings.tech_token == ""
+    assert settings.viewer_token == ""
     assert settings.demo_mode is True
     assert settings.secrets_backend == "env"
     assert str(settings.vault_path) == ".wait-local-agent/vault"
@@ -49,6 +60,14 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.rate_limit_enabled is True
+    assert settings.rate_limit_general == "100/minute"
+    assert settings.rate_limit_connector == "10/minute"
+    assert settings.update_channel_url == ""
+    assert settings.update_pubkeys == ()
+    assert settings.license_key == ""
+    assert settings.license_secret == ""
+    assert settings.pack_signing_secret == ""
 
 
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
@@ -91,21 +110,46 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_page_size == 10
 
 
+def test_rate_limit_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_RATE_LIMIT_ENABLED", "false")
+    monkeypatch.setenv("WAIT_RATE_LIMIT_GENERAL", "25/minute")
+    monkeypatch.setenv("WAIT_RATE_LIMIT_CONNECTOR", "5/minute")
+
+    settings = load_settings()
+
+    assert settings.rate_limit_enabled is False
+    assert settings.rate_limit_general == "25/minute"
+    assert settings.rate_limit_connector == "5/minute"
+
+
+def test_update_channel_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_UPDATE_CHANNEL_URL", "https://updates.wait.example.test/channel.json")
+    monkeypatch.setenv("WAIT_UPDATE_PUBKEYS", " key-one ,key-two, , key-three ")
+
+    settings = load_settings()
+
+    assert settings.update_channel_url == "https://updates.wait.example.test/channel.json"
+    assert settings.update_pubkeys == ("key-one", "key-two", "key-three")
+
+
 def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> None:
     vault_path = tmp_path / "vault"
     vault = SecretVault.initialize(vault_path)
     vault.set("WAIT_HALOPSA_CLIENT_SECRET", "vault-secret")
     vault.set("WAIT_HUDU_API_KEY", "vault-hudu-key")
+    vault.set("license_key", "vault-license-key")
     monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
     monkeypatch.setenv("WAIT_VAULT_PATH", str(vault_path))
     monkeypatch.setenv("WAIT_HALOPSA_CLIENT_SECRET", "env-secret")
     monkeypatch.setenv("WAIT_HUDU_API_KEY", "env-hudu-key")
+    monkeypatch.setenv("WAIT_LICENSE_KEY", "env-license-key")
 
     settings = load_settings()
 
     assert settings.secrets_backend == "fernet"
     assert settings.halopsa_client_secret == "vault-secret"
     assert settings.hudu_api_key == "vault-hudu-key"
+    assert settings.license_key == "vault-license-key"
 
 
 def test_invalid_secrets_backend_falls_back_to_env(monkeypatch) -> None:

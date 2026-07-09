@@ -83,6 +83,12 @@ type HaloTicketsResponse = {
   items: HaloTicket[];
 };
 
+type AuthRoleResponse = {
+  role: "admin" | "technician" | "viewer";
+  api_auth_required: boolean;
+  demo_mode: boolean;
+};
+
 const actionTypes = [
   "add_note",
   "draft_response",
@@ -92,8 +98,11 @@ const actionTypes = [
 ];
 
 const defaultFieldText = "note=Reviewed by WAIT Local Agent";
+const apiTokenStorageKey = "wait-local-agent-api-token";
 
 export function App() {
+  const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
+  const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>({
     status: "blocked",
@@ -119,6 +128,8 @@ export function App() {
   const liveWritesReady = writeHealth.status === "ready";
   const targetTicketId = selectedTicketId || manualTicketId.trim();
   const isHaloApproval = (request: ApprovalRequest) => request.action_type.startsWith("halopsa.");
+  const canWrite = role !== "viewer";
+  const isAdmin = role === "admin";
 
   const pendingApprovals = useMemo(
     () => approvalRequests.filter((request) => request.status === "pending"),
@@ -128,6 +139,7 @@ export function App() {
   async function refresh() {
     setLoading(true);
     try {
+      const auth = await apiGet<AuthRoleResponse>("/auth/role");
       const results = await Promise.allSettled([
         apiGet<ConnectorStatus[]>("/connectors"),
         apiGet<HaloReadResult>("/connectors/halopsa/write-health"),
@@ -156,6 +168,7 @@ export function App() {
       const runs = asArray<WorkflowRun>(
         settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])
       );
+      setRole(auth.role);
       setConnectors(connectorRows);
       setWriteHealth(writeState);
       setHaloTickets(asArray<HaloTicket>(ticketResponse.items));
@@ -171,6 +184,19 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function saveApiToken() {
+    persistApiToken(apiToken);
+    setStatusMessage("API token saved for dashboard requests.");
+    await refresh();
+  }
+
+  async function clearApiToken() {
+    setApiToken("");
+    persistApiToken("");
+    setStatusMessage("API token cleared.");
+    await refresh();
   }
 
   useEffect(() => {
@@ -302,6 +328,25 @@ export function App() {
               <RefreshCw size={17} aria-hidden="true" />
               Refresh
             </button>
+            <label className="token-input">
+              <span className="sr-only">API token</span>
+              <input
+                type="password"
+                placeholder="Bearer token"
+                value={apiToken}
+                onChange={(event) => setApiToken(event.target.value)}
+              />
+            </label>
+            <button className="icon-button" type="button" onClick={() => void saveApiToken()}>
+              <KeyRound size={17} aria-hidden="true" />
+              Save Token
+            </button>
+            <button className="icon-button" type="button" onClick={() => void clearApiToken()}>
+              Clear Token
+            </button>
+            <div className="status-pill">
+              Role: {role}
+            </div>
             <div className={`status-pill ${liveWritesReady ? "" : "danger"}`}>
               {liveWritesReady ? (
                 <CheckCircle2 size={18} aria-hidden="true" />
@@ -375,6 +420,7 @@ export function App() {
             </div>
           </article>
 
+          {canWrite ? (
           <article id="draft" className="panel">
             <div className="panel-heading">
               <h2>Draft HaloPSA Write</h2>
@@ -416,6 +462,7 @@ export function App() {
               </button>
             </form>
           </article>
+          ) : null}
 
           <article id="approvals" className="panel approvals-panel">
             <div className="panel-heading">
@@ -473,6 +520,7 @@ export function App() {
                       <span>No workflow run linked</span>
                     )}
                   </div>
+                  {canWrite ? (
                   <div className="row-actions">
                     <button
                       className="icon-button"
@@ -516,6 +564,7 @@ export function App() {
                       Execute
                     </button>
                   </div>
+                  ) : null}
                 </div>
               ))}
               {approvalRequests.length === 0 ? (
@@ -559,6 +608,7 @@ export function App() {
             </div>
           </article>
 
+          {isAdmin ? (
           <article id="settings" className="panel settings-panel">
             <div className="panel-heading">
               <h2>Provider And Secrets</h2>
@@ -595,6 +645,7 @@ export function App() {
               </div>
             </dl>
           </article>
+          ) : null}
         </section>
       </section>
     </main>
@@ -602,7 +653,7 @@ export function App() {
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  const response = await fetch(path, { headers: buildApiHeaders() });
   if (!response.ok) {
     throw new Error(`${path} failed with HTTP ${response.status}`);
   }
@@ -612,7 +663,7 @@ async function apiGet<T>(path: string): Promise<T> {
 async function apiPost<T>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(true),
     body: JSON.stringify(body)
   });
   if (!response.ok) {
@@ -625,7 +676,7 @@ async function apiPost<T>(path: string, body: object): Promise<T> {
 async function apiPatch<T>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: buildApiHeaders(true),
     body: JSON.stringify(body)
   });
   if (!response.ok) {
@@ -677,4 +728,36 @@ function formatPayload(payload: ApprovalRequest["payload"]): string {
     return "No parsed payload.";
   }
   return JSON.stringify(payload, null, 2);
+}
+
+function buildApiHeaders(includeJsonContentType = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  const token = loadStoredApiToken().trim();
+  if (includeJsonContentType) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function loadStoredApiToken(): string {
+  try {
+    return window.localStorage.getItem(apiTokenStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function persistApiToken(token: string): void {
+  try {
+    if (token.trim()) {
+      window.localStorage.setItem(apiTokenStorageKey, token.trim());
+      return;
+    }
+    window.localStorage.removeItem(apiTokenStorageKey);
+  } catch {
+    return;
+  }
 }

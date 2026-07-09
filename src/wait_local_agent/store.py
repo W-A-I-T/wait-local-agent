@@ -12,6 +12,7 @@ from wait_local_agent.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
+    ScheduledJob,
     Ticket,
     WorkflowRun,
     utc_now,
@@ -44,7 +45,8 @@ class Store:
                     subject text not null,
                     body text not null,
                     priority text not null,
-                    status text not null
+                    status text not null,
+                    client_id text
                 )
                 """
             )
@@ -66,7 +68,9 @@ class Store:
                     event_type text not null,
                     subject_id text not null,
                     detail text not null,
-                    created_at text not null
+                    created_at text not null,
+                    client_id text,
+                    approver_id text
                 )
                 """
             )
@@ -84,7 +88,9 @@ class Store:
                     execution_status text not null default 'not_started',
                     execution_message text not null default '',
                     executed_at text not null default '',
-                    execution_result_json text not null default '{}'
+                    execution_result_json text not null default '{}',
+                    client_id text,
+                    approver_id text
                 )
                 """
             )
@@ -134,8 +140,23 @@ class Store:
                     status text not null,
                     message text not null,
                     approval_request_id integer,
+                    client_id text,
                     created_at text not null,
                     updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists scheduled_jobs (
+                    id integer primary key autoincrement,
+                    template_id text not null,
+                    cron text not null,
+                    params_json text not null,
+                    paused integer not null default 0,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text
                 )
                 """
             )
@@ -149,10 +170,19 @@ class Store:
                     checksum text not null,
                     modified_at text not null,
                     chunk_count integer not null,
-                    indexed_at text not null
+                    indexed_at text not null,
+                    client_id text
                 )
                 """
             )
+            self._ensure_column(connection, "tickets", "client_id", "text")
+            self._ensure_column(connection, "audit_events", "client_id", "text")
+            self._ensure_column(connection, "audit_events", "approver_id", "text")
+            self._ensure_column(connection, "approval_requests", "client_id", "text")
+            self._ensure_column(connection, "approval_requests", "approver_id", "text")
+            self._ensure_column(connection, "workflow_runs", "client_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
+            self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             connection.execute(
                 """
                 create table if not exists knowledge_chunks (
@@ -203,14 +233,15 @@ class Store:
             for ticket in tickets:
                 connection.execute(
                     """
-                    insert into tickets (id, client, subject, body, priority, status)
-                    values (?, ?, ?, ?, ?, ?)
+                    insert into tickets (id, client, subject, body, priority, status, client_id)
+                    values (?, ?, ?, ?, ?, ?, ?)
                     on conflict(id) do update set
                       client=excluded.client,
                       subject=excluded.subject,
                       body=excluded.body,
                       priority=excluded.priority,
-                      status=excluded.status
+                      status=excluded.status,
+                      client_id=coalesce(excluded.client_id, tickets.client_id)
                     """,
                     (
                         ticket.id,
@@ -219,6 +250,7 @@ class Store:
                         ticket.body,
                         ticket.priority,
                         ticket.status,
+                        _normalize_client_id(ticket.client_id),
                     ),
                 )
                 self._add_audit_event(
@@ -226,12 +258,19 @@ class Store:
                     "ticket.ingested",
                     ticket.id,
                     f"Imported {ticket.subject}",
+                    client_id=_normalize_client_id(ticket.client_id),
                 )
         return len(tickets)
 
-    def list_tickets(self) -> list[Ticket]:
+    def list_tickets(self, client_id: str | None = None) -> list[Ticket]:
         with self._connect() as connection:
-            rows = connection.execute("select * from tickets order by id").fetchall()
+            if client_id is None:
+                rows = connection.execute("select * from tickets order by id").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from tickets where client_id = ? order by id",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:
@@ -270,18 +309,33 @@ class Store:
         return str(row["comment"]) if row else ""
 
     def create_approval_request(
-        self, subject_id: str, action_type: str, payload: dict[str, object]
+        self,
+        subject_id: str,
+        action_type: str,
+        payload: dict[str, object],
+        *,
+        client_id: str | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         payload_json = json.dumps(payload, sort_keys=True)
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 insert into approval_requests
-                  (subject_id, action_type, payload_json, status, comment, created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?)
+                  (
+                    subject_id,
+                    action_type,
+                    payload_json,
+                    status,
+                    comment,
+                    created_at,
+                    updated_at,
+                    client_id
+                  )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject_id, action_type, payload_json, "pending", "", now, now),
+                (subject_id, action_type, payload_json, "pending", "", now, now, normalized_client_id),
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("approval request insert did not return an id")
@@ -291,6 +345,7 @@ class Store:
                 "approval.requested",
                 subject_id,
                 f"{action_type} approval requested",
+                client_id=normalized_client_id,
             )
             self._add_event_history(
                 connection,
@@ -306,7 +361,12 @@ class Store:
         return request
 
     def update_approval_request(
-        self, request_id: int, status: str, comment: str = ""
+        self,
+        request_id: int,
+        status: str,
+        comment: str = "",
+        *,
+        approver_id: str | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         with self._connect() as connection:
@@ -318,10 +378,10 @@ class Store:
             connection.execute(
                 """
                 update approval_requests
-                set status = ?, comment = ?, updated_at = ?
+                set status = ?, comment = ?, updated_at = ?, approver_id = coalesce(?, approver_id)
                 where id = ?
                 """,
-                (status, comment, now, request_id),
+                (status, comment, now, approver_id, request_id),
             )
             workflow_status = _workflow_status_for_approval(status)
             connection.execute(
@@ -337,6 +397,8 @@ class Store:
                 "approval_request.updated",
                 str(row["subject_id"]),
                 f"{row['action_type']} {status}",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+                approver_id=approver_id,
             )
             self._add_event_history(
                 connection,
@@ -380,6 +442,7 @@ class Store:
                 "approval_request.edited",
                 subject_id,
                 message,
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
             )
             self._add_event_history(
                 connection,
@@ -422,7 +485,14 @@ class Store:
             action_type = str(row["action_type"])
             subject_id = str(row["subject_id"])
             detail = f"{action_type} execution {status}: {message}"
-            self._add_audit_event(connection, "halopsa.write", subject_id, detail)
+            self._add_audit_event(
+                connection,
+                "halopsa.write",
+                subject_id,
+                detail,
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+                approver_id=str(row["approver_id"]) if row["approver_id"] is not None else None,
+            )
             self._add_event_history(
                 connection,
                 "halopsa.write",
@@ -443,16 +513,37 @@ class Store:
             ).fetchone()
         return ApprovalRequest(**dict(row)) if row else None
 
-    def list_approval_requests(self) -> list[ApprovalRequest]:
+    def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "select * from approval_requests order by id desc"
-            ).fetchall()
+            if client_id is None:
+                rows = connection.execute(
+                    "select * from approval_requests order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from approval_requests where client_id = ? order by id desc",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
         return [ApprovalRequest(**dict(row)) for row in rows]
 
-    def add_audit_event(self, event_type: str, subject_id: str, detail: str) -> None:
+    def add_audit_event(
+        self,
+        event_type: str,
+        subject_id: str,
+        detail: str,
+        *,
+        client_id: str | None = None,
+        approver_id: str | None = None,
+    ) -> None:
         with self._connect() as connection:
-            self._add_audit_event(connection, event_type, subject_id, detail)
+            self._add_audit_event(
+                connection,
+                event_type,
+                subject_id,
+                detail,
+                client_id=client_id,
+                approver_id=approver_id,
+            )
             self._add_event_history(
                 connection,
                 event_type,
@@ -464,14 +555,28 @@ class Store:
 
     @staticmethod
     def _add_audit_event(
-        connection: sqlite3.Connection, event_type: str, subject_id: str, detail: str
+        connection: sqlite3.Connection,
+        event_type: str,
+        subject_id: str,
+        detail: str,
+        *,
+        client_id: str | None = None,
+        approver_id: str | None = None,
     ) -> None:
         connection.execute(
             """
-            insert into audit_events (event_type, subject_id, detail, created_at)
-            values (?, ?, ?, ?)
+            insert into audit_events
+              (event_type, subject_id, detail, created_at, client_id, approver_id)
+            values (?, ?, ?, ?, ?, ?)
             """,
-            (event_type, subject_id, detail, utc_now()),
+            (
+                event_type,
+                subject_id,
+                detail,
+                utc_now(),
+                _normalize_client_id(client_id),
+                approver_id,
+            ),
         )
 
     @staticmethod
@@ -492,9 +597,15 @@ class Store:
             (event_type, subject_id, status, message, payload_json, utc_now()),
         )
 
-    def list_audit_events(self) -> list[AuditEvent]:
+    def list_audit_events(self, client_id: str | None = None) -> list[AuditEvent]:
         with self._connect() as connection:
-            rows = connection.execute("select * from audit_events order by id desc").fetchall()
+            if client_id is None:
+                rows = connection.execute("select * from audit_events order by id desc").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from audit_events where client_id = ? order by id desc",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
 
     def list_event_history(self) -> list[EventHistoryEntry]:
@@ -509,22 +620,48 @@ class Store:
         status: str,
         message: str,
         approval_request_id: int | None = None,
+        *,
+        client_id: str | None = None,
     ) -> WorkflowRun:
         now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 insert into workflow_runs
-                  (template_id, ticket_id, status, message, approval_request_id,
-                   created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?)
+                  (
+                    template_id,
+                    ticket_id,
+                    status,
+                    message,
+                    approval_request_id,
+                    client_id,
+                    created_at,
+                    updated_at
+                  )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (template_id, ticket_id, status, message, approval_request_id, now, now),
+                (
+                    template_id,
+                    ticket_id,
+                    status,
+                    message,
+                    approval_request_id,
+                    normalized_client_id,
+                    now,
+                    now,
+                ),
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("workflow run insert did not return an id")
             run_id = int(cursor.lastrowid)
-            self._add_audit_event(connection, "workflow.run_created", ticket_id, message)
+            self._add_audit_event(
+                connection,
+                "workflow.run_created",
+                ticket_id,
+                message,
+                client_id=normalized_client_id,
+            )
             payload = json.dumps(
                 {
                     "template_id": template_id,
@@ -553,9 +690,15 @@ class Store:
             ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
 
-    def list_workflow_runs(self) -> list[WorkflowRun]:
+    def list_workflow_runs(self, client_id: str | None = None) -> list[WorkflowRun]:
         with self._connect() as connection:
-            rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
+            if client_id is None:
+                rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from workflow_runs where client_id = ? order by id desc",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
 
     def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
@@ -565,6 +708,152 @@ class Store:
                 (approval_request_id,),
             ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
+
+    def create_scheduled_job(
+        self,
+        template_id: str,
+        cron: str,
+        params: dict[str, object],
+        *,
+        paused: bool = False,
+        client_id: str | None = None,
+    ) -> ScheduledJob:
+        now = utc_now()
+        params_json = json.dumps(params, sort_keys=True)
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into scheduled_jobs
+                  (
+                    template_id,
+                    cron,
+                    params_json,
+                    paused,
+                    created_at,
+                    updated_at,
+                    client_id
+                  )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template_id,
+                    cron,
+                    params_json,
+                    int(paused),
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("scheduled job insert did not return an id")
+            job_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "scheduled_job.created",
+                str(job_id),
+                f"{template_id} scheduled with cron {cron}",
+                client_id=normalized_client_id,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.created",
+                str(job_id),
+                "paused" if paused else "scheduled",
+                f"{template_id} scheduled with cron {cron}",
+                params_json,
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
+    def get_scheduled_job(self, job_id: int) -> ScheduledJob | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+        return _scheduled_job_from_row(row) if row else None
+
+    def list_scheduled_jobs(self, client_id: str | None = None) -> list[ScheduledJob]:
+        with self._connect() as connection:
+            if client_id is None:
+                rows = connection.execute(
+                    "select * from scheduled_jobs order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from scheduled_jobs where client_id = ? order by id desc",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
+        return [_scheduled_job_from_row(row) for row in rows]
+
+    def update_scheduled_job_paused(self, job_id: int, paused: bool) -> ScheduledJob:
+        now = utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute(
+                """
+                update scheduled_jobs
+                set paused = ?, updated_at = ?
+                where id = ?
+                """,
+                (int(paused), now, job_id),
+            )
+            template_id = str(row["template_id"])
+            detail = "paused" if paused else "resumed"
+            self._add_audit_event(
+                connection,
+                f"scheduled_job.{detail}",
+                str(job_id),
+                f"{template_id} {detail}",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+            self._add_event_history(
+                connection,
+                f"scheduled_job.{detail}",
+                str(job_id),
+                detail,
+                f"{template_id} {detail}",
+                str(row["params_json"]),
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
+    def delete_scheduled_job(self, job_id: int) -> ScheduledJob:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute("delete from scheduled_jobs where id = ?", (job_id,))
+            self._add_audit_event(
+                connection,
+                "scheduled_job.deleted",
+                str(job_id),
+                f"{row['template_id']} removed",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.deleted",
+                str(job_id),
+                "deleted",
+                f"{row['template_id']} removed",
+                str(row["params_json"]),
+            )
+        return _scheduled_job_from_row(row)
 
     def list_event_history_for_subject(self, subject_id: str) -> list[EventHistoryEntry]:
         with self._connect() as connection:
@@ -583,6 +872,7 @@ class Store:
         checksum: str,
         modified_at: str,
         chunks: list[str],
+        client_id: str | None = None,
     ) -> KnowledgeDocument:
         return self.upsert_knowledge_documents(
             [
@@ -594,15 +884,20 @@ class Store:
                     modified_at=modified_at,
                     chunks=chunks,
                 )
-            ]
+            ],
+            client_id=client_id,
         )[0]
 
     def upsert_knowledge_documents(
-        self, documents: list[KnowledgeDocumentWrite]
+        self,
+        documents: list[KnowledgeDocumentWrite],
+        *,
+        client_id: str | None = None,
     ) -> list[KnowledgeDocument]:
         if not documents:
             return []
         now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
         document_ids: list[int] = []
         with self._connect() as connection:
             for document in documents:
@@ -626,7 +921,7 @@ class Store:
                         """
                         update knowledge_documents
                         set title = ?, kind = ?, checksum = ?, modified_at = ?,
-                            chunk_count = ?, indexed_at = ?
+                            chunk_count = ?, indexed_at = ?, client_id = coalesce(?, client_id)
                         where id = ?
                         """,
                         (
@@ -636,6 +931,7 @@ class Store:
                             document.modified_at,
                             len(document.chunks),
                             now,
+                            normalized_client_id,
                             document_id,
                         ),
                     )
@@ -643,8 +939,17 @@ class Store:
                     cursor = connection.execute(
                         """
                         insert into knowledge_documents
-                          (path, title, kind, checksum, modified_at, chunk_count, indexed_at)
-                        values (?, ?, ?, ?, ?, ?, ?)
+                          (
+                            path,
+                            title,
+                            kind,
+                            checksum,
+                            modified_at,
+                            chunk_count,
+                            indexed_at,
+                            client_id
+                          )
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             document.path,
@@ -654,6 +959,7 @@ class Store:
                             document.modified_at,
                             len(document.chunks),
                             now,
+                            normalized_client_id,
                         ),
                     )
                     if cursor.lastrowid is None:
@@ -684,6 +990,7 @@ class Store:
                     "knowledge.ingested",
                     document.path,
                     f"Indexed {document.title}",
+                    client_id=normalized_client_id,
                 )
                 document_ids.append(document_id)
 
@@ -703,11 +1010,17 @@ class Store:
             ).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
 
-    def list_knowledge_documents(self) -> list[KnowledgeDocument]:
+    def list_knowledge_documents(self, client_id: str | None = None) -> list[KnowledgeDocument]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "select * from knowledge_documents order by title, path"
-            ).fetchall()
+            if client_id is None:
+                rows = connection.execute(
+                    "select * from knowledge_documents order by title, path"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from knowledge_documents where client_id = ? order by title, path",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
         return [KnowledgeDocument(**dict(row)) for row in rows]
 
     def knowledge_chunk_count(self) -> int:
@@ -715,11 +1028,17 @@ class Store:
             row = connection.execute("select count(*) as count from knowledge_chunks").fetchone()
         return int(row["count"])
 
-    def search_knowledge_chunks(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+    def search_knowledge_chunks(
+        self,
+        query: str,
+        limit: int = 3,
+        client_id: str | None = None,
+    ) -> list[KnowledgeChunk]:
         bounded_limit = _bounded_search_limit(limit)
         fts_query = _fts_query(query)
         if not fts_query:
             return []
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -728,6 +1047,7 @@ class Store:
                   c.document_id,
                   d.title,
                   d.path,
+                  d.client_id,
                   c.chunk_index,
                   c.text,
                   c.excerpt,
@@ -736,10 +1056,11 @@ class Store:
                 join knowledge_chunks c on c.id = cast(knowledge_chunks_fts.chunk_id as integer)
                 join knowledge_documents d on d.id = c.document_id
                 where knowledge_chunks_fts match ?
+                  and (? is null or d.client_id = ?)
                 order by rank, d.title, c.chunk_index
                 limit ?
                 """,
-                (fts_query, bounded_limit),
+                (fts_query, normalized_client_id, normalized_client_id, bounded_limit),
             ).fetchall()
         return [
             KnowledgeChunk(
@@ -750,6 +1071,7 @@ class Store:
                 chunk_index=int(row["chunk_index"]),
                 text=str(row["text"]),
                 excerpt=str(row["excerpt"]),
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
             )
             for row in rows
         ]
@@ -763,6 +1085,7 @@ class Store:
                   c.document_id,
                   d.title,
                   d.path,
+                  d.client_id,
                   c.chunk_index,
                   c.text,
                   c.excerpt
@@ -782,6 +1105,7 @@ class Store:
                 chunk_index=int(row["chunk_index"]),
                 text=str(row["text"]),
                 excerpt=str(row["excerpt"]),
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
             )
             for row in rows
         ]
@@ -876,3 +1200,16 @@ def _workflow_status_for_approval(status: str) -> str:
     if status == "rejected":
         return "rejected"
     return "pending_approval"
+
+
+def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
+    payload = dict(row)
+    payload["paused"] = bool(payload["paused"])
+    return ScheduledJob(**payload)
+
+
+def _normalize_client_id(client_id: str | None) -> str | None:
+    if client_id is None:
+        return None
+    normalized = client_id.strip()
+    return normalized or None

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from wait_local_agent.config import Settings
 from wait_local_agent.halopsa import HaloPSAClient
+from wait_local_agent.hudu import HuduClient
 from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
@@ -22,6 +24,14 @@ HALOPSA_ACTION_TYPES = {
     "assign_technician",
     "update_ticket_fields",
 }
+
+
+@dataclass(frozen=True)
+class ConnectorValidationResult:
+    connector: str
+    passed: bool
+    layer: str
+    message: str
 
 
 def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
@@ -115,11 +125,61 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
     ]
 
 
+def validate_connector_credentials(
+    connector: str,
+    settings: Settings,
+    *,
+    halopsa_client: HaloPSAClient | None = None,
+    hudu_client: HuduClient | None = None,
+) -> ConnectorValidationResult:
+    if connector == "halopsa":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_HALOPSA_BASE_URL": settings.halopsa_base_url,
+                "WAIT_HALOPSA_CLIENT_ID": settings.halopsa_client_id,
+                "WAIT_HALOPSA_CLIENT_SECRET": settings.halopsa_client_secret,
+                "WAIT_HALOPSA_TENANT": settings.halopsa_tenant,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"HaloPSA credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (halopsa_client or HaloPSAClient(settings)).health()
+    elif connector == "hudu":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_HUDU_BASE_URL": settings.hudu_base_url,
+                "WAIT_HUDU_API_KEY": settings.hudu_api_key,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Hudu credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (hudu_client or HuduClient(settings)).health()
+    else:
+        raise ValueError(f"unsupported connector: {connector}")
+    return _classify_validation_result(connector, result.status, result.message)
+
+
 def draft_halopsa_ticket_action(
     store: Store,
     ticket_id: str,
     action_type: str,
     fields: dict[str, object],
+    *,
+    client_id: str | None = None,
 ) -> HaloTicketDraft:
     if action_type not in HALOPSA_ACTION_TYPES:
         raise ValueError(f"unsupported HaloPSA action type: {action_type}")
@@ -129,7 +189,12 @@ def draft_halopsa_ticket_action(
         "action_type": action_type,
         "fields": fields,
     }
-    approval = store.create_approval_request(ticket_id, f"halopsa.{action_type}", payload)
+    approval = store.create_approval_request(
+        ticket_id,
+        f"halopsa.{action_type}",
+        payload,
+        client_id=client_id,
+    )
     return HaloTicketDraft(
         ticket_id=ticket_id,
         action_type=action_type,
@@ -246,3 +311,30 @@ def _first_present(fields: dict[str, object], *keys: str) -> object:
         if value not in (None, ""):
             return value
     return ""
+
+
+def _classify_validation_result(
+    connector: str,
+    status: str,
+    message: str,
+) -> ConnectorValidationResult:
+    if status == "ready":
+        return ConnectorValidationResult(connector, True, "connector", message)
+    if status == "not_configured":
+        return ConnectorValidationResult(connector, False, "config", message)
+    if status == "blocked":
+        return ConnectorValidationResult(connector, False, "safety", message)
+    lowered = message.lower()
+    if "http 401" in lowered or "http 403" in lowered or "unauthor" in lowered or "forbidden" in lowered:
+        layer = "auth"
+    elif (
+        "before receiving a response" in lowered
+        or "request failed" in lowered
+        or "timed out" in lowered
+        or "timeout" in lowered
+        or "connect" in lowered
+    ):
+        layer = "connectivity"
+    else:
+        layer = "connector"
+    return ConnectorValidationResult(connector, False, layer, message)

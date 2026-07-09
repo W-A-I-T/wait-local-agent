@@ -65,6 +65,9 @@ class Settings:
     local_model_timeout_seconds: float
     vector_backend: str
     api_token: str = ""
+    admin_token: str = ""
+    tech_token: str = ""
+    viewer_token: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
@@ -76,6 +79,12 @@ class Settings:
     qdrant_url: str = ""
     qdrant_collection: str = "wait_knowledge_chunks"
     connector_timeout_seconds: float = 20.0
+    scheduler_enabled: bool = True
+    rate_limit_enabled: bool = True
+    rate_limit_general: str = "100/minute"
+    rate_limit_connector: str = "10/minute"
+    update_channel_url: str = ""
+    update_pubkeys: tuple[str, ...] = ()
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -86,6 +95,9 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    license_key: str = ""
+    license_secret: str = ""
+    pack_signing_secret: str = ""
 
 
 def load_settings() -> Settings:
@@ -104,6 +116,9 @@ def load_settings() -> Settings:
         local_model_timeout_seconds=_float_env("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", 20.0),
         vector_backend=os.getenv("WAIT_VECTOR_BACKEND", "sqlite"),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
+        admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
+        tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
+        viewer_token=os.getenv("WAIT_VIEWER_TOKEN", ""),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
         vault_path=vault_path,
@@ -115,6 +130,16 @@ def load_settings() -> Settings:
         qdrant_url=os.getenv("WAIT_QDRANT_URL", ""),
         qdrant_collection=os.getenv("WAIT_QDRANT_COLLECTION", "wait_knowledge_chunks"),
         connector_timeout_seconds=_float_env("WAIT_CONNECTOR_TIMEOUT_SECONDS", 20.0),
+        scheduler_enabled=_bool_env("WAIT_SCHEDULER_ENABLED", True),
+        rate_limit_enabled=_bool_env("WAIT_RATE_LIMIT_ENABLED", True),
+        rate_limit_general=os.getenv("WAIT_RATE_LIMIT_GENERAL", "100/minute"),
+        rate_limit_connector=os.getenv("WAIT_RATE_LIMIT_CONNECTOR", "10/minute"),
+        update_channel_url=os.getenv("WAIT_UPDATE_CHANNEL_URL", "").strip(),
+        update_pubkeys=tuple(
+            value.strip()
+            for value in os.getenv("WAIT_UPDATE_PUBKEYS", "").split(",")
+            if value.strip()
+        ),
         halopsa_base_url=_secret_value(
             "WAIT_HALOPSA_BASE_URL",
             os.getenv("WAIT_HALOPSA_BASE_URL", ""),
@@ -160,4 +185,12 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        license_key=_secret_value(
+            "license_key",
+            os.getenv("WAIT_LICENSE_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        license_secret=os.getenv("WAIT_LICENSE_SECRET", ""),
+        pack_signing_secret=os.getenv("WAIT_PACK_SIGNING_SECRET", ""),
     )

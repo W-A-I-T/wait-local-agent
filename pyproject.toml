@@ -4,17 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wait-local-agent"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first AI copilot runtime for MSPs and SMBs."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "WAIT" }]
 dependencies = [
-  "cryptography>=42,<49",
-  "fastapi>=0.115,<1.0",
+  "APScheduler==3.10.4",
+  "cryptography>=48.0.1,<49",
+  "fastapi>=0.139.0,<1.0",
   "httpx>=0.27,<1.0",
-  "pypdf>=6.10.2,<7.0",
+  "pypdf>=6.13.3,<7.0",
+  "slowapi>=0.1.10,<0.2",
   "typer>=0.12,<1.0",
   "uvicorn[standard]>=0.30,<1.0",
 ]
@@ -64,6 +66,13 @@ fail_under = 95
 line-length = 120
 target-version = "py312"
 
+[tool.uv]
+constraint-dependencies = [
+  "idna>=3.15",
+  "msgpack>=1.2.1",
+  "starlette>=1.3.1",
+]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
@@ -75,5 +84,5 @@ disable_error_code = ["no-untyped-def"]
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["docling.*", "fastembed.*", "qdrant_client.*", "reportlab.*"]
+module = ["apscheduler.*", "docling.*", "fastembed.*", "qdrant_client.*", "reportlab.*"]
 ignore_missing_imports = true

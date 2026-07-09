@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import cast
 
@@ -133,7 +134,85 @@ def test_audit_event_export_json_and_csv(settings) -> None:
     assert future_filter.status_code == 200
     assert future_filter.json() == {"count": 0, "events": []}
 
+def test_auth_role_approver_identity_and_client_filters(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-ACME', 'Acme', 'Subject', 'Body', 'High', 'Open', 'acme')
+            """
+        )
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-BETA', 'Beta', 'Subject', 'Body', 'Low', 'Open', 'beta')
+            """
+        )
+    approval = store.create_approval_request(
+        "TCK-ACME",
+        "ticket.assign",
+        {"ticket_id": "TCK-ACME"},
+        client_id="acme",
+    )
+    store.create_approval_request("TCK-BETA", "ticket.assign", {"ticket_id": "TCK-BETA"}, client_id="beta")
+    store.add_audit_event("unit.test", "TCK-ACME", "acme event", client_id="acme")
+    store.add_audit_event("unit.test", "TCK-BETA", "beta event", client_id="beta")
+    store.create_workflow_run(
+        "documentation-assisted-response",
+        "TCK-ACME",
+        "pending_approval",
+        "acme",
+        approval.id,
+        client_id="acme",
+    )
+    store.upsert_knowledge_document(
+        path="examples/sample_docs/acme.md",
+        title="Acme",
+        kind="markdown",
+        checksum="sum-acme",
+        modified_at="2026-07-08T00:00:00+00:00",
+        chunks=["chunk"],
+        client_id="acme",
+    )
+    client = TestClient(create_app(secure_settings))
 
+    role = client.get("/auth/role", headers={"Authorization": "Bearer viewer-token"})
+    filtered_tickets = client.get("/tickets", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_approvals = client.get("/approval-requests", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_documents = client.get("/knowledge/documents", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    approved = client.post(
+        f"/approval-requests/{approval.id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "ship it"},
+    )
+    export = client.get("/audit-events/export", params={"client_id": "acme"}, headers=_auth("admin-token"))
+    expected_approver_id = hashlib.sha256(b"tech-token").hexdigest()[:16]
+
+    assert role.status_code == 200
+    assert role.json()["role"] == "viewer"
+    assert [ticket["id"] for ticket in filtered_tickets.json()] == ["TCK-ACME"]
+    assert [request["subject_id"] for request in filtered_approvals.json()] == ["TCK-ACME"]
+    assert all(event["client_id"] == "acme" for event in filtered_audit.json())
+    assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
+    assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
+    assert approved.status_code == 200
+    assert approved.json()["approver_id"] == expected_approver_id
+    assert any(
+        event["event_type"] == "approval_request.updated" and event["approver_id"] == expected_approver_id
+        for event in export.json()["events"]
+    )
 def test_missing_ticket_returns_404(settings) -> None:
     client = TestClient(create_app(settings))
 
@@ -155,6 +234,36 @@ def test_knowledge_api_ingest_list_and_search(settings) -> None:
     assert len(documents.json()) == 3
     assert search.status_code == 200
     assert search.json()[0]["title"] == "Shared Mailbox Runbook"
+
+
+def test_knowledge_search_scopes_results_by_client_id(settings) -> None:
+    store = Store(settings.data_path)
+    store.upsert_knowledge_document(
+        path="examples/sample_docs/acme.md",
+        title="Acme Runbook",
+        kind="markdown",
+        checksum="acme-checksum",
+        modified_at="2026-07-08T00:00:00+00:00",
+        chunks=["mailbox permissions for acme"],
+        client_id="acme",
+    )
+    store.upsert_knowledge_document(
+        path="examples/sample_docs/beta.md",
+        title="Beta Runbook",
+        kind="markdown",
+        checksum="beta-checksum",
+        modified_at="2026-07-08T00:00:00+00:00",
+        chunks=["mailbox permissions for beta"],
+        client_id="beta",
+    )
+    client = TestClient(create_app(settings))
+
+    filtered = client.get("/knowledge/search", params={"q": "mailbox permissions", "client_id": "acme"})
+    unfiltered = client.get("/knowledge/search", params={"q": "mailbox permissions"})
+
+    assert filtered.status_code == 200
+    assert [chunk["title"] for chunk in filtered.json()] == ["Acme Runbook"]
+    assert len(unfiltered.json()) == 2
 
 
 def test_knowledge_api_rejects_outside_allowed_root(settings, tmp_path) -> None:
@@ -211,6 +320,123 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert workflow_runs.status_code == 200
     assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
     assert workflow_runs.json()[0]["status"] == "pending_approval"
+
+
+def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1002"),
+        )
+    client = TestClient(create_app(settings))
+
+    run = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        json={"ticket_id": "TCK-1002"},
+    )
+    approvals = client.get("/approval-requests", params={"client_id": "acme"})
+    runs = client.get("/workflow-runs", params={"client_id": "acme"})
+
+    assert run.status_code == 200
+    assert run.json()["client_id"] == "acme"
+    assert [request["subject_id"] for request in approvals.json()] == ["TCK-1002"]
+    assert [item["ticket_id"] for item in runs.json()] == ["TCK-1002"]
+
+
+def test_invalid_halopsa_draft_returns_400(settings, monkeypatch) -> None:
+    client = TestClient(create_app(settings))
+
+    def fail_draft(*args, **kwargs):
+        raise ValueError("bad draft")
+
+    monkeypatch.setattr(app_module, "draft_halopsa_ticket_action", fail_draft)
+
+    response = client.post(
+        "/connectors/halopsa/tickets/TCK-1002/drafts",
+        json={"action_type": "add_note", "fields": {"note": "ok"}},
+    )
+
+    assert response.status_code == 400
+
+
+def test_approval_detail_handles_invalid_payload_and_missing_write_health(settings, monkeypatch) -> None:
+    class HaloClientWithoutWriteHealth:
+        def __init__(self, _settings) -> None:
+            pass
+
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-1002",
+        "halopsa.add_note",
+        {"fields": {"note": "ok"}},
+    )
+    store.update_approval_request(approval.id or 0, "approved", "ready")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id = ?",
+            ("not-json", approval.id),
+        )
+    monkeypatch.setattr(app_module, "HaloPSAClient", HaloClientWithoutWriteHealth)
+    client = TestClient(app_module.create_app(settings))
+
+    response = client.get(f"/approval-requests/{approval.id}")
+
+    assert response.status_code == 200
+    assert response.json()["payload"] == {}
+    assert response.json()["block_reason"] == "HaloPSA write health is unavailable."
+
+
+def test_update_approval_request_recovers_from_runtime_error(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-1002",
+        "halopsa.add_note",
+        {"fields": {"note": "ok"}},
+    )
+    client = TestClient(create_app(settings))
+
+    def fail_execution(_store, _client, request_id: int):
+        raise RuntimeError(f"execution failed for {request_id}")
+
+    monkeypatch.setattr(app_module, "execute_halopsa_approval_request", fail_execution)
+    response = client.post(
+        f"/approval-requests/{approval.id}",
+        json={"status": "approved", "comment": "try later"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    assert response.json()["execution_status"] == "not_started"
+
+
+def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    missing_template = client.post(
+        "/scheduled-jobs",
+        json={"template_id": "missing", "cron": "0 1 * * *", "params": {"ticket_id": "TCK-1002"}},
+    )
+    missing_ticket = client.post(
+        "/scheduled-jobs",
+        json={"template_id": "documentation-assisted-response", "cron": "0 1 * * *", "params": {"ticket_id": "NOPE"}},
+    )
+    missing_param = client.post(
+        "/scheduled-jobs",
+        json={"template_id": "documentation-assisted-response", "cron": "0 1 * * *", "params": {}},
+    )
+    pause = client.post("/scheduled-jobs/999/pause")
+    resume = client.post("/scheduled-jobs/999/resume")
+    delete = client.delete("/scheduled-jobs/999")
+
+    assert missing_template.status_code == 404
+    assert missing_ticket.status_code == 404
+    assert missing_param.status_code == 422
+    assert pause.status_code == 404
+    assert resume.status_code == 404
+    assert delete.status_code == 404
 
 
 def test_approval_detail_payload_edit_and_workflow_detail(settings) -> None:
@@ -338,6 +564,78 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
     assert approved_runs.json()[0]["status"] == "approved"
     assert rejected.status_code == 200
     assert rejected_runs.json()[0]["status"] == "rejected"
+
+
+def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registration(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": True,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    Store(secure_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    app = create_app(secure_settings)
+
+    with TestClient(app) as client:
+        viewer_create = client.post(
+            "/scheduled-jobs",
+            headers=_auth("viewer-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "0 9 * * *",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        invalid_cron = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "bad cron",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        created = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "cron": "0 9 * * *",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        listed = client.get("/scheduled-jobs", headers=_auth("viewer-token"))
+        job_id = created.json()["id"]
+
+        assert viewer_create.status_code == 403
+        assert invalid_cron.status_code == 422
+        assert "invalid cron expression" in invalid_cron.json()["detail"]
+        assert created.status_code == 200
+        assert created.json()["next_run_at"] is not None
+        assert created.json()["params"]["ticket_id"] == "TCK-1001"
+        assert app.state.scheduler._scheduler is not None
+        assert len(app.state.scheduler._scheduler.get_jobs()) == 1
+        assert listed.status_code == 200
+        assert listed.json()[0]["id"] == job_id
+
+        paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
+        resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
+        deleted = client.delete(f"/scheduled-jobs/{job_id}", headers=_auth("tech-token"))
+
+        assert paused.status_code == 200
+        assert paused.json()["paused"] is True
+        assert paused.json()["next_run_at"] is None
+        assert resumed.status_code == 200
+        assert resumed.json()["paused"] is False
+        assert resumed.json()["next_run_at"] is not None
+        assert deleted.status_code == 200
+        assert deleted.json()["id"] == job_id
+        assert len(app.state.scheduler._scheduler.get_jobs()) == 0
+        assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 
 
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
@@ -655,3 +953,7 @@ def _read_response(items):
 
 def _hudu_response(items):
     return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

@@ -4,15 +4,15 @@ Use this checklist before a public release tag or launch announcement.
 
 ## Safety gates
 
-- [ ] `WAIT_ALLOW_WRITE_ACTIONS=false` in `.env.example`, Dockerfile, and Compose defaults.
-- [ ] `WAIT_ALLOW_HTTP_PROBING=false` in `.env.example`, Dockerfile, and Compose defaults.
-- [ ] `WAIT_ALLOW_CLOUD_FALLBACK=false` in `.env.example`, Dockerfile, and Compose defaults.
-- [ ] `WAIT_ALLOW_LLM_INFERENCE=false` in `.env.example`, Dockerfile, and Compose defaults.
-- [ ] HaloPSA write execution requires an approved approval request.
-- [ ] Hudu remains read-only.
-- [ ] `packs/` is gitignored.
-- [ ] No proprietary pack implementation is committed.
-- [ ] No real client data or connector credentials are committed.
+- [x] `WAIT_ALLOW_WRITE_ACTIONS=false` in `.env.example`, Dockerfile, and Compose defaults.
+- [x] `WAIT_ALLOW_HTTP_PROBING=false` in `.env.example`, Dockerfile, and Compose defaults.
+- [x] `WAIT_ALLOW_CLOUD_FALLBACK=false` in `.env.example`, Dockerfile, and Compose defaults.
+- [x] `WAIT_ALLOW_LLM_INFERENCE=false` in `.env.example`, Dockerfile, and Compose defaults.
+- [x] HaloPSA write execution requires an approved approval request.
+- [x] Hudu remains read-only.
+- [x] `packs/` is gitignored.
+- [x] No proprietary pack implementation is committed.
+- [x] No real client data or connector credentials are committed.
 
 ## Validation commands
 
@@ -63,16 +63,17 @@ gitleaks detect --source . --log-opts HEAD
 
 ## Launch assets
 
-- [ ] README explains ready-now scope and staged roadmap.
-- [ ] `docs/local-demo.md` is accurate.
-- [ ] `docs/appliance-install.md` is accurate.
-- [ ] `docs/security-model.md` reflects implemented auth, vault, redaction, and audit export.
-- [ ] `docs/connector-setup.md` describes HaloPSA/Hudu setup without enabling writes by default.
-- [ ] `docs/open-core-boundary.md` states public vs proprietary boundaries.
-- [ ] `CHANGELOG.md` includes the release entry.
-- [ ] GitHub issue templates are present.
-- [ ] Synthetic demo data is present under `demo/`.
-- [ ] Screenshots, demo GIF, architecture image, and landing page copy are prepared outside this code pass.
+- [x] README explains ready-now scope and staged roadmap.
+- [x] `docs/local-demo.md` is accurate.
+- [x] `docs/appliance-install.md` is accurate.
+- [x] `docs/security-model.md` reflects implemented auth, vault, redaction, and audit export.
+- [x] `docs/connector-setup.md` describes HaloPSA/Hudu setup without enabling writes by default.
+- [x] `docs/open-core-boundary.md` states public vs proprietary boundaries.
+- [x] `CHANGELOG.md` includes the release entry.
+- [x] GitHub issue templates are present.
+- [x] Synthetic demo data is present under `demo/`.
+- [ ] Demo GIF and external landing page copy are prepared outside this code pass.
+- [x] Screenshots and architecture content are prepared for this release pass.
 
 ## Release decision
 
