@@ -61,8 +61,12 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     beta_approval = store.create_approval_request("TCK-2", "ticket.assign", {"ticket_id": "TCK-2"}, client_id="beta")
     store.add_audit_event("unit.test", "TCK-1", "acme event", client_id="acme")
     store.add_audit_event("unit.test", "TCK-2", "beta event", client_id="beta")
-    store.create_workflow_run("documentation-assisted-response", "TCK-1", "pending_approval", "acme", acme_approval.id, client_id="acme")
-    store.create_workflow_run("documentation-assisted-response", "TCK-2", "pending_approval", "beta", beta_approval.id, client_id="beta")
+    store.create_workflow_run(
+        "documentation-assisted-response", "TCK-1", "pending_approval", "acme", acme_approval.id, client_id="acme"
+    )
+    store.create_workflow_run(
+        "documentation-assisted-response", "TCK-2", "pending_approval", "beta", beta_approval.id, client_id="beta"
+    )
     store.upsert_knowledge_document(
         path="examples/sample_docs/acme.md",
         title="Acme",
@@ -174,17 +178,57 @@ def _seed_prechange_schema(path: Path) -> None:
             insert into audit_events (event_type, subject_id, detail, created_at)
             values ('unit.test', 'TCK-1', 'detail', '2026-07-08T00:00:00+00:00');
             insert into approval_requests
-              (subject_id, action_type, payload_json, status, comment, created_at, updated_at, execution_status, execution_message, executed_at, execution_result_json)
+              (
+                subject_id,
+                action_type,
+                payload_json,
+                status,
+                comment,
+                created_at,
+                updated_at,
+                execution_status,
+                execution_message,
+                executed_at,
+                execution_result_json
+              )
             values
-              ('TCK-1', 'ticket.assign', '{}', 'pending', '', '2026-07-08T00:00:00+00:00', '2026-07-08T00:00:00+00:00', 'not_started', '', '', '{}');
+              (
+                'TCK-1',
+                'ticket.assign',
+                '{}',
+                'pending',
+                '',
+                '2026-07-08T00:00:00+00:00',
+                '2026-07-08T00:00:00+00:00',
+                'not_started',
+                '',
+                '',
+                '{}'
+              );
             insert into workflow_runs
               (template_id, ticket_id, status, message, approval_request_id, created_at, updated_at)
             values
-              ('documentation-assisted-response', 'TCK-1', 'pending_approval', 'waiting', 1, '2026-07-08T00:00:00+00:00', '2026-07-08T00:00:00+00:00');
+              (
+                'documentation-assisted-response',
+                'TCK-1',
+                'pending_approval',
+                'waiting',
+                1,
+                '2026-07-08T00:00:00+00:00',
+                '2026-07-08T00:00:00+00:00'
+              );
             insert into knowledge_documents
               (path, title, kind, checksum, modified_at, chunk_count, indexed_at)
             values
-              ('examples/sample_docs/doc.md', 'Doc', 'markdown', 'sum', '2026-07-08T00:00:00+00:00', 1, '2026-07-08T00:00:00+00:00');
+              (
+                'examples/sample_docs/doc.md',
+                'Doc',
+                'markdown',
+                'sum',
+                '2026-07-08T00:00:00+00:00',
+                1,
+                '2026-07-08T00:00:00+00:00'
+              );
             """
         )
 
