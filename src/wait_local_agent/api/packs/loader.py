@@ -339,7 +339,7 @@ def _pack_enabled(pack_name: str, settings: Settings) -> bool:
     except ImportError:
         return False
     try:
-        pack_enabled = getattr(pack_keys, "pack_enabled")
+        pack_enabled = pack_keys.pack_enabled
         return bool(pack_enabled(pack_name, settings.license_key or None))
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("License validation failed for pack %s: %s", pack_name, exc)
