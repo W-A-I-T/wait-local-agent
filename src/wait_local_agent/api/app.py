@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
@@ -625,8 +625,8 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
-    response = _rate_limit_exceeded_handler(request, exc)
+def _rate_limit_handler(request: Request, exc: Exception) -> Response:
+    response = _rate_limit_exceeded_handler(request, cast(RateLimitExceeded, exc))
     current_limit = getattr(request.state, "view_rate_limit", None)
     if current_limit is None:
         return response
