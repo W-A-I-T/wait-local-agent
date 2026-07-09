@@ -79,6 +79,7 @@ class Settings:
     qdrant_url: str = ""
     qdrant_collection: str = "wait_knowledge_chunks"
     connector_timeout_seconds: float = 20.0
+    scheduler_enabled: bool = True
     rate_limit_enabled: bool = True
     rate_limit_general: str = "100/minute"
     rate_limit_connector: str = "10/minute"
@@ -124,6 +125,7 @@ def load_settings() -> Settings:
         qdrant_url=os.getenv("WAIT_QDRANT_URL", ""),
         qdrant_collection=os.getenv("WAIT_QDRANT_COLLECTION", "wait_knowledge_chunks"),
         connector_timeout_seconds=_float_env("WAIT_CONNECTOR_TIMEOUT_SECONDS", 20.0),
+        scheduler_enabled=_bool_env("WAIT_SCHEDULER_ENABLED", True),
         rate_limit_enabled=_bool_env("WAIT_RATE_LIMIT_ENABLED", True),
         rate_limit_general=os.getenv("WAIT_RATE_LIMIT_GENERAL", "100/minute"),
         rate_limit_connector=os.getenv("WAIT_RATE_LIMIT_CONNECTOR", "10/minute"),

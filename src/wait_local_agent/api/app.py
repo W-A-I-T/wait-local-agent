@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import time
+from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,11 +31,16 @@ from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import AuthContext, Role, require_role
+from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
 from wait_local_agent.vector_search import search_backend_from_settings
-from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
+from wait_local_agent.workflows import (
+    get_workflow_template,
+    list_workflow_templates,
+    run_workflow_template,
+)
 
 ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
@@ -75,9 +81,16 @@ class WorkflowRunRequest(BaseModel):
     client_id: str | None = None
 
 
+class ScheduledJobCreateRequest(BaseModel):
+    template_id: str
+    cron: str
+    params: dict[str, object]
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     store = Store(active_settings.data_path)
+    scheduler = SchedulerManager(store, enabled=active_settings.scheduler_enabled)
     service = TicketIntelligenceService(
         store=store,
         settings=active_settings,
@@ -86,9 +99,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler.shutdown()
+
     app = FastAPI(
         title="WAIT Local Agent",
         version="0.1.0",
+        lifespan=lifespan,
     )
     limiter = Limiter(
         key_func=get_remote_address,
@@ -98,6 +120,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enabled=active_settings.rate_limit_enabled,
     )
     app.state.settings = active_settings
+    app.state.store = store
+    app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_middleware(SlowAPIMiddleware)
@@ -114,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
             "secrets_backend": active_settings.secrets_backend,
+            "scheduler_enabled": active_settings.scheduler_enabled,
             "halopsa_configured": bool(
                 active_settings.halopsa_base_url
                 and active_settings.halopsa_client_id
@@ -473,6 +498,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
 
+    @app.get("/scheduled-jobs")
+    def scheduled_jobs(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [_scheduled_job_view(job) for job in scheduler.list_jobs(client_id=client_id)]
+
+    @app.post("/scheduled-jobs")
+    def create_scheduled_job(
+        request: ScheduledJobCreateRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        if get_workflow_template(request.template_id) is None:
+            raise HTTPException(status_code=404, detail="workflow template not found")
+        ticket_id = _scheduled_ticket_id(request.params)
+        if store.get_ticket(ticket_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
+        try:
+            scheduled_job = scheduler.register(
+                request.template_id,
+                request.cron,
+                request.params,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    @app.post("/scheduled-jobs/{job_id}/pause")
+    def pause_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+        try:
+            return _scheduled_job_view(scheduler.pause(job_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+
+    @app.post("/scheduled-jobs/{job_id}/resume")
+    def resume_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+        try:
+            return _scheduled_job_view(scheduler.resume(job_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+
+    @app.delete("/scheduled-jobs/{job_id}")
+    def delete_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+        try:
+            return _scheduled_job_view(scheduler.remove(job_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+
     @app.post("/workflows/templates/{template_id}/runs")
     def run_workflow(
         template_id: str,
@@ -614,6 +687,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return False, write_health.message
         return True, ""
 
+    def _scheduled_job_view(job) -> dict[str, object]:
+        return {
+            "id": job.id,
+            "template_id": job.template_id,
+            "cron": job.cron,
+            "paused": job.paused,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "client_id": job.client_id,
+            "next_run_at": job.next_run_at,
+            "params": _safe_json_object(job.params_json),
+        }
+
     return app
 
 
@@ -623,6 +709,13 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _scheduled_ticket_id(params: dict[str, object]) -> str:
+    ticket_id = params.get("ticket_id")
+    if not isinstance(ticket_id, str) or not ticket_id.strip():
+        raise HTTPException(status_code=422, detail="scheduled job params must include ticket_id")
+    return ticket_id
 
 
 def _rate_limit_handler(request: Request, exc: Exception) -> Response:

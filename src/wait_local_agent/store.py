@@ -11,6 +11,7 @@ from wait_local_agent.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
+    ScheduledJob,
     Ticket,
     WorkflowRun,
     utc_now,
@@ -143,6 +144,20 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists scheduled_jobs (
+                    id integer primary key autoincrement,
+                    template_id text not null,
+                    cron text not null,
+                    params_json text not null,
+                    paused integer not null default 0,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists knowledge_documents (
                     id integer primary key autoincrement,
                     path text not null unique,
@@ -162,6 +177,7 @@ class Store:
             self._ensure_column(connection, "approval_requests", "client_id", "text")
             self._ensure_column(connection, "approval_requests", "approver_id", "text")
             self._ensure_column(connection, "workflow_runs", "client_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             connection.execute(
                 """
@@ -674,6 +690,152 @@ class Store:
             ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
 
+    def create_scheduled_job(
+        self,
+        template_id: str,
+        cron: str,
+        params: dict[str, object],
+        *,
+        paused: bool = False,
+        client_id: str | None = None,
+    ) -> ScheduledJob:
+        now = utc_now()
+        params_json = json.dumps(params, sort_keys=True)
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into scheduled_jobs
+                  (
+                    template_id,
+                    cron,
+                    params_json,
+                    paused,
+                    created_at,
+                    updated_at,
+                    client_id
+                  )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template_id,
+                    cron,
+                    params_json,
+                    int(paused),
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("scheduled job insert did not return an id")
+            job_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "scheduled_job.created",
+                str(job_id),
+                f"{template_id} scheduled with cron {cron}",
+                client_id=normalized_client_id,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.created",
+                str(job_id),
+                "paused" if paused else "scheduled",
+                f"{template_id} scheduled with cron {cron}",
+                params_json,
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
+    def get_scheduled_job(self, job_id: int) -> ScheduledJob | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+        return _scheduled_job_from_row(row) if row else None
+
+    def list_scheduled_jobs(self, client_id: str | None = None) -> list[ScheduledJob]:
+        with self._connect() as connection:
+            if client_id is None:
+                rows = connection.execute(
+                    "select * from scheduled_jobs order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from scheduled_jobs where client_id = ? order by id desc",
+                    (_normalize_client_id(client_id),),
+                ).fetchall()
+        return [_scheduled_job_from_row(row) for row in rows]
+
+    def update_scheduled_job_paused(self, job_id: int, paused: bool) -> ScheduledJob:
+        now = utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute(
+                """
+                update scheduled_jobs
+                set paused = ?, updated_at = ?
+                where id = ?
+                """,
+                (int(paused), now, job_id),
+            )
+            template_id = str(row["template_id"])
+            detail = "paused" if paused else "resumed"
+            self._add_audit_event(
+                connection,
+                f"scheduled_job.{detail}",
+                str(job_id),
+                f"{template_id} {detail}",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+            self._add_event_history(
+                connection,
+                f"scheduled_job.{detail}",
+                str(job_id),
+                detail,
+                f"{template_id} {detail}",
+                str(row["params_json"]),
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
+    def delete_scheduled_job(self, job_id: int) -> ScheduledJob:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute("delete from scheduled_jobs where id = ?", (job_id,))
+            self._add_audit_event(
+                connection,
+                "scheduled_job.deleted",
+                str(job_id),
+                f"{row['template_id']} removed",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.deleted",
+                str(job_id),
+                "deleted",
+                f"{row['template_id']} removed",
+                str(row["params_json"]),
+            )
+        return _scheduled_job_from_row(row)
+
     def list_event_history_for_subject(self, subject_id: str) -> list[EventHistoryEntry]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -937,6 +1099,12 @@ def _workflow_status_for_approval(status: str) -> str:
     if status == "rejected":
         return "rejected"
     return "pending_approval"
+
+
+def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
+    payload = dict(row)
+    payload["paused"] = bool(payload["paused"])
+    return ScheduledJob(**payload)
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:
