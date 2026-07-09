@@ -4,92 +4,76 @@
 [![License](https://img.shields.io/github/license/W-A-I-T/wait-local-agent)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 
-**Local-first MSP and founder automation appliance for tickets, runbooks, approvals, safe connector drafts, and auditable workflows.**
+**Local-first MSP and founder automation appliance for tickets, runbooks, approvals, connector drafts, scheduled workflows, and auditable local operations.**
 
-WAIT Local Agent is an Apache 2.0, self-hosted runtime for operators who want inspectable local automation instead of a cloud-first control plane. The public repo ships the local appliance: FastAPI API, Typer CLI, React dashboard, SQLite state, approval-gated connector actions, scheduled workflows, signed update checks, and open-core pack loading.
+WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 
-> **Safety guarantee:** live PSA writes require explicit operator opt-in (`WAIT_ALLOW_WRITE_ACTIONS=true`) and a human-approved approval request. Fresh installs stay read-first and local by default.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    User[Operator or Technician] --> CLI[Typer CLI]
-    User --> UI[React Dashboard]
-    CLI --> API[FastAPI Runtime]
-    UI --> API
-
-    subgraph Core["Local Appliance Core"]
-        API --> RBAC[RBAC and Token Auth]
-        API --> Approval[Approval Queue and Audit]
-        API --> Workflows[Workflow Engine and Scheduler]
-        API --> Knowledge[Knowledge Ingest and Search]
-        API --> Backup[Backup and Restore]
-        API --> Update[Signed Update Check]
-        API --> Store[(SQLite State)]
-    end
-
-    Approval --> Connectors[HaloPSA and Hudu Connectors]
-    API --> Loader[Pack Loader and wait packs CLI]
-    Loader -. public open-core boundary .-> Packs[Private or Paid Packs]
-    API --> Founder[Founder Surface]
-    Founder -. requires installed founder pack .-> Packs
-```
+> Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector probing requires `WAIT_ALLOW_HTTP_PROBING=true`, and HaloPSA writes still require an approved draft.
 
 ## What Ships In 1.0.0
 
-- FastAPI operator API, Typer CLI, and React dashboard for local operation.
-- RBAC-backed bearer token auth with admin, technician, and viewer roles.
-- SQLite-backed tickets, documents, approvals, audit events, workflow runs, and scheduled jobs.
-- Tenant and client scoping on stored workflow, approval, and event views.
-- Approval queue with payload preview, field edits, approver identity capture, approve/reject, and execution history.
-- HaloPSA read paths plus approval-gated write drafts and execution.
+- FastAPI API on port `8788`, React dashboard on port `5173`, and `wait-local-agent` CLI.
+- Role-based bearer tokens with `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT_VIEWER_TOKEN`, plus legacy `WAIT_API_TOKEN` as an admin-equivalent token.
+- Demo mode: when `WAIT_DEMO_MODE=true` and no role token is enforced, local demo flows run without bearer auth.
+- SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
+- Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
+- HaloPSA read paths, approval-gated write drafts, and execution history.
 - Hudu read-only documentation context.
-- Connector validation CLI for HaloPSA and Hudu credential checks.
-- Markdown, text, and text-based PDF ingestion with SQLite FTS5 retrieval by default.
-- Scheduled workflow registration, pause, resume, delete, and audit trail.
-- Optional Fernet secret vault plus encrypted backup and restore support.
-- Signed update-channel client checks.
-- Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
-- Founder API and CLI surface in the public repo, gated on founder pack installation.
-
-## Open-Core Boundary
-
-This repository contains the open core: runtime, API, CLI, dashboard, workflow engine, scheduler, HaloPSA and Hudu surfaces, pack loader, tests, docs, and release assets.
-
-Paid or proprietary pack implementation does not belong here. Private pack work belongs in `W-A-I-T/wait-local-agent-packs` or another private repository. The local `packs/` directory remains gitignored for proprietary installs.
-
-See [docs/open-core-boundary.md](docs/open-core-boundary.md) and [docs/commercial-model.md](docs/commercial-model.md).
-
-## Screenshots
-
-### Dashboard
-
-![WAIT Local Agent dashboard](docs/media/dashboard.png)
-
-### API Reference
-
-![WAIT Local Agent API reference](docs/media/api-reference.png)
+- Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
+- Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
+- Scheduled workflow APIs under `/scheduled-jobs`.
+- Signed update checks with `wait-local-agent update check`.
+- Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
+- Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
 
 ## Requirements
 
-- Python 3.12 for local CLI and API development.
-- Docker with Compose support for the appliance path.
-- Node.js 22 for dashboard development outside Docker.
-- Optional local model endpoint such as Ollama or vLLM.
+- Python 3.12+
+- Docker with Compose support for the appliance path
+- Node.js 22 only if you want to run the dashboard outside Docker
+- Optional `uv` for contributor setup
 
-## Quick Start: Local CLI
+## Quick Start
+
+### Appliance path
 
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
 cd wait-local-agent
+cp .env.example .env
+docker compose up --build
+```
+
+- Dashboard: `http://127.0.0.1:5173`
+- API: `http://127.0.0.1:8788`
+- The dashboard is a Vite dev server that proxies API traffic to the API container.
+- Persistent SQLite state lives in the `wait-local-agent-data` Docker volume.
+- `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
+- Demo mode still works without a `.env`; Compose falls back to the built-in demo-safe defaults in `docker-compose.yml`.
+
+The installer helper does the same clone/copy/start flow:
+
+```bash
+scripts/install.sh
+```
+
+or:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh | bash
+```
+
+### Local CLI path
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 wait-local-agent doctor
 ```
 
-Run the deterministic demo:
+Deterministic demo path:
 
 ```bash
 scripts/demo_appliance.sh
@@ -106,72 +90,55 @@ wait-local-agent workflows run documentation-assisted-response TCK-1002
 wait-local-agent approvals list
 wait-local-agent events list
 wait-local-agent connectors validate halopsa
+wait-local-agent connectors validate hudu
 wait-local-agent update check
 wait-local-agent packs status
 ```
 
-## Quick Start: Docker Appliance
+## Authentication and Demo Mode
 
-```bash
-docker compose up --build
-```
-
-- API: `http://127.0.0.1:8788`
-- Dashboard: `http://127.0.0.1:5173`
-- SQLite state: Docker volume `wait-local-agent-data`
-
-Health check:
-
-```bash
-curl http://127.0.0.1:8788/health
-```
-
-Expected conservative defaults:
+Demo mode keeps local walkthroughs simple:
 
 ```text
-write_actions_enabled=false
-http_probing_enabled=false
-cloud_fallback_enabled=false
-llm_inference_enabled=false
-api_auth_required=false
-```
-
-One-command helper:
-
-```bash
-scripts/install.sh
-```
-
-## Configuration Defaults
-
-`.env.example`, `Dockerfile`, and `docker-compose.yml` keep the appliance local and conservative by default.
-
-```bash
-WAIT_DATA_PATH=.wait-local-agent/state.db
-WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
+WAIT_DEMO_MODE=true
 WAIT_API_TOKEN=
 WAIT_ADMIN_TOKEN=
 WAIT_TECH_TOKEN=
 WAIT_VIEWER_TOKEN=
-WAIT_DEMO_MODE=true
+```
+
+For any shared LAN, appliance, or production-style install, disable demo mode and set role tokens:
+
+```bash
+WAIT_DEMO_MODE=false
+WAIT_API_TOKEN=<legacy-admin-token>
+WAIT_ADMIN_TOKEN=<admin-token>
+WAIT_TECH_TOKEN=<tech-token>
+WAIT_VIEWER_TOKEN=<viewer-token>
+```
+
+Behavior:
+
+- `WAIT_API_TOKEN` is the legacy admin-equivalent token.
+- `WAIT_ADMIN_TOKEN` grants admin routes.
+- `WAIT_TECH_TOKEN` grants technician routes.
+- `WAIT_VIEWER_TOKEN` grants read-only routes.
+- When `WAIT_DEMO_MODE=true`, requests resolve as local admin for demo use.
+
+## Configuration
+
+The complete shipped env surface is documented in [.env.example](.env.example). High-signal settings:
+
+```text
+WAIT_DATA_PATH=.wait-local-agent/state.db
+WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
 WAIT_SECRETS_BACKEND=env
 WAIT_VAULT_PATH=.wait-local-agent/vault
 WAIT_ALLOW_WRITE_ACTIONS=false
 WAIT_ALLOW_HTTP_PROBING=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
-WAIT_LOCAL_MODEL_PROVIDER=deterministic
-WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
-WAIT_LOCAL_MODEL_NAME=llama3.1
-WAIT_LOCAL_MODEL_TIMEOUT_SECONDS=20
 WAIT_VECTOR_BACKEND=sqlite
-WAIT_DOCUMENT_PARSER=basic
-WAIT_ALLOW_OCR=false
-WAIT_EMBEDDING_PROVIDER=none
-WAIT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-WAIT_QDRANT_PATH=.wait-local-agent/qdrant
-WAIT_QDRANT_URL=
-WAIT_QDRANT_COLLECTION=wait_knowledge_chunks
 WAIT_CONNECTOR_TIMEOUT_SECONDS=20
 WAIT_SCHEDULER_ENABLED=true
 WAIT_RATE_LIMIT_ENABLED=true
@@ -179,60 +146,57 @@ WAIT_RATE_LIMIT_GENERAL=100/minute
 WAIT_RATE_LIMIT_CONNECTOR=10/minute
 WAIT_UPDATE_CHANNEL_URL=
 WAIT_UPDATE_PUBKEYS=
-WAIT_HALOPSA_BASE_URL=
-WAIT_HALOPSA_CLIENT_ID=
-WAIT_HALOPSA_CLIENT_SECRET=
-WAIT_HALOPSA_TENANT=
-WAIT_HALOPSA_TOKEN_URL=
-WAIT_HALOPSA_TICKET_WRITE_ENDPOINT=Ticket
-WAIT_HALOPSA_ACTION_WRITE_ENDPOINT=Actions
-WAIT_HUDU_BASE_URL=
-WAIT_HUDU_API_KEY=
-WAIT_HUDU_PAGE_SIZE=25
 WAIT_LICENSE_KEY=
 WAIT_LICENSE_SECRET=
-```
-
-## Authentication and Roles
-
-Local demo mode allows unauthenticated local API access only when both conditions are true:
-
-```text
-WAIT_DEMO_MODE=true
-WAIT_API_TOKEN=
-```
-
-For any shared host or production-style install, configure bearer tokens and use role-specific credentials:
-
-```bash
-WAIT_DEMO_MODE=false
-WAIT_API_TOKEN=<strong-local-token>
-WAIT_ADMIN_TOKEN=<strong-admin-token>
-WAIT_TECH_TOKEN=<strong-tech-token>
-WAIT_VIEWER_TOKEN=<strong-viewer-token>
-wait-local-agent serve
-curl -H 'Authorization: Bearer <strong-local-token>' http://127.0.0.1:8788/health
+WAIT_PACK_SIGNING_SECRET=
 ```
 
 ## Secrets Vault and Encrypted Backups
 
-Environment variables remain the default for local demos. For longer-lived connector credentials and encrypted backups:
+The default secrets backend is plain environment variables. For longer-lived appliances and encrypted backups, switch to the Fernet vault:
 
 ```bash
 WAIT_SECRETS_BACKEND=fernet
 WAIT_VAULT_PATH=.wait-local-agent/vault
 wait-local-agent secrets init
 wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
-wait-local-agent secrets set WAIT_BACKUP_FERNET_KEY '<fernet-key>'
+python - <<'PY'
+from cryptography.fernet import Fernet
+print(Fernet.generate_key().decode())
+PY
+wait-local-agent secrets set WAIT_BACKUP_FERNET_KEY '<generated-fernet-key>'
 wait-local-agent backup create .wait-local-agent/backups/state.db.enc --encrypt
 wait-local-agent backup restore .wait-local-agent/backups/state.db.enc --encrypted
 ```
 
-`wait-local-agent secrets list` prints key names only. Treat `wait-local-agent secrets get` output as sensitive terminal output.
+Notes:
 
-## HaloPSA Connector
+- Encrypted backups require `WAIT_SECRETS_BACKEND=fernet`.
+- `WAIT_BACKUP_FERNET_KEY` must exist in the local vault before `--encrypt` or `--encrypted` works.
+- `wait-local-agent secrets list` prints key names only.
 
-Reads require credentials and `WAIT_ALLOW_HTTP_PROBING=true`:
+## Connectors
+
+### HaloPSA
+
+Required settings:
+
+```text
+WAIT_HALOPSA_BASE_URL=
+WAIT_HALOPSA_CLIENT_ID=
+WAIT_HALOPSA_CLIENT_SECRET=
+WAIT_HALOPSA_TENANT=
+WAIT_HALOPSA_TOKEN_URL=
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Credential validation:
+
+```bash
+wait-local-agent connectors validate halopsa
+```
+
+Read commands:
 
 ```bash
 wait-local-agent connectors halopsa-health
@@ -240,10 +204,11 @@ wait-local-agent connectors halopsa-tickets
 wait-local-agent connectors halopsa-ticket HALO-1002
 wait-local-agent connectors halopsa-notes HALO-1002
 wait-local-agent connectors halopsa-clients
+wait-local-agent connectors halopsa-assets <client-id>
 wait-local-agent connectors halopsa-categories
 ```
 
-Writes require credentials, `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, a draft, and human approval:
+Write path:
 
 ```bash
 wait-local-agent connectors draft-halopsa HALO-1002 add_note \
@@ -254,11 +219,31 @@ wait-local-agent approvals update 1 approved "approved by technician"
 wait-local-agent connectors execute-halopsa 1
 ```
 
-Execution records sanitized metadata only: request id, action type, status, endpoint, HTTP status code, remote id when available, and concise result message.
+Live HaloPSA writes require:
 
-## Hudu Connector
+- `WAIT_ALLOW_HTTP_PROBING=true`
+- `WAIT_ALLOW_WRITE_ACTIONS=true`
+- configured credentials
+- a pending draft
+- explicit approval
 
-Hudu remains read-only documentation context in the public repo.
+### Hudu
+
+Required settings:
+
+```text
+WAIT_HUDU_BASE_URL=
+WAIT_HUDU_API_KEY=
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Validation:
+
+```bash
+wait-local-agent connectors validate hudu
+```
+
+Read commands:
 
 ```bash
 wait-local-agent connectors hudu-health
@@ -268,30 +253,86 @@ wait-local-agent connectors hudu-article ARTICLE-1
 wait-local-agent connectors hudu-folders
 ```
 
-## Founders and Packs
+Hudu is read-only in the public repo.
 
-The public repo exposes the founder API and CLI contract, but real founder workflows require an installed founder pack:
+## Scheduled Workflows and Tenancy Filters
+
+Workflow templates are listed with:
+
+```bash
+wait-local-agent workflows templates
+```
+
+Workflow runs and scheduled jobs are available over API routes, including:
+
+- `GET /scheduled-jobs`
+- `POST /scheduled-jobs`
+- `POST /scheduled-jobs/{job_id}/pause`
+- `POST /scheduled-jobs/{job_id}/resume`
+- `DELETE /scheduled-jobs/{job_id}`
+
+Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
+
+## Updates
+
+Signed update checks are disabled by default until both settings are populated:
+
+```text
+WAIT_UPDATE_CHANNEL_URL=
+WAIT_UPDATE_PUBKEYS=
+```
+
+Check for updates:
+
+```bash
+wait-local-agent update check
+```
+
+## Packs and Founder Surface
+
+Pack operations:
+
+```bash
+wait-local-agent packs list
+wait-local-agent packs status
+wait-local-agent packs install /path/to/wait-pack-name.tar.gz --license <key>
+```
+
+Pack notes:
+
+- `WAIT_PACK_SIGNING_SECRET` is required to install a signed tarball.
+- `WAIT_LICENSE_KEY` unlocks licensed packs.
+- When the Fernet vault is enabled, `packs install --license` stores the key in the vault; otherwise the CLI prints a reminder to set `WAIT_LICENSE_KEY` manually.
+- `WAIT_LICENSE_SECRET` is loaded into config for pack-specific license flows but is not consumed by the public core directly.
+
+Founder surface:
 
 ```bash
 wait-local-agent founder scan /path/to/project
 wait-local-agent founder preflight
 wait-local-agent founder handoff --output handoff.md
 wait-local-agent founder export-bundle --artifact-id art-1 --output bundle.json
-wait-local-agent founder upload --artifact-id art-1
-wait-local-agent packs list
-wait-local-agent packs install /path/to/pack.tar.gz --license <key>
+wait-local-agent founder upload --artifact-id art-1 --yes
 ```
 
-If the founder pack is not installed, founder commands exit with a stable install hint instead of pretending the feature is available locally.
+Public founder routes:
+
+- `POST /founder/scan`
+- `GET /founder/vault`
+- `GET /founder/preflight/latest`
+- `GET /founder/upload-preview/{artifact_id}`
+- `POST /founder/upload/{artifact_id}`
+- `GET /founder/lp-status`
+
+If the founder pack is absent, founder CLI commands exit with an install hint and founder API routes return `501` with `{"error":"founder pack not installed"}`.
 
 ## More Documentation
 
-- [docs/status.md](docs/status.md)
-- [docs/launch-checklist.md](docs/launch-checklist.md)
-- [docs/publication-checklist.md](docs/publication-checklist.md)
-- [docs/local-demo.md](docs/local-demo.md)
 - [docs/appliance-install.md](docs/appliance-install.md)
 - [docs/connector-setup.md](docs/connector-setup.md)
+- [docs/local-demo.md](docs/local-demo.md)
+- [docs/architecture.md](docs/architecture.md)
 - [docs/security-model.md](docs/security-model.md)
 - [docs/pack-loader.md](docs/pack-loader.md)
 - [docs/update-channel.md](docs/update-channel.md)
+- [docs/open-core-boundary.md](docs/open-core-boundary.md)

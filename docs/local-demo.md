@@ -1,11 +1,11 @@
 # Local Demo
 
-This demo keeps WAIT Local Agent on the local deterministic path:
+This walkthrough stays on the deterministic local path:
 
 - no live connector writes
 - no outbound connector probing
 - no cloud fallback
-- no model inference
+- no local model inference
 - no real client data
 
 ## Scripted path
@@ -16,7 +16,7 @@ From a Python environment with the package installed:
 scripts/demo_appliance.sh
 ```
 
-The script runs:
+The script runs the shipped commands:
 
 ```bash
 wait-local-agent doctor
@@ -32,6 +32,7 @@ wait-local-agent events list
 ## Docker appliance path
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
@@ -54,11 +55,26 @@ http_probing_enabled=false
 cloud_fallback_enabled=false
 llm_inference_enabled=false
 api_auth_required=false
+demo_mode=true
 ```
+
+## Demo auth model
+
+Demo mode is open only when the appliance stays in its local demo configuration:
+
+```text
+WAIT_DEMO_MODE=true
+WAIT_API_TOKEN=
+WAIT_ADMIN_TOKEN=
+WAIT_TECH_TOKEN=
+WAIT_VIEWER_TOKEN=
+```
+
+If you set role tokens for a shared test, also set `WAIT_DEMO_MODE=false`.
 
 ## Synthetic launch data
 
-The `demo/` directory contains public-safe launch data that can be used for screenshots and walkthroughs:
+The `demo/` directory contains public-safe runbooks and tickets for screenshots and walkthroughs:
 
 ```bash
 WAIT_DATA_PATH=.wait-local-agent/demo.db \
