@@ -1,56 +1,84 @@
 # WAIT Local Agent
 
-**Local-first MSP automation appliance for tickets, runbooks, approvals, connector drafts, and audit history.**
+[![CI](https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml/badge.svg)](https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/W-A-I-T/wait-local-agent)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 
-WAIT Local Agent is an Apache 2.0, self-hosted copilot runtime for MSPs and founder-led teams that want inspectable local automation instead of a cloud-first control plane. It keeps the core appliance local: FastAPI, Typer CLI, React dashboard, SQLite state, local knowledge search, approval queue, and HaloPSA/Hudu connector surfaces.
+**Local-first MSP and founder automation appliance for tickets, runbooks, approvals, safe connector drafts, and auditable workflows.**
 
-> **Safety guarantee:** live PSA writes require explicit operator opt-in (`WAIT_ALLOW_WRITE_ACTIONS=true`) and a human-approved approval request. They are disabled in every fresh install and in the demo path.
+WAIT Local Agent is an Apache 2.0, self-hosted runtime for operators who want inspectable local automation instead of a cloud-first control plane. The public repo ships the local appliance: FastAPI API, Typer CLI, React dashboard, SQLite state, approval-gated connector actions, scheduled workflows, signed update checks, and open-core pack loading.
 
-## What works now
+> **Safety guarantee:** live PSA writes require explicit operator opt-in (`WAIT_ALLOW_WRITE_ACTIONS=true`) and a human-approved approval request. Fresh installs stay read-first and local by default.
 
-- Docker Compose appliance with API, dashboard, health check, and persistent SQLite volume.
-- FastAPI operator API and Typer CLI.
-- Optional Bearer token API gate outside local demo mode.
-- SQLite-backed tickets, approvals, approval requests, workflow runs, audit events, event history, documents, and FTS5 chunks.
-- Markdown, plain text, and text-based PDF ingestion.
-- SQLite FTS5 knowledge retrieval by default.
-- Optional Docling/OCR and Qdrant extras when explicitly installed and enabled.
-- Deterministic ticket classification and summary drafting with citations.
-- Optional local OpenAI-compatible model provider; disabled by default.
-- JSON and CSV event history export.
-- Optional Fernet-backed local secrets vault for connector credentials.
-- HaloPSA read paths for health, tickets, notes, clients, assets, and categories behind `WAIT_ALLOW_HTTP_PROBING=true`.
-- HaloPSA write drafts and approved live execution for notes, responses, status/category fields, ticket fields, and technician assignment.
-- Hudu read-only documentation context for health, companies, articles, article detail, and folders.
-- Approval queue with payload preview, edit-before-approval, approve, reject, execute, and event history views.
-- Launch scaffolding: install helper, synthetic demo data, CHANGELOG, docs, and GitHub issue templates.
+## Architecture
 
-## Not ready yet
+```mermaid
+flowchart LR
+    User[Operator or Technician] --> CLI[Typer CLI]
+    User --> UI[React Dashboard]
+    CLI --> API[FastAPI Runtime]
+    UI --> API
 
-- Ungated live writes.
-- Hosted multi-tenant control plane.
-- Live RMM, Microsoft 365, Entra, IT Glue, SharePoint, or Hudu write synchronization.
-- RBAC roles, tenant/client boundaries, encrypted backup, signed update channel, and rate limiting.
-- Proprietary MSP Pack or Founder Pack implementation in this public repository.
+    subgraph Core["Local Appliance Core"]
+        API --> RBAC[RBAC and Token Auth]
+        API --> Approval[Approval Queue and Audit]
+        API --> Workflows[Workflow Engine and Scheduler]
+        API --> Knowledge[Knowledge Ingest and Search]
+        API --> Backup[Backup and Restore]
+        API --> Update[Signed Update Check]
+        API --> Store[(SQLite State)]
+    end
 
-See `docs/status.md` and `docs/roadmap.md` for phase-by-phase status.
+    Approval --> Connectors[HaloPSA and Hudu Connectors]
+    API --> Loader[Pack Loader and wait packs CLI]
+    Loader -. public open-core boundary .-> Packs[Private or Paid Packs]
+    API --> Founder[Founder Surface]
+    Founder -. requires installed founder pack .-> Packs
+```
 
-## Open-core boundary
+## What Ships In 1.0.0
 
-This repository contains the free open core: runtime, CLI, store, approval engine, connector framework, HaloPSA + Hudu open-core surfaces, workflow schema, dashboard, tests, docs, and appliance packaging.
+- FastAPI operator API, Typer CLI, and React dashboard for local operation.
+- RBAC-backed bearer token auth with admin, technician, and viewer roles.
+- SQLite-backed tickets, documents, approvals, audit events, workflow runs, and scheduled jobs.
+- Tenant and client scoping on stored workflow, approval, and event views.
+- Approval queue with payload preview, field edits, approver identity capture, approve/reject, and execution history.
+- HaloPSA read paths plus approval-gated write drafts and execution.
+- Hudu read-only documentation context.
+- Connector validation CLI for HaloPSA and Hudu credential checks.
+- Markdown, text, and text-based PDF ingestion with SQLite FTS5 retrieval by default.
+- Scheduled workflow registration, pause, resume, delete, and audit trail.
+- Optional Fernet secret vault plus encrypted backup and restore support.
+- Signed update-channel client checks.
+- Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
+- Founder API and CLI surface in the public repo, gated on founder pack installation.
 
-Paid or proprietary pack implementation must not be committed here. Private pack work belongs in `W-A-I-T/wait-local-agent-packs` or another private repository. The local `packs/` directory is gitignored for proprietary pack installs.
+## Open-Core Boundary
 
-See `docs/open-core-boundary.md` and `docs/commercial-model.md`.
+This repository contains the open core: runtime, API, CLI, dashboard, workflow engine, scheduler, HaloPSA and Hudu surfaces, pack loader, tests, docs, and release assets.
+
+Paid or proprietary pack implementation does not belong here. Private pack work belongs in `W-A-I-T/wait-local-agent-packs` or another private repository. The local `packs/` directory remains gitignored for proprietary installs.
+
+See [docs/open-core-boundary.md](docs/open-core-boundary.md) and [docs/commercial-model.md](docs/commercial-model.md).
+
+## Screenshots
+
+### Dashboard
+
+![WAIT Local Agent dashboard](docs/media/dashboard.png)
+
+### API Reference
+
+![WAIT Local Agent API reference](docs/media/api-reference.png)
 
 ## Requirements
 
-- Python 3.12 for local CLI/API development.
+- Python 3.12 for local CLI and API development.
 - Docker with Compose support for the appliance path.
 - Node.js 22 for dashboard development outside Docker.
 - Optional local model endpoint such as Ollama or vLLM.
 
-## Quick start: local CLI
+## Quick Start: Local CLI
 
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
@@ -67,7 +95,7 @@ Run the deterministic demo:
 scripts/demo_appliance.sh
 ```
 
-Manual demo steps:
+Manual CLI checks against the shipped surface:
 
 ```bash
 wait-local-agent knowledge ingest examples/sample_docs
@@ -77,9 +105,12 @@ wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
 wait-local-agent approvals list
 wait-local-agent events list
+wait-local-agent connectors validate halopsa
+wait-local-agent update check
+wait-local-agent packs status
 ```
 
-## Quick start: Docker appliance
+## Quick Start: Docker Appliance
 
 ```bash
 docker compose up --build
@@ -95,7 +126,7 @@ Health check:
 curl http://127.0.0.1:8788/health
 ```
 
-Expected demo defaults:
+Expected conservative defaults:
 
 ```text
 write_actions_enabled=false
@@ -111,14 +142,17 @@ One-command helper:
 scripts/install.sh
 ```
 
-## Configuration defaults
+## Configuration Defaults
 
-`.env.example`, Dockerfile, and Compose defaults keep the appliance local and conservative.
+`.env.example`, `Dockerfile`, and `docker-compose.yml` keep the appliance local and conservative by default.
 
 ```bash
 WAIT_DATA_PATH=.wait-local-agent/state.db
 WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
 WAIT_API_TOKEN=
+WAIT_ADMIN_TOKEN=
+WAIT_TECH_TOKEN=
+WAIT_VIEWER_TOKEN=
 WAIT_DEMO_MODE=true
 WAIT_SECRETS_BACKEND=env
 WAIT_VAULT_PATH=.wait-local-agent/vault
@@ -139,6 +173,12 @@ WAIT_QDRANT_PATH=.wait-local-agent/qdrant
 WAIT_QDRANT_URL=
 WAIT_QDRANT_COLLECTION=wait_knowledge_chunks
 WAIT_CONNECTOR_TIMEOUT_SECONDS=20
+WAIT_SCHEDULER_ENABLED=true
+WAIT_RATE_LIMIT_ENABLED=true
+WAIT_RATE_LIMIT_GENERAL=100/minute
+WAIT_RATE_LIMIT_CONNECTOR=10/minute
+WAIT_UPDATE_CHANNEL_URL=
+WAIT_UPDATE_PUBKEYS=
 WAIT_HALOPSA_BASE_URL=
 WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
@@ -149,9 +189,11 @@ WAIT_HALOPSA_ACTION_WRITE_ENDPOINT=Actions
 WAIT_HUDU_BASE_URL=
 WAIT_HUDU_API_KEY=
 WAIT_HUDU_PAGE_SIZE=25
+WAIT_LICENSE_KEY=
+WAIT_LICENSE_SECRET=
 ```
 
-## API authentication
+## Authentication and Roles
 
 Local demo mode allows unauthenticated local API access only when both conditions are true:
 
@@ -160,30 +202,35 @@ WAIT_DEMO_MODE=true
 WAIT_API_TOKEN=
 ```
 
-For any shared host or production-style install:
+For any shared host or production-style install, configure bearer tokens and use role-specific credentials:
 
 ```bash
 WAIT_DEMO_MODE=false
 WAIT_API_TOKEN=<strong-local-token>
+WAIT_ADMIN_TOKEN=<strong-admin-token>
+WAIT_TECH_TOKEN=<strong-tech-token>
+WAIT_VIEWER_TOKEN=<strong-viewer-token>
 wait-local-agent serve
 curl -H 'Authorization: Bearer <strong-local-token>' http://127.0.0.1:8788/health
 ```
 
-## Secrets vault
+## Secrets Vault and Encrypted Backups
 
-Environment variables remain the default for local demos. For longer-lived connector credentials:
+Environment variables remain the default for local demos. For longer-lived connector credentials and encrypted backups:
 
 ```bash
 WAIT_SECRETS_BACKEND=fernet
 WAIT_VAULT_PATH=.wait-local-agent/vault
 wait-local-agent secrets init
 wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
-wait-local-agent secrets list
+wait-local-agent secrets set WAIT_BACKUP_FERNET_KEY '<fernet-key>'
+wait-local-agent backup create .wait-local-agent/backups/state.db.enc --encrypt
+wait-local-agent backup restore .wait-local-agent/backups/state.db.enc --encrypted
 ```
 
-`secrets list` prints key names only. Treat `secrets get` output as sensitive terminal output.
+`wait-local-agent secrets list` prints key names only. Treat `wait-local-agent secrets get` output as sensitive terminal output.
 
-## HaloPSA connector
+## HaloPSA Connector
 
 Reads require credentials and `WAIT_ALLOW_HTTP_PROBING=true`:
 
@@ -209,9 +256,9 @@ wait-local-agent connectors execute-halopsa 1
 
 Execution records sanitized metadata only: request id, action type, status, endpoint, HTTP status code, remote id when available, and concise result message.
 
-## Hudu connector
+## Hudu Connector
 
-Hudu is read-only documentation context in this public repo.
+Hudu remains read-only documentation context in the public repo.
 
 ```bash
 wait-local-agent connectors hudu-health
@@ -221,99 +268,30 @@ wait-local-agent connectors hudu-article ARTICLE-1
 wait-local-agent connectors hudu-folders
 ```
 
-## Backup, restore, and audit export
+## Founders and Packs
+
+The public repo exposes the founder API and CLI contract, but real founder workflows require an installed founder pack:
 
 ```bash
-wait-local-agent backup create .wait-local-agent/backups/state.db
-wait-local-agent backup restore .wait-local-agent/backups/state.db
-scripts/backup_state.sh
-scripts/restore_state.sh .wait-local-agent/backups/state.db
+wait-local-agent founder scan /path/to/project
+wait-local-agent founder preflight
+wait-local-agent founder handoff --output handoff.md
+wait-local-agent founder export-bundle --artifact-id art-1 --output bundle.json
+wait-local-agent founder upload --artifact-id art-1
+wait-local-agent packs list
+wait-local-agent packs install /path/to/pack.tar.gz --license <key>
 ```
 
-```bash
-wait-local-agent audit export .wait-local-agent/audit.json
-wait-local-agent audit export .wait-local-agent/audit.csv --format csv
-curl http://127.0.0.1:8788/audit/export
-curl 'http://127.0.0.1:8788/audit/export?export_format=csv'
-```
+If the founder pack is not installed, founder commands exit with a stable install hint instead of pretending the feature is available locally.
 
-## Local model and knowledge extras
+## More Documentation
 
-The default provider is deterministic so tests, demos, and offline installs are repeatable. To try a local model endpoint:
-
-```bash
-WAIT_ALLOW_LLM_INFERENCE=true
-WAIT_LOCAL_MODEL_PROVIDER=ollama
-WAIT_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
-WAIT_LOCAL_MODEL_NAME=llama3.1
-```
-
-Optional knowledge extras:
-
-```bash
-pip install -e ".[docling]"    # Docling parser/OCR support
-pip install -e ".[qdrant]"     # Qdrant vector backend support
-pip install -e ".[knowledge]"  # Both optional knowledge extras
-```
-
-Docling OCR remains disabled until `WAIT_DOCUMENT_PARSER=docling` and `WAIT_ALLOW_OCR=true` are set. Qdrant remains disabled until `WAIT_VECTOR_BACKEND=qdrant` is set.
-
-## Development checks
-
-```bash
-scripts/validate_release.sh
-```
-
-Manual equivalents:
-
-```bash
-ruff check .
-mypy src tests
-bandit -r src
-pip-audit --skip-editable
-python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
-python scripts/public_surface_audit.py
-
-cd ui
-npm install
-npm run test
-npm run build
-```
-
-## Architecture
-
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ WAIT Local Agent                                             │
-│                                                              │
-│ Dashboard ── FastAPI ── SQLite store                         │
-│     │          │          │                                  │
-│     │          │          ├─ tickets / approvals / events     │
-│     │          │          └─ knowledge docs / FTS chunks      │
-│     │          │                                             │
-│     │          ├─ deterministic or explicit local provider    │
-│     │          ├─ HaloPSA read + approval-gated write         │
-│     │          └─ Hudu read-only context                      │
-│     │                                                        │
-│ Typer CLI ── backup / restore / audit export / vault          │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## Documentation
-
-| Doc | Contents |
-| --- | --- |
-| [docs/local-demo.md](docs/local-demo.md) | Local demo and synthetic launch data |
-| [docs/appliance-install.md](docs/appliance-install.md) | Docker Compose appliance install path |
-| [docs/security-model.md](docs/security-model.md) | Safe defaults, auth, vault, audit, approval gates |
-| [docs/connector-setup.md](docs/connector-setup.md) | HaloPSA and Hudu setup |
-| [docs/open-core-boundary.md](docs/open-core-boundary.md) | Public vs proprietary pack boundary |
-| [docs/launch-checklist.md](docs/launch-checklist.md) | Release and launch readiness checklist |
-| [docs/roadmap.md](docs/roadmap.md) | Phase-by-phase roadmap |
-| [docs/commercial-model.md](docs/commercial-model.md) | Open-core and commercial model |
-| [docs/status.md](docs/status.md) | Current implementation status |
-| [docs/architecture.md](docs/architecture.md) | Technical component architecture |
-
-## License
-
-Apache 2.0. See [LICENSE](LICENSE).
+- [docs/status.md](docs/status.md)
+- [docs/launch-checklist.md](docs/launch-checklist.md)
+- [docs/publication-checklist.md](docs/publication-checklist.md)
+- [docs/local-demo.md](docs/local-demo.md)
+- [docs/appliance-install.md](docs/appliance-install.md)
+- [docs/connector-setup.md](docs/connector-setup.md)
+- [docs/security-model.md](docs/security-model.md)
+- [docs/pack-loader.md](docs/pack-loader.md)
+- [docs/update-channel.md](docs/update-channel.md)

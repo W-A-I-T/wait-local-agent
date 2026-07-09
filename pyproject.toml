@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wait-local-agent"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first AI copilot runtime for MSPs and SMBs."
 readme = "README.md"
 requires-python = ">=3.12"
