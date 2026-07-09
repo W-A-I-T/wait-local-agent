@@ -120,6 +120,8 @@ def draft_halopsa_ticket_action(
     ticket_id: str,
     action_type: str,
     fields: dict[str, object],
+    *,
+    client_id: str | None = None,
 ) -> HaloTicketDraft:
     if action_type not in HALOPSA_ACTION_TYPES:
         raise ValueError(f"unsupported HaloPSA action type: {action_type}")
@@ -129,7 +131,12 @@ def draft_halopsa_ticket_action(
         "action_type": action_type,
         "fields": fields,
     }
-    approval = store.create_approval_request(ticket_id, f"halopsa.{action_type}", payload)
+    approval = store.create_approval_request(
+        ticket_id,
+        f"halopsa.{action_type}",
+        payload,
+        client_id=client_id,
+    )
     return HaloTicketDraft(
         ticket_id=ticket_id,
         action_type=action_type,

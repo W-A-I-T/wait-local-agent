@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import cast
 
@@ -132,6 +133,87 @@ def test_audit_event_export_json_and_csv(settings) -> None:
     assert "unit.test.later" in csv_export.text
     assert future_filter.status_code == 200
     assert future_filter.json() == {"count": 0, "events": []}
+
+
+def test_auth_role_approver_identity_and_client_filters(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-ACME', 'Acme', 'Subject', 'Body', 'High', 'Open', 'acme')
+            """
+        )
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-BETA', 'Beta', 'Subject', 'Body', 'Low', 'Open', 'beta')
+            """
+        )
+    approval = store.create_approval_request(
+        "TCK-ACME",
+        "ticket.assign",
+        {"ticket_id": "TCK-ACME"},
+        client_id="acme",
+    )
+    store.create_approval_request("TCK-BETA", "ticket.assign", {"ticket_id": "TCK-BETA"}, client_id="beta")
+    store.add_audit_event("unit.test", "TCK-ACME", "acme event", client_id="acme")
+    store.add_audit_event("unit.test", "TCK-BETA", "beta event", client_id="beta")
+    store.create_workflow_run(
+        "documentation-assisted-response",
+        "TCK-ACME",
+        "pending_approval",
+        "acme",
+        approval.id,
+        client_id="acme",
+    )
+    store.upsert_knowledge_document(
+        path="examples/sample_docs/acme.md",
+        title="Acme",
+        kind="markdown",
+        checksum="sum-acme",
+        modified_at="2026-07-08T00:00:00+00:00",
+        chunks=["chunk"],
+        client_id="acme",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    role = client.get("/auth/role", headers={"Authorization": "Bearer viewer-token"})
+    filtered_tickets = client.get("/tickets", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_approvals = client.get("/approval-requests", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_documents = client.get("/knowledge/documents", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    approved = client.post(
+        f"/approval-requests/{approval.id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "ship it"},
+    )
+    export = client.get("/audit-events/export", params={"client_id": "acme"}, headers=_auth("admin-token"))
+    expected_approver_id = hashlib.sha256(b"tech-token").hexdigest()[:16]
+
+    assert role.status_code == 200
+    assert role.json()["role"] == "viewer"
+    assert [ticket["id"] for ticket in filtered_tickets.json()] == ["TCK-ACME"]
+    assert [request["subject_id"] for request in filtered_approvals.json()] == ["TCK-ACME"]
+    assert all(event["client_id"] == "acme" for event in filtered_audit.json())
+    assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
+    assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
+    assert approved.status_code == 200
+    assert approved.json()["approver_id"] == expected_approver_id
+    assert any(
+        event["event_type"] == "approval_request.updated" and event["approver_id"] == expected_approver_id
+        for event in export.json()["events"]
+    )
 
 
 def test_missing_ticket_returns_404(settings) -> None:
@@ -655,3 +737,7 @@ def _read_response(items):
 
 def _hudu_response(items):
     return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

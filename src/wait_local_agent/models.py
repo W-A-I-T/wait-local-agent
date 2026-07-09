@@ -27,6 +27,7 @@ class Ticket:
     body: str
     priority: str
     status: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,8 @@ class AuditEvent:
     subject_id: str
     detail: str
     created_at: str
+    client_id: str | None = None
+    approver_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,8 @@ class ApprovalRequest:
     execution_message: str = ""
     executed_at: str = ""
     execution_result_json: str = "{}"
+    client_id: str | None = None
+    approver_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +229,7 @@ class WorkflowRun:
     approval_request_id: int | None
     created_at: str
     updated_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +249,7 @@ class KnowledgeDocument:
     modified_at: str
     chunk_count: int
     indexed_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)

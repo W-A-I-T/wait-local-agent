@@ -32,12 +32,15 @@ class KnowledgeIngestionService:
         self.parser = parser or BasicDocumentParser()
         self.search_backend = search_backend
 
-    def ingest_path(self, path: Path) -> list[KnowledgeDocument]:
+    def ingest_path(self, path: Path, *, client_id: str | None = None) -> list[KnowledgeDocument]:
         target = path.resolve()
         self._validate_allowed_path(target)
         files = self._document_files(target)
         pending_documents = self._prepare_documents(files)
-        documents = self.store.upsert_knowledge_documents(pending_documents)
+        documents = self.store.upsert_knowledge_documents(
+            pending_documents,
+            client_id=client_id,
+        )
         if self.search_backend is not None:
             for document in documents:
                 chunks = self.store.list_knowledge_chunks_for_document(document.id)

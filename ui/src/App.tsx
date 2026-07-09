@@ -83,6 +83,12 @@ type HaloTicketsResponse = {
   items: HaloTicket[];
 };
 
+type AuthRoleResponse = {
+  role: "admin" | "technician" | "viewer";
+  api_auth_required: boolean;
+  demo_mode: boolean;
+};
+
 const actionTypes = [
   "add_note",
   "draft_response",
@@ -94,6 +100,7 @@ const actionTypes = [
 const defaultFieldText = "note=Reviewed by WAIT Local Agent";
 
 export function App() {
+  const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>({
     status: "blocked",
@@ -119,6 +126,8 @@ export function App() {
   const liveWritesReady = writeHealth.status === "ready";
   const targetTicketId = selectedTicketId || manualTicketId.trim();
   const isHaloApproval = (request: ApprovalRequest) => request.action_type.startsWith("halopsa.");
+  const canWrite = role !== "viewer";
+  const isAdmin = role === "admin";
 
   const pendingApprovals = useMemo(
     () => approvalRequests.filter((request) => request.status === "pending"),
@@ -128,6 +137,7 @@ export function App() {
   async function refresh() {
     setLoading(true);
     try {
+      const auth = await apiGet<AuthRoleResponse>("/auth/role");
       const results = await Promise.allSettled([
         apiGet<ConnectorStatus[]>("/connectors"),
         apiGet<HaloReadResult>("/connectors/halopsa/write-health"),
@@ -156,6 +166,7 @@ export function App() {
       const runs = asArray<WorkflowRun>(
         settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])
       );
+      setRole(auth.role);
       setConnectors(connectorRows);
       setWriteHealth(writeState);
       setHaloTickets(asArray<HaloTicket>(ticketResponse.items));
@@ -302,6 +313,9 @@ export function App() {
               <RefreshCw size={17} aria-hidden="true" />
               Refresh
             </button>
+            <div className="status-pill">
+              Role: {role}
+            </div>
             <div className={`status-pill ${liveWritesReady ? "" : "danger"}`}>
               {liveWritesReady ? (
                 <CheckCircle2 size={18} aria-hidden="true" />
@@ -375,6 +389,7 @@ export function App() {
             </div>
           </article>
 
+          {canWrite ? (
           <article id="draft" className="panel">
             <div className="panel-heading">
               <h2>Draft HaloPSA Write</h2>
@@ -416,6 +431,7 @@ export function App() {
               </button>
             </form>
           </article>
+          ) : null}
 
           <article id="approvals" className="panel approvals-panel">
             <div className="panel-heading">
@@ -473,6 +489,7 @@ export function App() {
                       <span>No workflow run linked</span>
                     )}
                   </div>
+                  {canWrite ? (
                   <div className="row-actions">
                     <button
                       className="icon-button"
@@ -516,6 +533,7 @@ export function App() {
                       Execute
                     </button>
                   </div>
+                  ) : null}
                 </div>
               ))}
               {approvalRequests.length === 0 ? (
@@ -559,6 +577,7 @@ export function App() {
             </div>
           </article>
 
+          {isAdmin ? (
           <article id="settings" className="panel settings-panel">
             <div className="panel-heading">
               <h2>Provider And Secrets</h2>
@@ -595,6 +614,7 @@ export function App() {
               </div>
             </dl>
           </article>
+          ) : null}
         </section>
       </section>
     </main>
