@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from wait_local_agent.config import Settings, load_settings
@@ -23,11 +23,16 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
-from wait_local_agent.security import auth_required, require_bearer_authorization
+from wait_local_agent.rbac import AuthContext, Role, require_role
+from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
+
+ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
+TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
+AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 
 
 class ApprovalRequest(BaseModel):
@@ -39,6 +44,7 @@ class KnowledgeIngestRequest(BaseModel):
     path: str
     parser: str | None = None
     ocr: bool | None = None
+    client_id: str | None = None
 
 
 class ApprovalPayloadPatchRequest(BaseModel):
@@ -55,10 +61,12 @@ class HaloDraftRequest(BaseModel):
         "update_ticket_fields",
     ]
     fields: dict[str, object]
+    client_id: str | None = None
 
 
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
+    client_id: str | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -72,17 +80,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
 
-    def require_api_auth(authorization: Annotated[str | None, Header()] = None) -> None:
-        require_bearer_authorization(active_settings, authorization)
-
     app = FastAPI(
         title="WAIT Local Agent",
         version="0.1.0",
-        dependencies=[Depends(require_api_auth)],
     )
+    app.state.settings = active_settings
 
     @app.get("/health")
-    def health() -> dict[str, object]:
+    def health(_: ViewerAccess) -> dict[str, object]:
         return {
             "status": "ok",
             "write_actions_enabled": active_settings.allow_write_actions,
@@ -103,16 +108,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
         }
 
+    @app.get("/auth/role")
+    def auth_role(context: ViewerAccess) -> dict[str, object]:
+        return {
+            "role": context.role.label(),
+            "api_auth_required": auth_required(active_settings),
+            "demo_mode": active_settings.demo_mode,
+        }
+
     @app.get("/settings/security")
-    def security_settings() -> dict[str, object]:
+    def security_settings(_: AdminAccess) -> dict[str, object]:
         return {
             "api_token_configured": bool(active_settings.api_token),
+            "admin_token_configured": bool(active_settings.admin_token),
+            "tech_token_configured": bool(active_settings.tech_token),
+            "viewer_token_configured": bool(active_settings.viewer_token),
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
         }
 
     @app.get("/settings/providers")
-    def providers() -> dict[str, object]:
+    def providers(_: ViewerAccess) -> dict[str, object]:
         return {
             "local_model_provider": active_settings.local_model_provider,
             "local_model_base_url": active_settings.local_model_base_url,
@@ -128,29 +144,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/tickets")
-    def tickets() -> list[dict[str, object]]:
-        return [asdict(ticket) for ticket in store.list_tickets()]
+    def tickets(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [asdict(ticket) for ticket in store.list_tickets(client_id=client_id)]
 
     @app.get("/tickets/{ticket_id}/summary")
-    def summarize_ticket(ticket_id: str) -> dict[str, object]:
+    def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
         try:
             return asdict(service.summarize(ticket_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ticket not found") from exc
 
     @app.post("/tickets/{ticket_id}/approvals")
-    def update_approval(ticket_id: str, request: ApprovalRequest) -> dict[str, str]:
+    def update_approval(
+        ticket_id: str,
+        request: ApprovalRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, str]:
         if store.get_ticket(ticket_id) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         store.set_approval(ticket_id, request.status, request.comment)
         return {"ticket_id": ticket_id, "status": request.status, "comment": request.comment}
 
     @app.get("/approval-requests")
-    def approval_requests() -> list[dict[str, object]]:
-        return [_approval_view(request) for request in store.list_approval_requests()]
+    def approval_requests(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [
+            _approval_view(request) for request in store.list_approval_requests(client_id=client_id)
+        ]
 
     @app.get("/approval-requests/{request_id}")
-    def approval_request_detail(request_id: int) -> dict[str, object]:
+    def approval_request_detail(request_id: int, _: ViewerAccess) -> dict[str, object]:
         request = store.get_approval_request(request_id)
         if request is None:
             raise HTTPException(status_code=404, detail="approval request not found")
@@ -158,7 +186,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/approval-requests/{request_id}/payload")
     def update_approval_payload(
-        request_id: int, request: ApprovalPayloadPatchRequest
+        request_id: int,
+        request: ApprovalPayloadPatchRequest,
+        _: TechnicianAccess,
     ) -> dict[str, object]:
         try:
             approval = update_halopsa_approval_fields(
@@ -176,9 +206,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _approval_view(approval)
 
     @app.post("/approval-requests/{request_id}")
-    def update_approval_request(request_id: int, request: ApprovalRequest) -> dict[str, object]:
+    def update_approval_request(
+        request_id: int,
+        request: ApprovalRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
         try:
-            approval = store.update_approval_request(request_id, request.status, request.comment)
+            approval = store.update_approval_request(
+                request_id,
+                request.status,
+                request.comment,
+                approver_id=context.approver_id,
+            )
             if request.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
@@ -189,15 +228,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
 
     @app.get("/audit")
-    def audit() -> list[dict[str, object]]:
-        return [asdict(event) for event in store.list_audit_events()]
+    def audit(_: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
+        return [asdict(event) for event in store.list_audit_events(client_id=client_id)]
 
     @app.get("/audit/export")
-    def audit_export(export_format: Literal["json", "csv"] = "json") -> Response:
-        events = [asdict(event) for event in store.list_audit_events()]
+    def audit_export(
+        _: AdminAccess,
+        export_format: Literal["json", "csv"] = "json",
+        client_id: str | None = None,
+    ) -> Response:
+        events = [asdict(event) for event in store.list_audit_events(client_id=client_id)]
         if export_format == "csv":
             output = io.StringIO()
-            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)
@@ -214,11 +257,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/audit-events/export")
     def audit_events_export(
+        _: AdminAccess,
         format: Literal["json", "csv"] = "json",
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to_: Annotated[datetime | None, Query(alias="to")] = None,
+        client_id: str | None = None,
     ) -> Response:
-        all_events = store.list_audit_events()
+        all_events = store.list_audit_events(client_id=client_id)
         filtered = [
             e for e in all_events
             if (from_ is None or datetime.fromisoformat(e.created_at) >= from_.astimezone(UTC))
@@ -227,7 +272,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         events = [asdict(e) for e in filtered]
         if format == "csv":
             output = io.StringIO()
-            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)
@@ -242,44 +287,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/event-history")
-    def event_history() -> list[dict[str, object]]:
+    def event_history(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(event) for event in store.list_event_history()]
 
     @app.get("/connectors")
-    def connectors() -> list[dict[str, object]]:
+    def connectors(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(status) for status in list_connector_statuses(active_settings)]
 
     @app.get("/secrets")
-    def secrets() -> list[dict[str, object]]:
+    def secrets(_: AdminAccess) -> list[dict[str, object]]:
         return [asdict(secret) for secret in list_secret_records(active_settings)]
 
     @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
-    def create_halopsa_draft(ticket_id: str, request: HaloDraftRequest) -> dict[str, object]:
+    def create_halopsa_draft(
+        ticket_id: str,
+        request: HaloDraftRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
         try:
             draft = draft_halopsa_ticket_action(
                 store,
                 ticket_id,
                 request.action_type,
                 request.fields,
+                client_id=request.client_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return asdict(draft)
 
     @app.get("/connectors/halopsa/health")
-    def halopsa_health() -> dict[str, object]:
+    def halopsa_health(_: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.health()
         _audit_halopsa_read("health", result.status, result.count)
         return asdict(result)
 
     @app.get("/connectors/halopsa/write-health")
-    def halopsa_write_health() -> dict[str, object]:
+    def halopsa_write_health(_: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.write_health()
         store.add_audit_event("halopsa.write_health", "halopsa", result.status)
         return asdict(result)
 
     @app.post("/connectors/halopsa/approval-requests/{request_id}/execute")
-    def execute_halopsa_approval(request_id: int) -> dict[str, object]:
+    def execute_halopsa_approval(request_id: int, _: TechnicianAccess) -> dict[str, object]:
         try:
             return asdict(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
@@ -290,48 +340,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/connectors/halopsa/tickets")
-    def halopsa_tickets(page: int = 1, page_size: int = 50) -> dict[str, object]:
+    def halopsa_tickets(_: ViewerAccess, page: int = 1, page_size: int = 50) -> dict[str, object]:
         response = halopsa_client.list_tickets(page=page, page_size=page_size)
         return _halopsa_response("tickets.list", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}")
-    def halopsa_ticket(ticket_id: str) -> dict[str, object]:
+    def halopsa_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.get_ticket(ticket_id)
         return _halopsa_response("tickets.get", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}/notes")
-    def halopsa_ticket_notes(ticket_id: str) -> dict[str, object]:
+    def halopsa_ticket_notes(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_ticket_notes(ticket_id)
         return _halopsa_response("tickets.notes", response)
 
     @app.get("/connectors/halopsa/clients")
-    def halopsa_clients(page: int = 1, page_size: int = 50) -> dict[str, object]:
+    def halopsa_clients(_: ViewerAccess, page: int = 1, page_size: int = 50) -> dict[str, object]:
         response = halopsa_client.list_clients(page=page, page_size=page_size)
         return _halopsa_response("clients.list", response)
 
     @app.get("/connectors/halopsa/clients/{client_id}/assets")
-    def halopsa_client_assets(client_id: str) -> dict[str, object]:
+    def halopsa_client_assets(client_id: str, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_client_assets(client_id)
         return _halopsa_response("clients.assets", response)
 
     @app.get("/connectors/halopsa/categories")
-    def halopsa_categories() -> dict[str, object]:
+    def halopsa_categories(_: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_categories()
         return _halopsa_response("categories.list", response)
 
     @app.get("/connectors/hudu/health")
-    def hudu_health() -> dict[str, object]:
+    def hudu_health(_: ViewerAccess) -> dict[str, object]:
         result = hudu_client.health()
         _audit_hudu_read("health", result.status, result.count)
         return asdict(result)
 
     @app.get("/connectors/hudu/companies")
-    def hudu_companies(page: int = 1, page_size: int | None = None) -> dict[str, object]:
+    def hudu_companies(
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
         response = hudu_client.list_companies(page=page, page_size=page_size)
         return _hudu_response("companies.list", response)
 
     @app.get("/connectors/hudu/articles")
     def hudu_articles(
+        _: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
         page_size: int | None = None,
@@ -344,12 +399,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _hudu_response("articles.list", response)
 
     @app.get("/connectors/hudu/articles/{article_id}")
-    def hudu_article(article_id: str) -> dict[str, object]:
+    def hudu_article(article_id: str, _: ViewerAccess) -> dict[str, object]:
         response = hudu_client.get_article(article_id)
         return _hudu_response("articles.get", response)
 
     @app.get("/connectors/hudu/folders")
     def hudu_folders(
+        _: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
         page_size: int | None = None,
@@ -362,24 +418,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _hudu_response("folders.list", response)
 
     @app.get("/workflows/templates")
-    def workflow_templates() -> list[dict[str, object]]:
+    def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
 
     @app.post("/workflows/templates/{template_id}/runs")
-    def run_workflow(template_id: str, request: WorkflowRunRequest) -> dict[str, object]:
+    def run_workflow(
+        template_id: str,
+        request: WorkflowRunRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
         try:
-            return asdict(run_workflow_template(store, template_id, request.ticket_id))
+            return asdict(
+                run_workflow_template(
+                    store,
+                    template_id,
+                    request.ticket_id,
+                    client_id=request.client_id,
+                )
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="workflow template not found") from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="ticket not found") from exc
 
     @app.get("/workflow-runs")
-    def workflow_runs() -> list[dict[str, object]]:
-        return [asdict(run) for run in store.list_workflow_runs()]
+    def workflow_runs(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [asdict(run) for run in store.list_workflow_runs(client_id=client_id)]
 
     @app.get("/workflow-runs/{run_id}")
-    def workflow_run_detail(run_id: int) -> dict[str, object]:
+    def workflow_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
         run = store.get_workflow_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
@@ -402,7 +472,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/knowledge/ingest")
-    def ingest_knowledge(request: KnowledgeIngestRequest) -> list[dict[str, object]]:
+    def ingest_knowledge(
+        request: KnowledgeIngestRequest,
+        _: TechnicianAccess,
+    ) -> list[dict[str, object]]:
         try:
             settings = replace(
                 active_settings,
@@ -410,17 +483,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allow_ocr=active_settings.allow_ocr if request.ocr is None else request.ocr,
             )
             service = ingestion_service_from_settings(store, settings)
-            documents = service.ingest_path(Path(request.path))
+            documents = service.ingest_path(Path(request.path), client_id=request.client_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [asdict(document) for document in documents]
 
     @app.get("/knowledge/documents")
-    def knowledge_documents() -> list[dict[str, object]]:
-        return [asdict(document) for document in store.list_knowledge_documents()]
+    def knowledge_documents(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [asdict(document) for document in store.list_knowledge_documents(client_id=client_id)]
 
     @app.get("/knowledge/search")
     def knowledge_search(
+        _: ViewerAccess,
         q: str,
         limit: int = 3,
         backend: str | None = None,

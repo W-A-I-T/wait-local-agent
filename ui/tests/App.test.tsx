@@ -111,6 +111,9 @@ describe("App", () => {
 
   it("renders empty and error states for unavailable API sections", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/auth/role") {
+        return json({ role: "admin", api_auth_required: false, demo_mode: true });
+      }
       if (String(input) === "/approval-requests") {
         return json([]);
       }
@@ -126,10 +129,28 @@ describe("App", () => {
     expect(screen.getByText("No workflow runs visible.")).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("/workflow-runs failed with HTTP 503");
   });
+
+  it("hides write controls for viewer role", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, false, "viewer")));
+
+    render(<App />);
+
+    expect(await screen.findByText("Role: viewer")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Draft HaloPSA Write" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Provider And Secrets" })).not.toBeInTheDocument();
+  });
 });
 
-async function mockFetch(input: RequestInfo | URL, blocked = false): Promise<Response> {
+async function mockFetch(
+  input: RequestInfo | URL,
+  blocked = false,
+  role: "admin" | "technician" | "viewer" = "admin"
+): Promise<Response> {
   const path = String(input);
+  if (path === "/auth/role") {
+    return json({ role, api_auth_required: false, demo_mode: true });
+  }
   if (path === "/connectors") {
     return json([
       {

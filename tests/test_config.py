@@ -33,6 +33,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
     assert settings.api_token == ""
+    assert settings.admin_token == ""
+    assert settings.tech_token == ""
+    assert settings.viewer_token == ""
     assert settings.demo_mode is True
     assert settings.secrets_backend == "env"
     assert str(settings.vault_path) == ".wait-local-agent/vault"

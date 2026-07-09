@@ -65,6 +65,9 @@ class Settings:
     local_model_timeout_seconds: float
     vector_backend: str
     api_token: str = ""
+    admin_token: str = ""
+    tech_token: str = ""
+    viewer_token: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
@@ -104,6 +107,9 @@ def load_settings() -> Settings:
         local_model_timeout_seconds=_float_env("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", 20.0),
         vector_backend=os.getenv("WAIT_VECTOR_BACKEND", "sqlite"),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
+        admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
+        tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
+        viewer_token=os.getenv("WAIT_VIEWER_TOKEN", ""),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
         vault_path=vault_path,

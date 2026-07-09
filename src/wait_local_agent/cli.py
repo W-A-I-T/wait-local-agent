@@ -139,7 +139,7 @@ def export_audit_events(
     elif export_format == "csv":
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("w", encoding="utf-8", newline="") as handle:
-            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at"]
+            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(events)
