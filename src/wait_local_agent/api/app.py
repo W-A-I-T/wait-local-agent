@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -18,6 +19,14 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
+from wait_local_agent.api.founder import (
+    FounderPackContractError,
+    FounderPackUnavailableError,
+    founder_pack_unavailable_handler,
+)
+from wait_local_agent.api.founder import (
+    create_router as create_founder_router,
+)
 from wait_local_agent.api.packs.loader import configure_pack_routes
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
@@ -128,8 +137,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    app.add_exception_handler(FounderPackUnavailableError, founder_pack_unavailable_handler)
+    app.add_exception_handler(FounderPackContractError, _founder_contract_error_handler)
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(app, active_settings)
+    app.include_router(create_founder_router())
 
     @app.get("/health")
     @limiter.exempt
@@ -738,6 +750,13 @@ def _rate_limit_handler(request: Request, exc: Exception) -> Response:
     )
     response.headers["Retry-After"] = str(max(1, int(reset_at - time.time()) + 1))
     return response
+
+
+def _founder_contract_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content={"detail": str(cast(FounderPackContractError, exc))},
+    )
 
 
 SENSITIVE_KEY_PARTS = (
