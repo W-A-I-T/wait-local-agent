@@ -12,6 +12,16 @@ import typer
 import uvicorn
 
 from wait_local_agent.api.app import create_app
+from wait_local_agent.api.founder import (
+    FOUNDER_INSTALL_HINT,
+    FounderPackContractError,
+    FounderPackUnavailableError,
+    build_upload_preview,
+    invoke_founder,
+    json_object,
+    render_json,
+    require_founder_pack,
+)
 from wait_local_agent.api.packs.loader import (
     PackInstallError,
     configure_pack_cli,
@@ -52,6 +62,7 @@ backup_app = typer.Typer(help="SQLite backup and restore commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
+founder_app = typer.Typer(help="Founder pack commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -63,6 +74,7 @@ app.add_typer(backup_app, name="backup")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
 app.add_typer(packs_app, name="packs")
+app.add_typer(founder_app, name="founder")
 
 LOGGER = logging.getLogger(__name__)
 _PACK_CLI_NAMES: set[str] = set()
@@ -123,6 +135,7 @@ def doctor() -> None:
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
+    typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
 
 @packs_app.command("list")
@@ -172,6 +185,54 @@ def install_pack(
     )
     if license_key and not result.license_stored_in_vault:
         typer.echo("set WAIT_LICENSE_KEY in the environment to unlock licensed packs")
+
+
+@founder_app.command("scan")
+def founder_scan(path: Path) -> None:
+    response = json_object(_invoke_founder_cli("scan", path), operation="scan")
+    typer.echo(render_json(response))
+
+
+@founder_app.command("preflight")
+def founder_preflight() -> None:
+    response = json_object(_invoke_founder_cli("preflight_latest"), operation="preflight_latest")
+    typer.echo(render_json(response))
+
+
+@founder_app.command("handoff")
+def founder_handoff(output: Annotated[Path, typer.Option("--output")]) -> None:
+    response = _invoke_founder_cli("handoff")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(response, str):
+        output.write_text(response, encoding="utf-8")
+    else:
+        output.write_text(render_json(response) + "\n", encoding="utf-8")
+    typer.echo(f"handoff={output}")
+
+
+@founder_app.command("export-bundle")
+def founder_export_bundle(
+    artifact_id: Annotated[str, typer.Option("--artifact-id")],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(render_json(bundle) + "\n", encoding="utf-8")
+    typer.echo(f"bundle={output} artifact_id={artifact_id}")
+
+
+@founder_app.command("upload")
+def founder_upload(
+    artifact_id: Annotated[str, typer.Option("--artifact-id")],
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
+) -> None:
+    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
+    typer.echo(render_json(build_upload_preview(artifact_id, bundle)))
+    if not yes:
+        typer.echo("re-run with --yes to confirm upload")
+        raise typer.Exit(code=1)
+    response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
+    typer.echo(render_json(response))
 
 
 @app.command()
@@ -603,6 +664,30 @@ def update_check() -> None:
         typer.echo(f"status=error detail=internal_error message={exc}")
         raise typer.Exit(code=1) from exc
     typer.echo(_format_update_status(status))
+
+
+def _doctor_founder_lp_status() -> str:
+    try:
+        payload = json_object(invoke_founder(require_founder_pack(), "lp_status"), operation="lp_status")
+    except FounderPackUnavailableError:
+        return "not_installed"
+    except FounderPackContractError:
+        return "contract_error"
+    status = payload.get("status")
+    if isinstance(status, str):
+        return status
+    return json.dumps(payload, sort_keys=True)
+
+
+def _invoke_founder_cli(operation: str, *args: object) -> object:
+    try:
+        pack = require_founder_pack()
+        return invoke_founder(pack, operation, *args)
+    except FounderPackUnavailableError:
+        typer.echo(FOUNDER_INSTALL_HINT)
+        raise typer.Exit(code=1) from None
+    except FounderPackContractError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _print_halopsa_response(read_type: str, response: HaloReadResponse) -> None:

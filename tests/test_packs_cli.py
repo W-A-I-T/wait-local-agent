@@ -8,7 +8,8 @@ from wait_local_agent.api.packs.loader import PackInstallError, PackInstallResul
 
 def test_packs_list_is_empty_when_no_packs_are_discovered(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
-    cli_module.sync_pack_cli([])
+    monkeypatch.setattr(cli_module, "sync_pack_cli", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli_module, "load_pack_registry", lambda _settings: PackRegistry())
     runner = CliRunner()
 
     result = runner.invoke(cli_module.app, ["packs", "list"])
