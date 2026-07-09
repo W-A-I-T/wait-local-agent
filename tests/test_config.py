@@ -25,6 +25,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
+    monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
 
     settings = load_settings()
 
@@ -52,6 +55,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.rate_limit_enabled is True
+    assert settings.rate_limit_general == "100/minute"
+    assert settings.rate_limit_connector == "10/minute"
 
 
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
@@ -92,6 +98,18 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+
+
+def test_rate_limit_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_RATE_LIMIT_ENABLED", "false")
+    monkeypatch.setenv("WAIT_RATE_LIMIT_GENERAL", "25/minute")
+    monkeypatch.setenv("WAIT_RATE_LIMIT_CONNECTOR", "5/minute")
+
+    settings = load_settings()
+
+    assert settings.rate_limit_enabled is False
+    assert settings.rate_limit_general == "25/minute"
+    assert settings.rate_limit_connector == "5/minute"
 
 
 def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> None:

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from wait_local_agent.config import Settings
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 @pytest.fixture()
@@ -32,6 +37,9 @@ def settings(tmp_path: Path) -> Settings:
         qdrant_url="",
         qdrant_collection="wait_knowledge_chunks",
         connector_timeout_seconds=20.0,
+        rate_limit_enabled=False,
+        rate_limit_general="100/minute",
+        rate_limit_connector="10/minute",
         halopsa_base_url="",
         halopsa_client_id="",
         halopsa_client_secret="",

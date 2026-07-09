@@ -10,7 +10,7 @@ import typer
 import uvicorn
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.backup import backup_state, restore_state
+from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -18,6 +18,7 @@ from wait_local_agent.connectors import (
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
+    validate_connector_credentials,
 )
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -234,6 +235,24 @@ def list_secrets() -> None:
         )
 
 
+@connectors_app.command("validate")
+def validate_connector(connector: Annotated[str, typer.Argument(help="Connector id: halopsa or hudu.")]) -> None:
+    settings = load_settings()
+    try:
+        result = validate_connector_credentials(
+            connector,
+            settings,
+            halopsa_client=_halopsa_client(),
+            hudu_client=_hudu_client(),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    status = "PASS" if result.passed else "FAIL"
+    typer.echo(f"{status} connector={result.connector} layer={result.layer} {result.message}")
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
 @connectors_app.command("draft-halopsa")
 def draft_halopsa(
     ticket_id: str,
@@ -420,14 +439,28 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
 
 
 @backup_app.command("create")
-def create_backup(destination: Path) -> None:
-    path = backup_state(_store(), destination)
+def create_backup(
+    destination: Path,
+    encrypt: Annotated[bool, typer.Option("--encrypt", help="Encrypt the backup using the local Fernet vault key.")] = False,
+) -> None:
+    settings = load_settings()
+    try:
+        path = backup_state(_store(), destination, encrypt=encrypt, settings=settings)
+    except BackupEncryptionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"backup={path}")
 
 
 @backup_app.command("restore")
-def restore_backup(source: Path) -> None:
-    path = restore_state(_store(), source)
+def restore_backup(
+    source: Path,
+    encrypted: Annotated[bool, typer.Option("--encrypted", help="Restore from an encrypted backup created with --encrypt.")] = False,
+) -> None:
+    settings = load_settings()
+    try:
+        path = restore_state(_store(), source, encrypted=encrypted, settings=settings)
+    except BackupEncryptionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"restored={path}")
 
 

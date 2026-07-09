@@ -3,13 +3,19 @@ from __future__ import annotations
 import csv
 import io
 import json
+import time
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.extension import _rate_limit_exceeded_handler
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
@@ -84,10 +90,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="WAIT Local Agent",
         version="0.1.0",
     )
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=[active_settings.rate_limit_general],
+        headers_enabled=False,
+        retry_after="delta-seconds",
+        enabled=active_settings.rate_limit_enabled,
+    )
     app.state.settings = active_settings
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     @app.get("/health")
-    def health(_: ViewerAccess) -> dict[str, object]:
+    @limiter.exempt
+    def health(request: Request, _: ViewerAccess) -> dict[str, object]:
         return {
             "status": "ok",
             "write_actions_enabled": active_settings.allow_write_actions,
@@ -206,19 +223,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _approval_view(approval)
 
     @app.post("/approval-requests/{request_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
     def update_approval_request(
         request_id: int,
-        request: ApprovalRequest,
+        payload: ApprovalRequest,
+        request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
             approval = store.update_approval_request(
                 request_id,
-                request.status,
-                request.comment,
+                payload.status,
+                payload.comment,
                 approver_id=context.approver_id,
             )
-            if request.status == "approved" and approval.action_type.startswith("halopsa."):
+            if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
                 except RuntimeError:
@@ -299,37 +318,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [asdict(secret) for secret in list_secret_records(active_settings)]
 
     @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
     def create_halopsa_draft(
         ticket_id: str,
-        request: HaloDraftRequest,
+        payload: HaloDraftRequest,
+        request: Request,
         _: TechnicianAccess,
     ) -> dict[str, object]:
         try:
             draft = draft_halopsa_ticket_action(
                 store,
                 ticket_id,
-                request.action_type,
-                request.fields,
-                client_id=request.client_id,
+                payload.action_type,
+                payload.fields,
+                client_id=payload.client_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return asdict(draft)
 
     @app.get("/connectors/halopsa/health")
-    def halopsa_health(_: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.health()
         _audit_halopsa_read("health", result.status, result.count)
         return asdict(result)
 
     @app.get("/connectors/halopsa/write-health")
-    def halopsa_write_health(_: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.write_health()
         store.add_audit_event("halopsa.write_health", "halopsa", result.status)
         return asdict(result)
 
     @app.post("/connectors/halopsa/approval-requests/{request_id}/execute")
-    def execute_halopsa_approval(request_id: int, _: TechnicianAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_halopsa_approval(
+        request_id: int,
+        request: Request,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
         try:
             return asdict(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
@@ -340,43 +368,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/connectors/halopsa/tickets")
-    def halopsa_tickets(_: ViewerAccess, page: int = 1, page_size: int = 50) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
         response = halopsa_client.list_tickets(page=page, page_size=page_size)
         return _halopsa_response("tickets.list", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}")
-    def halopsa_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.get_ticket(ticket_id)
         return _halopsa_response("tickets.get", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}/notes")
-    def halopsa_ticket_notes(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_ticket_notes(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_ticket_notes(ticket_id)
         return _halopsa_response("tickets.notes", response)
 
     @app.get("/connectors/halopsa/clients")
-    def halopsa_clients(_: ViewerAccess, page: int = 1, page_size: int = 50) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_clients(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
         response = halopsa_client.list_clients(page=page, page_size=page_size)
         return _halopsa_response("clients.list", response)
 
     @app.get("/connectors/halopsa/clients/{client_id}/assets")
-    def halopsa_client_assets(client_id: str, _: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_client_assets(client_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_client_assets(client_id)
         return _halopsa_response("clients.assets", response)
 
     @app.get("/connectors/halopsa/categories")
-    def halopsa_categories(_: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def halopsa_categories(request: Request, _: ViewerAccess) -> dict[str, object]:
         response = halopsa_client.list_categories()
         return _halopsa_response("categories.list", response)
 
     @app.get("/connectors/hudu/health")
-    def hudu_health(_: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def hudu_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = hudu_client.health()
         _audit_hudu_read("health", result.status, result.count)
         return asdict(result)
 
     @app.get("/connectors/hudu/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
     def hudu_companies(
+        request: Request,
         _: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
@@ -385,7 +432,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _hudu_response("companies.list", response)
 
     @app.get("/connectors/hudu/articles")
+    @limiter.limit(active_settings.rate_limit_connector)
     def hudu_articles(
+        request: Request,
         _: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
@@ -399,12 +448,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _hudu_response("articles.list", response)
 
     @app.get("/connectors/hudu/articles/{article_id}")
-    def hudu_article(article_id: str, _: ViewerAccess) -> dict[str, object]:
+    @limiter.limit(active_settings.rate_limit_connector)
+    def hudu_article(article_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
         response = hudu_client.get_article(article_id)
         return _hudu_response("articles.get", response)
 
     @app.get("/connectors/hudu/folders")
+    @limiter.limit(active_settings.rate_limit_connector)
     def hudu_folders(
+        request: Request,
         _: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
@@ -571,6 +623,19 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    response = _rate_limit_exceeded_handler(request, exc)
+    current_limit = getattr(request.state, "view_rate_limit", None)
+    if current_limit is None:
+        return response
+    reset_at, _remaining = request.app.state.limiter.limiter.get_window_stats(
+        current_limit[0],
+        *current_limit[1],
+    )
+    response.headers["Retry-After"] = str(max(1, int(reset_at - time.time()) + 1))
+    return response
 
 
 SENSITIVE_KEY_PARTS = (
