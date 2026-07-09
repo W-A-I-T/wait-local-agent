@@ -35,6 +35,7 @@ from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store
+from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import (
     get_workflow_template,
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -123,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.store = store
     app.state.scheduler = scheduler
     app.state.limiter = limiter
+    app.state.update_status_cache = update_status_cache
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_middleware(SlowAPIMiddleware)
 
@@ -184,6 +187,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "embedding_model": active_settings.embedding_model,
             "qdrant_collection": active_settings.qdrant_collection,
         }
+
+    @app.get("/update-status")
+    def update_status(_: AdminAccess) -> dict[str, object]:
+        return update_status_cache.get_status(lambda: check_for_updates(active_settings)).to_dict()
 
     @app.get("/tickets")
     def tickets(

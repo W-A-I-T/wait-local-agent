@@ -28,6 +28,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
+    monkeypatch.delenv("WAIT_UPDATE_CHANNEL_URL", raising=False)
+    monkeypatch.delenv("WAIT_UPDATE_PUBKEYS", raising=False)
 
     settings = load_settings()
 
@@ -58,6 +60,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
+    assert settings.update_channel_url == ""
+    assert settings.update_pubkeys == ()
 
 
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
@@ -110,6 +114,16 @@ def test_rate_limit_env_values(monkeypatch) -> None:
     assert settings.rate_limit_enabled is False
     assert settings.rate_limit_general == "25/minute"
     assert settings.rate_limit_connector == "5/minute"
+
+
+def test_update_channel_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_UPDATE_CHANNEL_URL", "https://updates.wait.example.test/channel.json")
+    monkeypatch.setenv("WAIT_UPDATE_PUBKEYS", " key-one ,key-two, , key-three ")
+
+    settings = load_settings()
+
+    assert settings.update_channel_url == "https://updates.wait.example.test/channel.json"
+    assert settings.update_pubkeys == ("key-one", "key-two", "key-three")
 
 
 def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> None:
