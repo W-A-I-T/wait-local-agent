@@ -441,7 +441,13 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
 @backup_app.command("create")
 def create_backup(
     destination: Path,
-    encrypt: Annotated[bool, typer.Option("--encrypt", help="Encrypt the backup using the local Fernet vault key.")] = False,
+    encrypt: Annotated[
+        bool,
+        typer.Option(
+            "--encrypt",
+            help="Encrypt the backup using the local Fernet vault key.",
+        ),
+    ] = False,
 ) -> None:
     settings = load_settings()
     try:
@@ -454,7 +460,13 @@ def create_backup(
 @backup_app.command("restore")
 def restore_backup(
     source: Path,
-    encrypted: Annotated[bool, typer.Option("--encrypted", help="Restore from an encrypted backup created with --encrypt.")] = False,
+    encrypted: Annotated[
+        bool,
+        typer.Option(
+            "--encrypted",
+            help="Restore from an encrypted backup created with --encrypt.",
+        ),
+    ] = False,
 ) -> None:
     settings = load_settings()
     try:

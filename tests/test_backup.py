@@ -51,7 +51,12 @@ def test_encrypted_backup_requires_vault_key(settings, tmp_path: Path) -> None:
     SecretVault.initialize(secure_settings.vault_path)
 
     with pytest.raises(BackupEncryptionError, match=BACKUP_KEY_SECRET_NAME):
-        backup_state(Store(secure_settings.data_path), tmp_path / "state.db.enc", encrypt=True, settings=secure_settings)
+        backup_state(
+            Store(secure_settings.data_path),
+            tmp_path / "state.db.enc",
+            encrypt=True,
+            settings=secure_settings,
+        )
 
 
 def test_encrypted_backup_restore_cli_fails_cleanly_without_key(monkeypatch, tmp_path: Path) -> None:
