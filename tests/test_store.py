@@ -21,6 +21,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         workflow_columns = _columns(connection, "workflow_runs")
         scheduled_columns = _columns(connection, "scheduled_jobs")
         knowledge_columns = _columns(connection, "knowledge_documents")
+        event_history_columns = _columns(connection, "event_history")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
         audit = connection.execute("select * from audit_events where id = 1").fetchone()
@@ -32,6 +33,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "approver_id" in approval_columns
     assert "client_id" in audit_columns
     assert "approver_id" in audit_columns
+    assert "client_id" in event_history_columns
     assert "client_id" in workflow_columns
     assert "client_id" in scheduled_columns
     assert "client_id" in knowledge_columns
@@ -89,10 +91,20 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     )
 
     assert [ticket.id for ticket in store.list_tickets(client_id="acme")] == ["TCK-1"]
+    assert [ticket.id for ticket in store.list_tickets(client_id="")] == ["TCK-1", "TCK-2"]
     assert [request.id for request in store.list_approval_requests(client_id="acme")] == [acme_approval.id]
+    assert [request.id for request in store.list_approval_requests(client_id="")] == [
+        beta_approval.id,
+        acme_approval.id,
+    ]
     assert any(event.subject_id == "TCK-1" for event in store.list_audit_events(client_id="acme"))
+    assert len(store.list_audit_events(client_id="")) == len(store.list_audit_events())
+    assert all(event.client_id == "acme" for event in store.list_event_history(client_id="acme"))
+    assert len(store.list_event_history(client_id="")) == len(store.list_event_history())
     assert [run.ticket_id for run in store.list_workflow_runs(client_id="acme")] == ["TCK-1"]
+    assert [run.ticket_id for run in store.list_workflow_runs(client_id="")] == ["TCK-2", "TCK-1"]
     assert [document.title for document in store.list_knowledge_documents(client_id="acme")] == ["Acme"]
+    assert [document.title for document in store.list_knowledge_documents(client_id="")] == ["Acme", "Beta"]
     assert len(store.list_tickets()) == 2
     assert len(store.list_approval_requests()) == 2
     assert len(store.list_workflow_runs()) == 2
@@ -123,6 +135,7 @@ def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     assert resumed.paused is False
     assert deleted.id == beta.id
     assert [job.id for job in store.list_scheduled_jobs(client_id="acme")] == [acme.id]
+    assert [job.id for job in store.list_scheduled_jobs(client_id="")] == [acme.id]
     assert store.get_scheduled_job(beta.id or 0) is None
 
 

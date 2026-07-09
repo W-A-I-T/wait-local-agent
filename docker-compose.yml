@@ -7,7 +7,7 @@ services:
     environment:
       WAIT_DATA_PATH: /data/state.db
       WAIT_ALLOWED_DOC_ROOT: /app/examples/sample_docs
-      WAIT_DEMO_MODE: "true"
+      WAIT_DEMO_MODE: ${WAIT_DEMO_MODE:-true}
       WAIT_SECRETS_BACKEND: env
       WAIT_VAULT_PATH: /data/vault
     ports:

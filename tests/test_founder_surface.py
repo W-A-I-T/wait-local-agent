@@ -246,7 +246,7 @@ def test_founder_helper_serialization_and_preview_cache_cover_dataclass_path_and
     )
 
     assert value == {
-        "payload": {"artifact_id": "art-1", "path": Path("demo")},
+        "payload": {"artifact_id": "art-1", "path": "demo"},
         "items": ["alpha", "beta"],
     }
     assert render_json({"value": Path("demo")}) == '{\n  "value": "demo"\n}'
