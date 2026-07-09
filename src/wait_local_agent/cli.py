@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Annotated
@@ -10,6 +12,12 @@ import typer
 import uvicorn
 
 from wait_local_agent.api.app import create_app
+from wait_local_agent.api.packs.loader import (
+    PackInstallError,
+    configure_pack_cli,
+    install_pack_tarball,
+    load_pack_registry,
+)
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
@@ -43,6 +51,7 @@ events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
+packs_app = typer.Typer(help="Installed pack commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -53,6 +62,10 @@ app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
+app.add_typer(packs_app, name="packs")
+
+LOGGER = logging.getLogger(__name__)
+_PACK_CLI_NAMES: set[str] = set()
 
 
 def _store() -> Store:
@@ -67,9 +80,19 @@ def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
 
 
+def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
+    app.registered_groups = [
+        group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
+    ]
+    _PACK_CLI_NAMES.clear()
+    registry = configure_pack_cli(app, load_settings(), candidate_module_names)
+    _PACK_CLI_NAMES.update(status.name for status in registry.statuses if status.mounted_cli)
+
+
 @app.command()
 def doctor() -> None:
     settings = load_settings()
+    sync_pack_cli()
     typer.echo("WAIT Local Agent")
     typer.echo(f"data_path={settings.data_path}")
     typer.echo(f"provider={settings.local_model_provider}")
@@ -99,6 +122,56 @@ def doctor() -> None:
     typer.echo(f"halopsa_configured={halopsa_configured}")
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
+    typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
+
+
+@packs_app.command("list")
+def list_packs() -> None:
+    sync_pack_cli()
+    registry = load_pack_registry(load_settings())
+    if not registry.statuses:
+        typer.echo("no packs discovered")
+        return
+    for status in registry.statuses:
+        typer.echo(f"{status.name} {status.version} {'locked' if status.locked else 'unlocked'}")
+
+
+@packs_app.command("status")
+def status_packs() -> None:
+    sync_pack_cli()
+    registry = load_pack_registry(load_settings())
+    if not registry.statuses:
+        typer.echo("no packs discovered")
+        return
+    for status in registry.statuses:
+        typer.echo(
+            f"{status.name} version={status.version} state={'locked' if status.locked else 'unlocked'} "
+            f"router={status.router_available} cli={status.cli_available}"
+        )
+
+
+@packs_app.command("install")
+def install_pack(
+    tarball: Path,
+    license_key: Annotated[
+        str | None,
+        typer.Option("--license", help="Pack license key to store after install."),
+    ] = None,
+) -> None:
+    try:
+        result = install_pack_tarball(
+            tarball,
+            license_key=license_key,
+            settings=load_settings(),
+        )
+    except PackInstallError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"installed={result.pack_name} version={result.version} files={len(result.extracted_files)} "
+        f"license_stored_in_vault={result.license_stored_in_vault}"
+    )
+    if license_key and not result.license_stored_in_vault:
+        typer.echo("set WAIT_LICENSE_KEY in the environment to unlock licensed packs")
 
 
 @app.command()
@@ -584,3 +657,9 @@ def _format_update_status(status: UpdateStatus) -> str:
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
     uvicorn.run(create_app(), host=host, port=port)
+
+
+try:
+    sync_pack_cli()
+except Exception as exc:  # noqa: BLE001
+    LOGGER.warning("Pack CLI discovery failed during startup: %s", exc)

@@ -18,6 +18,7 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
+from wait_local_agent.api.packs.loader import configure_pack_routes
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -128,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.update_status_cache = update_status_cache
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_middleware(SlowAPIMiddleware)
+    configure_pack_routes(app, active_settings)
 
     @app.get("/health")
     @limiter.exempt

@@ -95,6 +95,9 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    license_key: str = ""
+    license_secret: str = ""
+    pack_signing_secret: str = ""
 
 
 def load_settings() -> Settings:
@@ -182,4 +185,12 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        license_key=_secret_value(
+            "license_key",
+            os.getenv("WAIT_LICENSE_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        license_secret=os.getenv("WAIT_LICENSE_SECRET", ""),
+        pack_signing_secret=os.getenv("WAIT_PACK_SIGNING_SECRET", ""),
     )
