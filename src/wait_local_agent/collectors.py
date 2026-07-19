@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import platform
+import platform as _process_inventory_platform
 import socket
 from dataclasses import asdict, dataclass, field
+from pathlib import Path as _ProcessInventoryPath
 from typing import Any, Protocol
 
 from wait_local_agent.models import (
@@ -446,3 +448,298 @@ def _host_canonical_id(hostname: str) -> str:
 
 default_registry = CollectorRegistry()
 default_registry.register(HostRuntimeCollector())
+ 
+
+
+
+
+class ProcessInventoryCollectorModule:
+    """Read-only collector that inventories local processes from /proc."""
+
+    module_id = "process-inventory"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Process Inventory"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local running processes.",
+            "asset_type": "process",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": ["/proc"],
+            "operations": ["read-process-metadata"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._process_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._process_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        pid = record["pid"]
+        return {
+            "asset_type": "process",
+            "asset_id": f"process:{pid}",
+            "name": record.get("name") or record.get("cmdline") or str(pid),
+            "attributes": {
+                "pid": pid,
+                "name": record.get("name", ""),
+                "cmdline": record.get("cmdline", ""),
+                "state": record.get("state", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        pid = record["pid"]
+        return [
+            {
+                "asset_type": "process",
+                "asset_id": f"process:{pid}",
+                "key": "process.pid",
+                "value": pid,
+            },
+            {
+                "asset_type": "process",
+                "asset_id": f"process:{pid}",
+                "key": "process.name",
+                "value": record.get("name", ""),
+            },
+            {
+                "asset_type": "process",
+                "asset_id": f"process:{pid}",
+                "key": "process.cmdline",
+                "value": record.get("cmdline", ""),
+            },
+            {
+                "asset_type": "process",
+                "asset_id": f"process:{pid}",
+                "key": "process.state",
+                "value": record.get("state", ""),
+            },
+        ]
+
+    def _process_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        proc_path = _ProcessInventoryPath("/proc")
+        if not proc_path.exists() or not proc_path.is_dir():
+            return []
+
+        records = []
+        try:
+            entries = list(proc_path.iterdir())
+        except OSError:
+            return []
+
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+
+            record = self._read_proc_entry(entry)
+            if record is None:
+                continue
+
+            records.append(record)
+            if limit is not None and len(records) >= limit:
+                break
+
+        records.sort(key=lambda item: item["pid"])
+        return records
+
+    @staticmethod
+    def _read_proc_entry(entry):
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            return None
+
+        status = _read_process_inventory_text(entry / "status")
+        name = ""
+        state = ""
+        for line in status.splitlines():
+            if line.startswith("Name:"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("State:"):
+                state = line.split(":", 1)[1].strip()
+
+        cmdline = _read_process_inventory_cmdline(entry / "cmdline")
+        if not name:
+            comm = _read_process_inventory_text(entry / "comm").strip()
+            name = comm
+
+        if not name and not cmdline:
+            return None
+
+        return {
+            "pid": pid,
+            "name": name,
+            "cmdline": cmdline,
+            "state": state,
+        }
+
+
+def _read_process_inventory_text(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        return ""
+
+
+def _read_process_inventory_cmdline(path):
+    try:
+        raw = path.read_bytes()
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        return ""
+
+    parts = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+    return " ".join(parts)
+
+
+def _register_process_inventory_collector():
+    module = ProcessInventoryCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+        "MODULE_REGISTRY",
+        "COLLECTOR_MODULES",
+        "COLLECTOR_REGISTRY",
+        "COLLECTORS",
+        "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "ProcessInventoryCollectorModule" not in exported:
+        exported.append("ProcessInventoryCollectorModule")
+
+
+_register_process_inventory_collector()
