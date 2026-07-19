@@ -16,6 +16,7 @@ from wait_local_agent.collectors import (
     CollectorResult,
     CollectorService,
     CollectorValidationResult,
+    HostRuntimeCollector,
     default_registry,
 )
 from wait_local_agent.models import (
@@ -132,6 +133,37 @@ class ExplodingCollectorModule(FakeCollectorModule):
 
     def collect(self, config: dict[str, Any]) -> CollectorResult:
         raise RuntimeError(f"collector failure for {config['source_name']}")
+
+
+def test_host_runtime_preview_run_persists_host_asset_observations_and_exports(settings) -> None:
+    registry = CollectorRegistry()
+    registry.register(HostRuntimeCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    preview = service.preview("host-runtime", {})
+    run = service.run("host-runtime", {}, confirm=True, client_id="local")
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assets = store.list_canonical_assets()
+    observations = store.list_asset_observations(run_id=run.id or 0)
+    observation_types = {observation.observation_type for observation in observations}
+
+    assert preview.module_id == "host-runtime"
+    assert preview.estimated_assets == 1
+    assert preview.estimated_observations == 3
+    assert preview.metadata["external_network_scanning"] is False
+    assert run.status == "completed"
+    assert len(assets) == 1
+    assert assets[0].asset_type == "host"
+    assert assets[0].canonical_id.startswith("host-runtime:host:")
+    assert len(observations) == 3
+    assert observation_types == {
+        "host_runtime_inventory",
+        "host_capacity",
+        "network_interfaces",
+    }
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 def test_fake_module_preview_run_persists_asset_observation_and_exports_bundle(settings) -> None:
