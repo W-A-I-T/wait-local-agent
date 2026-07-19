@@ -322,13 +322,12 @@ def test_register_supports_list_set_tuple_and_register_object(
     assert [getattr(m, "module_id", None) for m in listed].count("process-inventory") == 1
     assert any(getattr(m, "module_id", None) == "process-inventory" for m in setted)
     assert getattr(calls.get("register"), "module_id", None) == "process-inventory"
+    registry_tuple = collectors.__dict__["collector_registry"]
     assert (
-        [getattr(m, "module_id", None) for m in collectors.collector_registry].count(
-            "process-inventory"
-        )
+        [getattr(m, "module_id", None) for m in registry_tuple].count("process-inventory")
         == 1
     )
-    assert "ProcessInventoryCollectorModule" in collectors.__all__
+    assert "ProcessInventoryCollectorModule" in collectors.__dict__["__all__"]
 
 
 # --------------------------------------------------------------------------- #
