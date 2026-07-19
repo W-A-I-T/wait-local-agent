@@ -12,7 +12,7 @@ from typing import Annotated, Literal, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
@@ -29,6 +29,7 @@ from wait_local_agent.api.founder import (
 )
 from wait_local_agent.api.packs.loader import configure_pack_routes
 from wait_local_agent.config import Settings, load_settings
+from wait_local_agent.collectors import CollectorService, default_registry
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,
@@ -101,6 +102,15 @@ class ScheduledJobCreateRequest(BaseModel):
     params: dict[str, object]
 
 
+class CollectorConfigRequest(BaseModel):
+    config: dict[str, object] = Field(default_factory=dict)
+    client_id: str | None = None
+
+
+class CollectorRunRequest(CollectorConfigRequest):
+    confirm: bool = False
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     store = Store(active_settings.data_path)
@@ -114,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     hudu_client = HuduClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
+    collector_service = CollectorService(store, default_registry)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -299,6 +310,102 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
+
+    @app.get("/collectors/modules")
+    def collector_modules(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(manifest) for manifest in collector_service.list_modules()]
+
+    @app.post("/collectors/modules/{module_id}/validate")
+    def collector_validate(
+        module_id: str,
+        payload: CollectorConfigRequest,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        try:
+            return asdict(collector_service.validate(module_id, payload.config))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="collector module not found") from exc
+
+    @app.post("/collectors/modules/{module_id}/preview")
+    def collector_preview(
+        module_id: str,
+        payload: CollectorConfigRequest,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        try:
+            return asdict(collector_service.preview(module_id, payload.config))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="collector module not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/collectors/modules/{module_id}/run")
+    def collector_run(
+        module_id: str,
+        payload: CollectorRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return asdict(
+                collector_service.run(
+                    module_id,
+                    payload.config,
+                    confirm=payload.confirm,
+                    client_id=payload.client_id,
+                    actor_id=context.approver_id,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="collector module not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/collectors/runs")
+    def collector_runs(
+        _: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        return [asdict(run) for run in store.list_collector_runs(client_id=client_id)]
+
+    @app.get("/collectors/runs/{run_id}")
+    def collector_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
+        run = store.get_collector_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="collector run not found")
+        return {
+            **asdict(run),
+            "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
+            "observations": [
+                asdict(observation) for observation in store.list_asset_observations(run_id=run_id)
+            ],
+            "config_snapshots": [
+                asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)
+            ],
+            "config_diffs": [asdict(diff) for diff in store.list_config_diffs(run_id=run_id)],
+            "restore_exercises": [
+                asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)
+            ],
+        }
+
+    @app.post("/collectors/runs/{run_id}/export")
+    def collector_run_export(
+        run_id: int,
+        context: ViewerAccess,
+        report_type: ReportType = ReportType.COLLECTOR_BUNDLE,
+    ) -> dict[str, object]:
+        try:
+            report = collector_service.export_report(
+                run_id,
+                report_type,
+                created_by=context.approver_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="collector run not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return report_as_dict(report)
 
     @app.get("/reports")
     def reports(

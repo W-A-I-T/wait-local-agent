@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from wait_local_agent.models import (
     ApprovalRequest,
+    AssetObservation,
     AuditEvent,
+    CanonicalAsset,
+    CollectorRun,
+    CollectorSource,
+    ConfigDiff,
+    ConfigSnapshot,
     EventHistoryEntry,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
+    RestoreExercise,
     ScheduledJob,
     Ticket,
     WorkflowRun,
@@ -19,6 +27,7 @@ from wait_local_agent.models import (
 )
 
 if TYPE_CHECKING:
+    from wait_local_agent.collectors import CollectorResult
     from wait_local_agent.reports.models import GeneratedReport
 
 MAX_SEARCH_LIMIT = 25
@@ -216,6 +225,120 @@ class Store:
                     project_id text not null default '',
                     sections_json text not null,
                     metadata_json text not null default '{}'
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists collector_sources (
+                    id integer primary key autoincrement,
+                    module_id text not null,
+                    name text not null,
+                    config_json text not null,
+                    config_hash text not null,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text,
+                    unique(module_id, config_hash, client_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists collector_runs (
+                    id integer primary key autoincrement,
+                    module_id text not null,
+                    source_id integer references collector_sources(id),
+                    status text not null,
+                    mode text not null,
+                    scope_json text not null,
+                    preview_json text not null,
+                    result_json text not null default '{}',
+                    started_at text not null,
+                    completed_at text not null default '',
+                    client_id text,
+                    actor_id text,
+                    report_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists canonical_assets (
+                    id integer primary key autoincrement,
+                    canonical_id text not null unique,
+                    asset_type text not null,
+                    display_name text not null,
+                    client_id text,
+                    owner text not null default '',
+                    source_module text not null default '',
+                    source_id text not null default '',
+                    confidence real not null default 1.0,
+                    first_seen text not null,
+                    last_seen text not null,
+                    attributes_json text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists asset_observations (
+                    id integer primary key autoincrement,
+                    asset_id integer not null references canonical_assets(id),
+                    run_id integer not null references collector_runs(id),
+                    source_id integer references collector_sources(id),
+                    observed_at text not null,
+                    observation_type text not null,
+                    payload_json text not null,
+                    confidence real not null default 1.0
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists config_snapshots (
+                    id integer primary key autoincrement,
+                    run_id integer not null references collector_runs(id),
+                    asset_id integer references canonical_assets(id),
+                    source_id integer references collector_sources(id),
+                    snapshot_type text not null,
+                    checksum text not null,
+                    payload_json text not null,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists config_diffs (
+                    id integer primary key autoincrement,
+                    baseline_snapshot_id integer references config_snapshots(id),
+                    candidate_snapshot_id integer references config_snapshots(id),
+                    asset_id integer references canonical_assets(id),
+                    diff_type text not null,
+                    severity text not null,
+                    summary text not null,
+                    payload_json text not null,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists restore_exercises (
+                    id integer primary key autoincrement,
+                    run_id integer references collector_runs(id),
+                    asset_id integer references canonical_assets(id),
+                    source_id integer references collector_sources(id),
+                    exercise_id text not null,
+                    status text not null,
+                    target text not null,
+                    backup_artifact_id text not null,
+                    validation_json text not null,
+                    evidence_json text not null,
+                    started_at text not null,
+                    completed_at text not null,
+                    client_id text
                 )
                 """
             )
@@ -1148,6 +1271,707 @@ class Store:
             for row in rows
         ]
 
+    def upsert_collector_source(
+        self,
+        *,
+        module_id: str,
+        name: str,
+        config: dict[str, object],
+        client_id: str | None = None,
+    ) -> CollectorSource:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        config_json = _json_dumps(config)
+        config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into collector_sources
+                  (module_id, name, config_json, config_hash, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(module_id, config_hash, client_id) do update set
+                  name=excluded.name,
+                  config_json=excluded.config_json,
+                  updated_at=excluded.updated_at
+                """,
+                (module_id, name, config_json, config_hash, now, now, normalized_client_id),
+            )
+            source_id = cursor.lastrowid
+            if source_id is None or source_id == 0:
+                row = connection.execute(
+                    """
+                    select id from collector_sources
+                    where module_id = ? and config_hash = ?
+                      and ((? is null and client_id is null) or client_id = ?)
+                    """,
+                    (module_id, config_hash, normalized_client_id, normalized_client_id),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("collector source upsert did not return an id")
+                source_id = int(row["id"])
+            self._add_audit_event(
+                connection,
+                "collector.source_registered",
+                str(source_id),
+                f"{module_id} source {name}",
+                client_id=normalized_client_id,
+            )
+        source = self.get_collector_source(int(source_id))
+        if source is None:
+            raise RuntimeError("collector source was not persisted")
+        return source
+
+    def get_collector_source(self, source_id: int) -> CollectorSource | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from collector_sources where id = ?",
+                (source_id,),
+            ).fetchone()
+        return CollectorSource(**dict(row)) if row else None
+
+    def list_collector_sources(self, client_id: str | None = None) -> list[CollectorSource]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from collector_sources order by updated_at desc, id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from collector_sources
+                    where client_id = ?
+                    order by updated_at desc, id desc
+                    """,
+                    (normalized_client_id,),
+                ).fetchall()
+        return [CollectorSource(**dict(row)) for row in rows]
+
+    def create_collector_run(
+        self,
+        *,
+        module_id: str,
+        source_id: int | None,
+        status: str,
+        mode: str,
+        scope: dict[str, object],
+        preview: dict[str, object],
+        client_id: str | None = None,
+        actor_id: str | None = None,
+    ) -> CollectorRun:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into collector_runs
+                  (
+                    module_id,
+                    source_id,
+                    status,
+                    mode,
+                    scope_json,
+                    preview_json,
+                    result_json,
+                    started_at,
+                    completed_at,
+                    client_id,
+                    actor_id
+                  )
+                values (?, ?, ?, ?, ?, ?, '{}', ?, '', ?, ?)
+                """,
+                (
+                    module_id,
+                    source_id,
+                    status,
+                    mode,
+                    _json_dumps(scope),
+                    _json_dumps(preview),
+                    now,
+                    normalized_client_id,
+                    actor_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("collector run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "collector.run_started",
+                str(run_id),
+                f"{module_id} {mode}",
+                client_id=normalized_client_id,
+                approver_id=actor_id,
+            )
+            self._add_event_history(
+                connection,
+                "collector.run_started",
+                str(run_id),
+                status,
+                f"{module_id} {mode}",
+                _json_dumps(preview),
+                normalized_client_id,
+            )
+        run = self.get_collector_run(run_id)
+        if run is None:
+            raise RuntimeError("collector run was not persisted")
+        return run
+
+    def complete_collector_run(
+        self,
+        run_id: int,
+        status: str,
+        *,
+        result: dict[str, object],
+    ) -> CollectorRun:
+        now = utc_now()
+        result_json = _json_dumps(result)
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from collector_runs where id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            connection.execute(
+                """
+                update collector_runs
+                set status = ?, result_json = ?, completed_at = ?
+                where id = ?
+                """,
+                (status, result_json, now, run_id),
+            )
+            event_type = "collector.run_completed" if status == "completed" else "collector.run_failed"
+            self._add_audit_event(
+                connection,
+                event_type,
+                str(run_id),
+                f"{row['module_id']} {status}",
+                client_id=str(row["client_id"]) if row["client_id"] is not None else None,
+                approver_id=str(row["actor_id"]) if row["actor_id"] is not None else None,
+            )
+            self._add_event_history(
+                connection,
+                event_type,
+                str(run_id),
+                status,
+                f"{row['module_id']} {status}",
+                result_json,
+                str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+        run = self.get_collector_run(run_id)
+        if run is None:
+            raise RuntimeError("collector run was not persisted")
+        return run
+
+    def get_collector_run(self, run_id: int) -> CollectorRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from collector_runs where id = ?",
+                (run_id,),
+            ).fetchone()
+        return CollectorRun(**dict(row)) if row else None
+
+    def list_collector_runs(self, client_id: str | None = None) -> list[CollectorRun]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from collector_runs order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from collector_runs where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [CollectorRun(**dict(row)) for row in rows]
+
+    def set_collector_run_report(self, run_id: int, report_id: str) -> CollectorRun:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select id from collector_runs where id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            connection.execute(
+                "update collector_runs set report_id = ? where id = ?",
+                (report_id, run_id),
+            )
+        run = self.get_collector_run(run_id)
+        if run is None:
+            raise RuntimeError("collector run was not persisted")
+        return run
+
+    def persist_collector_result(
+        self,
+        run_id: int,
+        source_row_id: int | None,
+        module_id: str,
+        result: "CollectorResult",
+        *,
+        client_id: str | None = None,
+    ) -> None:
+        asset_by_canonical_id: dict[str, CanonicalAsset] = {}
+        for asset_write in result.assets:
+            asset = self.upsert_canonical_asset(
+                canonical_id=asset_write.canonical_id,
+                asset_type=asset_write.asset_type,
+                display_name=asset_write.display_name,
+                attributes=asset_write.attributes,
+                client_id=asset_write.client_id or client_id,
+                owner=asset_write.owner,
+                source_module=asset_write.source_module or module_id,
+                source_id=asset_write.source_id,
+                confidence=asset_write.confidence,
+            )
+            asset_by_canonical_id[asset.canonical_id] = asset
+        for observation in result.observations:
+            asset = asset_by_canonical_id.get(observation.canonical_id) or self.get_canonical_asset_by_canonical_id(
+                observation.canonical_id
+            )
+            if asset is None or asset.id is None:
+                raise KeyError(f"asset {observation.canonical_id} not found")
+            self.add_asset_observation(
+                asset_id=asset.id,
+                run_id=run_id,
+                source_id=source_row_id,
+                observation_type=observation.observation_type,
+                payload=observation.payload,
+                confidence=observation.confidence,
+            )
+        for snapshot in result.config_snapshots:
+            asset_id = self._asset_id_for_canonical_id(snapshot.canonical_id)
+            self.add_config_snapshot(
+                run_id=run_id,
+                asset_id=asset_id,
+                source_id=source_row_id,
+                snapshot_type=snapshot.snapshot_type,
+                payload=snapshot.payload,
+                checksum=snapshot.checksum,
+            )
+        for diff in result.config_diffs:
+            self.add_config_diff(
+                baseline_snapshot_id=diff.baseline_snapshot_id,
+                candidate_snapshot_id=diff.candidate_snapshot_id,
+                asset_id=self._asset_id_for_canonical_id(diff.canonical_id),
+                diff_type=diff.diff_type,
+                severity=diff.severity,
+                summary=diff.summary,
+                payload=diff.payload,
+            )
+        for exercise in result.restore_exercises:
+            self.add_restore_exercise(
+                run_id=run_id,
+                asset_id=self._asset_id_for_canonical_id(exercise.canonical_id),
+                source_id=source_row_id,
+                exercise_id=exercise.exercise_id,
+                status=exercise.status,
+                target=exercise.target,
+                backup_artifact_id=exercise.backup_artifact_id,
+                validation=exercise.validation,
+                evidence=exercise.evidence,
+                started_at=exercise.started_at,
+                completed_at=exercise.completed_at,
+                client_id=client_id,
+            )
+
+    def upsert_canonical_asset(
+        self,
+        *,
+        canonical_id: str,
+        asset_type: str,
+        display_name: str,
+        attributes: dict[str, object],
+        client_id: str | None = None,
+        owner: str = "",
+        source_module: str = "",
+        source_id: str = "",
+        confidence: float = 1.0,
+    ) -> CanonicalAsset:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        attributes_json = _json_dumps(attributes)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into canonical_assets
+                  (
+                    canonical_id,
+                    asset_type,
+                    display_name,
+                    client_id,
+                    owner,
+                    source_module,
+                    source_id,
+                    confidence,
+                    first_seen,
+                    last_seen,
+                    attributes_json
+                  )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(canonical_id) do update set
+                  asset_type=excluded.asset_type,
+                  display_name=excluded.display_name,
+                  client_id=coalesce(excluded.client_id, canonical_assets.client_id),
+                  owner=excluded.owner,
+                  source_module=excluded.source_module,
+                  source_id=excluded.source_id,
+                  confidence=excluded.confidence,
+                  last_seen=excluded.last_seen,
+                  attributes_json=excluded.attributes_json
+                """,
+                (
+                    canonical_id,
+                    asset_type,
+                    display_name,
+                    normalized_client_id,
+                    owner,
+                    source_module,
+                    source_id,
+                    confidence,
+                    now,
+                    now,
+                    attributes_json,
+                ),
+            )
+            asset_id = cursor.lastrowid
+            if asset_id is None or asset_id == 0:
+                row = connection.execute(
+                    "select id from canonical_assets where canonical_id = ?",
+                    (canonical_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("canonical asset upsert did not return an id")
+                asset_id = int(row["id"])
+        asset = self.get_canonical_asset(int(asset_id))
+        if asset is None:
+            raise RuntimeError("canonical asset was not persisted")
+        return asset
+
+    def get_canonical_asset(self, asset_id: int) -> CanonicalAsset | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from canonical_assets where id = ?",
+                (asset_id,),
+            ).fetchone()
+        return CanonicalAsset(**dict(row)) if row else None
+
+    def get_canonical_asset_by_canonical_id(self, canonical_id: str) -> CanonicalAsset | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from canonical_assets where canonical_id = ?",
+                (canonical_id,),
+            ).fetchone()
+        return CanonicalAsset(**dict(row)) if row else None
+
+    def list_canonical_assets(
+        self,
+        *,
+        run_id: int | None = None,
+        client_id: str | None = None,
+    ) -> list[CanonicalAsset]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute(
+                    """
+                    select * from canonical_assets
+                    where (? is null or client_id = ?)
+                    order by display_name, canonical_id
+                    """,
+                    (normalized_client_id, normalized_client_id),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select distinct a.*
+                    from canonical_assets a
+                    left join asset_observations o on o.asset_id = a.id
+                    left join config_snapshots s on s.asset_id = a.id
+                    left join restore_exercises r on r.asset_id = a.id
+                    where o.run_id = ? or s.run_id = ? or r.run_id = ?
+                    order by a.display_name, a.canonical_id
+                    """,
+                    (run_id, run_id, run_id),
+                ).fetchall()
+        return [CanonicalAsset(**dict(row)) for row in rows]
+
+    def add_asset_observation(
+        self,
+        *,
+        asset_id: int,
+        run_id: int,
+        source_id: int | None,
+        observation_type: str,
+        payload: dict[str, object],
+        confidence: float = 1.0,
+    ) -> AssetObservation:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into asset_observations
+                  (asset_id, run_id, source_id, observed_at, observation_type, payload_json, confidence)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (asset_id, run_id, source_id, now, observation_type, _json_dumps(payload), confidence),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("asset observation insert did not return an id")
+            observation_id = int(cursor.lastrowid)
+        observation = self.get_asset_observation(observation_id)
+        if observation is None:
+            raise RuntimeError("asset observation was not persisted")
+        return observation
+
+    def get_asset_observation(self, observation_id: int) -> AssetObservation | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from asset_observations where id = ?",
+                (observation_id,),
+            ).fetchone()
+        return AssetObservation(**dict(row)) if row else None
+
+    def list_asset_observations(self, *, run_id: int | None = None) -> list[AssetObservation]:
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute(
+                    "select * from asset_observations order by id"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from asset_observations where run_id = ? order by id",
+                    (run_id,),
+                ).fetchall()
+        return [AssetObservation(**dict(row)) for row in rows]
+
+    def add_config_snapshot(
+        self,
+        *,
+        run_id: int,
+        asset_id: int | None,
+        source_id: int | None,
+        snapshot_type: str,
+        payload: dict[str, object],
+        checksum: str = "",
+    ) -> ConfigSnapshot:
+        now = utc_now()
+        payload_json = _json_dumps(payload)
+        stable_checksum = checksum or hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into config_snapshots
+                  (run_id, asset_id, source_id, snapshot_type, checksum, payload_json, created_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, asset_id, source_id, snapshot_type, stable_checksum, payload_json, now),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("config snapshot insert did not return an id")
+            snapshot_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "collector.snapshot_created",
+                str(run_id),
+                f"{snapshot_type} checksum={stable_checksum}",
+            )
+        snapshot = self.get_config_snapshot(snapshot_id)
+        if snapshot is None:
+            raise RuntimeError("config snapshot was not persisted")
+        return snapshot
+
+    def get_config_snapshot(self, snapshot_id: int) -> ConfigSnapshot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from config_snapshots where id = ?",
+                (snapshot_id,),
+            ).fetchone()
+        return ConfigSnapshot(**dict(row)) if row else None
+
+    def list_config_snapshots(self, *, run_id: int | None = None) -> list[ConfigSnapshot]:
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute("select * from config_snapshots order by id").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from config_snapshots where run_id = ? order by id",
+                    (run_id,),
+                ).fetchall()
+        return [ConfigSnapshot(**dict(row)) for row in rows]
+
+    def add_config_diff(
+        self,
+        *,
+        baseline_snapshot_id: int | None,
+        candidate_snapshot_id: int | None,
+        asset_id: int | None,
+        diff_type: str,
+        severity: str,
+        summary: str,
+        payload: dict[str, object],
+    ) -> ConfigDiff:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into config_diffs
+                  (
+                    baseline_snapshot_id,
+                    candidate_snapshot_id,
+                    asset_id,
+                    diff_type,
+                    severity,
+                    summary,
+                    payload_json,
+                    created_at
+                  )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    baseline_snapshot_id,
+                    candidate_snapshot_id,
+                    asset_id,
+                    diff_type,
+                    severity,
+                    summary,
+                    _json_dumps(payload),
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("config diff insert did not return an id")
+            diff_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "collector.diff_detected",
+                str(candidate_snapshot_id or diff_id),
+                f"{severity}: {summary}",
+            )
+        diff = self.get_config_diff(diff_id)
+        if diff is None:
+            raise RuntimeError("config diff was not persisted")
+        return diff
+
+    def get_config_diff(self, diff_id: int) -> ConfigDiff | None:
+        with self._connect() as connection:
+            row = connection.execute("select * from config_diffs where id = ?", (diff_id,)).fetchone()
+        return ConfigDiff(**dict(row)) if row else None
+
+    def list_config_diffs(self, *, run_id: int | None = None) -> list[ConfigDiff]:
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute("select * from config_diffs order by id").fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select distinct d.*
+                    from config_diffs d
+                    left join config_snapshots c on c.id = d.candidate_snapshot_id
+                    left join config_snapshots b on b.id = d.baseline_snapshot_id
+                    where c.run_id = ? or b.run_id = ?
+                    order by d.id
+                    """,
+                    (run_id, run_id),
+                ).fetchall()
+        return [ConfigDiff(**dict(row)) for row in rows]
+
+    def add_restore_exercise(
+        self,
+        *,
+        run_id: int | None,
+        asset_id: int | None,
+        source_id: int | None,
+        exercise_id: str,
+        status: str,
+        target: str,
+        backup_artifact_id: str,
+        validation: dict[str, object],
+        evidence: dict[str, object],
+        started_at: str = "",
+        completed_at: str = "",
+        client_id: str | None = None,
+    ) -> RestoreExercise:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into restore_exercises
+                  (
+                    run_id,
+                    asset_id,
+                    source_id,
+                    exercise_id,
+                    status,
+                    target,
+                    backup_artifact_id,
+                    validation_json,
+                    evidence_json,
+                    started_at,
+                    completed_at,
+                    client_id
+                  )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    asset_id,
+                    source_id,
+                    exercise_id,
+                    status,
+                    target,
+                    backup_artifact_id,
+                    _json_dumps(validation),
+                    _json_dumps(evidence),
+                    started_at or now,
+                    completed_at or now,
+                    normalized_client_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("restore exercise insert did not return an id")
+            row_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "collector.restore_exercise_recorded",
+                str(run_id or row_id),
+                f"{exercise_id} {status}",
+                client_id=normalized_client_id,
+            )
+        exercise = self.get_restore_exercise(row_id)
+        if exercise is None:
+            raise RuntimeError("restore exercise was not persisted")
+        return exercise
+
+    def get_restore_exercise(self, row_id: int) -> RestoreExercise | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from restore_exercises where id = ?",
+                (row_id,),
+            ).fetchone()
+        return RestoreExercise(**dict(row)) if row else None
+
+    def list_restore_exercises(self, *, run_id: int | None = None) -> list[RestoreExercise]:
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute("select * from restore_exercises order by id").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from restore_exercises where run_id = ? order by id",
+                    (run_id,),
+                ).fetchall()
+        return [RestoreExercise(**dict(row)) for row in rows]
+
+    def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
+        if not canonical_id:
+            return None
+        asset = self.get_canonical_asset_by_canonical_id(canonical_id)
+        if asset is None:
+            raise KeyError(f"asset {canonical_id} not found")
+        return asset.id
+
     def save_report(self, report: GeneratedReport) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -1244,6 +2068,10 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     payload = dict(row)
     payload["paused"] = bool(payload["paused"])
     return ScheduledJob(**payload)
+
+
+def _json_dumps(payload: dict[str, object]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

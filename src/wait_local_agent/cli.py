@@ -32,6 +32,7 @@ from wait_local_agent.api.packs.loader import (
 )
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
 from wait_local_agent.config import load_settings
+from wait_local_agent.collectors import CollectorService
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,
@@ -69,6 +70,8 @@ update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
 founder_app = typer.Typer(help="Founder pack commands.")
 reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
+collectors_app = typer.Typer(help="Collector module protocol commands.")
+collector_bundle_app = typer.Typer(help="Collector evidence bundle commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -84,10 +87,16 @@ app.add_typer(founder_app, name="founder")
 LOGGER = logging.getLogger(__name__)
 _PACK_CLI_NAMES: set[str] = set()
 app.add_typer(reports_app, name="reports")
+collectors_app.add_typer(collector_bundle_app, name="bundle")
+app.add_typer(collectors_app, name="collectors")
 
 
 def _store() -> Store:
     return Store(load_settings().data_path)
+
+
+def _collector_service() -> CollectorService:
+    return CollectorService(_store())
 
 
 def _halopsa_client() -> HaloPSAClient:
@@ -583,6 +592,93 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
         typer.echo(chunk.excerpt)
 
 
+@collectors_app.command("list")
+def list_collectors() -> None:
+    modules = _collector_service().list_modules()
+    if not modules:
+        typer.echo("no collector modules registered")
+        return
+    for manifest in modules:
+        typer.echo(
+            f"{manifest.id} version={manifest.version} "
+            f"capabilities={','.join(manifest.capabilities) or '-'}"
+        )
+
+
+@collectors_app.command("validate")
+def validate_collector(
+    module_id: str,
+    config: Annotated[Path | None, typer.Option("--config", help="JSON config file.")] = None,
+) -> None:
+    try:
+        result = _collector_service().validate(module_id, _load_json_config(config))
+    except KeyError as exc:
+        raise typer.BadParameter("collector module not found") from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
+@collectors_app.command("preview")
+def preview_collector(
+    module_id: str,
+    config: Annotated[Path | None, typer.Option("--config", help="JSON config file.")] = None,
+) -> None:
+    try:
+        preview = _collector_service().preview(module_id, _load_json_config(config))
+    except KeyError as exc:
+        raise typer.BadParameter("collector module not found") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(preview), sort_keys=True, indent=2))
+
+
+@collectors_app.command("run")
+def run_collector(
+    module_id: str,
+    config: Annotated[Path | None, typer.Option("--config", help="JSON config file.")] = None,
+    confirm: Annotated[
+        bool,
+        typer.Option("--confirm", help="Confirm this previewed collector run."),
+    ] = False,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        run = _collector_service().run(
+            module_id,
+            _load_json_config(config),
+            confirm=confirm,
+            client_id=client_id,
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("collector module not found") from exc
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"run_id={run.id} status={run.status} module={run.module_id}")
+
+
+@collectors_app.command("export")
+def export_collector_report(
+    run_id: int,
+    report_type: Annotated[
+        str,
+        typer.Option(help="collector_bundle, appliance_hardening, or restore_evidence."),
+    ] = ReportType.COLLECTOR_BUNDLE.value,
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    export_format: Annotated[str, typer.Option("--format", help="json or markdown.")] = "json",
+) -> None:
+    _export_collector_report(run_id, report_type, output, export_format)
+
+
+@collector_bundle_app.command("export")
+def export_collector_bundle(
+    run_id: int,
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    export_format: Annotated[str, typer.Option("--format", help="json or markdown.")] = "json",
+) -> None:
+    _export_collector_report(run_id, ReportType.COLLECTOR_BUNDLE.value, output, export_format)
+
+
 @reports_app.command("list")
 def list_reports(
     report_type: Annotated[str, typer.Option(help="Filter by report type value.")] = "",
@@ -780,6 +876,37 @@ def _approval_cli_view(approval) -> dict[str, object]:
         **asdict(approval),
         "payload": payload if isinstance(payload, dict) else {},
     }
+
+
+def _load_json_config(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("collector config must be a JSON object")
+    return payload
+
+
+def _export_collector_report(
+    run_id: int,
+    report_type: str,
+    output: Path | None,
+    export_format: str,
+) -> None:
+    service = _collector_service()
+    try:
+        created = service.export_report(run_id, ReportType(report_type))
+        rendered = ReportService(_store()).export_report(created.id, ReportFormat(export_format))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except KeyError as exc:
+        raise typer.BadParameter("collector run not found") from exc
+    if output is None:
+        typer.echo(rendered)
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
+    typer.echo(f"exported={output} report_id={created.id} run_id={run_id}")
 
 
 def _format_update_status(status: UpdateStatus) -> str:

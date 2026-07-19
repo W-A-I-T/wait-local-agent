@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 ApprovalStatus = Literal["pending", "approved", "rejected"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
@@ -286,6 +286,158 @@ class KnowledgeChunk:
     text: str
     excerpt: str
     client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CollectorSource:
+    id: int | None
+    module_id: str
+    name: str
+    config_json: str
+    config_hash: str
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CollectorRun:
+    id: int | None
+    module_id: str
+    source_id: int | None
+    status: str
+    mode: str
+    scope_json: str
+    preview_json: str
+    result_json: str
+    started_at: str
+    completed_at: str
+    client_id: str | None = None
+    actor_id: str | None = None
+    report_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CanonicalAsset:
+    id: int | None
+    canonical_id: str
+    asset_type: str
+    display_name: str
+    attributes_json: str
+    first_seen: str
+    last_seen: str
+    client_id: str | None = None
+    owner: str = ""
+    source_module: str = ""
+    source_id: str = ""
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class AssetObservation:
+    id: int | None
+    asset_id: int
+    run_id: int
+    source_id: int | None
+    observed_at: str
+    observation_type: str
+    payload_json: str
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class ConfigSnapshot:
+    id: int | None
+    run_id: int
+    asset_id: int | None
+    source_id: int | None
+    snapshot_type: str
+    checksum: str
+    payload_json: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ConfigDiff:
+    id: int | None
+    baseline_snapshot_id: int | None
+    candidate_snapshot_id: int | None
+    asset_id: int | None
+    diff_type: str
+    severity: str
+    summary: str
+    payload_json: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class RestoreExercise:
+    id: int | None
+    run_id: int | None
+    asset_id: int | None
+    source_id: int | None
+    exercise_id: str
+    status: str
+    target: str
+    backup_artifact_id: str
+    validation_json: str
+    evidence_json: str
+    started_at: str
+    completed_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CollectorAssetWrite:
+    canonical_id: str
+    asset_type: str
+    display_name: str
+    attributes: dict[str, Any]
+    client_id: str | None = None
+    owner: str = ""
+    source_module: str = ""
+    source_id: str = ""
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class AssetObservationWrite:
+    canonical_id: str
+    observation_type: str
+    payload: dict[str, Any]
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class ConfigSnapshotWrite:
+    snapshot_type: str
+    payload: dict[str, Any]
+    canonical_id: str | None = None
+    checksum: str = ""
+
+
+@dataclass(frozen=True)
+class ConfigDiffWrite:
+    diff_type: str
+    severity: str
+    summary: str
+    payload: dict[str, Any]
+    baseline_snapshot_id: int | None = None
+    candidate_snapshot_id: int | None = None
+    canonical_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RestoreExerciseWrite:
+    exercise_id: str
+    status: str
+    target: str
+    backup_artifact_id: str
+    validation: dict[str, Any]
+    evidence: dict[str, Any]
+    canonical_id: str | None = None
+    started_at: str = ""
+    completed_at: str = ""
 
 
 def utc_now() -> str:
