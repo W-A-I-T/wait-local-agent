@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import platform
 import platform as _process_inventory_platform
@@ -24,6 +25,8 @@ from wait_local_agent.reports.builders import (
 from wait_local_agent.reports.models import GeneratedReport, ReportType
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.store import Store
+
+_ListeningPortsPath = _ProcessInventoryPath
 
 
 @dataclass(frozen=True)
@@ -665,6 +668,287 @@ class ProcessInventoryCollectorModule:
         }
 
 
+class ListeningPortsCollectorModule:
+    """Read-only collector that inventories local listening sockets from /proc/net."""
+
+    module_id = "listening-ports"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Listening Ports"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local listening sockets.",
+            "asset_type": "network-socket",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": [
+                "/proc/net/tcp",
+                "/proc/net/tcp6",
+                "/proc/net/udp",
+                "/proc/net/udp6",
+            ],
+            "operations": ["read-socket-table"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._socket_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._socket_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        protocol = record["protocol"]
+        local_port = record["local_port"]
+        local_ip = record["local_ip"]
+        return {
+            "asset_type": "network-socket",
+            "asset_id": f"socket:{protocol}:{local_ip}:{local_port}",
+            "name": f"{protocol}/{local_port}",
+            "attributes": {
+                "protocol": protocol,
+                "local_ip": local_ip,
+                "local_port": local_port,
+                "state": record.get("state", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        protocol = record["protocol"]
+        local_port = record["local_port"]
+        local_ip = record["local_ip"]
+        state = record.get("state", "")
+        return [
+            {
+                "asset_type": "network-socket",
+                "asset_id": f"socket:{protocol}:{local_ip}:{local_port}",
+                "key": "socket.protocol",
+                "value": protocol,
+            },
+            {
+                "asset_type": "network-socket",
+                "asset_id": f"socket:{protocol}:{local_ip}:{local_port}",
+                "key": "socket.local_ip",
+                "value": local_ip,
+            },
+            {
+                "asset_type": "network-socket",
+                "asset_id": f"socket:{protocol}:{local_ip}:{local_port}",
+                "key": "socket.local_port",
+                "value": local_port,
+            },
+            {
+                "asset_type": "network-socket",
+                "asset_id": f"socket:{protocol}:{local_ip}:{local_port}",
+                "key": "socket.state",
+                "value": state,
+            },
+        ]
+
+    def _socket_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        files = (
+            ("tcp", "/proc/net/tcp"),
+            ("tcp6", "/proc/net/tcp6"),
+            ("udp", "/proc/net/udp"),
+            ("udp6", "/proc/net/udp6"),
+        )
+        records: list[dict[str, Any]] = []
+
+        for protocol, path in files:
+            records.extend(self._read_socket_file(_ListeningPortsPath(path), protocol))
+            if limit is not None and len(records) >= limit:
+                break
+
+        records.sort(key=lambda item: (item["protocol"], item["local_port"]))
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _read_socket_file(self, path, protocol):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return []
+
+        if not lines:
+            return []
+
+        records = []
+        for line in lines[1:]:
+            record = self._parse_socket_row(line, protocol)
+            if record is not None:
+                records.append(record)
+        return records
+
+    @staticmethod
+    def _parse_socket_row(line, protocol):
+        fields = line.split()
+        if len(fields) < 4:
+            return None
+
+        local_address = fields[1]
+        state = fields[3]
+
+        parsed = ListeningPortsCollectorModule._parse_socket_address(local_address, protocol)
+        if parsed is None:
+            return None
+
+        local_ip, local_port = parsed
+        if protocol in {"tcp", "tcp6"}:
+            mapped_state = ListeningPortsCollectorModule._tcp_state_name(state)
+            if mapped_state != "LISTEN":
+                return None
+            return {
+                "protocol": protocol,
+                "local_ip": local_ip,
+                "local_port": local_port,
+                "state": mapped_state,
+            }
+
+        return {
+            "protocol": protocol,
+            "local_ip": local_ip,
+            "local_port": local_port,
+            "state": "udp",
+        }
+
+    @staticmethod
+    def _parse_socket_address(address, protocol):
+        try:
+            ip_hex, port_hex = address.rsplit(":", 1)
+            local_port = int(port_hex, 16)
+        except (TypeError, ValueError):
+            return None
+
+        if protocol in {"tcp", "udp"}:
+            local_ip = ListeningPortsCollectorModule._decode_ipv4_address(ip_hex)
+        elif protocol in {"tcp6", "udp6"}:
+            local_ip = ListeningPortsCollectorModule._decode_ipv6_address(ip_hex)
+        else:
+            return None
+
+        if not local_ip:
+            return None
+
+        return local_ip, local_port
+
+    @staticmethod
+    def _decode_ipv4_address(ip_hex):
+        if len(ip_hex) != 8:
+            return ""
+        try:
+            pairs = [int(ip_hex[index : index + 2], 16) for index in range(0, 8, 2)]
+        except ValueError:
+            return ""
+        return ".".join(str(byte) for byte in reversed(pairs))
+
+    @staticmethod
+    def _decode_ipv6_address(ip_hex):
+        if len(ip_hex) != 32:
+            return ""
+        try:
+            bytes_value = bytes.fromhex(ip_hex)
+        except ValueError:
+            return ""
+        return str(ipaddress.IPv6Address(bytes_value[::-1]))
+
+    @staticmethod
+    def _tcp_state_name(raw_state):
+        state = raw_state.upper()
+        if state == "0A":
+            return "LISTEN"
+        if state == "01":
+            return "ESTABLISHED"
+        return state
+
+
 def _read_process_inventory_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -743,3 +1027,66 @@ def _register_process_inventory_collector():
 
 
 _register_process_inventory_collector()
+
+
+def _register_listening_ports_collector():
+    module = ListeningPortsCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+        "MODULE_REGISTRY",
+        "COLLECTOR_MODULES",
+        "COLLECTOR_REGISTRY",
+        "COLLECTORS",
+        "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "ListeningPortsCollectorModule" not in exported:
+        exported.append("ListeningPortsCollectorModule")
+
+
+_register_listening_ports_collector()
