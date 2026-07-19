@@ -1,394 +1,374 @@
+"""Tests for the process-inventory collector module.
+
+These exercise ``ProcessInventoryCollectorModule`` against its concrete return
+contract by building a real temporary ``/proc`` tree and redirecting the
+module's ``_ProcessInventoryPath`` alias at it, rather than mocking stdlib
+scandir/glob (which the module never calls).
+"""
+
 from __future__ import annotations
 
-import builtins
-import errno
-import glob
-import os
-import platform
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from wait_local_agent.collectors import ProcessInventoryCollector
+from wait_local_agent import collectors
+
+Module = collectors.ProcessInventoryCollectorModule
 
 
-def _collector(config: dict[str, Any] | None = None) -> ProcessInventoryCollector:
-    config = config or {}
-    try:
-        return ProcessInventoryCollector(config)
-    except TypeError:
-        collector = ProcessInventoryCollector()
-        if hasattr(collector, "config"):
-            collector.config = config
-        return collector
-
-
-def _call_validate_config(
-    collector: ProcessInventoryCollector,
-    config: dict[str, Any] | None = None,
-) -> Any:
-    if not hasattr(collector, "validate_config"):
-        pytest.skip("collector has no validate_config method")
-
-    if config is None:
-        try:
-            return collector.validate_config()
-        except TypeError:
-            return collector.validate_config({})
-
-    try:
-        return collector.validate_config(config)
-    except TypeError:
-        if hasattr(collector, "config"):
-            collector.config = config
-        return collector.validate_config()
-
-
-def _unwrap_items(result: Any) -> list[Any]:
-    if result is None:
-        return []
-    if isinstance(result, list):
-        return result
-    if isinstance(result, tuple):
-        return list(result)
-    if isinstance(result, dict):
-        for key in ("processes", "items", "data", "results"):
-            value = result.get(key)
-            if isinstance(value, list):
-                return value
-        return [result]
-    for attr in ("processes", "items", "data", "results"):
-        value = getattr(result, attr, None)
-        if isinstance(value, list):
-            return value
-    return [result]
-
-
-def _item_value(item: Any, *names: str) -> Any:
-    for name in names:
-        if isinstance(item, dict) and name in item:
-            return item[name]
-        if hasattr(item, name):
-            return getattr(item, name)
-    return None
-
-
-def _assert_valid_config_result(result: Any) -> None:
-    if isinstance(result, dict) and "valid" in result:
-        assert result["valid"] is True
-        return
-
-    assert result is None or result is True or result in ({}, [])
-
-
-def _write_proc_entry(
+def _write_process(
     proc_root: Path,
     pid: int,
     *,
-    stat_name: str,
-    comm: str,
-    cmdline: bytes,
-    state: str = "S",
-    status: str | None = None,
-) -> Path:
-    process_dir = proc_root / str(pid)
-    process_dir.mkdir()
-    (process_dir / "stat").write_text(
-        f"{pid} ({stat_name}) {state} 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15\n",
-        encoding="utf-8",
-    )
-    (process_dir / "comm").write_text(f"{comm}\n", encoding="utf-8")
-    (process_dir / "cmdline").write_bytes(cmdline)
-    (process_dir / "status").write_text(
-        status
-        or (
-            f"Name:\t{comm}\n"
-            f"State:\t{state} (sleeping)\n"
-            f"Pid:\t{pid}\n"
-            "PPid:\t1\n"
-        ),
-        encoding="utf-8",
-    )
-    return process_dir
-
-
-def _patch_proc_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    proc_root = tmp_path / "proc"
-    proc_root.mkdir()
-
-    original_listdir = os.listdir
-    original_scandir = os.scandir
-    original_glob = glob.glob
-    original_path_exists = os.path.exists
-    original_path_isdir = os.path.isdir
-    original_iterdir = Path.iterdir
-    original_exists = Path.exists
-    original_is_dir = Path.is_dir
-    original_path_open = Path.open
-    original_open = builtins.open
-
-    def remap(value: Any) -> Any:
-        if isinstance(value, int):
-            return value
-        path = os.fspath(value)
-        if path == "/proc":
-            return proc_root
-        if path.startswith("/proc/"):
-            return proc_root / path.removeprefix("/proc/")
-        return value
-
-    def fake_listdir(path: Any) -> list[str]:
-        return original_listdir(remap(path))
-
-    def fake_scandir(path: Any) -> os.ScandirIterator[str]:
-        return original_scandir(remap(path))
-
-    def fake_glob(pathname: Any, *args: Any, **kwargs: Any) -> list[str]:
-        matches = original_glob(os.fspath(remap(pathname)), *args, **kwargs)
-        return [
-            f"/proc/{Path(match).relative_to(proc_root)}"
-            if Path(match).is_relative_to(proc_root)
-            else match
-            for match in matches
-        ]
-
-    def fake_path_exists(path: Any) -> bool:
-        return original_path_exists(remap(path))
-
-    def fake_path_isdir(path: Any) -> bool:
-        return original_path_isdir(remap(path))
-
-    def fake_iterdir(self: Path) -> Any:
-        return original_iterdir(remap(self))
-
-    def fake_exists(self: Path) -> bool:
-        return original_exists(remap(self))
-
-    def fake_is_dir(self: Path) -> bool:
-        return original_is_dir(remap(self))
-
-    def fake_path_open(self: Path, *args: Any, **kwargs: Any) -> Any:
-        return original_path_open(remap(self), *args, **kwargs)
-
-    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
-        return original_open(remap(file), *args, **kwargs)
-
-    monkeypatch.setattr(os, "listdir", fake_listdir)
-    monkeypatch.setattr(os, "scandir", fake_scandir)
-    monkeypatch.setattr(glob, "glob", fake_glob)
-    monkeypatch.setattr(os.path, "exists", fake_path_exists)
-    monkeypatch.setattr(os.path, "isdir", fake_path_isdir)
-    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
-    monkeypatch.setattr(Path, "exists", fake_exists)
-    monkeypatch.setattr(Path, "is_dir", fake_is_dir)
-    monkeypatch.setattr(Path, "open", fake_path_open)
-    monkeypatch.setattr(builtins, "open", fake_open)
-    monkeypatch.setattr(platform, "system", lambda: "Linux")
-    return proc_root
-
-
-def test_process_inventory_validate_config_accepts_default_config() -> None:
-    result = _call_validate_config(_collector())
-
-    _assert_valid_config_result(result)
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        {"enabled": True},
-    ],
-)
-def test_process_inventory_validate_config_accepts_common_options(
-    config: dict[str, Any],
+    name: str = "bash",
+    state: str = "S (sleeping)",
+    cmdline: bytes = b"/bin/bash\x00-i\x00",
+    with_status: bool = True,
+    comm: str | None = None,
 ) -> None:
-    result = _call_validate_config(_collector(config), config)
+    """Create a single ``/proc/<pid>`` entry under ``proc_root``."""
+    entry = proc_root / str(pid)
+    entry.mkdir()
+    if with_status:
+        (entry / "status").write_text(f"Name:\t{name}\nState:\t{state}\n")
+    if cmdline is not None:
+        (entry / "cmdline").write_bytes(cmdline)
+    if comm is not None:
+        (entry / "comm").write_text(comm)
 
-    _assert_valid_config_result(result)
+
+@pytest.fixture()
+def proc_root(tmp_path: Path) -> Path:
+    root = tmp_path / "proc"
+    root.mkdir()
+    return root
 
 
-def test_process_inventory_preview_reads_mocked_proc_without_cmdline(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    proc_root = _patch_proc_root(monkeypatch, tmp_path)
-    _write_proc_entry(
-        proc_root,
-        101,
-        stat_name="python3",
-        comm="python3",
-        cmdline=b"",
-        state="S",
+def _use_proc(monkeypatch: pytest.MonkeyPatch, proc_root: Path, system: str = "Linux") -> None:
+    """Point the module's ``/proc`` reader at ``proc_root`` on ``system``."""
+    original = collectors._ProcessInventoryPath
+    monkeypatch.setattr(
+        collectors,
+        "_ProcessInventoryPath",
+        lambda p, _root=proc_root, _orig=original: _root if str(p) == "/proc" else _orig(p),
     )
-    (proc_root / "self").mkdir()
+    monkeypatch.setattr(collectors._process_inventory_platform, "system", lambda: system)
+
+
+def _collector() -> Any:
+    return Module()
+
+
+# --------------------------------------------------------------------------- #
+# manifest / scope
+# --------------------------------------------------------------------------- #
+
+
+def test_manifest_advertises_read_only_linux_process_collector() -> None:
+    manifest = _collector().manifest()
+    assert manifest["module_id"] == "process-inventory"
+    assert manifest["read_only"] is True
+    assert manifest["platforms"] == ["linux"]
+    assert manifest["asset_type"] == "process"
+
+
+def test_scope_is_read_only_stdlib_only_no_network_or_shell() -> None:
+    scope = _collector().scope()
+    assert scope["read_only"] is True
+    assert scope["stdlib_only"] is True
+    assert scope["network"] is False
+    assert scope["shell"] is False
+    assert scope["paths"] == ["/proc"]
+
+
+# --------------------------------------------------------------------------- #
+# validate_config
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("config", [None, {}, {"limit": 0}, {"limit": 5}])
+def test_validate_config_accepts_valid_config(config: Any) -> None:
+    result = _collector().validate_config(config)
+    assert result["ok"] is True
+    assert result["errors"] == []
+
+
+@pytest.mark.parametrize("config", [{"limit": -1}, {"limit": "x"}, {"limit": 1.5}])
+def test_validate_config_rejects_bad_limit(config: Any) -> None:
+    result = _collector().validate_config(config)
+    assert result["ok"] is False
+    assert any("limit" in error for error in result["errors"])
+
+
+def test_validate_config_rejects_non_mapping() -> None:
+    result = _collector().validate_config(["not", "a", "mapping"])
+    assert result["ok"] is False
+    assert any("mapping" in error for error in result["errors"])
+
+
+# --------------------------------------------------------------------------- #
+# collect / preview — concrete return contract
+# --------------------------------------------------------------------------- #
+
+
+def test_collect_parses_pid_name_cmdline_and_state(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 20, name="python", state="R (running)", cmdline=b"python\x00app.py\x00")
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect()
+
+    assert result["module_id"] == "process-inventory"
+    assert result["ok"] is True
+    assert result["preview"] is False
+    assert result["count"] == 1
+
+    asset = result["items"][0]["canonical_asset"]
+    assert asset["asset_id"] == "process:20"
+    attrs = asset["attributes"]
+    assert attrs["pid"] == 20
+    assert attrs["name"] == "python"
+    assert attrs["cmdline"] == "python app.py"
+    assert attrs["state"] == "R (running)"
+
+    observations = {obs["key"]: obs["value"] for obs in result["items"][0]["observations"]}
+    assert observations["process.pid"] == 20
+    assert observations["process.name"] == "python"
+    assert observations["process.cmdline"] == "python app.py"
+    assert observations["process.state"] == "R (running)"
+
+
+def test_collect_sorts_records_by_pid_and_ignores_non_numeric_entries(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 30)
+    _write_process(proc_root, 4)
+    _write_process(proc_root, 200)
+    # non-numeric siblings that must be ignored
+    (proc_root / "acpi").mkdir()
+    (proc_root / "cpuinfo").write_text("x")
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect()
+    pids = [item["canonical_asset"]["attributes"]["pid"] for item in result["items"]]
+    assert pids == [4, 30, 200]
+
+
+def test_collect_falls_back_to_comm_when_status_name_missing(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 7, with_status=False, cmdline=b"", comm="worker\n")
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect()
+    assert result["items"][0]["canonical_asset"]["attributes"]["name"] == "worker"
+
+
+def test_collect_skips_entries_with_no_name_and_no_cmdline(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    # empty entry: no status, empty cmdline, no comm -> record is None -> skipped
+    _write_process(proc_root, 9, with_status=False, cmdline=b"")
+    _write_process(proc_root, 10)
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect()
+    pids = [item["canonical_asset"]["attributes"]["pid"] for item in result["items"]]
+    assert pids == [10]
+
+
+def test_collect_swallows_permission_error_reading_status(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 11, comm="guarded\n")
+    _use_proc(monkeypatch, proc_root)
+
+    real_read_text = Path.read_text
+
+    def deny_status(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == "status":
+            raise PermissionError("denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_status)
+
+    result = _collector().collect()
+    # status unreadable -> name comes from comm fallback, no crash
+    assert result["items"][0]["canonical_asset"]["attributes"]["name"] == "guarded"
+
+
+def test_preview_marks_preview_and_caps_at_default_limit(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    for pid in range(1, 16):  # 15 processes
+        _write_process(proc_root, pid)
+    _use_proc(monkeypatch, proc_root)
 
     result = _collector().preview()
-    items = _unwrap_items(result)
-
-    assert items
-    item = items[0]
-    pid = _item_value(item, "pid")
-    if pid is not None:
-        assert pid in (101, "101")
-    name = _item_value(item, "name", "comm", "process_name")
-    if name is not None:
-        assert name == "python3"
-    cmdline = _item_value(item, "cmdline", "command", "command_line", "args")
-    assert cmdline in ("", [], None)
+    assert result["preview"] is True
+    assert result["count"] == 10  # preview default limit
 
 
-def test_process_inventory_collect_parses_pid_name_cmdline_and_state(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_collect_honours_explicit_limit(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
 ) -> None:
-    proc_root = _patch_proc_root(monkeypatch, tmp_path)
-    _write_proc_entry(
-        proc_root,
-        4242,
-        stat_name="worker",
-        comm="worker",
-        cmdline=b"/usr/bin/worker\x00--queue\x00critical\x00",
-        state="R",
-        status=(
-            "Name:\tworker\n"
-            "State:\tR (running)\n"
-            "Pid:\t4242\n"
-            "PPid:\t7\n"
-        ),
-    )
-    _write_proc_entry(
-        proc_root,
-        77,
-        stat_name="name with spaces",
-        comm="spacey",
-        cmdline=b"spacey\x00--flag\x00",
-        state="T",
-    )
-    (proc_root / "not-a-pid").mkdir()
+    for pid in range(1, 6):
+        _write_process(proc_root, pid)
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect({"limit": 2})
+    assert result["count"] == 2
+
+
+def test_collect_with_limit_zero_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
+
+    result = _collector().collect({"limit": 0})
+    assert result["ok"] is True
+    assert result["items"] == []
+    assert result["count"] == 0
+
+
+def test_collect_returns_not_ok_for_invalid_config(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _use_proc(monkeypatch, proc_root)
+    result = _collector().collect({"limit": -5})
+    assert result["ok"] is False
+    assert result["assets"] == []
+    assert result["errors"]
+
+
+def test_preview_returns_not_ok_for_invalid_config(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _use_proc(monkeypatch, proc_root)
+    result = _collector().preview({"limit": "bad"})
+    assert result["ok"] is False
+    assert result["assets"] == []
+
+
+# --------------------------------------------------------------------------- #
+# platform / path guards
+# --------------------------------------------------------------------------- #
+
+
+def test_collect_returns_empty_on_non_linux(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root, system="Darwin")
 
     result = _collector().collect()
-    items = _unwrap_items(result)
-
-    by_pid = {str(_item_value(item, "pid")): item for item in items}
-    assert set(by_pid) == {"4242", "77"}
-
-    worker = by_pid["4242"]
-    assert _item_value(worker, "name", "comm", "process_name") == "worker"
-    worker_cmdline = str(_item_value(worker, "cmdline", "command", "command_line", "args"))
-    assert "worker" in worker_cmdline
-    assert "critical" in worker_cmdline
-    assert _item_value(worker, "state", "status") in ("R", "running", "R (running)", None)
-
-    spaced = by_pid["77"]
-    assert _item_value(spaced, "name", "comm", "process_name") in (
-        "spacey",
-        "name with spaces",
-    )
-    assert _item_value(spaced, "state", "status") in ("T", "stopped", "T (stopped)", None)
+    assert result["ok"] is True
+    assert result["items"] == []
 
 
-def test_process_inventory_collect_skips_missing_process_files(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_collect_returns_empty_when_proc_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    proc_root = _patch_proc_root(monkeypatch, tmp_path)
-    _write_proc_entry(
-        proc_root,
-        10,
-        stat_name="alive",
-        comm="alive",
-        cmdline=b"alive\x00",
-        state="S",
-    )
-    disappearing = _write_proc_entry(
-        proc_root,
-        11,
-        stat_name="gone",
-        comm="gone",
-        cmdline=b"gone\x00",
-        state="S",
-    )
-    (disappearing / "stat").unlink()
+    missing = tmp_path / "does-not-exist"
+    _use_proc(monkeypatch, missing, system="Linux")
 
     result = _collector().collect()
-    pids = [str(_item_value(item, "pid")) for item in _unwrap_items(result)]
+    assert result["ok"] is True
+    assert result["items"] == []
 
-    assert pids == ["10"]
+
+# --------------------------------------------------------------------------- #
+# registration
+# --------------------------------------------------------------------------- #
 
 
-def test_process_inventory_collect_skips_permission_denied_process(
+def test_register_process_inventory_collector_is_idempotent() -> None:
+    # Runs at import; calling again must not raise and must keep the module known.
+    collectors._register_process_inventory_collector()
+    registry = collectors.__dict__.get("MODULE_REGISTRY")
+    if isinstance(registry, dict):
+        module = registry.get("process-inventory")
+        assert module is not None
+        assert module.module_id == "process-inventory"
+
+
+def test_register_supports_list_set_tuple_and_register_object(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    proc_root = _patch_proc_root(monkeypatch, tmp_path)
-    _write_proc_entry(
-        proc_root,
-        20,
-        stat_name="visible",
-        comm="visible",
-        cmdline=b"visible\x00",
-        state="S",
+    calls: dict[str, Any] = {}
+
+    class RegistryObject:
+        # Rejects the 2-arg form so the module falls back to register(module).
+        def register(self, module: Any) -> None:
+            calls["register"] = module
+
+    listed: list[Any] = []
+    setted: set[Any] = set()
+    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
+    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
+    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
+    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
+    monkeypatch.setattr(collectors, "__all__", [], raising=False)
+
+    # First registration populates every shape.
+    collectors._register_process_inventory_collector()
+    # Second registration exercises the "already present" guards (list/tuple).
+    collectors._register_process_inventory_collector()
+
+    assert [getattr(m, "module_id", None) for m in listed].count("process-inventory") == 1
+    assert any(getattr(m, "module_id", None) == "process-inventory" for m in setted)
+    assert getattr(calls.get("register"), "module_id", None) == "process-inventory"
+    assert (
+        [getattr(m, "module_id", None) for m in collectors.collector_registry].count(
+            "process-inventory"
+        )
+        == 1
     )
-    _write_proc_entry(
-        proc_root,
-        21,
-        stat_name="private",
-        comm="private",
-        cmdline=b"private\x00",
-        state="S",
-    )
-
-    fake_proc_open = builtins.open
-    fake_proc_path_open = Path.open
-
-    def permission_error_for_private(file: Any, *args: Any, **kwargs: Any) -> Any:
-        path = os.fspath(file)
-        if "/21/" in path:
-            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
-        return fake_proc_open(file, *args, **kwargs)
-
-    def permission_error_for_private_path(
-        self: Path,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        path = os.fspath(self)
-        if "/21/" in path:
-            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
-        return fake_proc_path_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", permission_error_for_private)
-    monkeypatch.setattr(Path, "open", permission_error_for_private_path)
-
-    result = _collector().collect()
-    pids = [str(_item_value(item, "pid")) for item in _unwrap_items(result)]
-
-    assert pids == ["20"]
+    assert "ProcessInventoryCollectorModule" in collectors.__all__
 
 
-def test_process_inventory_collect_returns_empty_without_proc(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+# --------------------------------------------------------------------------- #
+# defensive read paths
+# --------------------------------------------------------------------------- #
+
+
+def test_collect_returns_empty_when_iterdir_raises(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
 ) -> None:
-    proc_root = _patch_proc_root(monkeypatch, tmp_path)
-    proc_root.rmdir()
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
 
-    assert _unwrap_items(_collector().collect()) == []
+    real_iterdir = Path.iterdir
+
+    def boom(self: Path) -> Any:
+        if self.name == "proc":
+            raise OSError("boom")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", boom)
+    assert _collector().collect()["items"] == []
 
 
-def test_process_inventory_preview_and_collect_return_empty_on_non_linux(
-    monkeypatch: pytest.MonkeyPatch,
+def test_collect_handles_unreadable_cmdline(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path
 ) -> None:
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    entry = proc_root / "12"
+    entry.mkdir()
+    # Includes a non-Name/State line so the status parser exercises its skip branch.
+    (entry / "status").write_text("Name:\tsvc\nPid:\t12\nState:\tS (sleeping)\n")
+    (entry / "cmdline").mkdir()  # read_bytes -> IsADirectoryError (OSError) -> ""
+    _use_proc(monkeypatch, proc_root)
 
-    def fail_real_proc_access(path: Any, *args: Any, **kwargs: Any) -> Any:
-        if os.fspath(path).startswith("/proc"):
-            pytest.fail("non-Linux path must not read /proc")
-        return []
+    attrs = _collector().collect()["items"][0]["canonical_asset"]["attributes"]
+    assert attrs["name"] == "svc"
+    assert attrs["cmdline"] == ""
 
-    monkeypatch.setattr(os, "listdir", fail_real_proc_access)
-    monkeypatch.setattr(os, "scandir", fail_real_proc_access)
 
-    assert _unwrap_items(_collector().preview()) == []
-    assert _unwrap_items(_collector().collect()) == []
+def test_read_proc_entry_returns_none_for_non_numeric_name(tmp_path: Path) -> None:
+    entry = tmp_path / "notapid"
+    entry.mkdir()
+    assert Module._read_proc_entry(entry) is None
