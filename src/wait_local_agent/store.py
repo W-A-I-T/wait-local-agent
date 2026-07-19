@@ -1527,13 +1527,13 @@ class Store:
             )
             asset_by_canonical_id[asset.canonical_id] = asset
         for observation in result.observations:
-            asset = asset_by_canonical_id.get(observation.canonical_id) or self.get_canonical_asset_by_canonical_id(
+            obs_asset = asset_by_canonical_id.get(observation.canonical_id) or self.get_canonical_asset_by_canonical_id(
                 observation.canonical_id
             )
-            if asset is None or asset.id is None:
+            if obs_asset is None or obs_asset.id is None:
                 raise KeyError(f"asset {observation.canonical_id} not found")
             self.add_asset_observation(
-                asset_id=asset.id,
+                asset_id=obs_asset.id,
                 run_id=run_id,
                 source_id=source_row_id,
                 observation_type=observation.observation_type,

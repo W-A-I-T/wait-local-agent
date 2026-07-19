@@ -399,7 +399,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             report = collector_service.export_report(
                 run_id,
                 report_type,
-                created_by=context.approver_id,
+                created_by=context.approver_id or "system",
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="collector run not found") from exc
