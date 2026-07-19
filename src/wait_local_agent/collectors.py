@@ -27,6 +27,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.store import Store
 
 _ListeningPortsPath = _ProcessInventoryPath
+_NetworkInterfacesPath = _ProcessInventoryPath
 
 
 @dataclass(frozen=True)
@@ -949,6 +950,232 @@ class ListeningPortsCollectorModule:
         return state
 
 
+class NetworkInterfacesCollectorModule:
+    """Read-only collector that inventories local network interfaces from /sys/class/net."""
+
+    module_id = "network-interfaces"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Network Interfaces"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local network interface metadata.",
+            "asset_type": "network-interface",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": ["/sys/class/net"],
+            "operations": ["read-interface-metadata"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._interface_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._interface_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        interface_name = record["interface"]
+        return {
+            "asset_type": "network-interface",
+            "asset_id": f"netif:{interface_name}",
+            "name": interface_name,
+            "attributes": {
+                "interface": interface_name,
+                "mac": record.get("mac", ""),
+                "operstate": record.get("operstate", ""),
+                "mtu": record.get("mtu", ""),
+                "type": record.get("type", ""),
+                "flags": record.get("flags", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        interface_name = record["interface"]
+        return [
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.name",
+                "value": interface_name,
+            },
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.mac",
+                "value": record.get("mac", ""),
+            },
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.operstate",
+                "value": record.get("operstate", ""),
+            },
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.mtu",
+                "value": record.get("mtu", ""),
+            },
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.type",
+                "value": record.get("type", ""),
+            },
+            {
+                "asset_type": "network-interface",
+                "asset_id": f"netif:{interface_name}",
+                "key": "netif.flags",
+                "value": record.get("flags", ""),
+            },
+        ]
+
+    def _interface_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        sys_net_root = _NetworkInterfacesPath("/sys/class/net")
+        if not sys_net_root.exists() or not sys_net_root.is_dir():
+            return []
+
+        try:
+            entries = list(sys_net_root.iterdir())
+        except OSError:
+            return []
+
+        records = []
+        for entry in entries:
+            interface_name = entry.name
+            if not interface_name:
+                continue
+
+            record = self._read_interface_record(entry)
+            if record is None:
+                continue
+
+            records.append(record)
+
+        records.sort(key=lambda item: item["interface"])
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _read_interface_record(self, entry):
+        interface_name = entry.name
+        if not interface_name:
+            return None
+
+        mtu_raw = self._read_interface_file(entry / "mtu")
+        return {
+            "interface": interface_name,
+            "operstate": self._read_interface_file(entry / "operstate"),
+            "mac": self._read_interface_file(entry / "address"),
+            "mtu": self._coerce_mtu(mtu_raw),
+            "type": self._read_interface_file(entry / "type"),
+            "flags": self._read_interface_file(entry / "flags"),
+        }
+
+    @staticmethod
+    def _read_interface_file(path):
+        try:
+            return path.read_text(encoding="utf-8", errors="replace").strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def _coerce_mtu(value):
+        value = value.strip()
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return value
+
+
 def _read_process_inventory_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -1090,3 +1317,66 @@ def _register_listening_ports_collector():
 
 
 _register_listening_ports_collector()
+
+
+def _register_network_interfaces_collector():
+    module = NetworkInterfacesCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "NetworkInterfacesCollectorModule" not in exported:
+        exported.append("NetworkInterfacesCollectorModule")
+
+
+_register_network_interfaces_collector()
