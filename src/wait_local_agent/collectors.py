@@ -29,6 +29,9 @@ from wait_local_agent.store import Store
 _ListeningPortsPath = _ProcessInventoryPath
 _NetworkInterfacesPath = _ProcessInventoryPath
 _FirewallRulesPath = _ProcessInventoryPath
+_DatabaseInventoryPath = _ProcessInventoryPath
+_WifiInventoryPath = _ProcessInventoryPath
+_RoutingTablePath = _ProcessInventoryPath
 
 
 @dataclass(frozen=True)
@@ -1445,6 +1448,899 @@ class FirewallRulesCollectorModule:
         return ""
 
 
+class DatabaseInventoryCollectorModule:
+    """Read-only collector that inventories local database engines from config files."""
+
+    module_id = "database-inventory"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Database Inventory"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local database engine configuration files.",
+            "asset_type": "database-instance",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": [
+                "/etc/postgresql/*/main/postgresql.conf",
+                "/etc/mysql/my.cnf",
+                "/etc/mysql/mariadb.conf.d/*.cnf",
+                "/etc/mongod.conf",
+                "/etc/redis/redis.conf",
+            ],
+            "operations": ["read-database-config"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._database_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._database_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        engine = record["engine"]
+        return {
+            "asset_type": "database-instance",
+            "asset_id": f"db:{engine}",
+            "name": engine,
+            "attributes": {
+                "engine": engine,
+                "config_file": record.get("config_file", ""),
+                "port": record.get("port", ""),
+                "data_dir": record.get("data_dir", ""),
+                "bind": record.get("bind", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        engine = record["engine"]
+        return [
+            {
+                "asset_type": "database-instance",
+                "asset_id": f"db:{engine}",
+                "key": "database.engine",
+                "value": engine,
+            },
+            {
+                "asset_type": "database-instance",
+                "asset_id": f"db:{engine}",
+                "key": "database.config_file",
+                "value": record.get("config_file", ""),
+            },
+            {
+                "asset_type": "database-instance",
+                "asset_id": f"db:{engine}",
+                "key": "database.port",
+                "value": record.get("port", ""),
+            },
+            {
+                "asset_type": "database-instance",
+                "asset_id": f"db:{engine}",
+                "key": "database.data_dir",
+                "value": record.get("data_dir", ""),
+            },
+            {
+                "asset_type": "database-instance",
+                "asset_id": f"db:{engine}",
+                "key": "database.bind",
+                "value": record.get("bind", ""),
+            },
+        ]
+
+    def _database_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        records = []
+        for record in (
+            self._postgresql_record(),
+            self._mysql_record(),
+            self._mariadb_record(),
+            self._mongodb_record(),
+            self._redis_record(),
+        ):
+            if record is not None:
+                records.append(record)
+
+        records.sort(key=lambda item: item["engine"])
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _postgresql_record(self):
+        paths = self._glob_paths("/etc/postgresql", "*/main/postgresql.conf")
+        settings = self._read_first_assignment_settings(paths, ("port", "data_directory", "listen_addresses"))
+        if settings is None:
+            return None
+
+        return self._record(
+            "postgresql",
+            settings["config_file"],
+            port=settings.get("port", ""),
+            data_dir=settings.get("data_directory", ""),
+            bind=settings.get("listen_addresses", ""),
+        )
+
+    def _mysql_record(self):
+        paths = [_DatabaseInventoryPath("/etc/mysql/my.cnf")]
+        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"))
+        if settings is None:
+            return None
+
+        return self._record(
+            "mysql",
+            settings["config_file"],
+            port=settings.get("port", ""),
+            data_dir=settings.get("datadir", ""),
+            bind=settings.get("bind-address", ""),
+        )
+
+    def _mariadb_record(self):
+        paths = self._glob_paths("/etc/mysql/mariadb.conf.d", "*.cnf")
+        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"))
+        if settings is None:
+            return None
+
+        return self._record(
+            "mariadb",
+            settings["config_file"],
+            port=settings.get("port", ""),
+            data_dir=settings.get("datadir", ""),
+            bind=settings.get("bind-address", ""),
+        )
+
+    def _mongodb_record(self):
+        path = _DatabaseInventoryPath("/etc/mongod.conf")
+        settings = self._read_first_colon_settings([path], ("port", "dbpath", "bindip"))
+        if settings is None:
+            return None
+
+        return self._record(
+            "mongodb",
+            settings["config_file"],
+            port=settings.get("port", ""),
+            data_dir=settings.get("dbpath", ""),
+            bind=settings.get("bindip", ""),
+        )
+
+    def _redis_record(self):
+        path = _DatabaseInventoryPath("/etc/redis/redis.conf")
+        settings = self._read_first_assignment_settings([path], ("port", "dir", "bind"))
+        if settings is None:
+            return None
+
+        return self._record(
+            "redis",
+            settings["config_file"],
+            port=settings.get("port", ""),
+            data_dir=settings.get("dir", ""),
+            bind=settings.get("bind", ""),
+        )
+
+    @staticmethod
+    def _record(engine, config_file, *, port="", data_dir="", bind=""):
+        return {
+            "engine": engine,
+            "config_file": config_file,
+            "port": str(port),
+            "data_dir": data_dir,
+            "bind": bind,
+        }
+
+    @staticmethod
+    def _glob_paths(root, pattern):
+        try:
+            return sorted(_DatabaseInventoryPath(root).glob(pattern), key=lambda path: str(path))
+        except OSError:
+            return []
+
+    def _read_first_assignment_settings(self, paths, keys):
+        for path in paths:
+            text = self._read_database_config(path)
+            if text is None:
+                continue
+            settings = self._parse_assignment_settings(text, keys)
+            settings["config_file"] = str(path)
+            return settings
+        return None
+
+    def _read_first_colon_settings(self, paths, keys):
+        for path in paths:
+            text = self._read_database_config(path)
+            if text is None:
+                continue
+            settings = self._parse_colon_settings(text, keys)
+            settings["config_file"] = str(path)
+            return settings
+        return None
+
+    @staticmethod
+    def _read_database_config(path):
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+            return path.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+    @classmethod
+    def _parse_assignment_settings(cls, text, keys):
+        wanted = {key.lower() for key in keys}
+        settings = {}
+        for line in text.splitlines():
+            stripped = cls._strip_config_comment(line).strip()
+            if not stripped or stripped.startswith("["):
+                continue
+
+            if "=" in stripped:
+                key, value = stripped.split("=", 1)
+            else:
+                parts = stripped.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                key, value = parts
+
+            normalized_key = key.strip().lower()
+            if normalized_key in wanted:
+                settings[normalized_key] = cls._clean_config_value(value)
+        return settings
+
+    @classmethod
+    def _parse_colon_settings(cls, text, keys):
+        wanted = {key.lower() for key in keys}
+        settings = {}
+        for line in text.splitlines():
+            stripped = cls._strip_config_comment(line).strip()
+            if ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            normalized_key = key.strip().lower()
+            if normalized_key in wanted:
+                settings[normalized_key] = cls._clean_config_value(value)
+        return settings
+
+    @staticmethod
+    def _strip_config_comment(line):
+        in_single = False
+        in_double = False
+        for index, character in enumerate(line):
+            if character == "'" and not in_double:
+                in_single = not in_single
+            elif character == '"' and not in_single:
+                in_double = not in_double
+            elif character == "#" and not in_single and not in_double:
+                return line[:index]
+        return line
+
+    @staticmethod
+    def _clean_config_value(value):
+        cleaned = value.strip().strip(",")
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+            cleaned = cleaned[1:-1]
+        return cleaned.strip()
+
+class WifiInventoryCollectorModule:
+    """Read-only collector that inventories local Wi-Fi interfaces."""
+
+    module_id = "wifi-inventory"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Wi-Fi Inventory"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local wireless interface metadata.",
+            "asset_type": "wifi-interface",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": ["/proc/net/wireless", "/sys/class/net"],
+            "operations": ["read-wireless-interface-metadata"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._wifi_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._wifi_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        interface_name = record["interface"]
+        return {
+            "asset_type": "wifi-interface",
+            "asset_id": f"wifi:{interface_name}",
+            "name": interface_name,
+            "attributes": {
+                "interface": interface_name,
+                "mac": record.get("mac", ""),
+                "operstate": record.get("operstate", ""),
+                "link": record.get("link", ""),
+                "level": record.get("level", ""),
+                "noise": record.get("noise", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        interface_name = record["interface"]
+        return [
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.interface",
+                "value": interface_name,
+            },
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.mac",
+                "value": record.get("mac", ""),
+            },
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.operstate",
+                "value": record.get("operstate", ""),
+            },
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.link",
+                "value": record.get("link", ""),
+            },
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.level",
+                "value": record.get("level", ""),
+            },
+            {
+                "asset_type": "wifi-interface",
+                "asset_id": f"wifi:{interface_name}",
+                "key": "wifi.noise",
+                "value": record.get("noise", ""),
+            },
+        ]
+
+    def _wifi_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        wireless_path = _WifiInventoryPath("/proc/net/wireless")
+        sys_net_root = _WifiInventoryPath("/sys/class/net")
+        proc_records = self._wireless_rows(wireless_path)
+        interface_names = set(proc_records)
+
+        interface_names.update(self._wireless_interfaces_from_sys(sys_net_root))
+        if not interface_names:
+            return []
+
+        records = []
+        for interface_name in sorted(interface_names):
+            sys_record = self._read_sys_wifi_record(sys_net_root / interface_name)
+            record = {
+                "interface": interface_name,
+                "mac": sys_record.get("mac", ""),
+                "operstate": sys_record.get("operstate", ""),
+                "link": proc_records.get(interface_name, {}).get("link", ""),
+                "level": proc_records.get(interface_name, {}).get("level", ""),
+                "noise": proc_records.get(interface_name, {}).get("noise", ""),
+            }
+            records.append(record)
+
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _wireless_rows(self, path):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return {}
+
+        records = {}
+        for line in lines[2:]:
+            record = self._parse_wireless_row(line)
+            if record is not None:
+                records[record["interface"]] = record
+        return records
+
+    @staticmethod
+    def _parse_wireless_row(line):
+        fields = line.split()
+        if len(fields) < 5:
+            return None
+
+        interface_name = fields[0].rstrip(":")
+        if not interface_name:
+            return None
+
+        return {
+            "interface": interface_name,
+            "link": fields[2],
+            "level": fields[3],
+            "noise": fields[4],
+        }
+
+    @staticmethod
+    def _wireless_interfaces_from_sys(sys_net_root):
+        if not sys_net_root.exists() or not sys_net_root.is_dir():
+            return []
+
+        try:
+            entries = list(sys_net_root.iterdir())
+        except OSError:
+            return []
+
+        interfaces = []
+        for entry in entries:
+            if entry.name and (entry / "wireless").is_dir():
+                interfaces.append(entry.name)
+        return interfaces
+
+    def _read_sys_wifi_record(self, entry):
+        return {
+            "mac": self._read_wifi_file(entry / "address"),
+            "operstate": self._read_wifi_file(entry / "operstate"),
+        }
+
+    @staticmethod
+    def _read_wifi_file(path):
+        try:
+            return path.read_text(encoding="utf-8", errors="replace").strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return ""
+
+class RoutingTableCollectorModule:
+    """Read-only collector that inventories local IPv4 and IPv6 routes from /proc/net."""
+
+    module_id = "routing-table"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Routing Table"
+    version = "1.0"
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local IPv4 and IPv6 routing table entries.",
+            "asset_type": "route",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": ["/proc/net/route", "/proc/net/ipv6_route"],
+            "operations": ["read-routing-table"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._route_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._route_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        family = record["family"]
+        interface = record["interface"]
+        destination = record["destination"]
+        gateway = record["gateway"]
+        index = record["index"]
+        return {
+            "asset_type": "route",
+            "asset_id": f"route:{family}:{interface}:{destination}/{index}",
+            "name": f"{destination} via {gateway} dev {interface}",
+            "attributes": {
+                "family": family,
+                "interface": interface,
+                "destination": destination,
+                "gateway": gateway,
+                "mask": record["mask"],
+                "flags": record["flags"],
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        family = record["family"]
+        interface = record["interface"]
+        destination = record["destination"]
+        index = record["index"]
+        asset_id = f"route:{family}:{interface}:{destination}/{index}"
+        return [
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.family",
+                "value": family,
+            },
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.interface",
+                "value": interface,
+            },
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.destination",
+                "value": destination,
+            },
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.gateway",
+                "value": record["gateway"],
+            },
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.mask",
+                "value": record["mask"],
+            },
+            {
+                "asset_type": "route",
+                "asset_id": asset_id,
+                "key": "route.flags",
+                "value": record["flags"],
+            },
+        ]
+
+    def _route_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        records = []
+        records.extend(self._read_ipv4_route_file(_RoutingTablePath("/proc/net/route")))
+        records.extend(self._read_ipv6_route_file(_RoutingTablePath("/proc/net/ipv6_route")))
+        records.sort(key=lambda item: (item["family"], item["interface"], item["destination"]))
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _read_ipv4_route_file(self, path):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return []
+
+        if not lines:
+            return []
+
+        records = []
+        for index, line in enumerate(lines[1:]):
+            record = self._parse_ipv4_route_row(line, index)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def _read_ipv6_route_file(self, path):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return []
+
+        records = []
+        for index, line in enumerate(lines):
+            record = self._parse_ipv6_route_row(line, index)
+            if record is not None:
+                records.append(record)
+        return records
+
+    @staticmethod
+    def _parse_ipv4_route_row(line, index):
+        fields = line.split()
+        if len(fields) < 8:
+            return None
+
+        destination = RoutingTableCollectorModule._decode_ipv4_address(fields[1])
+        gateway = RoutingTableCollectorModule._decode_ipv4_address(fields[2])
+        mask = RoutingTableCollectorModule._decode_ipv4_address(fields[7])
+        if not destination or not gateway or not mask:
+            return None
+
+        return {
+            "family": "ipv4",
+            "interface": fields[0],
+            "destination": destination,
+            "gateway": gateway,
+            "mask": mask,
+            "flags": fields[3],
+            "index": index,
+        }
+
+    @staticmethod
+    def _parse_ipv6_route_row(line, index):
+        fields = line.split()
+        if len(fields) < 10:
+            return None
+
+        destination = RoutingTableCollectorModule._decode_ipv6_address(fields[0])
+        gateway = RoutingTableCollectorModule._decode_ipv6_address(fields[4])
+        if not destination or not gateway:
+            return None
+
+        try:
+            mask = int(fields[1], 16)
+        except ValueError:
+            return None
+
+        return {
+            "family": "ipv6",
+            "interface": fields[-1],
+            "destination": destination,
+            "gateway": gateway,
+            "mask": mask,
+            "flags": fields[8],
+            "index": index,
+        }
+
+    @staticmethod
+    def _decode_ipv4_address(ip_hex):
+        if len(ip_hex) != 8:
+            return ""
+        try:
+            pairs = [int(ip_hex[index : index + 2], 16) for index in range(0, 8, 2)]
+        except ValueError:
+            return ""
+        return ".".join(str(byte) for byte in reversed(pairs))
+
+    @staticmethod
+    def _decode_ipv6_address(ip_hex):
+        if len(ip_hex) != 32:
+            return ""
+        try:
+            bytes_value = bytes.fromhex(ip_hex)
+        except ValueError:
+            return ""
+        return str(ipaddress.IPv6Address(bytes_value))
+
+
 def _read_process_inventory_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -1712,3 +2608,192 @@ def _register_firewall_rules_collector():
 
 
 _register_firewall_rules_collector()
+
+
+def _register_database_inventory_collector():
+    module = DatabaseInventoryCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "DatabaseInventoryCollectorModule" not in exported:
+        exported.append("DatabaseInventoryCollectorModule")
+
+
+_register_database_inventory_collector()
+
+
+def _register_wifi_inventory_collector():
+    module = WifiInventoryCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "WifiInventoryCollectorModule" not in exported:
+        exported.append("WifiInventoryCollectorModule")
+
+
+_register_wifi_inventory_collector()
+
+
+def _register_routing_table_collector():
+    module = RoutingTableCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "RoutingTableCollectorModule" not in exported:
+        exported.append("RoutingTableCollectorModule")
+
+
+_register_routing_table_collector()
