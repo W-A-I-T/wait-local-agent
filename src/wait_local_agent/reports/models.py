@@ -22,6 +22,7 @@ class ReportType(StrEnum):
     INVESTOR_EVIDENCE = "investor_evidence"
     LICENSE_ENTITLEMENT = "license_entitlement"
     APPLIANCE_HARDENING = "appliance_hardening"
+    RESTORE_EVIDENCE = "restore_evidence"
 
 
 class ReportFormat(StrEnum):
