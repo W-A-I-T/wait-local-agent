@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import platform
+import socket
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
@@ -229,8 +232,217 @@ class CollectorService:
         return report
 
 
-default_registry = CollectorRegistry()
+class HostRuntimeCollector:
+    manifest = CollectorManifest(
+        id="host-runtime",
+        name="Host Runtime Inventory",
+        version="0.1.0",
+        description="Read-only inventory of the local host runtime using Python standard library APIs.",
+        capabilities=("local_host_inventory", "safe_read_only"),
+        scopes=("local_host", "os_runtime", "network_interfaces", "capacity"),
+        report_types=("collector_bundle",),
+    )
+
+    def validate_config(self, config: dict[str, Any]) -> CollectorValidationResult:
+        unsupported_keys = sorted(set(config) - {"source_name"})
+        errors: list[str] = []
+        if unsupported_keys:
+            errors.append(f"unsupported config keys: {', '.join(unsupported_keys)}")
+        source_name = config.get("source_name", "local-host")
+        if not isinstance(source_name, str) or not source_name.strip():
+            errors.append("source_name must be a non-empty string when provided")
+        if errors:
+            return CollectorValidationResult(
+                module_id=self.manifest.id,
+                passed=False,
+                message="host-runtime collector only supports read-only local host inventory",
+                errors=errors,
+            )
+        return CollectorValidationResult(
+            module_id=self.manifest.id,
+            passed=True,
+            message="ok",
+            normalized_config={"source_name": source_name.strip()},
+        )
+
+    def scope(self, config: dict[str, Any]) -> dict[str, Any]:
+        normalized = self.validate_config(config).normalized_config or config
+        return {
+            "source_name": normalized.get("source_name", "local-host"),
+            "scopes": list(self.manifest.scopes),
+            "capabilities": list(self.manifest.capabilities),
+            "safety": {
+                "read_only": True,
+                "external_network_scanning": False,
+                "remote_hosts": False,
+                "dependencies": "python-stdlib-only",
+            },
+        }
+
+    def preview(self, config: dict[str, Any]) -> CollectorPreview:
+        inventory = _collect_host_runtime_inventory()
+        return CollectorPreview(
+            module_id=self.manifest.id,
+            source_name=str(config.get("source_name", "local-host")),
+            scopes=list(self.manifest.scopes),
+            estimated_assets=1,
+            estimated_observations=3,
+            expected_reports=list(self.manifest.report_types),
+            metadata={
+                "hostname": inventory["hostname"],
+                "interface_count": len(inventory["network_interfaces"]),
+                "safe_read_only": True,
+                "external_network_scanning": False,
+            },
+        )
+
+    def collect(self, config: dict[str, Any]) -> CollectorResult:
+        inventory = _collect_host_runtime_inventory()
+        canonical_id = _host_canonical_id(inventory["hostname"])
+        return CollectorResult(
+            assets=[
+                CollectorAssetWrite(
+                    canonical_id=canonical_id,
+                    asset_type="host",
+                    display_name=inventory["hostname"] or "Local host",
+                    attributes={
+                        "source": str(config.get("source_name", "local-host")),
+                        "hostname": inventory["hostname"],
+                        "fqdn": inventory["fqdn"],
+                        "system": inventory["system"],
+                        "kernel": inventory["kernel"],
+                        "kernel_version": inventory["kernel_version"],
+                        "machine": inventory["machine"],
+                        "processor": inventory["processor"],
+                        "python_runtime": inventory["python_runtime"],
+                    },
+                    source_module=self.manifest.id,
+                    source_id=inventory["hostname"],
+                )
+            ],
+            observations=[
+                AssetObservationWrite(
+                    canonical_id=canonical_id,
+                    observation_type="host_runtime_inventory",
+                    payload={
+                        "hostname": inventory["hostname"],
+                        "fqdn": inventory["fqdn"],
+                        "platform": inventory["platform"],
+                        "system": inventory["system"],
+                        "release": inventory["kernel"],
+                        "version": inventory["kernel_version"],
+                        "machine": inventory["machine"],
+                        "processor": inventory["processor"],
+                        "python_runtime": inventory["python_runtime"],
+                    },
+                ),
+                AssetObservationWrite(
+                    canonical_id=canonical_id,
+                    observation_type="host_capacity",
+                    payload={
+                        "cpu_count": inventory["cpu_count"],
+                        "memory_total_bytes": inventory["memory_total_bytes"],
+                    },
+                ),
+                AssetObservationWrite(
+                    canonical_id=canonical_id,
+                    observation_type="network_interfaces",
+                    payload={
+                        "interfaces": inventory["network_interfaces"],
+                        "hostname_addresses": inventory["hostname_addresses"],
+                        "external_network_scanning": False,
+                    },
+                ),
+            ],
+            metadata={
+                "safe_read_only": True,
+                "external_network_scanning": False,
+                "stdlib_only": True,
+            },
+        )
 
 
 def _clean_module_id(module_id: str) -> str:
     return module_id.strip().lower()
+
+
+def _collect_host_runtime_inventory() -> dict[str, Any]:
+    hostname = socket.gethostname()
+    fqdn = platform.node() or hostname
+    return {
+        "hostname": hostname,
+        "fqdn": fqdn,
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "kernel": platform.release(),
+        "kernel_version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python_runtime": platform.python_implementation(),
+        "cpu_count": os.cpu_count(),
+        "memory_total_bytes": _memory_total_bytes(),
+        "network_interfaces": _network_interfaces(),
+        "hostname_addresses": _hostname_addresses(hostname, fqdn),
+    }
+
+
+def _memory_total_bytes() -> int | None:
+    if not hasattr(os, "sysconf"):
+        return None
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        page_count = os.sysconf("SC_PHYS_PAGES")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(page_size, int) or not isinstance(page_count, int):
+        return None
+    if page_size <= 0 or page_count <= 0:
+        return None
+    return page_size * page_count
+
+
+def _network_interfaces() -> list[dict[str, Any]]:
+    interfaces: list[dict[str, Any]] = []
+    if hasattr(socket, "if_nameindex"):
+        try:
+            for index, name in socket.if_nameindex():
+                interfaces.append({"index": index, "name": name, "addresses": []})
+        except OSError:
+            interfaces = []
+    if interfaces:
+        return sorted(interfaces, key=lambda item: (str(item["name"]), int(item["index"])))
+    return [{"index": None, "name": name, "addresses": []} for name in _network_interface_names_from_sys()]
+
+
+def _network_interface_names_from_sys() -> list[str]:
+    sys_net = "/sys/class/net"
+    try:
+        names = os.listdir(sys_net)
+    except OSError:
+        return []
+    return sorted(name for name in names if name and "/" not in name)
+
+
+def _hostname_addresses(hostname: str, fqdn: str) -> list[str]:
+    addresses: set[str] = set()
+    for name in {hostname, fqdn}:
+        if not name:
+            continue
+        try:
+            infos = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+        except OSError:
+            continue
+        for family, _socktype, _proto, _canonname, sockaddr in infos:
+            if family in {socket.AF_INET, socket.AF_INET6} and sockaddr:
+                addresses.add(str(sockaddr[0]))
+    return sorted(addresses)
+
+
+def _host_canonical_id(hostname: str) -> str:
+    normalized = "".join(character.lower() if character.isalnum() else "-" for character in hostname)
+    normalized = "-".join(part for part in normalized.split("-") if part)
+    return f"host-runtime:host:{normalized or 'local-host'}"
+
+
+default_registry = CollectorRegistry()
+default_registry.register(HostRuntimeCollector())
