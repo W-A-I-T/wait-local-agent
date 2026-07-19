@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1508,7 +1508,7 @@ class Store:
         run_id: int,
         source_row_id: int | None,
         module_id: str,
-        result: "CollectorResult",
+        result: CollectorResult,
         *,
         client_id: str | None = None,
     ) -> None:

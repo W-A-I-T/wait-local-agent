@@ -31,8 +31,8 @@ from wait_local_agent.api.packs.loader import (
     load_pack_registry,
 )
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
-from wait_local_agent.config import load_settings
 from wait_local_agent.collectors import CollectorService
+from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,

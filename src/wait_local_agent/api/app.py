@@ -28,8 +28,8 @@ from wait_local_agent.api.founder import (
     create_router as create_founder_router,
 )
 from wait_local_agent.api.packs.loader import configure_pack_routes
-from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.collectors import CollectorService, default_registry
+from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,
