@@ -28,6 +28,7 @@ from wait_local_agent.store import Store
 
 _ListeningPortsPath = _ProcessInventoryPath
 _NetworkInterfacesPath = _ProcessInventoryPath
+_FirewallRulesPath = _ProcessInventoryPath
 
 
 @dataclass(frozen=True)
@@ -616,7 +617,7 @@ class ProcessInventoryCollectorModule:
         if not proc_path.exists() or not proc_path.is_dir():
             return []
 
-        records = []
+        records: list[dict[str, Any]] = []
         try:
             entries = list(proc_path.iterdir())
         except OSError:
@@ -1176,6 +1177,274 @@ class NetworkInterfacesCollectorModule:
             return value
 
 
+class FirewallRulesCollectorModule:
+    """Read-only collector that inventories host firewall rules from config files."""
+
+    module_id = "firewall-rules"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Firewall Rules"
+    version = "1.0"
+
+    _config_paths = (
+        "/etc/nftables.conf",
+        "/etc/iptables/rules.v4",
+        "/etc/iptables/rules.v6",
+        "/etc/ufw/user.rules",
+        "/etc/ufw/user6.rules",
+    )
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of host firewall rules from local config files.",
+            "asset_type": "firewall-rule",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": list(self._config_paths),
+            "operations": ["read-firewall-config"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._firewall_rule_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._firewall_rule_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        source_basename = record["source_basename"]
+        index = record["index"]
+        return {
+            "asset_type": "firewall-rule",
+            "asset_id": f"fwrule:{source_basename}:{index}",
+            "name": f"{source_basename}:{index}",
+            "attributes": {
+                "source_file": record["source_file"],
+                "chain": record.get("chain", ""),
+                "action": record.get("action", ""),
+                "rule_text": record.get("rule_text", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        source_basename = record["source_basename"]
+        index = record["index"]
+        return [
+            {
+                "asset_type": "firewall-rule",
+                "asset_id": f"fwrule:{source_basename}:{index}",
+                "key": "firewall.source_file",
+                "value": record["source_file"],
+            },
+            {
+                "asset_type": "firewall-rule",
+                "asset_id": f"fwrule:{source_basename}:{index}",
+                "key": "firewall.chain",
+                "value": record.get("chain", ""),
+            },
+            {
+                "asset_type": "firewall-rule",
+                "asset_id": f"fwrule:{source_basename}:{index}",
+                "key": "firewall.action",
+                "value": record.get("action", ""),
+            },
+            {
+                "asset_type": "firewall-rule",
+                "asset_id": f"fwrule:{source_basename}:{index}",
+                "key": "firewall.rule_text",
+                "value": record.get("rule_text", ""),
+            },
+        ]
+
+    def _firewall_rule_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        records: list[dict[str, Any]] = []
+        for config_path in self._config_paths:
+            path = _FirewallRulesPath(config_path)
+            records.extend(self._read_firewall_rule_file(path, config_path))
+            if limit is not None and len(records) >= limit:
+                break
+
+        records.sort(key=lambda item: (item["source_file"], item["index"]))
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _read_firewall_rule_file(self, path, source_file):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return []
+
+        records: list[dict[str, Any]] = []
+        source_basename = _FirewallRulesPath(source_file).name
+        for line in lines:
+            record = self._parse_firewall_rule_line(line, source_file, source_basename, len(records) + 1)
+            if record is not None:
+                records.append(record)
+        return records
+
+    @staticmethod
+    def _parse_firewall_rule_line(line, source_file, source_basename, index):
+        rule_text = line.strip()
+        if not rule_text or rule_text.startswith("#"):
+            return None
+
+        tokens = rule_text.split()
+        chain = ""
+        action = FirewallRulesCollectorModule._extract_action(tokens)
+        if FirewallRulesCollectorModule._is_nft_rule(tokens):
+            chain = FirewallRulesCollectorModule._extract_nft_chain(tokens)
+        elif FirewallRulesCollectorModule._is_iptables_rule(tokens):
+            chain = FirewallRulesCollectorModule._extract_iptables_chain(tokens)
+        elif not FirewallRulesCollectorModule._is_ufw_rule(tokens):
+            return None
+
+        return {
+            "source_file": source_file,
+            "source_basename": source_basename,
+            "index": index,
+            "chain": chain,
+            "action": action,
+            "rule_text": rule_text[:300],
+        }
+
+    @staticmethod
+    def _is_nft_rule(tokens):
+        return (
+            len(tokens) >= 2
+            and ((tokens[0] == "add" and tokens[1] == "rule") or tokens[0] == "chain")
+        )
+
+    @staticmethod
+    def _is_iptables_rule(tokens):
+        return len(tokens) >= 2 and tokens[0] in {"-A", "-I"}
+
+    @staticmethod
+    def _is_ufw_rule(tokens):
+        return bool(tokens) and tokens[0].lower() in {"allow", "deny", "reject"}
+
+    @staticmethod
+    def _extract_nft_chain(tokens):
+        if len(tokens) >= 2 and tokens[0] == "chain":
+            return tokens[1]
+
+        try:
+            rule_index = tokens.index("rule")
+        except ValueError:
+            return ""
+
+        if len(tokens) > rule_index + 3:
+            return tokens[rule_index + 3]
+        if len(tokens) > rule_index + 2:
+            return tokens[rule_index + 2]
+        return ""
+
+    @staticmethod
+    def _extract_iptables_chain(tokens):
+        if len(tokens) >= 2 and tokens[0] in {"-A", "-I"}:
+            return tokens[1]
+        return ""
+
+    @staticmethod
+    def _extract_action(tokens):
+        for index, token in enumerate(tokens):
+            if token in {"-j", "--jump", "-g", "--goto"} and len(tokens) > index + 1:
+                return tokens[index + 1]
+
+        for token in tokens:
+            lowered = token.lower().rstrip(";")
+            if lowered in {"accept", "drop", "reject"}:
+                return token.rstrip(";")
+            if lowered in {"allow", "deny"}:
+                return lowered
+        return ""
+
+
 def _read_process_inventory_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -1380,3 +1649,66 @@ def _register_network_interfaces_collector():
 
 
 _register_network_interfaces_collector()
+
+
+def _register_firewall_rules_collector():
+    module = FirewallRulesCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "FirewallRulesCollectorModule" not in exported:
+        exported.append("FirewallRulesCollectorModule")
+
+
+_register_firewall_rules_collector()
