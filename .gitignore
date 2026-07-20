@@ -14,8 +14,12 @@ ui/dist/
 ui/*.tsbuildinfo
 *.log
 .env
+build/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/*
 /packs/
 data/vault/
 vault.key
 secrets.json.enc
 ui/node_modules.stale*/
+desktop/src-tauri/Cargo.lock

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default permissions for the WAIT Local Agent window","local":true,"windows":["main"],"permissions":["core:default","dialog:default",{"identifier":"shell:allow-spawn","allow":[{"name":"binaries/wait-local-agent-server","sidecar":true}]}]}}
