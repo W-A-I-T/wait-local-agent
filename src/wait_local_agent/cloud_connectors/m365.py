@@ -3,19 +3,22 @@ from __future__ import annotations
 import asyncio
 import inspect
 import threading
-from collections.abc import Mapping
+from collections.abc import Awaitable, Coroutine, Mapping
 from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
 class _FallbackM365Error(Exception):
     """Fallback for test environments where the Graph SDK is not installed yet."""
 
 
-try:
-    from kiota_abstractions.api_error import APIError as M365ApiError  # type: ignore[import-untyped]
-except ImportError:
-    M365ApiError: type[BaseException] = _FallbackM365Error
+if TYPE_CHECKING:
+    M365ApiError: type[BaseException]
+else:
+    try:
+        from kiota_abstractions.api_error import APIError as M365ApiError
+    except ImportError:
+        M365ApiError = _FallbackM365Error
 
 M365_ERROR_TYPES: tuple[type[BaseException], ...] = (M365ApiError,)
 
@@ -317,21 +320,26 @@ class M365InventoryConnector:
         return self._resolve(collection.get())
 
     @staticmethod
-    def _resolve(value: Any) -> Any:
+    def _resolve(value: object) -> Any:
         if not inspect.isawaitable(value):
             return value
 
+        coroutine: Coroutine[Any, Any, Any]
+        if inspect.iscoroutine(value):
+            coroutine = value
+        else:
+            coroutine = M365InventoryConnector._awaitable_result(value)
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(value)
+            return asyncio.run(coroutine)
 
         results: list[Any] = []
         errors: list[BaseException] = []
 
         def _run() -> None:
             try:
-                results.append(asyncio.run(value))
+                results.append(asyncio.run(coroutine))
             except BaseException as exc:  # pragma: no cover - defensive handoff from worker thread
                 errors.append(exc)
 
@@ -341,6 +349,10 @@ class M365InventoryConnector:
         if errors:
             raise errors[0]
         return results[0] if results else None
+
+    @staticmethod
+    async def _awaitable_result(value: Awaitable[Any]) -> Any:
+        return await value
 
     @staticmethod
     def _response_values(response: Any) -> list[Any]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Coroutine
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,11 @@ class FakeGraphError(Exception):
     pass
 
 
-class FakeCollection:
+type FakeCollectionResponse = dict[str, Any]
+type FakeCollectionGetResult = FakeCollectionResponse | Coroutine[Any, Any, FakeCollectionResponse]
+
+
+class FakeCollectionBase:
     def __init__(
         self,
         values: list[Any],
@@ -29,7 +34,10 @@ class FakeCollection:
         self.calls = calls
         self.name = name
 
-    def get(self) -> dict[str, Any]:
+    def get(self) -> FakeCollectionGetResult:
+        return self._response()
+
+    def _response(self) -> FakeCollectionResponse:
         if self.calls is not None:
             self.calls.append(self.name)
         if self.fail:
@@ -37,13 +45,14 @@ class FakeCollection:
         return {"value": self.values}
 
 
-class FakeAsyncCollection(FakeCollection):
-    async def get(self) -> dict[str, Any]:
-        if self.calls is not None:
-            self.calls.append(self.name)
-        if self.fail:
-            raise FakeGraphError()
-        return {"value": self.values}
+class FakeCollection(FakeCollectionBase):
+    def get(self) -> FakeCollectionResponse:
+        return self._response()
+
+
+class FakeAsyncCollection(FakeCollectionBase):
+    async def get(self) -> FakeCollectionResponse:
+        return self._response()
 
 
 class FakeClient:
