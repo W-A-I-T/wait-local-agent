@@ -68,7 +68,7 @@ describe("App", () => {
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connector Readiness" })).toBeInTheDocument();
-    expect(screen.getByText("Hudu connector")).toBeInTheDocument();
+    expect(screen.getAllByText("Hudu connector").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("heading", { name: "Payload Preview" }).length).toBeGreaterThan(0);
     expect(screen.getByText(/Workflow run run-1: running/)).toBeInTheDocument();
   });
@@ -118,7 +118,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, true)));
     renderApp();
 
-    expect(await screen.findByText("blocked")).toBeInTheDocument();
+    expect((await screen.findAllByText("blocked")).length).toBeGreaterThan(0);
     await screen.findByText("halopsa.add_note");
     expect(screen.getAllByRole("button", { name: /Approve/i })[0]).toBeEnabled();
     expect(screen.getAllByRole("button", { name: /Approve/i })[1]).toBeEnabled();

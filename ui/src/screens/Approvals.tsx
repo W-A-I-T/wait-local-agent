@@ -31,13 +31,13 @@ export function Approvals() {
             canWrite={canWrite}
             draftPayloadFields={draftPayloadFields}
             key={request.id}
-            liveWritesReady={liveWritesReady}
             request={request}
-            setDraftPayloadFields={setDraftPayloadFields}
+            savePayloadFields={savePayloadFields}
             updateApproval={updateApproval}
             executeApproval={executeApproval}
-            savePayloadFields={savePayloadFields}
             workflowFor={workflowFor}
+            setDraftPayloadFields={setDraftPayloadFields}
+            liveWritesReady={liveWritesReady}
           />
         ))}
         {approvalRequests.length === 0 ? <p>No approval requests yet.</p> : null}
@@ -73,6 +73,9 @@ function ApprovalCard({
 }: ApprovalCardProps) {
   const isHaloApproval = request.action_type.startsWith("halopsa.");
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
+  const workflow = workflowFor(request);
+  const canExecute = request.can_execute && liveWritesReady;
+
   return (
     <div className="approval-card">
       <div className="approval-main">
@@ -97,7 +100,7 @@ function ApprovalCard({
         <label className="payload-editor">
           Draft Fields
           <textarea
-            disabled={request.status !== "pending"}
+            disabled={!canWrite || request.status !== "pending"}
             rows={6}
             value={payloadText}
             onChange={(event) => setDraftPayloadFields((current) => ({ ...current, [request.id]: event.target.value }))}
@@ -109,7 +112,7 @@ function ApprovalCard({
         {request.workflow_run_id ? (
           <span>
             Workflow run {request.workflow_run_id}
-            {workflowFor(request) ? `: ${workflowFor(request)?.status}` : ""}
+            {workflow ? `: ${workflow.status}` : ""}
           </span>
         ) : <span>No workflow run linked</span>}
       </div>
@@ -141,7 +144,7 @@ function ApprovalCard({
             Reject
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "approved" || !isHaloApproval || !liveWritesReady}
+            disabled={busyId === request.id || request.status !== "approved" || !isHaloApproval || !canExecute}
             type="button"
             onClick={() => void executeApproval(request.id)}
           >
