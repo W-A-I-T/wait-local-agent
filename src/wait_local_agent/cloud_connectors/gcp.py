@@ -11,8 +11,8 @@ class _FallbackGcpError(Exception):
 
 
 try:
-    from google.api_core import exceptions as _google_api_exceptions  # type: ignore[import-untyped]
-    from google.auth import exceptions as _google_auth_exceptions  # type: ignore[import-untyped]
+    from google.api_core import exceptions as _google_api_exceptions
+    from google.auth import exceptions as _google_auth_exceptions
 except ImportError:
     GoogleAPICallError: type[BaseException] = _FallbackGcpError
     RetryError: type[BaseException] = _FallbackGcpError
