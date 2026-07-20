@@ -45,6 +45,9 @@ knowledge = [
   "fastembed>=0.4,<1",
   "qdrant-client>=1.12,<2",
 ]
+desktop = [
+  "pyinstaller==6.21.0",
+]
 dev = [
   "bandit>=1.7,<2.0",
   "mypy>=1.13,<2.0",
@@ -57,6 +60,7 @@ dev = [
 
 [project.scripts]
 wait-local-agent = "wait_local_agent.cli:app"
+wait-local-agent-server = "wait_local_agent.api.server_entry:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wait_local_agent"]

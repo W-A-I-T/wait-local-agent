@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
@@ -27,7 +29,12 @@ from wait_local_agent.api.founder import (
 from wait_local_agent.api.founder import (
     create_router as create_founder_router,
 )
-from wait_local_agent.api.packs.loader import configure_pack_routes
+from wait_local_agent.api.packs.loader import (
+    PackInstallError,
+    configure_pack_routes,
+    install_pack_tarball,
+)
+from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
 from wait_local_agent.collectors import CollectorService, default_registry
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
@@ -50,6 +57,7 @@ from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
+from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflows import (
     get_workflow_template,
@@ -111,6 +119,31 @@ class CollectorRunRequest(CollectorConfigRequest):
     confirm: bool = False
 
 
+class PackInstallRequest(BaseModel):
+    tarball_path: str = Field(validation_alias=AliasChoices("tarball_path", "tarball"))
+    license_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("license_key", "license"),
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class BackupCreateRequest(BaseModel):
+    destination: str
+    encrypt: bool = False
+
+
+class BackupRestoreRequest(BaseModel):
+    source: str
+    encrypted: bool = False
+
+
+class SecretSetRequest(BaseModel):
+    name: str
+    value: str
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     store = Store(active_settings.data_path)
@@ -152,6 +185,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
     app.add_exception_handler(FounderPackUnavailableError, founder_pack_unavailable_handler)
     app.add_exception_handler(FounderPackContractError, _founder_contract_error_handler)
     app.add_middleware(SlowAPIMiddleware)
@@ -224,6 +258,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/update-status")
     def update_status(_: AdminAccess) -> dict[str, object]:
         return update_status_cache.get_status(lambda: check_for_updates(active_settings)).to_dict()
+
+    @app.post("/update-check")
+    def update_check(_: AdminAccess) -> dict[str, object]:
+        return check_for_updates(active_settings).to_dict()
+
+    @app.get("/packs")
+    def packs(_: ViewerAccess) -> list[dict[str, object]]:
+        registry = app.state.pack_registry
+        return [
+            {
+                "name": status.name,
+                "version": status.version,
+                "locked": status.locked,
+                "requires_license": status.requires_license,
+            }
+            for status in registry.statuses
+        ]
+
+    @app.get("/packs/status")
+    def pack_status(_: ViewerAccess) -> list[dict[str, object]]:
+        registry = app.state.pack_registry
+        return [asdict(status) for status in registry.statuses]
+
+    @app.post("/packs/install")
+    def pack_install(payload: PackInstallRequest, _: AdminAccess) -> dict[str, object]:
+        try:
+            result = install_pack_tarball(
+                Path(payload.tarball_path),
+                license_key=payload.license_key,
+                settings=active_settings,
+            )
+        except PackInstallError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="pack tarball could not be read") from exc
+        return {
+            "pack_name": result.pack_name,
+            "version": result.version,
+            "files": len(result.extracted_files),
+            "license_stored_in_vault": result.license_stored_in_vault,
+        }
 
     @app.get("/tickets")
     def tickets(
@@ -521,6 +596,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/secrets")
     def secrets(_: AdminAccess) -> list[dict[str, object]]:
         return [asdict(secret) for secret in list_secret_records(active_settings)]
+
+    @app.post("/secrets")
+    def set_secret(payload: SecretSetRequest, _: AdminAccess) -> dict[str, str]:
+        try:
+            SecretVault.initialize(active_settings.vault_path).set(payload.name, payload.value)
+        except (SecretVaultError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"name": payload.name, "status": "stored"}
+
+    @app.post("/backups")
+    def create_backup(payload: BackupCreateRequest, _: AdminAccess) -> dict[str, object]:
+        try:
+            path = backup_state(
+                store,
+                Path(payload.destination),
+                encrypt=payload.encrypt,
+                settings=active_settings,
+            )
+        except BackupEncryptionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="backup destination could not be written") from exc
+        return {"backup": str(path), "encrypted": payload.encrypt}
+
+    @app.post("/backups/restore")
+    def restore_backup(payload: BackupRestoreRequest, _: AdminAccess) -> dict[str, object]:
+        try:
+            path = restore_state(
+                store,
+                Path(payload.source),
+                encrypted=payload.encrypted,
+                settings=active_settings,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="backup source not found") from exc
+        except BackupEncryptionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="backup source could not be restored") from exc
+        return {"restored": str(path), "encrypted": payload.encrypted}
 
     @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -925,6 +1040,41 @@ def _founder_contract_error_handler(_: Request, exc: Exception) -> JSONResponse:
         status_code=502,
         content={"detail": str(cast(FounderPackContractError, exc))},
     )
+
+
+def _request_validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    validation_error = cast(RequestValidationError, exc)
+    sensitive_fields: set[str]
+    if request.url.path == "/secrets":
+        sensitive_fields = {"value"}
+    elif request.url.path == "/packs/install":
+        sensitive_fields = {"license", "license_key"}
+    else:
+        sensitive_fields = set()
+
+    errors: list[dict[str, object]] = []
+    for error in validation_error.errors():
+        redacted = dict(error)
+        location = error.get("loc")
+        if isinstance(location, tuple) and location and str(location[-1]) in sensitive_fields:
+            redacted["input"] = "[redacted]"
+        elif "input" in error:
+            redacted["input"] = _redact_request_input(error["input"], sensitive_fields)
+        errors.append(redacted)
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+def _redact_request_input(value: object, sensitive_fields: set[str]) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): "[redacted]"
+            if str(key).lower() in sensitive_fields
+            else _redact_request_input(item, sensitive_fields)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_request_input(item, sensitive_fields) for item in value]
+    return "[redacted]" if sensitive_fields else value
 
 
 SENSITIVE_KEY_PARTS = (
