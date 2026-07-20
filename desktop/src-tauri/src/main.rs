@@ -10,16 +10,18 @@ use std::{
 };
 
 use tauri::{Manager, WindowEvent};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
 };
+use tauri_plugin_updater::UpdaterExt;
 
 const API_HOST: &str = "127.0.0.1";
 const API_PORT: u16 = 8788;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const TOKEN_STORAGE_KEY: &str = "wait-local-agent-api-token";
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 struct SidecarState {
@@ -37,6 +39,7 @@ fn main() {
         .manage(SidecarState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or_else(|| {
                 std::io::Error::other("main window is missing from the Tauri configuration")
@@ -90,6 +93,13 @@ fn main() {
                 }
             });
 
+            let updater_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = check_for_updates(updater_handle).await {
+                    eprintln!("WAIT Local Agent updater check skipped: {error}");
+                }
+            });
+
             let handle = app.handle().clone();
             let token = runtime.admin_token;
             thread::spawn(move || {
@@ -125,6 +135,52 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running WAIT Local Agent");
+}
+
+async fn check_for_updates<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> tauri_plugin_updater::Result<()> {
+    let update = app
+        .updater_builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .build()?
+        .check()
+        .await?;
+
+    let Some(update) = update else {
+        eprintln!("WAIT Local Agent updater: no update available");
+        return Ok(());
+    };
+
+    let should_install = app
+        .dialog()
+        .message(format!(
+            "WAIT Local Agent {} is available. Install it now?",
+            update.version
+        ))
+        .title("WAIT Local Agent update")
+        .buttons(MessageDialogButtons::YesNo)
+        .kind(MessageDialogKind::Info)
+        .blocking_show();
+
+    if !should_install {
+        eprintln!("WAIT Local Agent updater: update declined");
+        return Ok(());
+    }
+
+    update
+        .download_and_install(
+            |chunk_length, content_length| {
+                eprintln!(
+                    "WAIT Local Agent updater: downloaded {chunk_length} bytes (total: {content_length:?})"
+                );
+            },
+            || eprintln!("WAIT Local Agent updater: download finished"),
+        )
+        .await?;
+
+    eprintln!("WAIT Local Agent updater: update installed; restarting");
+    app.restart();
 }
 
 impl RuntimeConfig {

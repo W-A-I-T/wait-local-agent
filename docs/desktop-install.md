@@ -29,9 +29,54 @@ To enable signing in release CI, add all of these repository secrets:
   `APPLE_TEAM_ID`.
 - Windows Authenticode signing: `WINDOWS_CERTIFICATE` (base64 encoded `.pfx`)
   and `WINDOWS_CERTIFICATE_PASSWORD`.
+- Tauri updater artifacts: `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- Optional Linux checksum signature: `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`.
 
 Signing is atomic per platform. If any secret in a platform's set is missing,
-that platform remains unsigned; Linux remains unsigned.
+that platform remains unsigned. Linux installers remain unsigned, but every
+Linux release also includes a `SHA256SUMS` integrity file. A detached
+`SHA256SUMS.asc` signature is included when the release GPG secrets are
+configured.
+
+## In-app updates
+
+Installed desktop builds check for a newer published GitHub release in the
+background during startup. If an update is available, the app asks whether to
+download and install it; accepting restarts the app after installation, while
+declining leaves the current version running. Offline checks, missing releases,
+and updater errors are logged and do not prevent the app from starting.
+
+The updater endpoint uses published releases. Draft releases are not available
+to the in-app updater until they are published. Updater artifacts require the
+CI secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; without them, the normal unsigned
+installer fallback remains available, but an installer cannot provide a signed
+in-app update package.
+
+## Verify Linux release integrity
+
+Download `SHA256SUMS` alongside the Linux `.AppImage` or `.deb` from the same
+release, then run this from the directory containing those files and the
+checksum file:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+When `SHA256SUMS.asc` is present, import the WAIT release-publishing GPG public
+key provided by the release maintainer and verify the detached signature:
+
+```bash
+gpg --import WAIT-release-signing-public-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+The signature is optional because release CI skips GPG signing when
+`GPG_PRIVATE_KEY` or `GPG_PASSPHRASE` is not configured. A passing checksum
+check confirms the downloaded Linux files match the release's published
+integrity manifest; a passing GPG check additionally authenticates that
+manifest against the imported release key.
 
 ## Build locally
 

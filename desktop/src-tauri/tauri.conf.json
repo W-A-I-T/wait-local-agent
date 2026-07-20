@@ -29,6 +29,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "externalBin": ["binaries/wait-local-agent-server"],
     "icon": [
@@ -44,6 +45,14 @@
     "windows": {
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.digicert.com"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFM0QyNzNGOEU4NTJEQzEKUldUQkxZV09QeWM5bmoxYlF4SmUzVGdCREFnc3NjZHkvTWRiaC80V0VCdHFua1dWSzA0YmplZVkK",
+      "endpoints": [
+        "https://github.com/W-A-I-T/wait-local-agent/releases/latest/download/latest.json"
+      ]
     }
   }
 }
