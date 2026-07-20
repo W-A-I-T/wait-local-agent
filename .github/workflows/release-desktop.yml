@@ -138,6 +138,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -155,6 +157,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
@@ -166,6 +170,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
@@ -178,6 +184,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
@@ -189,8 +197,56 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
           releaseDraft: true
+
+      - name: Publish Linux integrity artifacts
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          bundle_dir="desktop/src-tauri/target/release/bundle"
+          mapfile -t linux_assets < <(
+            find "$bundle_dir/appimage" "$bundle_dir/deb" -maxdepth 1 -type f \
+              \( -name '*.AppImage' -o -name '*.deb' \) -print | sort
+          )
+          if (( ${#linux_assets[@]} == 0 )); then
+            echo "No Linux AppImage or deb bundle was produced" >&2
+            exit 1
+          fi
+
+          checksum_file="$bundle_dir/SHA256SUMS"
+          : > "$checksum_file"
+          for asset in "${linux_assets[@]}"; do
+            relative_asset="${asset#"$bundle_dir/"}"
+            (cd "$bundle_dir" && sha256sum "$relative_asset") >> "$checksum_file"
+          done
+
+          upload_files=("$checksum_file")
+          if [[ -n "${GPG_PRIVATE_KEY:-}" && -n "${GPG_PASSPHRASE:-}" ]]; then
+            gpg_home="$RUNNER_TEMP/wait-local-agent-gnupg"
+            mkdir -m 700 -p "$gpg_home"
+            export GNUPGHOME="$gpg_home"
+            trap 'rm -rf -- "$gpg_home"' EXIT
+
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes \
+              --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign \
+              --output "$bundle_dir/SHA256SUMS.asc" "$checksum_file"
+            upload_files+=("$bundle_dir/SHA256SUMS.asc")
+          else
+            echo "GPG signing secrets are absent; publishing SHA256SUMS only"
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" "${upload_files[@]}" --clobber
+          rm -f -- "$checksum_file" "$bundle_dir/SHA256SUMS.asc"

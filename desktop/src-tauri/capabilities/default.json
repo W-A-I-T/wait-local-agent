@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "dialog:default",
+    "updater:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [
