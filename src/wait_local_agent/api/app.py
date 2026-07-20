@@ -169,7 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="WAIT Local Agent",
-        version="1.0.0",
+        version="1.1.0",
         lifespan=lifespan,
     )
     limiter = Limiter(
