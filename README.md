@@ -33,6 +33,18 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Node.js 22 only if you want to run the dashboard outside Docker
 - Optional `uv` for contributor setup
 
+## Download & install (desktop app)
+
+For a guided local workspace with no Docker or terminal setup, download the
+installer for Windows, macOS, or Linux from the latest GitHub Release. The app
+keeps your workspace on this computer, starts the local service when it opens,
+and closes it with the app.
+
+The first release is unsigned, so your operating system may show a first-launch
+warning. Confirm that the installer came from the WAIT Local Agent GitHub
+Release before opening it. See [desktop-install.md](docs/desktop-install.md)
+for local builds and platform-specific notes.
+
 ## Quick Start
 
 ### Appliance path
