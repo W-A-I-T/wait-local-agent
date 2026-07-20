@@ -54,10 +54,12 @@ jobs:
           python -m pip install -e ".[desktop]"
 
       - name: Install UI dependencies
-        run: npm ci --prefix ui
+        run: npm ci
+        working-directory: ui
 
       - name: Install desktop dependencies
-        run: npm install --no-audit --no-fund --prefix desktop
+        run: npm install --no-audit --no-fund
+        working-directory: desktop
 
       - name: Build the target sidecar
         shell: bash
