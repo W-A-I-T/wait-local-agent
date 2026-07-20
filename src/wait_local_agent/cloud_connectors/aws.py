@@ -10,7 +10,7 @@ class _FallbackAwsError(Exception):
 
 
 try:
-    import botocore.exceptions as _botocore_exceptions
+    import botocore.exceptions as _botocore_exceptions  # type: ignore[import-untyped]
 except ImportError:
     BotoCoreError: type[BaseException] = _FallbackAwsError
     ClientError: type[BaseException] = _FallbackAwsError
