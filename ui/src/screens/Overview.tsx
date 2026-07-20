@@ -1,6 +1,10 @@
 import { Activity, CheckCircle2, GitBranch, Workflow } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
+import { OnboardingWizard } from "../surfaces/onboarding/OnboardingWizard";
+
+const ONBOARDING_DISMISS_KEY = "wait-local-agent-onboarding-dismissed";
 
 export function Overview() {
   const {
@@ -12,9 +16,38 @@ export function Overview() {
     isConfigured,
     configurationLoading
   } = useDashboard();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  const shouldShowOnboarding = !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
+
+  useEffect(() => {
+    if (!shouldShowOnboarding) {
+      setShowOnboarding(false);
+      return;
+    }
+    const dismissed = window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1";
+    setShowOnboarding(!dismissed);
+  }, [shouldShowOnboarding]);
+
+  function dismissOnboarding() {
+    window.localStorage.setItem(ONBOARDING_DISMISS_KEY, "1");
+    const next = new URLSearchParams(searchParams);
+    next.delete("onboarding");
+    setSearchParams(next, { replace: true });
+    setShowOnboarding(false);
+  }
 
   return (
     <div className="screen-stack">
+      {showOnboarding ? (
+        <section className="modal-backdrop">
+          <div className="onboarding-modal">
+            <OnboardingWizard onDone={() => dismissOnboarding()} onDismiss={() => dismissOnboarding()} />
+          </div>
+        </section>
+      ) : null}
+
       <section className="panel">
         <div className="panel-heading">
           <h2>Operations Overview</h2>
