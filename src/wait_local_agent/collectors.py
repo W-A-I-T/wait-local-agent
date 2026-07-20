@@ -4,6 +4,7 @@ import ipaddress
 import os
 import platform
 import platform as _process_inventory_platform
+import re
 import socket
 from dataclasses import asdict, dataclass, field
 from pathlib import Path as _ProcessInventoryPath
@@ -32,6 +33,8 @@ _FirewallRulesPath = _ProcessInventoryPath
 _DatabaseInventoryPath = _ProcessInventoryPath
 _WifiInventoryPath = _ProcessInventoryPath
 _RoutingTablePath = _ProcessInventoryPath
+_EndpointAgentsPath = _ProcessInventoryPath
+_WebServicesPath = _ProcessInventoryPath
 
 
 @dataclass(frozen=True)
@@ -2341,6 +2344,680 @@ class RoutingTableCollectorModule:
         return str(ipaddress.IPv6Address(bytes_value))
 
 
+class EndpointAgentsCollectorModule:
+    """Read-only collector that inventories endpoint-management, MDM, and EDR agents."""
+
+    module_id = "endpoint-agents"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Endpoint Agents"
+    version = "1.0"
+
+    _AGENT_MARKERS = (
+        (
+            "CrowdStrike Falcon",
+            "edr",
+            (
+                "/opt/CrowdStrike",
+                "/etc/systemd/system/falcon-sensor.service",
+            ),
+        ),
+        (
+            "SentinelOne",
+            "edr",
+            (
+                "/opt/sentinelone",
+                "/etc/systemd/system/sentinelone.service",
+            ),
+        ),
+        (
+            "Microsoft Defender for Endpoint",
+            "edr",
+            (
+                "/opt/microsoft/mdatp",
+                "/etc/opt/microsoft/mdatp",
+            ),
+        ),
+        (
+            "Jamf (MDM)",
+            "mdm",
+            (
+                "/usr/local/jamf",
+                "/Library/Application Support/JAMF",
+            ),
+        ),
+        (
+            "Microsoft Intune / Company Portal",
+            "mdm",
+            (
+                "/opt/microsoft/intune",
+                "/etc/intune",
+            ),
+        ),
+        (
+            "osquery",
+            "osquery",
+            (
+                "/etc/osquery",
+                "/usr/bin/osqueryd",
+            ),
+        ),
+        (
+            "Wazuh/OSSEC",
+            "hids",
+            (
+                "/var/ossec",
+                "/etc/ossec-init.conf",
+            ),
+        ),
+        (
+            "Carbon Black",
+            "edr",
+            (
+                "/opt/carbonblack",
+                "/etc/cb",
+            ),
+        ),
+        (
+            "Tanium",
+            "edr",
+            ("/opt/Tanium",),
+        ),
+    )
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local endpoint-management, MDM, and EDR agent markers.",
+            "asset_type": "endpoint-agent",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": [
+                marker
+                for _agent_name, _category, markers in self._AGENT_MARKERS
+                for marker in markers
+            ],
+            "operations": ["read-endpoint-agent-marker"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._agent_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._agent_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @classmethod
+    def _asset(cls, record):
+        agent = record["agent"]
+        slug = cls._agent_slug(agent)
+        return {
+            "asset_type": "endpoint-agent",
+            "asset_id": f"agent:{slug}",
+            "name": agent,
+            "attributes": {
+                "agent": agent,
+                "category": record.get("category", ""),
+                "detected_path": record.get("detected_path", ""),
+            },
+        }
+
+    @classmethod
+    def _observations(cls, record):
+        agent = record["agent"]
+        slug = cls._agent_slug(agent)
+        return [
+            {
+                "asset_type": "endpoint-agent",
+                "asset_id": f"agent:{slug}",
+                "key": "agent.name",
+                "value": agent,
+            },
+            {
+                "asset_type": "endpoint-agent",
+                "asset_id": f"agent:{slug}",
+                "key": "agent.category",
+                "value": record.get("category", ""),
+            },
+            {
+                "asset_type": "endpoint-agent",
+                "asset_id": f"agent:{slug}",
+                "key": "agent.detected_path",
+                "value": record.get("detected_path", ""),
+            },
+        ]
+
+    def _agent_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        records = []
+        for agent_name, category, markers in self._AGENT_MARKERS:
+            detected_path = self._first_existing_marker(markers)
+            if detected_path is None:
+                continue
+            records.append(
+                {
+                    "agent": agent_name,
+                    "category": category,
+                    "detected_path": detected_path,
+                }
+            )
+
+        records.sort(key=lambda item: item["agent"])
+        if limit is None:
+            return records
+        return records[:limit]
+
+    @staticmethod
+    def _first_existing_marker(markers):
+        for marker in markers:
+            path = _EndpointAgentsPath(marker)
+            try:
+                if path.exists():
+                    return str(path)
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+        return None
+
+    @staticmethod
+    def _agent_slug(agent_name):
+        return agent_name.lower().replace(" ", "-")
+
+class WebServicesCollectorModule:
+    """Read-only collector that inventories local web services from config files."""
+
+    module_id = "web-services"
+    id = module_id
+    collector_id = module_id
+    slug = module_id
+    name = "Web Services"
+    version = "1.0"
+
+    _config_paths = (
+        "/etc/nginx/nginx.conf",
+        "/etc/nginx/sites-enabled/*",
+        "/etc/nginx/conf.d/*.conf",
+        "/etc/apache2/sites-enabled/*",
+        "/etc/httpd/conf.d/*.conf",
+        "/etc/apache2/apache2.conf",
+        "/etc/caddy/Caddyfile",
+    )
+
+    def manifest(self):
+        return {
+            "module_id": self.module_id,
+            "name": self.name,
+            "version": self.version,
+            "description": "Read-only inventory of local web server virtual host configuration files.",
+            "asset_type": "web-service",
+            "read_only": True,
+            "dependencies": [],
+            "platforms": ["linux"],
+        }
+
+    def scope(self, config=None):
+        return {
+            "read_only": True,
+            "stdlib_only": True,
+            "paths": list(self._config_paths),
+            "operations": ["read-web-service-config"],
+            "network": False,
+            "shell": False,
+        }
+
+    def validate_config(self, config=None):
+        errors = []
+        if config not in (None, {}) and not isinstance(config, dict):
+            errors.append("config must be a mapping when provided")
+
+        if isinstance(config, dict) and "limit" in config:
+            limit = config["limit"]
+            if not isinstance(limit, int) or limit < 0:
+                errors.append("limit must be a non-negative integer")
+
+        return {"ok": not errors, "errors": errors}
+
+    def preview(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=10)
+        records = self._web_service_records(limit=limit)
+        return self._result(records, preview=True)
+
+    def collect(self, config=None):
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {
+                "module_id": self.module_id,
+                "ok": False,
+                "errors": validation["errors"],
+                "assets": [],
+                "observations": [],
+            }
+
+        limit = self._config_limit(config, default=None)
+        records = self._web_service_records(limit=limit)
+        return self._result(records, preview=False)
+
+    @staticmethod
+    def _config_limit(config, default):
+        if isinstance(config, dict) and "limit" in config:
+            return config["limit"]
+        return default
+
+    def _result(self, records, preview):
+        assets = [self._asset(record) for record in records]
+        observations = [
+            observation
+            for record in records
+            for observation in self._observations(record)
+        ]
+        return {
+            "module_id": self.module_id,
+            "ok": True,
+            "preview": preview,
+            "assets": assets,
+            "observations": observations,
+            "items": [
+                {
+                    "canonical_asset": asset,
+                    "observations": self._observations(record),
+                }
+                for asset, record in zip(assets, records, strict=False)
+            ],
+            "count": len(assets),
+        }
+
+    @staticmethod
+    def _asset(record):
+        server_type = record["server_type"]
+        index = record["index"]
+        port = record.get("port", "")
+        server_name = record.get("server_name", "")
+        return {
+            "asset_type": "web-service",
+            "asset_id": f"web:{server_type}:{index}",
+            "name": f"{server_name or 'default'}:{port or ''}",
+            "attributes": {
+                "server_type": server_type,
+                "config_file": record.get("config_file", ""),
+                "server_name": server_name,
+                "port": port,
+                "document_root": record.get("document_root", ""),
+            },
+        }
+
+    @staticmethod
+    def _observations(record):
+        server_type = record["server_type"]
+        index = record["index"]
+        asset_id = f"web:{server_type}:{index}"
+        return [
+            {
+                "asset_type": "web-service",
+                "asset_id": asset_id,
+                "key": "web.server_type",
+                "value": server_type,
+            },
+            {
+                "asset_type": "web-service",
+                "asset_id": asset_id,
+                "key": "web.config_file",
+                "value": record.get("config_file", ""),
+            },
+            {
+                "asset_type": "web-service",
+                "asset_id": asset_id,
+                "key": "web.server_name",
+                "value": record.get("server_name", ""),
+            },
+            {
+                "asset_type": "web-service",
+                "asset_id": asset_id,
+                "key": "web.port",
+                "value": record.get("port", ""),
+            },
+            {
+                "asset_type": "web-service",
+                "asset_id": asset_id,
+                "key": "web.document_root",
+                "value": record.get("document_root", ""),
+            },
+        ]
+
+    def _web_service_records(self, limit=None):
+        if limit == 0:
+            return []
+
+        if _process_inventory_platform.system() != "Linux":
+            return []
+
+        records = []
+        records.extend(self._nginx_records())
+        records.extend(self._apache_records())
+        records.extend(self._caddy_records())
+        records.sort(key=lambda item: (item["server_type"], item["config_file"], item["index"]))
+        if limit is None:
+            return records
+        return records[:limit]
+
+    def _nginx_records(self):
+        paths = [_WebServicesPath("/etc/nginx/nginx.conf")]
+        paths.extend(self._glob_paths("/etc/nginx/sites-enabled", "*"))
+        paths.extend(self._glob_paths("/etc/nginx/conf.d", "*.conf"))
+        return self._records_from_paths("nginx", paths, self._parse_nginx_config)
+
+    def _apache_records(self):
+        paths = []
+        paths.extend(self._glob_paths("/etc/apache2/sites-enabled", "*"))
+        paths.extend(self._glob_paths("/etc/httpd/conf.d", "*.conf"))
+        paths.append(_WebServicesPath("/etc/apache2/apache2.conf"))
+        return self._records_from_paths("apache", paths, self._parse_apache_config)
+
+    def _caddy_records(self):
+        path = _WebServicesPath("/etc/caddy/Caddyfile")
+        return self._records_from_paths("caddy", [path], self._parse_caddy_config)
+
+    def _records_from_paths(self, server_type, paths, parser):
+        records = []
+        for path in paths:
+            text = self._read_web_config(path)
+            if text is None:
+                continue
+            config_records = parser(text, str(path))
+            records.extend(config_records)
+
+        for index, record in enumerate(records, start=1):
+            record["index"] = index
+            record["server_type"] = server_type
+        return records
+
+    @staticmethod
+    def _glob_paths(root, pattern):
+        try:
+            return sorted(_WebServicesPath(root).glob(pattern), key=lambda path: str(path))
+        except OSError:
+            return []
+
+    @staticmethod
+    def _read_web_config(path):
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+            return path.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+    @classmethod
+    def _parse_nginx_config(cls, text, config_file):
+        records = []
+        for block in cls._extract_named_brace_blocks(text, "server"):
+            listen = cls._first_directive(block, "listen")
+            server_name = cls._first_directive(block, "server_name")
+            document_root = cls._first_directive(block, "root")
+            records.append(
+                cls._record(
+                    config_file,
+                    server_name=cls._clean_server_name(server_name),
+                    port=cls._extract_port(listen),
+                    document_root=document_root,
+                )
+            )
+        return records
+
+    @classmethod
+    def _parse_apache_config(cls, text, config_file):
+        records = []
+        pattern = re.compile(r"<VirtualHost\s+([^>]*)>(.*?)</VirtualHost>", re.IGNORECASE | re.DOTALL)
+        for match in pattern.finditer(text):
+            address = match.group(1)
+            block = match.group(2)
+            records.append(
+                cls._record(
+                    config_file,
+                    server_name=cls._apache_directive(block, "ServerName"),
+                    port=cls._extract_port(address),
+                    document_root=cls._apache_directive(block, "DocumentRoot"),
+                )
+            )
+        return records
+
+    @classmethod
+    def _parse_caddy_config(cls, text, config_file):
+        records = []
+        for address, block in cls._extract_caddy_blocks(text):
+            records.append(
+                cls._record(
+                    config_file,
+                    server_name=cls._caddy_server_name(address),
+                    port=cls._extract_port(address),
+                    document_root=cls._caddy_root(block),
+                )
+            )
+        return records
+
+    @staticmethod
+    def _record(config_file, *, server_name="", port="", document_root=""):
+        return {
+            "config_file": config_file,
+            "server_name": server_name,
+            "port": str(port),
+            "document_root": document_root,
+        }
+
+    @classmethod
+    def _extract_named_brace_blocks(cls, text, name):
+        blocks = []
+        pattern = re.compile(rf"\b{re.escape(name)}\s*\{{")
+        for match in pattern.finditer(text):
+            block = cls._extract_brace_body(text, match.end() - 1)
+            if block is not None:
+                blocks.append(block)
+        return blocks
+
+    @staticmethod
+    def _extract_brace_body(text, open_brace_index):
+        depth = 0
+        for index in range(open_brace_index, len(text)):
+            character = text[index]
+            if character == "{":
+                depth += 1
+                continue
+            if character != "}":
+                continue
+            depth -= 1
+            if depth == 0:
+                return text[open_brace_index + 1 : index]
+        return None
+
+    @classmethod
+    def _first_directive(cls, block, directive):
+        pattern = re.compile(rf"^\s*{re.escape(directive)}\s+(.+?);", re.MULTILINE)
+        match = pattern.search(block)
+        if match is None:
+            return ""
+        return cls._clean_config_value(match.group(1))
+
+    @classmethod
+    def _apache_directive(cls, block, directive):
+        pattern = re.compile(rf"\b{re.escape(directive)}\s+([^\s<]+)", re.IGNORECASE)
+        match = pattern.search(block)
+        if match is None:
+            return ""
+        return cls._clean_config_value(match.group(1))
+
+    @classmethod
+    def _extract_caddy_blocks(cls, text):
+        blocks = []
+        lines = text.splitlines()
+        offset = 0
+        for line in lines:
+            stripped = cls._strip_config_comment(line).strip()
+            if stripped.endswith("{") and not stripped.startswith(("handle ", "route ", "@")):
+                address = stripped[:-1].strip()
+                open_brace_index = text.find("{", offset)
+                block = cls._extract_brace_body(text, open_brace_index)
+                if address and block is not None:
+                    blocks.append((address, block))
+            offset += len(line) + 1
+        return blocks
+
+    @classmethod
+    def _caddy_root(cls, block):
+        depth = 0
+        for line in block.splitlines():
+            stripped = cls._strip_config_comment(line).strip()
+            if depth == 0 and stripped.startswith("root "):
+                parts = stripped.split()
+                if len(parts) >= 2:
+                    return cls._clean_config_value(parts[-1])
+            depth += stripped.count("{")
+            depth = max(0, depth - stripped.count("}"))
+        return ""
+
+    @classmethod
+    def _caddy_server_name(cls, address):
+        first = address.split(",", 1)[0].strip()
+        if "://" in first:
+            first = first.split("://", 1)[1]
+        first = first.split("/", 1)[0]
+        if first.startswith(":"):
+            return ""
+        return first.rsplit(":", 1)[0] if ":" in first else first
+
+    @classmethod
+    def _extract_port(cls, value):
+        cleaned = cls._clean_config_value(value)
+        if not cleaned:
+            return ""
+
+        first = cleaned.split()[0].strip("[]")
+        if "://" in first:
+            first = first.split("://", 1)[1]
+        if ":" in first:
+            candidate = first.rsplit(":", 1)[1]
+        else:
+            candidate = first
+
+        candidate = candidate.strip("*:[]")
+        return candidate if candidate.isdigit() else ""
+
+    @classmethod
+    def _clean_server_name(cls, value):
+        cleaned = cls._clean_config_value(value)
+        if not cleaned:
+            return ""
+        return cleaned.split()[0]
+
+    @staticmethod
+    def _strip_config_comment(line):
+        in_single = False
+        in_double = False
+        for index, character in enumerate(line):
+            if character == "'" and not in_double:
+                in_single = not in_single
+            elif character == '"' and not in_single:
+                in_double = not in_double
+            elif character == "#" and not in_single and not in_double:
+                return line[:index]
+        return line
+
+    @classmethod
+    def _clean_config_value(cls, value):
+        cleaned = cls._strip_config_comment(value).strip().strip(";").strip(",")
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+            cleaned = cleaned[1:-1]
+        return cleaned.strip()
+
+
 def _read_process_inventory_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -2797,3 +3474,129 @@ def _register_routing_table_collector():
 
 
 _register_routing_table_collector()
+
+
+def _register_endpoint_agents_collector():
+    module = EndpointAgentsCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "EndpointAgentsCollectorModule" not in exported:
+        exported.append("EndpointAgentsCollectorModule")
+
+
+_register_endpoint_agents_collector()
+
+
+def _register_web_services_collector():
+    module = WebServicesCollectorModule()
+    registered = False
+
+    registry_names = set(
+        (
+            "MODULE_REGISTRY",
+            "COLLECTOR_MODULES",
+            "COLLECTOR_REGISTRY",
+            "COLLECTORS",
+            "collector_registry",
+        )
+    )
+    registry_names.update(
+        name
+        for name, value in globals().items()
+        if isinstance(value, (dict, list, set))
+        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    )
+
+    for registry_name in registry_names:
+        registry = globals().get(registry_name)
+        if isinstance(registry, dict):
+            registry[module.module_id] = module
+            registered = True
+            continue
+
+        if isinstance(registry, list):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                registry.append(module)
+            registered = True
+            continue
+
+        if isinstance(registry, set):
+            registry.add(module)
+            registered = True
+            continue
+
+        if isinstance(registry, tuple):
+            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
+                globals()[registry_name] = registry + (module,)
+            registered = True
+            continue
+
+        register = getattr(registry, "register", None)
+        if callable(register):
+            try:
+                register(module.module_id, module)
+            except TypeError:
+                register(module)
+            registered = True
+
+    if not registered:
+        globals()["MODULE_REGISTRY"] = {module.module_id: module}
+
+    exported = globals().get("__all__")
+    if isinstance(exported, list) and "WebServicesCollectorModule" not in exported:
+        exported.append("WebServicesCollectorModule")
+
+
+_register_web_services_collector()
