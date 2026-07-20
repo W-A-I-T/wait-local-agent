@@ -43,7 +43,8 @@ and closes it with the app.
 Release signing is optional. Until the repository's signing secrets are
 configured, your operating system may show a first-launch unsigned-app warning.
 Confirm that the installer came from the WAIT Local Agent GitHub Release before
-opening it. macOS installers are universal for Intel and Apple Silicon. See
+opening it. macOS releases include separate native installers for Intel and
+Apple Silicon. See
 [desktop-install.md](docs/desktop-install.md) for signing secrets, local builds,
 and platform-specific notes.
 
