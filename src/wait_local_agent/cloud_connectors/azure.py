@@ -12,7 +12,7 @@ class _FallbackAzureError(Exception):
 
 
 try:
-    import azure.core.exceptions as _azure_exceptions  # type: ignore[import-untyped]
+    _azure_exceptions = import_module("azure.core.exceptions")
 except ImportError:
     AzureError: type[BaseException] = _FallbackAzureError
     ClientAuthenticationError: type[BaseException] = _FallbackAzureError
