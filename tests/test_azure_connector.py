@@ -9,7 +9,6 @@ import pytest
 
 from wait_local_agent.cloud_connectors.azure import AzureError, AzureInventoryConnector
 
-
 VM_ID_1 = "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-001"
 VM_ID_2 = "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-002"
 STORAGE_ID = "/subscriptions/sub-1/resourceGroups/rg-data/providers/Microsoft.Storage/storageAccounts/waitdata"
