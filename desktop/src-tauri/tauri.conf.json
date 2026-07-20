@@ -40,6 +40,10 @@
     ],
     "category": "Utility",
     "shortDescription": "A focused local workspace for MSP operations",
-    "longDescription": "WAIT Local Agent keeps the dashboard and local operations workspace together on the user's computer."
+    "longDescription": "WAIT Local Agent keeps the dashboard and local operations workspace together on the user's computer.",
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
   }
 }

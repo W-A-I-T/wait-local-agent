@@ -35,6 +35,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -65,7 +67,127 @@ jobs:
         shell: bash
         run: bash packaging/build-sidecar.sh
 
-      - name: Build and publish the draft release
+      - name: Detect macOS signing secrets
+        if: runner.os == 'macOS'
+        id: macos_signing
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -n "$APPLE_CERTIFICATE" && \
+            -n "$APPLE_CERTIFICATE_PASSWORD" && \
+            -n "$APPLE_SIGNING_IDENTITY" && \
+            -n "$APPLE_ID" && \
+            -n "$APPLE_PASSWORD" && \
+            -n "$APPLE_TEAM_ID" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        id: windows_signing
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            "ready=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $signingDir = Join-Path $env:RUNNER_TEMP "wait-local-agent-signing"
+          New-Item -ItemType Directory -Force -Path $signingDir | Out-Null
+          $encodedCertificate = Join-Path $signingDir "certificate.txt"
+          $certificatePath = Join-Path $signingDir "certificate.pfx"
+          [System.IO.File]::WriteAllText($encodedCertificate, $env:WINDOWS_CERTIFICATE)
+          certutil.exe -decode $encodedCertificate $certificatePath | Out-Null
+
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath `
+            -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $thumbprint = ($certificate | Where-Object HasPrivateKey | Select-Object -First 1).Thumbprint
+          if ([string]::IsNullOrWhiteSpace($thumbprint)) {
+            throw "The Windows signing certificate did not provide a thumbprint"
+          }
+
+          $config = [ordered]@{
+            bundle = [ordered]@{
+              windows = [ordered]@{
+                certificateThumbprint = $thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          }
+          $config | ConvertTo-Json -Depth 5 | Set-Content `
+            -Path "desktop/src-tauri/tauri.windows-signing.conf.json" -Encoding utf8NoBOM
+          Remove-Item -Force $encodedCertificate, $certificatePath
+          "ready=true" >> $env:GITHUB_OUTPUT
+
+      - name: Build and publish the draft release (macOS signed)
+        if: runner.os == 'macOS' && steps.macos_signing.outputs.ready == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: WAIT Local Agent ${{ github.ref_name }}
+          releaseDraft: true
+          args: --target universal-apple-darwin
+
+      - name: Build and publish the draft release (macOS unsigned)
+        if: runner.os == 'macOS' && steps.macos_signing.outputs.ready != 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: WAIT Local Agent ${{ github.ref_name }}
+          releaseDraft: true
+          args: --target universal-apple-darwin
+
+      - name: Build and publish the draft release (Windows signed)
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.ready == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: WAIT Local Agent ${{ github.ref_name }}
+          releaseDraft: true
+          args: --config src-tauri/tauri.windows-signing.conf.json
+
+      - name: Build and publish the draft release (Windows unsigned)
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.ready != 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: WAIT Local Agent ${{ github.ref_name }}
+          releaseDraft: true
+
+      - name: Build and publish the draft release (Linux)
+        if: runner.os == 'Linux'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

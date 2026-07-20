@@ -40,10 +40,12 @@ installer for Windows, macOS, or Linux from the latest GitHub Release. The app
 keeps your workspace on this computer, starts the local service when it opens,
 and closes it with the app.
 
-The first release is unsigned, so your operating system may show a first-launch
-warning. Confirm that the installer came from the WAIT Local Agent GitHub
-Release before opening it. See [desktop-install.md](docs/desktop-install.md)
-for local builds and platform-specific notes.
+Release signing is optional. Until the repository's signing secrets are
+configured, your operating system may show a first-launch unsigned-app warning.
+Confirm that the installer came from the WAIT Local Agent GitHub Release before
+opening it. macOS installers are universal for Intel and Apple Silicon. See
+[desktop-install.md](docs/desktop-install.md) for signing secrets, local builds,
+and platform-specific notes.
 
 ## Quick Start
 
