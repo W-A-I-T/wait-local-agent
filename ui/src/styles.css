@@ -88,6 +88,74 @@ nav a:hover {
   justify-content: flex-end;
 }
 
+.token-input input {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  min-width: 150px;
+  padding: 9px 12px;
+}
+
+.screen-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.overview-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  color: #253633;
+  padding: 14px;
+}
+
+.overview-card:hover {
+  border-color: #1f8261;
+}
+
+.overview-card svg {
+  color: #1f6f55;
+}
+
+.overview-card span,
+.screen-note {
+  color: #60706a;
+  font-size: 0.88rem;
+}
+
+.screen-note {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  margin: 0;
+}
+
+.coming-soon {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+}
+
+.coming-soon svg {
+  color: #1f6f55;
+}
+
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+  clip: rect(0, 0, 0, 0);
+}
+
 h1,
 h2,
 h3,
@@ -653,6 +721,7 @@ dd svg {
 @media (max-width: 760px) {
   .shell,
   .grid,
+  .overview-cards,
   .ticket-card,
   .approval-row,
   .approval-main,

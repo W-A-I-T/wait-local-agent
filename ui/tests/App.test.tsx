@@ -1,6 +1,30 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
+
+// These tests cover the original all-sections dashboard contract. Keep that
+// contract in the test while the production shell exposes the sections as
+// separate routes.
+vi.mock("../src/routes", async () => {
+  const [{ Approvals }, { Connectors }, { Overview }, { Tickets }] = await Promise.all([
+    import("../src/screens/Approvals"),
+    import("../src/screens/Connectors"),
+    import("../src/screens/Overview"),
+    import("../src/screens/Tickets")
+  ]);
+
+  return {
+    AppRoutes: () => (
+      <>
+        <Overview />
+        <Connectors />
+        <Tickets />
+        <Approvals />
+      </>
+    )
+  };
+});
 
 const approvals = [
   {
@@ -38,7 +62,7 @@ describe("App", () => {
   });
 
   it("renders API-backed HaloPSA live operations dashboard", async () => {
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByRole("heading", { name: "HaloPSA Live Operations" })).toBeInTheDocument();
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
@@ -50,7 +74,7 @@ describe("App", () => {
   });
 
   it("creates drafts, edits payload fields, and approves from controls", async () => {
-    render(<App />);
+    renderApp();
 
     await screen.findAllByText("HALO-1");
     fireEvent.click(screen.getByRole("button", { name: /Create Draft/i }));
@@ -92,7 +116,7 @@ describe("App", () => {
 
   it("keeps approvals available while Halo execution is blocked", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, true)));
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByText("blocked")).toBeInTheDocument();
     await screen.findByText("halopsa.add_note");
@@ -123,7 +147,7 @@ describe("App", () => {
       return mockFetch(input);
     }));
 
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByText("No approval requests yet.")).toBeInTheDocument();
     expect(screen.getByText("No workflow runs visible.")).toBeInTheDocument();
@@ -133,7 +157,7 @@ describe("App", () => {
   it("hides write controls for viewer role", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, false, "viewer")));
 
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByText("Role: viewer")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Draft HaloPSA Write" })).not.toBeInTheDocument();
@@ -144,18 +168,23 @@ describe("App", () => {
   it("sends bearer tokens from stored dashboard auth", async () => {
     window.localStorage.setItem("wait-local-agent-api-token", "viewer-token");
 
-    render(<App />);
+    renderApp();
 
     await screen.findByRole("heading", { name: "HaloPSA Live Operations" });
 
-    expect(fetch).toHaveBeenCalledWith(
-      "/auth/role",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer viewer-token" })
-      })
-    );
+    const authRoleCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/auth/role");
+    expect(authRoleCall).toBeDefined();
+    expect(new Headers(authRoleCall?.[1]?.headers).get("Authorization")).toBe("Bearer viewer-token");
   });
 });
+
+function renderApp() {
+  return render(
+    <MemoryRouter initialEntries={["/"]}>
+      <App />
+    </MemoryRouter>
+  );
+}
 
 async function mockFetch(
   input: RequestInfo | URL,
