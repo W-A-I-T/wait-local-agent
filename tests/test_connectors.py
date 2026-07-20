@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 
+from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     execute_halopsa_approval_request,
     update_halopsa_approval_fields,
@@ -16,6 +17,18 @@ from wait_local_agent.store import Store
 class FakeHaloClient:
     def execute_write(self, request):
         return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+
+def test_cloud_inventory_connectors_are_public_exports() -> None:
+    expected = [
+        "AwsInventoryConnector",
+        "AzureInventoryConnector",
+        "GCPInventoryConnector",
+        "M365InventoryConnector",
+    ]
+
+    assert cloud_connectors.__all__ == expected
+    assert all(hasattr(cloud_connectors, name) for name in expected)
 
 
 def test_halopsa_approval_payload_validation_edges(settings) -> None:
