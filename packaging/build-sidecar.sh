@@ -6,7 +6,7 @@ dist_dir="$repo_root/dist"
 work_dir="$repo_root/build/pyinstaller"
 binary_name="wait-local-agent-server"
 
-target="$(rustc -vV | awk '/^host: / { print $2; exit }')"
+target="$(rustc -vV | awk '/^host: / { print $2 }')"
 if [[ -z "$target" ]]; then
   echo "Unable to determine the Rust host target triple" >&2
   exit 1
