@@ -1,6 +1,6 @@
 [package]
 name = "wait-local-agent-desktop"
-version = "1.1.0"
+version = "1.1.1"
 description = "WAIT Local Agent desktop application"
 authors = ["WAIT"]
 edition = "2021"

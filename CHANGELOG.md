@@ -4,7 +4,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Linux draft release checksum publishing now includes RPM (`.rpm`) artifacts in `SHA256SUMS`.
+- Version bumped to `1.1.1` across API, Python package, desktop package, and UI/package metadata.
 
 ## [1.0.0] - 2026-07-08
 
