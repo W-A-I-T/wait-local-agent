@@ -56,9 +56,9 @@ in-app update package.
 
 ## Verify Linux release integrity
 
-Download `SHA256SUMS` alongside the Linux `.AppImage` or `.deb` from the same
-release, then run this from the directory containing those files and the
-checksum file:
+Download `SHA256SUMS` alongside the Linux `.AppImage`, `.deb`, or `.rpm` assets
+from the same release, then run this from the directory containing those files
+and the checksum file:
 
 ```bash
 sha256sum -c SHA256SUMS

@@ -217,11 +217,11 @@ jobs:
 
           bundle_dir="desktop/src-tauri/target/release/bundle"
           mapfile -t linux_assets < <(
-            find "$bundle_dir/appimage" "$bundle_dir/deb" -maxdepth 1 -type f \
-              \( -name '*.AppImage' -o -name '*.deb' \) -print | sort
+            find "$bundle_dir/appimage" "$bundle_dir/deb" "$bundle_dir/rpm" -maxdepth 1 -type f \
+              \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -print | sort
           )
           if (( ${#linux_assets[@]} == 0 )); then
-            echo "No Linux AppImage or deb bundle was produced" >&2
+            echo "No Linux AppImage, deb, or rpm bundle was produced" >&2
             exit 1
           fi
 
