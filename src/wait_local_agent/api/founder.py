@@ -121,9 +121,9 @@ def create_router() -> APIRouter:
         if not payload.confirm:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm must be true")
         if pack is not None:
-            sanitized_pack_bundle(pack, artifact_id)
+            bundle = sanitized_pack_bundle(pack, artifact_id)
             require_fresh_preview(store, artifact_id)
-            return json_object(invoke_founder(pack, "upload", artifact_id), operation="upload")
+            return json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
         try:
             return open_founder_upload(settings, store, config, artifact_id)
         except KeyError as exc:

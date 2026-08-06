@@ -185,6 +185,12 @@ def test_sanitize_bundle_scrubs_finding_text_and_dependency_url_credentials() ->
     assert sanitized["dependencies"]["productionDependencies"] == ["git+https://example.test/repo.git"]
 
 
+def test_sanitize_bundle_scrubs_aws_access_key_in_finding_text() -> None:
+    sanitized = sanitize_bundle({"findings": [{"message": "AWS key AKIA1234567890123456"}]})
+
+    assert "AKIA1234567890123456" not in json.dumps(sanitized)
+
+
 def test_builder_emits_environment_key_map_and_structured_findings(tmp_path: Path) -> None:
     (tmp_path / ".env.example").write_text("DATABASE_URL=example\nPUBLIC_NAME=ok\n", encoding="utf-8")
     bundle = build_founder_bundle(tmp_path, findings=[{"type": "warning", "message": "safe"}])
@@ -215,6 +221,32 @@ def test_pack_bundle_boundary_sanitizes_before_delegated_upload(monkeypatch) -> 
 
     assert calls
     assert "sk_live_PACK_SECRET" not in json.dumps(sanitized)
+
+
+def test_pack_upload_receives_sanitized_bundle_only() -> None:
+    module = ModuleType("packs.founder")
+    received: dict[str, object] = {}
+
+    module.export_bundle = lambda artifact_id: {  # type: ignore[attr-defined]
+        "findings": [{"message": "sk_live_PACK_SECRET"}],
+    }
+
+    def upload(artifact_id, bundle):  # type: ignore[no-untyped-def]
+        received.update(artifact_id=artifact_id, bundle=bundle)
+        return {"status": "uploaded"}
+
+    module.upload = upload  # type: ignore[attr-defined]
+    pack = LoadedPack(manifest={"name": "founder"}, module=module)
+    bundle = founder_module.sanitized_pack_bundle(pack, "artifact-1")
+
+    response = founder_module.json_object(
+        founder_module.invoke_founder(pack, "upload", "artifact-1", bundle),
+        operation="upload",
+    )
+
+    assert response["status"] == "uploaded"
+    assert received["artifact_id"] == "artifact-1"
+    assert "sk_live_PACK_SECRET" not in json.dumps(received["bundle"])
 
 
 def test_preview_marker_is_persisted_and_stale_markers_conflict(settings) -> None:

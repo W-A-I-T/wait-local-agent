@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 
 import httpx
@@ -134,7 +133,6 @@ def test_large_bundle_uses_collector_zip_flow_with_signed_storage_upload(monkeyp
         "fileName": "collector-bundle.zip",
         "contentType": "application/zip",
         "byteSize": len(signed_zip),
-        "sha256": hashlib.sha256(signed_zip).hexdigest(),
     }
     assert calls == [
         ("POST", "lp.test", "Bearer vault-token"),

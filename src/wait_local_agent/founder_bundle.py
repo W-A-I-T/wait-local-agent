@@ -46,7 +46,9 @@ _SECRET_LABEL = re.compile(
 )
 _BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
 _NAMED_SECRET = re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9_-]+\b")
+_AWS_ACCESS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _BASE64ISH = re.compile(r"\b[A-Za-z0-9+/]{32,}={0,2}\b")
+_HIGH_ENTROPY_TOKEN = re.compile(r"\b[A-Za-z0-9_~+/=-]{32,}\b")
 _DEPENDENCY_CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
 
 
@@ -444,19 +446,27 @@ def _string_or(value: Any, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
-def _scrub_value(value: Any, key: str = "") -> Any:
+def _scrub_value(value: Any, key: str = "", free_text: bool = False) -> Any:
     if isinstance(value, str):
         if key.lower() == "sha256" and re.fullmatch(r"[a-fA-F0-9]{40,64}", value):
             return value
-        return _scrub_string(value)
+        return _scrub_string(value, free_text=free_text)
     if isinstance(value, list):
-        return [_scrub_value(item, key) for item in value]
+        return [_scrub_value(item, key, free_text) for item in value]
     if isinstance(value, dict):
-        return {str(item_key): _scrub_value(item, str(item_key)) for item_key, item in value.items()}
+        return {
+            str(item_key): _scrub_value(
+                item,
+                str(item_key),
+                free_text or re.sub(r"[^a-z0-9]", "", str(item_key).lower())
+                in {"findings", "scannerresults"},
+            )
+            for item_key, item in value.items()
+        }
     return value
 
 
-def _scrub_string(value: str) -> str:
+def _scrub_string(value: str, *, free_text: bool = False) -> str:
     def replace_assignment(match: re.Match[str]) -> str:
         return f"{match.group(0)[:-len(match.group(3))]}[redacted]"
 
@@ -464,12 +474,20 @@ def _scrub_string(value: str) -> str:
     scrubbed = _SECRET_LABEL.sub(lambda match: f"{match.group(0).split()[0]} [redacted]", scrubbed)
     scrubbed = _BEARER_SECRET.sub("Bearer [redacted]", scrubbed)
     scrubbed = _NAMED_SECRET.sub("[redacted]", scrubbed)
+    scrubbed = _AWS_ACCESS_KEY.sub("[redacted]", scrubbed)
     for match in list(_BASE64ISH.finditer(scrubbed)):
         candidate = match.group(0)
         if re.fullmatch(r"[a-fA-F0-9]{40,64}", candidate):
             continue
         if len(set(candidate)) >= 12 and _shannon_entropy(candidate) >= 4.0:
             scrubbed = scrubbed.replace(candidate, "[redacted]")
+    if free_text:
+        for match in list(_HIGH_ENTROPY_TOKEN.finditer(scrubbed)):
+            candidate = match.group(0)
+            if re.fullmatch(r"[a-fA-F0-9]{40,64}", candidate):
+                continue
+            if len(set(candidate)) >= 12 and _shannon_entropy(candidate) >= 4.0:
+                scrubbed = scrubbed.replace(candidate, "[redacted]")
     return scrubbed
 
 

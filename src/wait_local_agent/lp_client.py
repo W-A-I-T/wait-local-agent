@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import time
@@ -112,7 +111,6 @@ class LaunchPassportClient:
 
     def _upload_zip(self, project_id: str, bundle_bytes: bytes) -> UploadResult:
         zipped = self._zip_bytes(bundle_bytes)
-        digest = hashlib.sha256(zipped).hexdigest()
         init = self._post_json(
             f"/api/collector/projects/{project_id}/artifacts/zip/init",
             json.dumps(
@@ -160,7 +158,6 @@ class LaunchPassportClient:
                     "fileName": "collector-bundle.zip",
                     "contentType": "application/zip",
                     "byteSize": len(zipped),
-                    "sha256": digest,
                 }
             ),
         )

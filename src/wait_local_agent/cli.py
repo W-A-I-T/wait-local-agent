@@ -315,7 +315,7 @@ def founder_upload(
             require_fresh_preview(_store(), artifact_id)
         except FounderUploadConflictError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        response = json_object(invoke_founder(pack, "upload", artifact_id), operation="upload")
+        response = json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
     typer.echo(render_founder_json(response))
 
 
