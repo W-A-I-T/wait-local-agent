@@ -162,7 +162,7 @@ def build_restore_evidence_report(
     ]
     metadata = (
         _metadata(run_id, collector_run.module_id, 0, 0)
-        if collector_run is not None
+        if collector_run is not None and run_id is not None
         else {"collector_run_id": None}
     )
     return sections, _evidence_metadata(
