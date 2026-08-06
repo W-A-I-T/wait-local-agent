@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -13,6 +15,7 @@ from typer.testing import CliRunner
 
 import wait_local_agent.api.founder as founder_module
 import wait_local_agent.cli as cli_module
+import wait_local_agent.founder_bundle as bundle_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
@@ -36,6 +39,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportUnauthorized,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVaultError
 
 
 def test_unconfigured_open_routes_return_clear_optional_state(settings) -> None:
@@ -475,6 +479,68 @@ def test_bundle_builder_handles_invalid_manifests_requirements_and_skipped_files
     assert all(item["path"] not in {".env", "private.key", "node_modules/ignored.js"} for item in bundle["files"])
 
 
+def test_founder_bundle_handles_non_objects_and_read_failures(monkeypatch, tmp_path: Path) -> None:
+    with pytest.raises(PrivacyViolation, match="object"):
+        sanitize_bundle(cast(dict[str, Any], []))
+
+    (tmp_path / "unreadable.txt").write_text("safe", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("httpx\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("PUBLIC_NAME=ok\n", encoding="utf-8")
+    original_read_bytes = Path.read_bytes
+    original_read_text = Path.read_text
+
+    def fail_file_read(path: Path) -> bytes:
+        if path.name == "unreadable.txt":
+            raise OSError("simulated read failure")
+        return original_read_bytes(path)
+
+    def fail_metadata_read(path: Path, *args, **kwargs) -> str:
+        if path.name in {"requirements.txt", ".env.example"}:
+            raise OSError("simulated read failure")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_file_read)
+    monkeypatch.setattr(Path, "read_text", fail_metadata_read)
+    bundle = build_founder_bundle(tmp_path)
+    assert all(item["path"] != "unreadable.txt" for item in bundle["files"])
+    assert bundle["dependencies"]["productionDependencies"] == []
+    assert bundle["environment"]["keys"] == {}
+
+
+def test_founder_bundle_normalizer_rejects_privacy_and_environment_values() -> None:
+    with pytest.raises(PrivacyViolation, match="privacy flags"):
+        sanitize_bundle({"privacy": {"secret_values_included": True}})
+    with pytest.raises(PrivacyViolation, match="environment keys"):
+        sanitize_bundle({"environment": {"keys": {".env": ["not-valid-name"]}}})
+
+    assert bundle_module._normalize_manifests(
+        [{"path": "package.json", "sizeBytes": 4}, {"path": "README.md", "sha256": "abc"}], []
+    ) == [
+        {"path": "package.json", "kind": "manifest", "sizeBytes": 4},
+        {"path": "README.md", "kind": "manifest", "sha256": "abc"},
+    ]
+    assert bundle_module._normalize_environment({"keys": {1: ["IGNORED"], "bad": "IGNORED"}}) == {"keys": {}}
+    assert bundle_module._dependency_strings("not-a-list") == []
+
+
+def test_founder_bundle_scrubs_base64_entropy_and_selects_python_manager(tmp_path: Path) -> None:
+    high_entropy = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/=="
+    sanitized = sanitize_bundle({"findings": [{"message": high_entropy}]})
+    assert high_entropy not in json.dumps(sanitized)
+    assert bundle_module._scrub_string(f"token {high_entropy}", free_text=True).endswith("[redacted]")
+    (tmp_path / "requirements-dev.txt").write_text("pytest\n", encoding="utf-8")
+    assert bundle_module._package_manager(tmp_path) == "python"
+
+
+def test_founder_json_and_count_helpers_cover_dataclass_and_list_shapes() -> None:
+    @dataclass
+    class Result:
+        status: str
+
+    assert json_value(Result("ok"), operation="test") == {"status": "ok"}
+    assert founder_module._finding_count({"findings": ["one", "two"]}) == 2
+
+
 def test_bundle_normalization_covers_fallback_shapes_and_privacy_edges() -> None:
     digest = "A" * 64
     result = sanitize_bundle(
@@ -687,3 +753,45 @@ def test_founder_error_handlers_map_remote_failures(error, code) -> None:
     response = founder_module.launch_passport_error_handler(request, error)
     assert response.status_code == code
     assert response.body == json.dumps({"error": "x"}, separators=(",", ":")).encode()
+
+
+def test_open_routes_and_handlers_cover_optional_config_fallbacks(monkeypatch, settings) -> None:
+    monkeypatch.setattr(founder_module, "get_pack", lambda _name: None)
+    monkeypatch.setattr(founder_module, "open_founder_status", lambda _settings, _config: {"status": "ok"})
+    monkeypatch.setattr(founder_module, "open_founder_results", lambda _settings, _config: {"scans": []})
+    store = Store(settings.data_path)
+    founder_module.configure_founder(settings, store, "https://lp.test", "project-1", "token")
+    application = FastAPI()
+    application.state.settings = settings
+    application.state.store = store
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "app": application}
+    )
+    endpoints = {
+        route.path: route.endpoint
+        for route in founder_module.create_router().routes
+        if isinstance(route, APIRoute)
+    }
+    assert endpoints["/founder/lp-status"](request, None) == {"status": "ok"}
+    assert endpoints["/founder/results"](request, None) == {"scans": []}
+
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    assert founder_module.founder_pack_unavailable_handler(request, RuntimeError()).status_code == 501
+    assert founder_module.founder_not_configured_handler(request, RuntimeError()).status_code == 409
+    assert founder_module.founder_privacy_handler(request, PrivacyViolation("private")).status_code == 400
+    assert founder_module.launch_passport_error_handler(request, RuntimeError("unknown")).status_code == 502
+
+
+def test_open_config_and_client_token_provider_handle_vault_errors(monkeypatch, settings) -> None:
+    store = Store(settings.data_path)
+    store.save_founder_config(lp_base_url="https://lp.test", lp_project_id="project", token_vault_ref="ref")
+    monkeypatch.setattr(founder_module.SecretVault, "get", lambda *_args: (_ for _ in ()).throw(SecretVaultError()))
+    with pytest.raises(FounderNotConfiguredError):
+        resolve_open_config(settings, store)
+    client = founder_module._open_client(
+        settings, {"lp_base_url": "https://lp.test", "token_vault_ref": "ref", "lp_project_id": "project"}
+    )
+    try:
+        assert client.token_provider() is None
+    finally:
+        client.close()

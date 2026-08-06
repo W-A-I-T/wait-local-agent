@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 
+import wait_local_agent.lp_client as lp_client_module
 from wait_local_agent.lp_client import (
     LaunchPassportClient,
     LaunchPassportForbidden,
@@ -236,3 +237,55 @@ def test_upload_result_fallback_and_token_configuration() -> None:
     assert result.as_dict() == {"artifact_id": "fallback", "status": "pending"}
     with LaunchPassportClient("https://lp.test", lambda: None) as client:
         assert client.status() == {"status": "unreachable", "error": "Launch Passport token is not configured"}
+
+
+def test_lp_client_covers_status_error_and_invalid_payload_shapes(monkeypatch) -> None:
+    with _client(lambda _request: httpx.Response(200, json={"status": "ok"})) as client:
+        assert client.status() == {"status": "ok"}
+
+    with _client(lambda _request: httpx.Response(500)) as client:
+        with pytest.raises(LaunchPassportRequestError, match="500"):
+            client.latest_report("project-1")
+
+    with _client(lambda _request: httpx.Response(200, json="scalar")) as client:
+        with pytest.raises(LaunchPassportRequestError, match="invalid payload"):
+            client.list_scans("project-1")
+
+    with _client(lambda _request: (_ for _ in ()).throw(httpx.ConnectError("offline"))) as client:
+        with pytest.raises(LaunchPassportRequestError, match="POST request failed"):
+            client._post_json("/path", "{}")
+
+    assert LaunchPassportClient._safe_project_id(" project-1 ") == "project-1"
+    assert lp_client_module._string_payload_value({"artifactId": 4}, "artifactId") == ""
+
+
+def test_lp_client_zip_flow_rejects_missing_storage_and_upload_request_errors(monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.lp_client.LaunchPassportClient.JSON_LIMIT_BYTES", 1)
+
+    def missing_storage(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            201,
+            json={"artifact": {"id": "a"}, "upload": {"signedUrl": "https://storage.test/u"}},
+        )
+
+    with _client(missing_storage) as client:
+        with pytest.raises(LaunchPassportRequestError, match="storage details"):
+            client.upload_bundle("project-1", {"files": ["x" * 20]})
+
+    def failing_upload(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/zip/init"):
+            return httpx.Response(
+                201,
+                json={
+                    "artifactId": "a",
+                    "bucket": "b",
+                    "path": "p",
+                    "artifact": {"id": "a"},
+                    "upload": {"signedUrl": "https://storage.test/u"},
+                },
+            )
+        raise httpx.ConnectError("storage unavailable", request=request)
+
+    with _client(failing_upload) as client:
+        with pytest.raises(LaunchPassportRequestError, match="zip upload"):
+            client.upload_bundle("project-1", {"files": ["x" * 20]})
