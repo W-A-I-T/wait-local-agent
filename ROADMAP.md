@@ -1,0 +1,87 @@
+# Capability Roadmap
+
+## Positioning
+
+WAIT Local Agent is a local-first, open-source MSP copilot for operators who
+want to keep client data on their own hardware. The default operating model is
+local-first. The open core is Apache 2.0; optional paid packs can add
+product-specific connectors, reports, and deployment capabilities without
+changing that local default.
+
+This is a parity roadmap, not a claim that WAIT Local Agent already provides
+everything in a competing product. “Today” means behavior available in this
+public repository and its documented open-core contracts. An optional pack or
+a future interface is not counted as shipped here.
+
+## Capability roadmap
+
+| Capability | Today | Planned |
+| --- | --- | --- |
+| Agents vs deterministic workflows | No general-purpose autonomous agent. The public core ships fixed, inspectable workflow templates and deterministic ticket intelligence, with optional local-provider support for limited reasoning assistance. | Smart-action foundations will extend the deterministic workflow model before any broader agent behavior is considered. |
+| Smart actions: triage, summary, suggest-resolution, find-similar-tickets, dispatch | Deterministic ticket summary/classification and cited local knowledge retrieval are shipped. A unified smart-action catalog covering suggestion, similarity, and dispatch is not shipped. | Add explicit smart-action primitives with clear approval and evidence boundaries. |
+| Triggered + scheduled runs | Workflow runs and persisted scheduled jobs are shipped, including pause, resume, delete, and audit tracking. | Broaden triggers, recurrence controls, and safe multi-step execution. |
+| Backfills | Not shipped as a distinct operator feature. | Add bounded, reviewable backfills after run identity, idempotency, and audit behavior are defined. |
+| Deterministic + AI filters | Deterministic workflow gates are shipped; an optional local OpenAI-compatible provider can assist with classification, summarization, and drafting. There is no general visual combined-filter builder. | Add inspectable filter composition and local-model guardrails. |
+| Technician-in-the-loop approvals | Approval requests, previews, edits, approver identity capture, and approval-gated HaloPSA execution are shipped. | Extend the same explicit approval contract to new actions and connectors. |
+| Per-tool permissions | Role-based access plus connector-specific read/write and connection-check gates are shipped; this is not yet a per-tool None/read/write matrix. | Add capability-level permissions without weakening the local safety defaults. |
+| Execution step logs + audit | Workflow status, connector execution history, immutable audit events, and JSON/CSV export are shipped. A complete step-by-step execution log is not claimed. | Add execution observability with step results, timing, failure context, and operator-safe analytics. |
+| Version history/rollback | No workflow version history or rollback surface. Local backup/restore protects appliance state but is not workflow rollback. | Define versioned workflow artifacts and bounded rollback semantics. |
+| Analytics: time saved, success rate, execution volume | Reports and audit/event exports are shipped; a product analytics surface for time saved, success rate, and execution volume is not shipped. | Add local analytics using explainable, operator-controlled measurements. |
+| Templates gallery | A fixed public workflow-template catalog with a run form is shipped; there is no gallery or marketplace. | Build a local template gallery with provenance, review, and optional pack distribution. |
+| PSA connectors | HaloPSA read paths and approval-gated writes are shipped. ConnectWise, Autotask, Syncro, and ServiceNow are not shipped. | Prioritize additional PSA connectors by operator demand and safe write coverage. |
+| RMM connectors | No RMM connector is shipped in the public core. Local endpoint collectors are a separate, read-only inventory capability. | Add read-only RMM inventory first, followed by explicitly approved actions. |
+| Documentation connectors | Hudu read-only documentation context is shipped. IT Glue and Confluence are not shipped. | Add IT Glue and Confluence through reviewed connector interfaces. |
+| M365/Entra actions | Code-level groundwork for a read-only M365 inventory adapter exists in the repository, but it is not exposed through any CLI command or API route; no customer-facing M365/Entra action surface is shipped. | Add read-only identity/context operations before any approved mutation path. |
+| Teams technician chat + white-label end-user bot | Not shipped. | Optional cloud-connected Teams mode after Azure bot registration, tenant isolation, and explicit data-flow controls are defined. |
+| Phone agent | Not shipped. | Deferred because it requires a telephony SaaS dependency and conflicts with the local-first default unless an operator explicitly enables a cloud-connected mode. |
+| Credit metering | Not applicable to the local runtime. Local usage accounting is a better fit than hosted credit depletion. | Add transparent local usage accounting alongside analytics; do not introduce hosted-credit assumptions into the open core. |
+| Local collectors + cloud inventory | Read-only local collector modules are exposed through a registry, preview, confirmation, persisted runs, and evidence export. AWS, Azure, GCP, and M365 adapter classes exist as code-level groundwork in the repository, but are not exposed through any CLI command or API route. | Finish full collector-registry exposure, credential preflight, and cloud-inventory adapter UX. |
+| Launch Passport evidence export | Collector bundle, hardening, and restore-evidence report types are in the public core. Founder routes define an optional-pack contract for preflight, bundle export, upload preview, explicit upload, and status; the private implementation is not present by default. | Complete the Launch Passport upload/polling integration while retaining diff preview and explicit confirmation. |
+
+## This cycle
+
+The following items are in progress or being prepared for the next compatible
+open-core increment. “In progress” does not mean that the complete end-user
+feature is already shipped:
+
+- Full collector registry exposure, including module metadata, validation,
+  preview, confirmed runs, and evidence export.
+- Cloud inventory adapters with credential preflight and clear opt-in data
+  flow.
+- Hardening and restore evidence runs that remain inspectable and exportable.
+- A host-collection Docker mode for controlled local collection.
+- Smart-action framework foundations built on deterministic workflows and
+  explicit local-model boundaries.
+- Execution observability and analytics for run volume, outcomes, timing, and
+  explainable local measurements.
+- A template gallery with reviewed, provenance-bearing templates.
+- Guided forms and non-developer workflow setup, followed later by broader
+  natural-language composition.
+- Launch Passport upload and polling integration around preview, confirmation,
+  and status visibility.
+
+## Deferred with rationale
+
+- **Phone agent:** telephony introduces a hosted dependency, audio/data-flow
+  concerns, and a default cloud path that does not fit local-first operation.
+- **Teams bots:** technician chat and a white-label end-user bot require Azure
+  bot registration and tenant-specific cloud connectivity. They remain an
+  optional mode rather than a default appliance dependency.
+- **Additional PSA and RMM vendors:** each vendor requires separate API,
+  credential, permission, rate-limit, and test coverage. Prioritization will
+  follow demonstrated operator demand, with read-only coverage before writes.
+- **Credit metering:** hosted credits are a SaaS billing concept. The local
+  equivalent is transparent usage accounting paired with analytics, without
+  making local operation depend on an external balance.
+- **Full natural-language builder:** a reliable builder should follow the
+  reviewed template and guided-form foundation. Shipping it first would make
+  workflow behavior harder to inspect and approve.
+
+## How to influence priorities
+
+Open a focused request in the [GitHub issue tracker](https://github.com/W-A-I-T/wait-local-agent/issues)
+with the workflow, connector, evidence, or local-first constraint you need.
+Include the current manual steps, the systems involved, whether read-only
+access is sufficient, and what approval or audit evidence an operator must see.
+Well-scoped demand helps determine which connector and template work belongs in
+the open core, an optional pack, or a later cloud-connected mode.
