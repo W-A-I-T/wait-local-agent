@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.WifiInventoryCollectorModule
 
@@ -244,6 +247,80 @@ def test_collect_swallows_unreadable_metadata_file(
     attrs = _collector().collect()["items"][0]["canonical_asset"]["attributes"]
     assert attrs["mac"] == ""
     assert attrs["operstate"] == "down"
+
+
+def test_typed_wifi_collect_returns_partial_with_per_interface_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    wifi_roots: tuple[Path, Path],
+) -> None:
+    proc_net_root, sys_net_root = wifi_roots
+    _write_wireless(proc_net_root, [_wireless_row("wlan0"), _wireless_row("wlan1")])
+    _write_wifi_interface(sys_net_root, "wlan0")
+    wlan1 = sys_net_root / "wlan1"
+    _write_wifi_interface(sys_net_root, "wlan1")
+    _use_wifi_paths(monkeypatch, proc_net_root, sys_net_root)
+
+    real_read_text = Path.read_text
+
+    def deny_wlan1(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == wlan1 / "address":
+            raise PermissionError("wifi metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_wlan1)
+    result = collectors.WifiInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["wifi:wlan0"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
+def test_typed_wifi_collect_maps_total_unavailable_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    wifi_roots: tuple[Path, Path],
+) -> None:
+    proc_net_root, sys_net_root = wifi_roots
+    _write_wireless(proc_net_root, [_wireless_row("wlan0")])
+    wlan0 = sys_net_root / "wlan0"
+    _write_wifi_interface(sys_net_root, "wlan0")
+    _use_wifi_paths(monkeypatch, proc_net_root, sys_net_root)
+
+    real_read_text = Path.read_text
+
+    def deny_wlan0(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == wlan0 / "address":
+            raise OSError("wifi source unavailable")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_wlan0)
+    result = collectors.WifiInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert result.source_outcomes[0].error_code == "collection_unavailable"
+
+
+def test_typed_wifi_round_trip_persists_and_exports(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    wifi_roots: tuple[Path, Path],
+) -> None:
+    proc_net_root, sys_net_root = wifi_roots
+    _write_wireless(proc_net_root, [_wireless_row("wlan0")])
+    _write_wifi_interface(sys_net_root, "wlan0")
+    _use_wifi_paths(monkeypatch, proc_net_root, sys_net_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.WifiInventoryCollector())
+    service = CollectorService(Store(settings.data_path), registry)
+
+    assert service.validate("wifi-inventory", {}).passed is True
+    preview = service.preview("wifi-inventory", {})
+    run = service.run("wifi-inventory", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 def test_collect_returns_empty_on_non_linux(

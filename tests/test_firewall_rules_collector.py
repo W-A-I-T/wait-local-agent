@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.FirewallRulesCollectorModule
 
@@ -326,6 +329,65 @@ def test_collect_swallows_unreadable_file_as_directory(
     result = _collector().collect()
     assert result["count"] == 1
     assert result["items"][0]["canonical_asset"]["attributes"]["source_file"] == "/etc/iptables/rules.v4"
+
+
+def test_typed_firewall_collect_returns_partial_with_source_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
+) -> None:
+    (firewall_root / "nftables.conf").mkdir()
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
+
+    result = collectors.FirewallRulesCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert len(result.assets) == 1
+    assert any(outcome.status is CollectionStatus.UNAVAILABLE for outcome in result.source_outcomes)
+
+
+def test_typed_firewall_collect_maps_total_permission_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
+) -> None:
+    rules_path = firewall_root / "rules.v4"
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
+
+    real_read_text = Path.read_text
+
+    def deny_rules(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == rules_path:
+            raise PermissionError("firewall rules denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_rules)
+    result = collectors.FirewallRulesCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+
+
+def test_typed_firewall_round_trip_persists_and_exports(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
+) -> None:
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.FirewallRulesCollector())
+    service = CollectorService(Store(settings.data_path), registry)
+
+    assert service.validate("firewall-rules", {}).passed is True
+    preview = service.preview("firewall-rules", {})
+    run = service.run("firewall-rules", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 # --------------------------------------------------------------------------- #

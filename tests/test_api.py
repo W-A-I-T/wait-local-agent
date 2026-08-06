@@ -9,10 +9,13 @@ from fastapi.testclient import TestClient
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import (
+    DatabaseInventoryCollector,
+    FirewallRulesCollector,
     HostRuntimeCollector,
     ListeningPortsCollector,
     NetworkInterfacesCollector,
     ProcessInventoryCollector,
+    WifiInventoryCollector,
     default_registry,
 )
 from wait_local_agent.models import (
@@ -26,13 +29,16 @@ from wait_local_agent.models import (
 from wait_local_agent.store import Store
 
 
-def test_api_lists_exactly_four_collector_modules(settings) -> None:
+def test_api_lists_exactly_seven_collector_modules(settings, isolated_default_registry) -> None:
     default_registry.clear()
     for module in (
+        DatabaseInventoryCollector(),
+        FirewallRulesCollector(),
         HostRuntimeCollector(),
         ListeningPortsCollector(),
         NetworkInterfacesCollector(),
         ProcessInventoryCollector(),
+        WifiInventoryCollector(),
     ):
         default_registry.register(module)
     client = TestClient(create_app(settings))
@@ -42,13 +48,16 @@ def test_api_lists_exactly_four_collector_modules(settings) -> None:
     assert response.status_code == 200
     modules = response.json()
     assert [module["id"] for module in modules] == [
+        "database-inventory",
+        "firewall-rules",
         "host-runtime",
         "listening-ports",
         "network-interfaces",
         "process-inventory",
+        "wifi-inventory",
     ]
-    assert len(modules) == 4
-    assert len(default_registry.list()) == 4
+    assert len(modules) == 7
+    assert len(default_registry.list()) == 7
 
 
 def test_health_reports_safe_defaults(settings) -> None:

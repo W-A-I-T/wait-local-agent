@@ -296,6 +296,28 @@ def test_typed_collect_maps_permission_error_to_not_authorized(
     assert result.source_outcomes[0].error_detail == "denied: " + str(proc_root / "1" / "status")
 
 
+def test_typed_process_collect_returns_partial_when_one_entry_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_process(proc_root, 100)
+    _write_process(proc_root, 101)
+    _use_proc(monkeypatch, proc_root)
+    real_read_text = Path.read_text
+
+    def deny_process(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.parent.name == "101":
+            raise PermissionError("process metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_process)
+    result = collectors.ProcessInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["process:100"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
 def test_process_inventory_round_trips_through_governed_service(
     monkeypatch: pytest.MonkeyPatch,
     proc_root: Path,

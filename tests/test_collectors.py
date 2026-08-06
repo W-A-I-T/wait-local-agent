@@ -41,12 +41,17 @@ def test_default_registry_exposes_typed_local_collectors() -> None:
     modules = default_registry.list()
 
     assert [module.manifest.id for module in modules] == [
+        "database-inventory",
+        "firewall-rules",
         "host-runtime",
         "listening-ports",
         "network-interfaces",
         "process-inventory",
+        "wifi-inventory",
     ]
-    for module in modules[1:]:
+    for module in modules:
+        if module.manifest.id == "host-runtime":
+            continue
         assert module.manifest.platforms == ("linux",)
         assert len(module.manifest.config_schema) == 1
         field = module.manifest.config_schema[0]
@@ -367,79 +372,78 @@ def test_collector_service_maps_typed_result_status_to_run_status(
         )
 
 
-def test_collector_api_surfaces_preview_run_and_export(settings) -> None:
+def test_collector_api_surfaces_preview_run_and_export(settings, isolated_default_registry) -> None:
     default_registry.clear()
     default_registry.register(FakeCollectorModule())
-    try:
-        client = TestClient(create_app(settings))
+    client = TestClient(create_app(settings))
 
-        modules = client.get("/collectors/modules")
-        validate = client.post(
-            "/collectors/modules/fake-fixture/validate",
-            json={"config": {"source_name": "api"}},
-        )
-        validate_bad = client.post(
-            "/collectors/modules/fake-fixture/validate",
-            json={"config": {"source_name": "bad"}},
-        )
-        preview_bad = client.post(
-            "/collectors/modules/fake-fixture/preview",
-            json={"config": {"source_name": "bad"}},
-        )
-        preview = client.post(
-            "/collectors/modules/fake-fixture/preview",
-            json={"config": {"source_name": "api"}},
-        )
-        unconfirmed = client.post(
-            "/collectors/modules/fake-fixture/run",
-            json={"confirm": False, "config": {"source_name": "api"}},
-        )
-        run = client.post(
-            "/collectors/modules/fake-fixture/run",
-            json={"confirm": True, "client_id": "api-client", "config": {"source_name": "api"}},
-        )
-        run_id = run.json()["id"]
-        runs = client.get("/collectors/runs", params={"client_id": "api-client"})
-        detail = client.get(f"/collectors/runs/{run_id}")
-        export = client.post(f"/collectors/runs/{run_id}/export")
-        unsupported_export = client.post(
-            f"/collectors/runs/{run_id}/export",
-            params={"report_type": "ticket_intelligence"},
-        )
-        missing_module = client.post("/collectors/modules/missing-fixture/validate", json={"config": {}})
-        missing_run = client.get("/collectors/runs/404")
-        missing_export = client.post("/collectors/runs/404/export")
+    modules = client.get("/collectors/modules")
+    validate = client.post(
+        "/collectors/modules/fake-fixture/validate",
+        json={"config": {"source_name": "api"}},
+    )
+    validate_bad = client.post(
+        "/collectors/modules/fake-fixture/validate",
+        json={"config": {"source_name": "bad"}},
+    )
+    preview_bad = client.post(
+        "/collectors/modules/fake-fixture/preview",
+        json={"config": {"source_name": "bad"}},
+    )
+    preview = client.post(
+        "/collectors/modules/fake-fixture/preview",
+        json={"config": {"source_name": "api"}},
+    )
+    unconfirmed = client.post(
+        "/collectors/modules/fake-fixture/run",
+        json={"confirm": False, "config": {"source_name": "api"}},
+    )
+    run = client.post(
+        "/collectors/modules/fake-fixture/run",
+        json={"confirm": True, "client_id": "api-client", "config": {"source_name": "api"}},
+    )
+    run_id = run.json()["id"]
+    runs = client.get("/collectors/runs", params={"client_id": "api-client"})
+    detail = client.get(f"/collectors/runs/{run_id}")
+    export = client.post(f"/collectors/runs/{run_id}/export")
+    unsupported_export = client.post(
+        f"/collectors/runs/{run_id}/export",
+        params={"report_type": "ticket_intelligence"},
+    )
+    missing_module = client.post("/collectors/modules/missing-fixture/validate", json={"config": {}})
+    missing_run = client.get("/collectors/runs/404")
+    missing_export = client.post("/collectors/runs/404/export")
 
-        assert modules.status_code == 200
-        assert modules.json()[0]["id"] == "fake-fixture"
-        assert validate.status_code == 200
-        assert validate.json()["passed"] is True
-        assert validate_bad.status_code == 200
-        assert validate_bad.json()["passed"] is False
-        assert preview_bad.status_code == 400
-        assert preview.status_code == 200
-        assert preview.json()["estimated_assets"] == 1
-        assert unconfirmed.status_code == 409
-        assert run.status_code == 200
-        assert run.json()["status"] == "completed"
-        assert run.json()["result_status"] == "success"
-        assert runs.status_code == 200
-        assert runs.json()[0]["id"] == run_id
-        assert runs.json()[0]["result_status"] == "success"
-        assert detail.status_code == 200
-        assert detail.json()["assets"][0]["display_name"] == "Endpoint 1"
-        assert detail.json()["result_status"] == "success"
-        assert export.status_code == 200
-        assert export.json()["report_type"] == "collector_bundle"
-        assert unsupported_export.status_code == 400
-        assert missing_module.status_code == 404
-        assert missing_run.status_code == 404
-        assert missing_export.status_code == 404
-    finally:
-        default_registry.clear()
+    assert modules.status_code == 200
+    assert modules.json()[0]["id"] == "fake-fixture"
+    assert validate.status_code == 200
+    assert validate.json()["passed"] is True
+    assert validate_bad.status_code == 200
+    assert validate_bad.json()["passed"] is False
+    assert preview_bad.status_code == 400
+    assert preview.status_code == 200
+    assert preview.json()["estimated_assets"] == 1
+    assert unconfirmed.status_code == 409
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert run.json()["result_status"] == "success"
+    assert runs.status_code == 200
+    assert runs.json()[0]["id"] == run_id
+    assert runs.json()[0]["result_status"] == "success"
+    assert detail.status_code == 200
+    assert detail.json()["assets"][0]["display_name"] == "Endpoint 1"
+    assert detail.json()["result_status"] == "success"
+    assert export.status_code == 200
+    assert export.json()["report_type"] == "collector_bundle"
+    assert unsupported_export.status_code == 400
+    assert missing_module.status_code == 404
+    assert missing_run.status_code == 404
+    assert missing_export.status_code == 404
 
 
-def test_collector_cli_surfaces_preview_run_and_bundle_export(monkeypatch, tmp_path) -> None:
+def test_collector_cli_surfaces_preview_run_and_bundle_export(
+    monkeypatch, tmp_path, isolated_default_registry
+) -> None:
     default_registry.clear()
     default_registry.register(FakeCollectorModule())
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
@@ -447,43 +451,40 @@ def test_collector_cli_surfaces_preview_run_and_bundle_export(monkeypatch, tmp_p
     output_path = tmp_path / "bundle.json"
     config_path.write_text(json.dumps({"source_name": "cli"}), encoding="utf-8")
     runner = CliRunner()
-    try:
-        listing = runner.invoke(app, ["collectors", "list"])
-        validate = runner.invoke(
-            app,
-            ["collectors", "validate", "fake-fixture", "--config", str(config_path)],
-        )
-        preview = runner.invoke(
-            app,
-            ["collectors", "preview", "fake-fixture", "--config", str(config_path)],
-        )
-        run = runner.invoke(
-            app,
-            ["collectors", "run", "fake-fixture", "--config", str(config_path), "--confirm"],
-        )
-        run_id = _run_id_from_output(run.output)
-        export = runner.invoke(
-            app,
-            ["collectors", "bundle", "export", str(run_id), "--output", str(output_path)],
-        )
+    listing = runner.invoke(app, ["collectors", "list"])
+    validate = runner.invoke(
+        app,
+        ["collectors", "validate", "fake-fixture", "--config", str(config_path)],
+    )
+    preview = runner.invoke(
+        app,
+        ["collectors", "preview", "fake-fixture", "--config", str(config_path)],
+    )
+    run = runner.invoke(
+        app,
+        ["collectors", "run", "fake-fixture", "--config", str(config_path), "--confirm"],
+    )
+    run_id = _run_id_from_output(run.output)
+    export = runner.invoke(
+        app,
+        ["collectors", "bundle", "export", str(run_id), "--output", str(output_path)],
+    )
 
-        assert listing.exit_code == 0
-        assert "fake-fixture" in listing.output
-        assert validate.exit_code == 0
-        assert json.loads(validate.output)["passed"] is True
-        assert preview.exit_code == 0
-        assert json.loads(preview.output)["source_name"] == "cli"
-        assert run.exit_code == 0
-        assert "status=completed" in run.output
-        assert "result_status=success" in run.output
-        assert export.exit_code == 0
-        assert output_path.exists()
-        assert json.loads(output_path.read_text(encoding="utf-8"))["report_type"] == "collector_bundle"
-    finally:
-        default_registry.clear()
+    assert listing.exit_code == 0
+    assert "fake-fixture" in listing.output
+    assert validate.exit_code == 0
+    assert json.loads(validate.output)["passed"] is True
+    assert preview.exit_code == 0
+    assert json.loads(preview.output)["source_name"] == "cli"
+    assert run.exit_code == 0
+    assert "status=completed" in run.output
+    assert "result_status=success" in run.output
+    assert export.exit_code == 0
+    assert output_path.exists()
+    assert json.loads(output_path.read_text(encoding="utf-8"))["report_type"] == "collector_bundle"
 
 
-def test_collector_cli_validation_and_guard_branches(monkeypatch, tmp_path) -> None:
+def test_collector_cli_validation_and_guard_branches(monkeypatch, tmp_path, isolated_default_registry) -> None:
     default_registry.clear()
     default_registry.register(FakeCollectorModule())
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
@@ -492,37 +493,34 @@ def test_collector_cli_validation_and_guard_branches(monkeypatch, tmp_path) -> N
     bad_config_path.write_text(json.dumps({"source_name": "bad"}), encoding="utf-8")
     list_config_path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
     runner = CliRunner()
-    try:
-        validation = runner.invoke(
-            app,
-            ["collectors", "validate", "fake-fixture", "--config", str(bad_config_path)],
-        )
-        preview = runner.invoke(
-            app,
-            ["collectors", "preview", "fake-fixture", "--config", str(bad_config_path)],
-        )
-        run = runner.invoke(app, ["collectors", "run", "fake-fixture"])
-        missing = runner.invoke(app, ["collectors", "validate", "missing-fixture"])
-        invalid_config = runner.invoke(
-            app,
-            ["collectors", "preview", "fake-fixture", "--config", str(list_config_path)],
-        )
+    validation = runner.invoke(
+        app,
+        ["collectors", "validate", "fake-fixture", "--config", str(bad_config_path)],
+    )
+    preview = runner.invoke(
+        app,
+        ["collectors", "preview", "fake-fixture", "--config", str(bad_config_path)],
+    )
+    run = runner.invoke(app, ["collectors", "run", "fake-fixture"])
+    missing = runner.invoke(app, ["collectors", "validate", "missing-fixture"])
+    invalid_config = runner.invoke(
+        app,
+        ["collectors", "preview", "fake-fixture", "--config", str(list_config_path)],
+    )
 
-        assert validation.exit_code == 1
-        assert json.loads(validation.output)["passed"] is False
-        assert preview.exit_code != 0
-        assert "bad source" in preview.output
-        assert run.exit_code != 0
-        assert "confirm=true" in run.output
-        assert missing.exit_code != 0
-        assert "collector module not found" in missing.output
-        assert invalid_config.exit_code != 0
-        assert "collector config must be a JSON object" in invalid_config.output
-    finally:
-        default_registry.clear()
+    assert validation.exit_code == 1
+    assert json.loads(validation.output)["passed"] is False
+    assert preview.exit_code != 0
+    assert "bad source" in preview.output
+    assert run.exit_code != 0
+    assert "confirm=true" in run.output
+    assert missing.exit_code != 0
+    assert "collector module not found" in missing.output
+    assert invalid_config.exit_code != 0
+    assert "collector config must be a JSON object" in invalid_config.output
 
 
-def test_collector_cli_lists_empty_registry() -> None:
+def test_collector_cli_lists_empty_registry(isolated_default_registry) -> None:
     default_registry.clear()
     runner = CliRunner()
 

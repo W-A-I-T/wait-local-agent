@@ -358,6 +358,21 @@ def test_typed_listening_ports_permission_error_is_not_authorized(
     assert result.source_outcomes[0].error_detail == "socket table denied"
 
 
+def test_typed_listening_ports_collect_returns_partial_when_one_table_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    (proc_root / "tcp6").mkdir()
+    _use_proc_net(monkeypatch, proc_root)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert len(result.assets) == 1
+    assert any(outcome.status is CollectionStatus.UNAVAILABLE for outcome in result.source_outcomes)
+
+
 def test_typed_listening_ports_generic_exception_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     proc_root: Path,

@@ -248,6 +248,28 @@ def test_typed_collect_maps_interface_permission_error(
     assert result.source_outcomes[0].error_code == "permission_denied"
 
 
+def test_typed_network_interfaces_collect_returns_partial_when_one_interface_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    sys_net_root: Path,
+) -> None:
+    _write_interface(sys_net_root, "eth0")
+    _write_interface(sys_net_root, "eth1")
+    _use_sys_class_net(monkeypatch, sys_net_root)
+    real_read_text = Path.read_text
+
+    def deny_eth1(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == sys_net_root / "eth1" / "address":
+            raise PermissionError("interface metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_eth1)
+    result = collectors.NetworkInterfacesCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["netif:eth0"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
 def test_network_interfaces_round_trips_through_governed_service(
     monkeypatch: pytest.MonkeyPatch,
     sys_net_root: Path,
