@@ -12,6 +12,11 @@ from wait_local_agent.reports.hardening_checks import (
     HardeningCheck,
     HardeningCheckRegistry,
     HardeningContext,
+    HardeningRunRecord,
+    _check_backup_recency,
+    _check_vault,
+    _mode,
+    _path_evidence,
     run_hardening_checks,
 )
 from wait_local_agent.store import Store
@@ -80,6 +85,53 @@ def test_registry_rejects_duplicate_and_non_lowercase_ids() -> None:
         raise AssertionError("uppercase check ids must be rejected")
     except ValueError as exc:
         assert "lowercase" in str(exc)
+
+
+def test_registry_clear_and_missing_lookup() -> None:
+    registry = HardeningCheckRegistry()
+    registry.register(HardeningCheck("safe-check", "Safe", "api", "low", lambda _: CheckResult("passed")))
+    registry.clear()
+    assert registry.list() == []
+
+    try:
+        registry.get("missing-check")
+        raise AssertionError("missing check ids must be rejected")
+    except KeyError as exc:
+        assert "missing-check is not registered" in str(exc)
+
+
+def test_hardening_checks_require_persistence_store() -> None:
+    try:
+        run_hardening_checks(HardeningContext())
+        raise AssertionError("hardening checks must require persistence")
+    except ValueError as exc:
+        assert "require a Store" in str(exc)
+
+
+def test_hardening_checks_reject_unpersisted_run(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    monkeypatch.setattr(
+        store,
+        "create_hardening_run",
+        lambda **_kwargs: HardeningRunRecord(None, "running", "start", "", 0, 0),
+    )
+
+    try:
+        run_hardening_checks(HardeningContext(store=store))
+        raise AssertionError("unpersisted hardening runs must be rejected")
+    except RuntimeError as exc:
+        assert "was not persisted" in str(exc)
+
+
+def test_hardening_path_edge_evidence_and_missing_backup(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+    assert _mode(missing) is None
+    assert _path_evidence(None) == {"path": None, "exists": False}
+    assert _check_vault(HardeningContext()).status == "failed"
+
+    result = _check_backup_recency(HardeningContext(backup_paths=(missing,)))
+    assert result.status == "failed"
+    assert result.evidence["backups"] == []
 
 
 def test_check_module_does_not_import_or_call_mutation_helpers() -> None:

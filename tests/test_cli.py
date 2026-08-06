@@ -20,6 +20,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.store import Store
 
 
@@ -182,6 +183,71 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert backup.exit_code == 0
     assert backup_path.exists()
     assert restore.exit_code == 0
+
+
+def test_hardening_and_restore_commands_report_success(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    backup_path = tmp_path / "backup.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    runner = CliRunner()
+
+    backup = runner.invoke(app, ["backup", "create", str(backup_path)])
+    hardening = runner.invoke(app, ["hardening", "run"])
+    listed_hardening = runner.invoke(app, ["hardening", "list"])
+    exercise = runner.invoke(app, ["backup", "restore-exercise", str(backup_path)])
+
+    assert backup.exit_code == 0
+    assert hardening.exit_code == 0
+    assert '"run"' in hardening.output
+    assert listed_hardening.exit_code == 0
+    assert "count=1" in listed_hardening.output
+    assert exercise.exit_code == 0
+    assert '"exercise"' in exercise.output
+
+
+def test_hardening_and_restore_cli_error_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        cli_module,
+        "run_hardening_checks",
+        lambda *args, **kwargs: HardeningRunRecord(None, "completed", "start", "", 0, 0),
+    )
+    hardening = runner.invoke(app, ["hardening", "run"])
+    assert hardening.exit_code != 0
+    assert "hardening run was not persisted" in hardening.output
+
+    monkeypatch.setattr(
+        cli_module,
+        "run_restore_exercise",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot start")),
+    )
+    exercise = runner.invoke(app, ["backup", "restore-exercise", "missing.db"])
+    assert exercise.exit_code != 0
+    assert "restore exercise could not be started" in exercise.output
+
+
+def test_secret_and_update_cli_error_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_VAULT_PATH", str(tmp_path / "vault"))
+    runner = CliRunner()
+
+    invalid_set = runner.invoke(app, ["secrets", "set", "", "value"])
+    invalid_get = runner.invoke(app, ["secrets", "get", ""])
+    monkeypatch.setattr(
+        cli_module,
+        "check_for_updates",
+        lambda _settings: (_ for _ in ()).throw(RuntimeError("network failed")),
+    )
+    update = runner.invoke(app, ["update", "check"])
+
+    assert invalid_set.exit_code != 0
+    assert "secret key must not be empty" in invalid_set.output
+    assert invalid_get.exit_code != 0
+    assert "secret key must not be empty" in invalid_get.output
+    assert update.exit_code == 1
+    assert "status=error detail=internal_error message=network failed" in update.output
 
 
 def test_halopsa_cli_read_commands_block_without_http_flag(monkeypatch, tmp_path) -> None:

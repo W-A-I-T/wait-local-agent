@@ -6,6 +6,7 @@ import pytest
 from cryptography.fernet import Fernet
 from typer.testing import CliRunner
 
+from wait_local_agent import backup as backup_module
 from wait_local_agent.backup import (
     BACKUP_KEY_SECRET_NAME,
     RESTORE_EXERCISE_SCRATCH_PREFIX,
@@ -95,6 +96,7 @@ def test_plain_backup_bootstraps_missing_store_and_restore_requires_existing_sou
     settings, tmp_path: Path
 ) -> None:
     store = Store(tmp_path / "missing-state.db")
+    store.path.unlink()
     backup_path = tmp_path / "backup" / "state.db"
 
     result = backup_state(store, backup_path)
@@ -105,6 +107,86 @@ def test_plain_backup_bootstraps_missing_store_and_restore_requires_existing_sou
 
     with pytest.raises(FileNotFoundError):
         restore_state(store, tmp_path / "missing.db")
+
+
+def test_restore_exercise_reports_row_count_mismatch(settings, tmp_path: Path) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    empty_store = Store(tmp_path / "empty.db")
+    backup_path = tmp_path / "empty-backup.db"
+    backup_state(empty_store, backup_path)
+
+    result = run_restore_exercise(backup_path, store=store, settings=settings)
+
+    assert result.status == "failed"
+    assert result.validation["error"] == "ValueError"
+    assert "row counts did not match" in result.evidence["error_detail"]
+
+
+def test_restore_exercise_reports_failed_integrity_check(settings, tmp_path: Path, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    source = tmp_path / "backup.db"
+    backup_state(store, source)
+
+    class ScratchStore:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+    class IntegrityConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, query: str):
+            assert query == "pragma integrity_check"
+            class IntegrityResult:
+                def fetchone(self):
+                    return ("corrupt",)
+
+            return IntegrityResult()
+
+    monkeypatch.setattr(backup_module, "Store", ScratchStore)
+    monkeypatch.setattr(backup_module, "_live_core_row_counts", lambda _path: {})
+    original_connect = backup_module.sqlite3.connect
+    monkeypatch.setattr(
+        backup_module.sqlite3,
+        "connect",
+        lambda *args, **kwargs: (
+            IntegrityConnection()
+            if str(args[0]).startswith("file:")
+            else original_connect(*args, **kwargs)
+        ),
+    )
+
+    result = run_restore_exercise(source, store=store, settings=settings)
+
+    assert result.status == "failed"
+    assert result.validation["error"] == "ValueError"
+    assert "integrity check returned corrupt" in result.evidence["error_detail"]
+
+
+def test_restore_exercise_removes_matching_stale_file(settings, tmp_path: Path) -> None:
+    store = Store(settings.data_path)
+    stale_file = settings.data_path.parent / f"{RESTORE_EXERCISE_SCRATCH_PREFIX}file"
+    stale_file.write_text("not a directory", encoding="utf-8")
+    source = tmp_path / "backup.db"
+    backup_state(store, source)
+
+    result = run_restore_exercise(source, store=store, settings=settings)
+
+    assert result.status == "passed"
+    assert stale_file.exists()
+
+
+def test_default_settings_and_store_bytes_bootstrap_missing_store(tmp_path: Path) -> None:
+    settings = backup_module._default_settings()
+    assert settings.data_path == Path(".wait-local-agent/state.db")
+
+    store = Store(tmp_path / "missing.db")
+    store.path.unlink()
+    assert backup_module._store_bytes(store)
 
 
 def test_encrypted_backup_rejects_uninitialized_vault_and_invalid_keys(
@@ -132,6 +214,27 @@ def test_encrypted_backup_rejects_uninitialized_vault_and_invalid_keys(
         backup_state(
             Store(secure_settings.data_path),
             tmp_path / "state-invalid.db.enc",
+            encrypt=True,
+            settings=secure_settings,
+        )
+
+
+def test_encrypted_backup_rejects_non_fernet_backend(settings, tmp_path: Path) -> None:
+    with pytest.raises(BackupEncryptionError, match="WAIT_SECRETS_BACKEND=fernet"):
+        backup_state(Store(settings.data_path), tmp_path / "backup.enc", encrypt=True, settings=settings)
+
+
+def test_encrypted_backup_rejects_unreadable_vault(settings, tmp_path: Path) -> None:
+    secure_settings = settings.__class__(
+        **{**settings.__dict__, "secrets_backend": "fernet", "vault_path": tmp_path / "vault"}
+    )
+    vault = SecretVault.initialize(secure_settings.vault_path)
+    vault.secrets_path.write_bytes(b"corrupt vault payload")
+
+    with pytest.raises(BackupEncryptionError, match="initialized local secret vault"):
+        backup_state(
+            Store(secure_settings.data_path),
+            tmp_path / "backup.enc",
             encrypt=True,
             settings=secure_settings,
         )
