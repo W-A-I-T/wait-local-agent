@@ -9,7 +9,9 @@ from wait_local_agent.lp_client import (
     LaunchPassportClient,
     LaunchPassportForbidden,
     LaunchPassportPayloadTooLarge,
+    LaunchPassportRequestError,
     LaunchPassportUnauthorized,
+    validate_launch_passport_base_url,
 )
 
 
@@ -139,3 +141,98 @@ def test_large_bundle_uses_collector_zip_flow_with_signed_storage_upload(monkeyp
         ("PUT", "storage.test", None),
         ("POST", "lp.test", "Bearer vault-token"),
     ]
+
+
+def test_client_validates_timeout_project_id_and_base_url() -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        LaunchPassportClient("https://lp.test", lambda: "token", timeout=0)
+    with pytest.raises(ValueError, match="path segment"):
+        LaunchPassportClient("https://lp.test", lambda: "token").list_scans("bad/id")
+    with pytest.raises(ValueError, match="http or https"):
+        validate_launch_passport_base_url("ftp://lp.test")
+    with pytest.raises(ValueError, match="invalid"):
+        validate_launch_passport_base_url("https://lp.test:bad")
+
+
+def test_status_handles_unreachable_and_list_payloads(monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.lp_client.time.sleep", lambda _seconds: None)
+
+    def failing(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline")
+
+    with _client(failing) as client:
+        result = client.status()
+    assert result["status"] == "unreachable"
+    assert "GET request failed" in result["error"]
+
+    with _client(lambda _request: httpx.Response(200, json=[{"id": "scan"}])) as client:
+        assert client.status() == {"status": "connected", "response": [{"id": "scan"}]}
+
+
+def test_get_and_post_map_request_and_payload_errors(monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.lp_client.time.sleep", lambda _seconds: None)
+
+    def failing(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    with _client(failing) as client:
+        with pytest.raises(LaunchPassportRequestError, match="GET request failed"):
+            client.list_scans("project-1")
+
+    with _client(lambda _request: httpx.Response(200, content=b"not-json")) as client:
+        with pytest.raises(LaunchPassportRequestError, match="invalid JSON"):
+            client.latest_report("project-1")
+
+    with _client(lambda _request: httpx.Response(200, json=[])) as client:
+        with pytest.raises(LaunchPassportRequestError, match="object payload"):
+            client.upload_bundle("project-1", {"metadata": {"sourceCode": False}})
+
+
+def test_zip_init_rejects_missing_details_and_upload_failures(monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.lp_client.LaunchPassportClient.JSON_LIMIT_BYTES", 1)
+
+    cases = [
+        ({"upload": {"signedUrl": "https://storage.test/u"}}, "artifact stub"),
+        ({"artifact": {}, "upload": {}}, "signed upload URL"),
+        (
+            {
+                "artifact": {"artifactId": "a"},
+                "upload": {"signedUrl": "https://storage.test/u", "method": "PATCH"},
+                "bucket": "b",
+                "path": "p",
+            },
+            "unsupported upload method",
+        ),
+    ]
+    for init_payload, message in cases:
+        def handler(request: httpx.Request, payload=init_payload) -> httpx.Response:
+            return httpx.Response(201, json=payload)
+
+        with _client(handler) as client:
+            with pytest.raises(LaunchPassportRequestError, match=message):
+                client.upload_bundle("project-1", {"files": ["x" * 20]})
+
+    def upload_error(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/zip/init"):
+            return httpx.Response(
+                201,
+                json={
+                    "artifactId": "a",
+                    "bucket": "b",
+                    "path": "p",
+                    "artifact": {"id": "a"},
+                    "upload": {"signedUrl": "https://storage.test/u"},
+                },
+            )
+        return httpx.Response(413)
+
+    with _client(upload_error) as client:
+        with pytest.raises(LaunchPassportPayloadTooLarge):
+            client.upload_bundle("project-1", {"files": ["x" * 20]})
+
+
+def test_upload_result_fallback_and_token_configuration() -> None:
+    result = LaunchPassportClient._upload_result({}, fallback={"id": "fallback", "status": "pending"})
+    assert result.as_dict() == {"artifact_id": "fallback", "status": "pending"}
+    with LaunchPassportClient("https://lp.test", lambda: None) as client:
+        assert client.status() == {"status": "unreachable", "error": "Launch Passport token is not configured"}
