@@ -714,11 +714,11 @@ class ProcessInventoryCollectorModule:
                 continue
 
             records.append(record)
-            if limit is not None and len(records) >= limit:
-                break
 
         records.sort(key=lambda item: item["pid"])
-        return _TypedCollection(records, tuple(source_outcomes))
+        if limit is None:
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
     @staticmethod
     def _read_proc_entry(entry, *, strict=False):
@@ -937,8 +937,6 @@ class ListeningPortsCollectorModule:
                     continue
                 source_outcomes.append(_source_outcome_for_exception(f"socket:{protocol}", exc))
                 continue
-            if limit is not None and len(records) >= limit:
-                break
 
         records.sort(key=lambda item: (item["protocol"], item["local_port"]))
         if limit is None:
@@ -1832,11 +1830,9 @@ class FirewallRulesCollectorModule:
                 records.extend(self._read_firewall_rule_file(path, config_path, strict=strict))
             except Exception as exc:
                 if not strict:
-                    continue
+                    raise
                 source_outcomes.append(_source_outcome_for_exception(f"firewall:{config_path}", exc))
                 continue
-            if limit is not None and len(records) >= limit:
-                break
 
         records.sort(key=lambda item: (item["source_file"], item["index"]))
         if limit is None:
@@ -2123,7 +2119,7 @@ class DatabaseInventoryCollectorModule:
                 record = reader(strict=strict)
             except Exception as exc:
                 if not strict:
-                    continue
+                    raise
                 source_outcomes.append(_source_outcome_for_exception(f"database:{source_id}", exc))
                 continue
             if record is not None:
@@ -2493,17 +2489,17 @@ class WifiInventoryCollectorModule:
             proc_records = self._wireless_rows(wireless_path, strict=strict)
         except Exception as exc:
             if not strict:
-                proc_records = {}
-            else:
-                source_outcomes.append(_source_outcome_for_exception("wifi:proc-net-wireless", exc))
-                proc_records = {}
+                raise
+            source_outcomes.append(_source_outcome_for_exception("wifi:proc-net-wireless", exc))
+            proc_records = {}
         interface_names = set(proc_records)
 
         try:
             interface_names.update(self._wireless_interfaces_from_sys(sys_net_root, strict=strict))
         except Exception as exc:
-            if strict:
-                source_outcomes.append(_source_outcome_for_exception("wifi:sys-class-net", exc))
+            if not strict:
+                raise
+            source_outcomes.append(_source_outcome_for_exception("wifi:sys-class-net", exc))
         if not interface_names:
             return _TypedCollection([], tuple(source_outcomes))
 
@@ -2513,7 +2509,7 @@ class WifiInventoryCollectorModule:
                 sys_record = self._read_sys_wifi_record(sys_net_root / interface_name, strict=strict)
             except Exception as exc:
                 if not strict:
-                    continue
+                    raise
                 source_outcomes.append(_source_outcome_for_exception(f"wifi:{interface_name}", exc))
                 continue
             record = {
