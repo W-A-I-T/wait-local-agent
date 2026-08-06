@@ -231,7 +231,7 @@ def test_pack_upload_receives_sanitized_bundle_only() -> None:
         "findings": [{"message": "sk_live_PACK_SECRET"}],
     }
 
-    def upload(artifact_id, bundle):  # type: ignore[no-untyped-def]
+    def upload(artifact_id, bundle):
         received.update(artifact_id=artifact_id, bundle=bundle)
         return {"status": "uploaded"}
 
