@@ -21,6 +21,7 @@ from wait_local_agent.models import (
     KnowledgeDocumentWrite,
     RestoreExercise,
     ScheduledJob,
+    SmartActionRun,
     Ticket,
     WorkflowRun,
     utc_now,
@@ -152,6 +153,22 @@ class Store:
                     message text not null,
                     approval_request_id integer,
                     client_id text,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists smart_action_runs (
+                    id integer primary key autoincrement,
+                    action_id text not null,
+                    actor text not null,
+                    status text not null,
+                    payload_digest text not null,
+                    output_json text not null,
+                    evidence_json text not null,
+                    approval_id integer,
                     created_at text not null,
                     updated_at text not null
                 )
@@ -856,6 +873,102 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def create_smart_action_run(
+        self,
+        action_id: str,
+        actor: str,
+        status: str,
+        payload_digest: str,
+        output: dict[str, object],
+        evidence: list[dict[str, object]],
+        *,
+        approval_id: int | None = None,
+    ) -> SmartActionRun:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into smart_action_runs
+                  (action_id, actor, status, payload_digest, output_json,
+                   evidence_json, approval_id, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    actor,
+                    status,
+                    payload_digest,
+                    _json_dumps(output),
+                    json.dumps(evidence, sort_keys=True),
+                    approval_id,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("smart action run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def set_smart_action_run_approval(self, run_id: int, approval_id: int) -> SmartActionRun:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update smart_action_runs set approval_id = ?, updated_at = ? where id = ?",
+                (approval_id, utc_now(), run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def complete_smart_action_run(
+        self,
+        run_id: int,
+        status: str,
+        output: dict[str, object],
+        evidence: list[dict[str, object]],
+    ) -> SmartActionRun:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update smart_action_runs
+                set status = ?, output_json = ?, evidence_json = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    status,
+                    _json_dumps(output),
+                    json.dumps(evidence, sort_keys=True),
+                    utc_now(),
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def get_smart_action_run(self, run_id: int) -> SmartActionRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from smart_action_runs where id = ?", (run_id,)
+            ).fetchone()
+        return SmartActionRun(**dict(row)) if row else None
+
+    def list_smart_action_runs(self) -> list[SmartActionRun]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from smart_action_runs order by id desc"
+            ).fetchall()
+        return [SmartActionRun(**dict(row)) for row in rows]
 
     def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
         with self._connect() as connection:

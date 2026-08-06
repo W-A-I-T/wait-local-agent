@@ -55,6 +55,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -101,6 +102,12 @@ class HaloDraftRequest(BaseModel):
 
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
+    client_id: str | None = None
+
+
+class SmartActionInvokeRequest(BaseModel):
+    payload: dict[str, object] = Field(default_factory=dict)
+    confirm: bool = False
     client_id: str | None = None
 
 
@@ -158,6 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
+    smart_action_service = SmartActionService(store, active_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -307,6 +315,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[dict[str, object]]:
         return [asdict(ticket) for ticket in store.list_tickets(client_id=client_id)]
 
+    @app.get("/smart-actions")
+    def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(manifest) for manifest in smart_action_service.list()]
+
+    @app.get("/smart-actions/runs")
+    def smart_action_runs(_: ViewerAccess) -> list[dict[str, object]]:
+        return [_smart_action_run_view(run) for run in smart_action_service.store.list_smart_action_runs()]
+
+    @app.get("/smart-actions/runs/{run_id}")
+    def smart_action_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
+        run = smart_action_service.store.get_smart_action_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="smart action run not found")
+        return _smart_action_run_view(run)
+
+    @app.get("/smart-actions/{action_id}")
+    def smart_action_detail(action_id: str, _: ViewerAccess) -> dict[str, object]:
+        try:
+            return asdict(smart_action_service.describe(action_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="smart action not found") from exc
+
+    @app.post("/smart-actions/{action_id}/invoke")
+    def invoke_smart_action(
+        action_id: str,
+        payload: SmartActionInvokeRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            result = smart_action_service.invoke(
+                action_id,
+                payload.payload,
+                context.approver_id or "api",
+                confirm=payload.confirm,
+                client_id=payload.client_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="smart action not found") from exc
+        return asdict(result)
+
     @app.get("/tickets/{ticket_id}/summary")
     def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
         try:
@@ -382,6 +430,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
+            if approval.action_type.startswith("smart_action:"):
+                smart_action_service.complete_approval(
+                    request_id,
+                    approver=context.approver_id,
+                )
+                approval = store.get_approval_request(request_id) or approval
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
@@ -1007,12 +1061,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+def _smart_action_run_view(run) -> dict[str, object]:
+    output = _safe_json_object(run.output_json)
+    evidence = _safe_json_list(run.evidence_json)
+    return {
+        "id": run.id,
+        "action_id": run.action_id,
+        "actor": run.actor,
+        "status": run.status,
+        "payload_digest": run.payload_digest,
+        "output": output,
+        "evidence": evidence,
+        "approval_id": run.approval_id,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+    }
+
+
 def _safe_json_object(payload_json: str) -> dict[str, object]:
     try:
         payload = json.loads(payload_json)
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _safe_json_list(payload_json: str) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return []
+    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
 
 
 def _scheduled_ticket_id(params: dict[str, object]) -> str:

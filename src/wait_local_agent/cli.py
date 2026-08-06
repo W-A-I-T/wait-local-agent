@@ -50,6 +50,7 @@ from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -72,6 +73,7 @@ founder_app = typer.Typer(help="Founder pack commands.")
 reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 collectors_app = typer.Typer(help="Collector module protocol commands.")
 collector_bundle_app = typer.Typer(help="Collector evidence bundle commands.")
+smart_actions_app = typer.Typer(help="Smart action commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -89,6 +91,7 @@ _PACK_CLI_NAMES: set[str] = set()
 app.add_typer(reports_app, name="reports")
 collectors_app.add_typer(collector_bundle_app, name="bundle")
 app.add_typer(collectors_app, name="collectors")
+app.add_typer(smart_actions_app, name="smart-actions")
 
 
 def _store() -> Store:
@@ -365,6 +368,10 @@ def update_approval_request(
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
+    if approval.action_type.startswith("smart_action:"):
+        settings = load_settings()
+        SmartActionService(store, settings).complete_approval(request_id, approver="cli")
+        approval = store.get_approval_request(request_id) or approval
     typer.echo(
         f"{approval.id} {approval.status} {approval.subject_id} {approval.action_type} "
         f"execution_status={approval.execution_status} "
@@ -590,6 +597,64 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
     for chunk in search_backend_from_settings(settings, store).search(query, limit=limit):
         typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
         typer.echo(chunk.excerpt)
+
+
+@smart_actions_app.command("list")
+def list_smart_actions() -> None:
+    settings = load_settings()
+    service = SmartActionService(Store(settings.data_path), settings)
+    for manifest in service.list():
+        typer.echo(
+            f"{manifest.action_id} kind={manifest.kind} "
+            f"approval_required={manifest.requires_approval} "
+            f"estimate={manifest.estimated_minutes_saved}"
+        )
+
+
+@smart_actions_app.command("describe")
+def describe_smart_action(action_id: str) -> None:
+    settings = load_settings()
+    service = SmartActionService(Store(settings.data_path), settings)
+    try:
+        manifest = service.describe(action_id)
+    except KeyError as exc:
+        raise typer.BadParameter("smart action not found") from exc
+    typer.echo(json.dumps(asdict(manifest), sort_keys=True, indent=2))
+
+
+@smart_actions_app.command("invoke")
+def invoke_smart_action(
+    action_id: str,
+    payload: Annotated[
+        str | None,
+        typer.Option("--payload", help="JSON object or path to a JSON object."),
+    ] = None,
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = SmartActionService(store, settings)
+    try:
+        result = service.invoke(
+            action_id,
+            _load_smart_action_payload(payload),
+            "cli",
+            confirm=confirm,
+        )
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+
+
+@smart_actions_app.command("runs")
+def list_smart_action_runs() -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    for run in store.list_smart_action_runs():
+        typer.echo(
+            f"{run.id} {run.action_id} {run.status} actor={run.actor} "
+            f"approval_id={run.approval_id}"
+        )
 
 
 @collectors_app.command("list")
@@ -884,6 +949,20 @@ def _load_json_config(path: Path | None) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise typer.BadParameter("collector config must be a JSON object")
+    return payload
+
+
+def _load_smart_action_payload(value: str | None) -> dict[str, object]:
+    if value is None:
+        return {}
+    candidate = Path(value)
+    raw = candidate.read_text(encoding="utf-8") if candidate.is_file() else value
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("payload must be a JSON object or JSON file") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("payload must be a JSON object")
     return payload
 
 

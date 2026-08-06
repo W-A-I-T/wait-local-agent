@@ -13,12 +13,14 @@ def retrieve_sources(
     doc_root: Path,
     store: Store | None = None,
     settings: Settings | None = None,
+    client_id: str | None = None,
 ) -> list[SourceReference]:
     if store is not None and store.knowledge_chunk_count() > 0:
         if settings is not None:
             chunks = search_backend_from_settings(settings, store).search(
                 f"{ticket.subject} {ticket.body}",
                 limit=3,
+                client_id=client_id,
             )
         else:
             chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
