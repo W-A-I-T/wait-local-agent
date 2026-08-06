@@ -230,6 +230,31 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists founder_config (
+                    id integer primary key check (id = 1),
+                    lp_base_url text not null,
+                    lp_project_id text not null,
+                    token_vault_ref text not null,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists founder_artifacts (
+                    artifact_id text primary key,
+                    project_id text not null,
+                    bundle_hash text not null,
+                    bundle_json text not null,
+                    created_at text not null,
+                    previewed_at text not null default '',
+                    uploaded_at text not null default ''
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists collector_sources (
                     id integer primary key autoincrement,
                     module_id text not null,
@@ -2001,6 +2026,85 @@ class Store:
                     report.sections_json(),
                     report.metadata_json(),
                 ),
+            )
+
+    def get_founder_config(self) -> dict[str, str] | None:
+        with self._connect() as connection:
+            row = connection.execute("select * from founder_config where id = 1").fetchone()
+        return {str(key): str(value) for key, value in dict(row).items()} if row else None
+
+    def save_founder_config(self, *, lp_base_url: str, lp_project_id: str, token_vault_ref: str) -> None:
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into founder_config
+                  (id, lp_base_url, lp_project_id, token_vault_ref, created_at, updated_at)
+                values (1, ?, ?, ?, ?, ?)
+                on conflict(id) do update set
+                  lp_base_url=excluded.lp_base_url,
+                  lp_project_id=excluded.lp_project_id,
+                  token_vault_ref=excluded.token_vault_ref,
+                  updated_at=excluded.updated_at
+                """,
+                (lp_base_url, lp_project_id, token_vault_ref, now, now),
+            )
+
+    def save_founder_artifact(
+        self,
+        *,
+        artifact_id: str,
+        project_id: str,
+        bundle_hash: str,
+        bundle: dict[str, object],
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into founder_artifacts
+                  (artifact_id, project_id, bundle_hash, bundle_json, created_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(artifact_id) do update set
+                  project_id=excluded.project_id,
+                  bundle_hash=excluded.bundle_hash,
+                  bundle_json=excluded.bundle_json,
+                  created_at=excluded.created_at,
+                  previewed_at='',
+                  uploaded_at=''
+                """,
+                (artifact_id, project_id, bundle_hash, _json_dumps(bundle), utc_now()),
+            )
+
+    def get_founder_artifact(self, artifact_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from founder_artifacts where artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "artifact_id": str(row["artifact_id"]),
+            "project_id": str(row["project_id"]),
+            "bundle_hash": str(row["bundle_hash"]),
+            "bundle": json.loads(str(row["bundle_json"])),
+            "created_at": str(row["created_at"]),
+            "previewed_at": str(row["previewed_at"]),
+            "uploaded_at": str(row["uploaded_at"]),
+        }
+
+    def mark_founder_artifact_previewed(self, artifact_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "update founder_artifacts set previewed_at = ? where artifact_id = ?",
+                (utc_now(), artifact_id),
+            )
+
+    def mark_founder_artifact_uploaded(self, artifact_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "update founder_artifacts set uploaded_at = ? where artifact_id = ?",
+                (utc_now(), artifact_id),
             )
 
     def get_report(self, report_id: str) -> GeneratedReport | None:
