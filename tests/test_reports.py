@@ -8,6 +8,10 @@ from typer.testing import CliRunner
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
+from wait_local_agent.reports.builders import (
+    build_appliance_hardening_report,
+    build_restore_evidence_report,
+)
 from wait_local_agent.reports.models import (
     GeneratedReport,
     ReportFormat,
@@ -107,6 +111,30 @@ def test_json_render_round_trips_sections(settings) -> None:
     assert payload["sections"][0]["findings"][0]["connector"] == "halopsa"
     assert validate_report_payload(payload) == []
     assert sections_from_json(report.sections_json()) == report.sections
+
+
+def test_hardening_and_restore_reports_are_not_run_without_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    hardening_sections, hardening_metadata = build_appliance_hardening_report(store)
+    restore_sections, restore_metadata = build_restore_evidence_report(store)
+
+    hardening = _service(settings).create_report(
+        ReportType.APPLIANCE_HARDENING,
+        "Hardening",
+        hardening_sections,
+        metadata=hardening_metadata,
+    )
+    restore = _service(settings).create_report(
+        ReportType.RESTORE_EVIDENCE,
+        "Restore",
+        restore_sections,
+        metadata=restore_metadata,
+    )
+
+    assert hardening.evidence_status == "not_run"
+    assert restore.evidence_status == "not_run"
+    assert json.loads(render_json(hardening))["evidence_status"] == "not_run"
+    assert "Evidence status: `not_run`" in render_markdown(restore)
 
 
 def test_markdown_render_contains_headers_and_recommendations() -> None:

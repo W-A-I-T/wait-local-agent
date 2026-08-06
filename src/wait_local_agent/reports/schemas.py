@@ -18,6 +18,7 @@ REPORT_JSON_SCHEMA: dict[str, Any] = {
         "client_id": {"type": "string"},
         "project_id": {"type": "string"},
         "metadata": {"type": "object"},
+        "evidence_status": {"type": "string", "enum": ["not_run", "no_evidence", "partial", "completed"]},
         "sections": {
             "type": "array",
             "items": {
@@ -46,6 +47,9 @@ def validate_report_payload(payload: dict[str, Any]) -> list[str]:
     report_type = payload.get("report_type")
     if isinstance(report_type, str) and report_type not in {item.value for item in ReportType}:
         problems.append(f"report_type {report_type} is not a known report type")
+    evidence_status = payload.get("evidence_status")
+    if evidence_status is not None and evidence_status not in {"not_run", "no_evidence", "partial", "completed"}:
+        problems.append(f"evidence_status {evidence_status} is not a known evidence status")
     sections = payload.get("sections")
     if not isinstance(sections, list):
         problems.append("sections must be a list")

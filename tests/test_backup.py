@@ -6,7 +6,13 @@ import pytest
 from cryptography.fernet import Fernet
 from typer.testing import CliRunner
 
-from wait_local_agent.backup import BACKUP_KEY_SECRET_NAME, BackupEncryptionError, backup_state, restore_state
+from wait_local_agent.backup import (
+    BACKUP_KEY_SECRET_NAME,
+    BackupEncryptionError,
+    backup_state,
+    restore_state,
+    run_restore_exercise,
+)
 from wait_local_agent.cli import app
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
@@ -152,3 +158,32 @@ def test_encrypted_restore_rejects_invalid_ciphertext(settings, tmp_path: Path) 
             encrypted=True,
             settings=secure_settings,
         )
+
+
+def test_restore_exercise_uses_scratch_and_preserves_live_rows(settings, tmp_path: Path) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    backup_path = tmp_path / "exercise.db"
+    backup_state(store, backup_path)
+    before_ids = [ticket.id for ticket in store.list_tickets()]
+
+    result = run_restore_exercise(backup_path, store=store, settings=settings)
+
+    assert result.status == "passed"
+    assert result.validation["integrity_check"] == "ok"
+    assert result.validation["verified_tables"]
+    assert result.evidence["scratch_removed"] is True
+    assert [ticket.id for ticket in store.list_tickets()] == before_ids
+    assert store.list_restore_exercises()[0].status == "passed"
+
+
+def test_restore_exercise_records_failure_and_cleans_scratch(settings, tmp_path: Path) -> None:
+    store = Store(settings.data_path)
+    broken_backup = tmp_path / "broken.db"
+    broken_backup.write_bytes(b"not sqlite")
+
+    result = run_restore_exercise(broken_backup, store=store, settings=settings)
+
+    assert result.status == "failed"
+    assert result.evidence["scratch_removed"] is True
+    assert "error_detail" in result.evidence

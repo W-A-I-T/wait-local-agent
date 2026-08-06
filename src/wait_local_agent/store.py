@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
     ApprovalRequest,
@@ -28,6 +28,11 @@ from wait_local_agent.models import (
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
+    from wait_local_agent.reports.hardening_checks import (
+        CheckResult,
+        HardeningCheckResultRecord,
+        HardeningRunRecord,
+    )
     from wait_local_agent.reports.models import GeneratedReport
 
 MAX_SEARCH_LIMIT = 25
@@ -228,6 +233,7 @@ class Store:
                 )
                 """
             )
+            self._ensure_column(connection, "reports", "evidence_status", "text not null default 'not_run'")
             connection.execute(
                 """
                 create table if not exists collector_sources (
@@ -339,6 +345,33 @@ class Store:
                     started_at text not null,
                     completed_at text not null,
                     client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists hardening_runs (
+                    id integer primary key autoincrement,
+                    status text not null,
+                    expected_check_count integer not null,
+                    started_at text not null,
+                    completed_at text not null default ''
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists hardening_check_results (
+                    id integer primary key autoincrement,
+                    run_id integer not null references hardening_runs(id) on delete cascade,
+                    check_id text not null,
+                    title text not null,
+                    scope text not null,
+                    severity text not null,
+                    status text not null,
+                    evidence_json text not null,
+                    remediation_hint text,
+                    unique(run_id, check_id)
                 )
                 """
             )
@@ -1964,6 +1997,135 @@ class Store:
                 ).fetchall()
         return [RestoreExercise(**dict(row)) for row in rows]
 
+    def create_hardening_run(self, *, expected_check_count: int, started_at: str) -> HardeningRunRecord:
+        from wait_local_agent.reports.hardening_checks import HardeningRunRecord
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into hardening_runs
+                  (status, expected_check_count, started_at, completed_at)
+                values ('running', ?, ?, '')
+                """,
+                (expected_check_count, started_at),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("hardening run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        return HardeningRunRecord(run_id, "running", started_at, "", expected_check_count, 0)
+
+    def add_hardening_check_result(
+        self,
+        *,
+        run_id: int,
+        check_id: str,
+        title: str,
+        scope: str,
+        severity: str,
+        result: CheckResult,
+    ) -> HardeningCheckResultRecord:
+        from wait_local_agent.reports.hardening_checks import HardeningCheckResultRecord
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into hardening_check_results
+                  (run_id, check_id, title, scope, severity, status, evidence_json, remediation_hint)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(run_id, check_id) do update set
+                  title=excluded.title,
+                  scope=excluded.scope,
+                  severity=excluded.severity,
+                  status=excluded.status,
+                  evidence_json=excluded.evidence_json,
+                  remediation_hint=excluded.remediation_hint
+                """,
+                (
+                    run_id,
+                    check_id,
+                    title,
+                    scope,
+                    severity,
+                    result.status,
+                    _json_dumps(result.evidence),
+                    result.remediation_hint,
+                ),
+            )
+            result_id = int(cursor.lastrowid or 0)
+        return HardeningCheckResultRecord(
+            result_id,
+            run_id,
+            check_id,
+            title,
+            scope,
+            severity,
+            result.status,
+            result.evidence,
+            result.remediation_hint,
+        )
+
+    def list_hardening_check_results(self, run_id: int) -> list[HardeningCheckResultRecord]:
+        from wait_local_agent.reports.hardening_checks import HardeningCheckResultRecord
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from hardening_check_results where run_id = ? order by id",
+                (run_id,),
+            ).fetchall()
+        return [
+            HardeningCheckResultRecord(
+                int(row["id"]),
+                int(row["run_id"]),
+                str(row["check_id"]),
+                str(row["title"]),
+                str(row["scope"]),
+                str(row["severity"]),
+                cast(Literal["passed", "failed", "not_applicable", "error"], str(row["status"])),
+                json.loads(str(row["evidence_json"])),
+                str(row["remediation_hint"]) if row["remediation_hint"] is not None else None,
+            )
+            for row in rows
+        ]
+
+    def complete_hardening_run(
+        self,
+        run_id: int,
+        status: Literal["running", "completed", "partial"],
+        completed_at: str,
+    ) -> HardeningRunRecord:
+        with self._connect() as connection:
+            connection.execute(
+                "update hardening_runs set status = ?, completed_at = ? where id = ?",
+                (status, completed_at, run_id),
+            )
+        run = self.get_hardening_run(run_id)
+        if run is None:
+            raise RuntimeError("hardening run was not persisted")
+        return run
+
+    def get_hardening_run(self, run_id: int) -> HardeningRunRecord | None:
+        from wait_local_agent.reports.hardening_checks import HardeningRunRecord
+
+        with self._connect() as connection:
+            row = connection.execute("select * from hardening_runs where id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        results = self.list_hardening_check_results(run_id)
+        return HardeningRunRecord(
+            int(row["id"]),
+            cast(Literal["running", "completed", "partial"], str(row["status"])),
+            str(row["started_at"]),
+            str(row["completed_at"]),
+            int(row["expected_check_count"]),
+            len(results),
+            results,
+        )
+
+    def list_hardening_runs(self) -> list[HardeningRunRecord]:
+        with self._connect() as connection:
+            ids = [int(row["id"]) for row in connection.execute("select id from hardening_runs order by id desc")]
+        return [run for run_id in ids if (run := self.get_hardening_run(run_id)) is not None]
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None
@@ -1978,8 +2140,8 @@ class Store:
                 """
                 insert into reports
                   (id, report_type, title, created_at, created_by,
-                   client_id, project_id, sections_json, metadata_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   client_id, project_id, sections_json, metadata_json, evidence_status)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(id) do update set
                   report_type=excluded.report_type,
                   title=excluded.title,
@@ -1988,7 +2150,8 @@ class Store:
                   client_id=excluded.client_id,
                   project_id=excluded.project_id,
                   sections_json=excluded.sections_json,
-                  metadata_json=excluded.metadata_json
+                  metadata_json=excluded.metadata_json,
+                  evidence_status=excluded.evidence_status
                 """,
                 (
                     report.id,
@@ -2000,6 +2163,7 @@ class Store:
                     report.project_id,
                     report.sections_json(),
                     report.metadata_json(),
+                    report.evidence_status,
                 ),
             )
 
@@ -2029,7 +2193,7 @@ class Store:
 
 
 def _report_from_row(row: sqlite3.Row) -> GeneratedReport:
-    from wait_local_agent.reports.models import GeneratedReport, ReportType, sections_from_json
+    from wait_local_agent.reports.models import EvidenceStatus, GeneratedReport, ReportType, sections_from_json
 
     return GeneratedReport(
         id=str(row["id"]),
@@ -2041,6 +2205,10 @@ def _report_from_row(row: sqlite3.Row) -> GeneratedReport:
         project_id=str(row["project_id"]),
         sections=sections_from_json(str(row["sections_json"])),
         metadata=json.loads(str(row["metadata_json"])),
+        evidence_status=cast(
+            EvidenceStatus,
+            str(row["evidence_status"]),
+        ),
     )
 
 

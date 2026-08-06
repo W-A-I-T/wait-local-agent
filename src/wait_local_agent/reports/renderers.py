@@ -60,6 +60,7 @@ def render_markdown(report: GeneratedReport) -> str:
         "",
         f"- Report ID: `{payload['id']}`",
         f"- Report type: `{payload['report_type']}`",
+        f"- Evidence status: `{payload['evidence_status']}`",
         f"- Created at: {payload['created_at']}",
     ]
     if payload["created_by"]:
