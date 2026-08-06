@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -24,6 +25,12 @@ SENSITIVE_KEY_PARTS = (
 
 REDACTED = "[redacted]"
 
+_SENSITIVE_TEXT_PATTERN = re.compile(
+    r"(?i)(\b(?:secret|token|api[_-]?key|password|apikey|auth[_-]?token|"
+    r"bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token|"
+    r"credential|private[_-]?key)\b\s*[:=]\s*)([^\s,;]+)"
+)
+
 
 def redact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     redacted: dict[str, Any] = {}
@@ -41,6 +48,12 @@ def redact_value(value: Any) -> Any:
     if isinstance(value, list):
         return [redact_value(item) for item in value]
     return value
+
+
+def redact_text(value: str) -> str:
+    """Redact secret-looking key/value pairs in human-readable text."""
+
+    return _SENSITIVE_TEXT_PATTERN.sub(r"\1" + REDACTED, value)
 
 
 def report_as_dict(report: GeneratedReport) -> dict[str, Any]:

@@ -27,6 +27,10 @@ from wait_local_agent.models import (
     utc_now,
 )
 
+# Opaque capability used only by SmartActionService.  A boolean flag would make
+# it too easy for an unrelated caller to reach the smart-action state machine.
+SMART_ACTION_APPROVAL_CAPABILITY = object()
+
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
     from wait_local_agent.reports.models import GeneratedReport
@@ -438,6 +442,7 @@ class Store:
         return self.get_ticket(ticket_id, client_id)
 
     def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
+        safe_comment = _redact_text(comment)
         ticket = self.get_ticket(ticket_id)
         with self._connect() as connection:
             connection.execute(
@@ -449,9 +454,9 @@ class Store:
                   comment=excluded.comment,
                   updated_at=excluded.updated_at
                 """,
-                (ticket_id, status, comment, utc_now()),
+                (ticket_id, status, safe_comment, utc_now()),
             )
-        detail = status if not comment else f"{status}: {comment}"
+        detail = status if not safe_comment else f"{status}: {safe_comment}"
         self.add_audit_event(
             "approval.updated",
             ticket_id,
@@ -471,7 +476,7 @@ class Store:
             row = connection.execute(
                 "select comment from approvals where ticket_id = ?", (ticket_id,)
             ).fetchone()
-        return str(row["comment"]) if row else ""
+        return _redact_text(str(row["comment"])) if row else ""
 
     def create_approval_request(
         self,
@@ -534,6 +539,7 @@ class Store:
         *,
         approver_id: str | None = None,
         allow_completed: bool = False,
+        _smart_action_capability: object | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         with self._connect() as connection:
@@ -543,6 +549,9 @@ class Store:
             if row is None:
                 raise KeyError(request_id)
             current_status = str(row["status"])
+            is_smart_action = str(row["action_type"]).startswith("smart_action:")
+            if is_smart_action and _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
+                raise PermissionError("smart-action approvals must be updated through SmartActionService")
             if status not in {"pending", "approved", "rejected"}:
                 raise ValueError("approval status must be pending, approved, or rejected")
             if current_status != "pending" and not allow_completed:
@@ -553,7 +562,7 @@ class Store:
                 set status = ?, comment = ?, updated_at = ?, approver_id = coalesce(?, approver_id)
                 where id = ?
                 """,
-                (status, comment, now, approver_id, request_id),
+                (status, _redact_text(comment), now, approver_id, request_id),
             )
             workflow_status = _workflow_status_for_approval(status)
             connection.execute(
@@ -577,8 +586,8 @@ class Store:
                 "approval_request.updated",
                 str(row["subject_id"]),
                 status,
-                comment or f"{row['action_type']} {status}",
-                str(row["payload_json"]),
+                _redact_text(comment or f"{row['action_type']} {status}"),
+                _redact_json_text(str(row["payload_json"])),
                 str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
@@ -605,11 +614,11 @@ class Store:
                 set payload_json = ?, comment = ?, updated_at = ?
                 where id = ?
                 """,
-                (payload_json, comment, now, request_id),
+                (payload_json, _redact_text(comment), now, request_id),
             )
             subject_id = str(row["subject_id"])
             action_type = str(row["action_type"])
-            message = comment or f"{action_type} payload edited"
+            message = _redact_text(comment or f"{action_type} payload edited")
             self._add_audit_event(
                 connection,
                 "approval_request.edited",
@@ -686,7 +695,11 @@ class Store:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
             ).fetchone()
-        return ApprovalRequest(**dict(row)) if row else None
+        if row is None:
+            return None
+        payload = dict(row)
+        payload["comment"] = _redact_text(str(payload["comment"]))
+        return ApprovalRequest(**payload)
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
         normalized_client_id = _normalize_client_id(client_id)
@@ -700,7 +713,12 @@ class Store:
                     "select * from approval_requests where client_id = ? order by id desc",
                     (normalized_client_id,),
                 ).fetchall()
-        return [ApprovalRequest(**dict(row)) for row in rows]
+        requests: list[ApprovalRequest] = []
+        for row in rows:
+            payload = dict(row)
+            payload["comment"] = _redact_text(str(payload["comment"]))
+            requests.append(ApprovalRequest(**payload))
+        return requests
 
     def add_audit_event(
         self,
@@ -1056,17 +1074,41 @@ class Store:
         status: str,
         output: dict[str, object],
         evidence: list[dict[str, object]],
+        *,
+        approval_id: int | None = None,
+        approver_id: str | None = None,
+        _smart_action_capability: object | None = None,
     ) -> SmartActionRun:
         with self._connect() as connection:
             current = connection.execute(
-                "select status from smart_action_runs where id = ?", (run_id,)
+                "select * from smart_action_runs where id = ?", (run_id,)
             ).fetchone()
             if current is None:
                 raise KeyError(run_id)
+            if _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
+                raise PermissionError("smart-action runs must be completed through SmartActionService")
             if str(current["status"]) != "pending_approval":
                 raise PermissionError("smart action run has already completed")
             if status not in {"success", "provider_not_configured", "failed", "rejected"}:
                 raise ValueError("invalid smart action run completion status")
+            linked_approval_id = current["approval_id"]
+            if (
+                approval_id is None
+                or linked_approval_id is None
+                or int(linked_approval_id) != approval_id
+                or not approver_id
+            ):
+                raise PermissionError("smart action completion requires its linked approval and approver")
+            approval = connection.execute(
+                "select action_type, status, approver_id from approval_requests where id = ?",
+                (approval_id,),
+            ).fetchone()
+            if approval is None or not str(approval["action_type"]).startswith("smart_action:"):
+                raise PermissionError("smart action completion requires a linked smart-action approval")
+            if str(approval["status"]) not in {"approved", "rejected"}:
+                raise PermissionError("smart action completion requires a completed approval")
+            if str(approval["approver_id"] or "") != approver_id:
+                raise PermissionError("smart action completion requires the approval approver")
             cursor = connection.execute(
                 """
                 update smart_action_runs
@@ -2347,6 +2389,12 @@ def _redact_json_text(payload_json: str) -> str:
     except json.JSONDecodeError:
         return payload_json
     return _json_dumps_value(payload)
+
+
+def _redact_text(value: str) -> str:
+    from wait_local_agent.reports.renderers import redact_text
+
+    return redact_text(value)
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

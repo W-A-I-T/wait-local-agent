@@ -373,6 +373,25 @@ def test_approval_show_and_edit_field_commands(monkeypatch, tmp_path) -> None:
     assert "only be edited while pending" in rejected.output
 
 
+def test_legacy_workflow_cli_approval_allows_terminal_state_update(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    store = Store(data_path)
+    approval = store.create_approval_request("TCK-WORKFLOW", "workflow.assign", {})
+    store.create_workflow_run(
+        "documentation-assisted-response",
+        "TCK-WORKFLOW",
+        "pending_approval",
+        "waiting",
+        approval.id,
+    )
+
+    result = CliRunner().invoke(app, ["approvals", "update", str(approval.id), "approved"])
+
+    assert result.exit_code == 0
+    assert "approved" in result.output
+
+
 def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     store = Store(tmp_path / "state.db")

@@ -134,9 +134,15 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert pending.status == "pending_approval"
     assert pending.approval_id is not None
     assert pending.run_id is not None
-    approval = store.update_approval_request(pending.approval_id, "approved", "reviewed")
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        "reviewed",
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
     completed = service.complete_approval(
-        approval.id or 0,
+        pending.approval_id,
         approver="approver",
         approver_role=Role.TECHNICIAN,
     )
@@ -159,7 +165,17 @@ def test_approval_completion_requires_authorized_different_approver(settings) ->
         "requester",
     )
     assert pending.approval_id is not None
-    store.update_approval_request(pending.approval_id, "approved")
+    with pytest.raises(PermissionError, match="SmartActionService"):
+        store.update_approval_request(pending.approval_id, "approved")
+    with pytest.raises(PermissionError, match="SmartActionService"):
+        store.complete_smart_action_run(
+            pending.run_id or 0,
+            "success",
+            {},
+            [],
+            approval_id=pending.approval_id,
+            approver_id="attacker",
+        )
 
     with pytest.raises(PermissionError, match="approver is required"):
         service.complete_approval(pending.approval_id, approver=None, approver_role=Role.TECHNICIAN)
@@ -186,13 +202,18 @@ def test_unknown_approved_action_is_failed_and_audited(settings) -> None:
         client_id="acme",
     )
     assert pending.approval_id is not None and pending.run_id is not None
-    store.update_approval_request(pending.approval_id, "approved")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update approval_requests set action_type = ? where id = ?",
             ("smart_action:missing-action", pending.approval_id),
         )
 
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
     result = service.complete_approval(
         pending.approval_id,
         approver="approver",

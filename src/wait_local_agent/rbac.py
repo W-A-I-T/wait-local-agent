@@ -24,6 +24,7 @@ class Role(IntEnum):
 class AuthContext:
     role: Role
     presented_token: str | None
+    client_id: str | None = None
 
     @property
     def approver_id(self) -> str | None:
@@ -42,8 +43,9 @@ def tokens_configured(settings: Settings) -> bool:
 
 
 def resolve_auth_context(settings: Settings, authorization: str | None) -> AuthContext:
+    client_id = settings.client_id.strip() or None
     if not tokens_configured(settings) or settings.demo_mode:
-        return AuthContext(role=Role.ADMIN, presented_token=None)
+        return AuthContext(role=Role.ADMIN, presented_token=None, client_id=client_id)
 
     token = _extract_bearer_token(authorization)
     for candidate, role in (
@@ -53,7 +55,7 @@ def resolve_auth_context(settings: Settings, authorization: str | None) -> AuthC
         (settings.viewer_token, Role.VIEWER),
     ):
         if candidate and compare_digest(token, candidate):
-            return AuthContext(role=role, presented_token=token)
+            return AuthContext(role=role, presented_token=token, client_id=client_id)
     raise _unauthorized("invalid bearer token")
 
 

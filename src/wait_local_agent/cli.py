@@ -48,7 +48,7 @@ from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
@@ -323,7 +323,7 @@ def list_approval_requests() -> None:
     for approval in _store().list_approval_requests():
         typer.echo(
             f"{approval.id} {approval.status} {approval.subject_id} "
-            f"{approval.action_type} {approval.comment}"
+            f"{approval.action_type} {redact_text(approval.comment)}"
         )
 
 
@@ -384,7 +384,12 @@ def update_approval_request(
         except (PermissionError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
     else:
-        approval = store.update_approval_request(request_id, status, comment)
+        approval = store.update_approval_request(
+            request_id,
+            status,
+            comment,
+            allow_completed=store.get_workflow_run_for_approval(request_id) is not None,
+        )
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
@@ -655,13 +660,16 @@ def invoke_smart_action(
     store = Store(settings.data_path)
     service = SmartActionService(store, settings)
     context = _cli_access(settings, token, Role.TECHNICIAN)
+    if context.role < Role.ADMIN and not context.client_id:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
     try:
         result = service.invoke(
             action_id,
             _load_smart_action_payload(payload),
             context.approver_id or "cli",
             confirm=confirm,
-            client_id=client_id,
+            client_id=scoped_client_id,
         )
     except (KeyError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -960,10 +968,21 @@ def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
 
 
 def _approval_cli_view(approval) -> dict[str, object]:
-    payload = json.loads(approval.payload_json)
+    try:
+        payload = json.loads(approval.payload_json)
+    except json.JSONDecodeError:
+        payload = {}
+    try:
+        output = json.loads(approval.execution_result_json)
+    except json.JSONDecodeError:
+        output = {}
     return {
         **asdict(approval),
+        "payload_json": json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":")),
+        "execution_result_json": json.dumps(redact_value(output), sort_keys=True, separators=(",", ":")),
+        "comment": redact_text(approval.comment),
         "payload": redact_value(payload) if isinstance(payload, dict) else {},
+        "output": redact_value(output) if isinstance(output, dict) else {},
     }
 
 

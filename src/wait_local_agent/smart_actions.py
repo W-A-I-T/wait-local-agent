@@ -18,7 +18,7 @@ from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.services import classify_ticket
-from wait_local_agent.store import Store
+from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
 ActionStatus = Literal[
     "success",
@@ -476,6 +476,9 @@ class SmartActionService:
                 "rejected",
                 _json_object(run.output_json),
                 _json_list(run.evidence_json),
+                approval_id=approval_id,
+                approver_id=approver,
+                _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
             )
             self.store.add_audit_event(
                 "smart_action.completed",
@@ -501,9 +504,7 @@ class SmartActionService:
             )
         if run.status != "pending_approval":
             return ActionResult(
-                status=run.status
-                if run.status in {"success", "failed", "provider_not_configured", "rejected"}
-                else "failed",  # type: ignore[arg-type]
+                status=_stored_action_status(run.status),
                 output=_json_object(run.output_json),
                 evidence=_json_list(run.evidence_json),
                 run_id=run.id,
@@ -527,7 +528,15 @@ class SmartActionService:
                 error_detail=result.error_detail,
             )
         result = _redact_result(result)
-        self.store.complete_smart_action_run(run.id, result.status, result.output, result.evidence)
+        self.store.complete_smart_action_run(
+            run.id,
+            result.status,
+            result.output,
+            result.evidence,
+            approval_id=approval_id,
+            approver_id=approver,
+            _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+        )
         self.store.add_audit_event(
             "smart_action.completed",
             str(run.id),
@@ -568,6 +577,7 @@ class SmartActionService:
                 status,
                 comment,
                 approver_id=approver,
+                _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
             )
             self.complete_approval(
                 approval_id,
@@ -696,6 +706,18 @@ def _provider_not_configured(detail: str = "") -> ActionResult:
 
 def _failed(detail: str) -> ActionResult:
     return ActionResult(status="failed", error_detail=detail)
+
+
+def _stored_action_status(status: str) -> ActionStatus:
+    if status == "success":
+        return "success"
+    if status == "failed":
+        return "failed"
+    if status == "provider_not_configured":
+        return "provider_not_configured"
+    if status == "rejected":
+        return "rejected"
+    return "failed"
 
 
 def _redact_result(result: ActionResult) -> ActionResult:
