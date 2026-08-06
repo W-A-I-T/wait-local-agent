@@ -6,9 +6,11 @@
 
 **Local-first MSP and founder automation appliance for tickets, runbooks, approvals, connector drafts, scheduled workflows, and auditable local operations.**
 
+See the [capability roadmap](ROADMAP.md) for the honest status of local-first MSP capabilities and the rationale for deferred work.
+
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 
-> Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector probing requires `WAIT_ALLOW_HTTP_PROBING=true`, and HaloPSA writes still require an approved draft.
+> Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector connection checks must be explicitly enabled, and HaloPSA writes still require an approved draft.
 
 ## What Ships In 1.0.0
 
@@ -150,7 +152,6 @@ WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
 WAIT_SECRETS_BACKEND=env
 WAIT_VAULT_PATH=.wait-local-agent/vault
 WAIT_ALLOW_WRITE_ACTIONS=false
-WAIT_ALLOW_HTTP_PROBING=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
 WAIT_VECTOR_BACKEND=sqlite
@@ -202,7 +203,6 @@ WAIT_HALOPSA_CLIENT_ID=
 WAIT_HALOPSA_CLIENT_SECRET=
 WAIT_HALOPSA_TENANT=
 WAIT_HALOPSA_TOKEN_URL=
-WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 Credential validation:
@@ -236,7 +236,7 @@ wait-local-agent connectors execute-halopsa 1
 
 Live HaloPSA writes require:
 
-- `WAIT_ALLOW_HTTP_PROBING=true`
+- outbound connector connection checks explicitly enabled
 - `WAIT_ALLOW_WRITE_ACTIONS=true`
 - configured credentials
 - a pending draft
@@ -249,7 +249,6 @@ Required settings:
 ```text
 WAIT_HUDU_BASE_URL=
 WAIT_HUDU_API_KEY=
-WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 Validation:
