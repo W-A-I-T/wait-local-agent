@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from wait_local_agent.backup import (
     BACKUP_KEY_SECRET_NAME,
+    RESTORE_EXERCISE_SCRATCH_PREFIX,
     BackupEncryptionError,
     backup_state,
     restore_state,
@@ -175,6 +176,20 @@ def test_restore_exercise_uses_scratch_and_preserves_live_rows(settings, tmp_pat
     assert result.evidence["scratch_removed"] is True
     assert [ticket.id for ticket in store.list_tickets()] == before_ids
     assert store.list_restore_exercises()[0].status == "passed"
+
+
+def test_restore_exercise_removes_stale_scratch_dirs(settings, tmp_path: Path) -> None:
+    store = Store(settings.data_path)
+    stale_dir = settings.data_path.parent / f"{RESTORE_EXERCISE_SCRATCH_PREFIX}stale"
+    stale_dir.mkdir()
+    (stale_dir / "leftover").write_text("leftover", encoding="utf-8")
+    backup_path = tmp_path / "exercise.db"
+    backup_state(store, backup_path)
+
+    result = run_restore_exercise(backup_path, store=store, settings=settings)
+
+    assert result.status == "passed"
+    assert not stale_dir.exists()
 
 
 def test_restore_exercise_records_failure_and_cleans_scratch(settings, tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 BACKUP_KEY_SECRET_NAME = "WAIT_BACKUP_FERNET_KEY"  # nosec B105: secret name constant, not a secret value
+RESTORE_EXERCISE_SCRATCH_PREFIX = "restore-exercise-scratch-"
 
 
 class BackupEncryptionError(RuntimeError):
@@ -78,11 +79,14 @@ def run_restore_exercise(
 
     active_settings = settings or _default_settings()
     live_store = store or Store(active_settings.data_path)
+    _remove_stale_restore_exercise_scratch_dirs(live_store.path.parent)
     source = Path(backup_id)
     exercise_id = str(uuid4())
     started_at = time.monotonic()
     started_iso = _utc_now()
-    scratch_dir = Path(tempfile.mkdtemp(prefix="restore-exercise-", dir=live_store.path.parent))
+    scratch_dir = Path(
+        tempfile.mkdtemp(prefix=RESTORE_EXERCISE_SCRATCH_PREFIX, dir=live_store.path.parent)
+    )
     scratch_db = scratch_dir / "restored.db"
     validation: dict[str, object] = {"verified_tables": [], "row_counts": {}}
     evidence: dict[str, object] = {"scratch_path": str(scratch_dir), "backup_artifact_id": str(source)}
@@ -173,8 +177,14 @@ _CORE_RESTORE_COUNT_QUERIES = {
 
 
 def _live_core_row_counts(path: Path) -> dict[str, int]:
-    with sqlite3.connect(path) as connection:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
         return _core_row_counts(connection)
+
+
+def _remove_stale_restore_exercise_scratch_dirs(parent: Path) -> None:
+    for candidate in parent.glob(f"{RESTORE_EXERCISE_SCRATCH_PREFIX}*"):
+        if candidate.is_dir():
+            shutil.rmtree(candidate, ignore_errors=True)
 
 
 def _restored_core_row_counts(connection: sqlite3.Connection) -> tuple[dict[str, int], list[str]]:
