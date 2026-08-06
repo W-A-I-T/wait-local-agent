@@ -8,6 +8,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -58,8 +59,7 @@ class LaunchPassportClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         normalized = base_url.strip().rstrip("/")
-        if not normalized.startswith(("http://", "https://")):
-            raise ValueError("Launch Passport base URL must use http or https")
+        validate_launch_passport_base_url(normalized)
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.base_url = normalized
@@ -125,15 +125,16 @@ class LaunchPassportClient:
         )
         upload = init.get("upload")
         upload_url = upload.get("signedUrl") if isinstance(upload, dict) else None
-        bucket = init.get("bucket")
-        path = init.get("path")
         artifact_stub = init.get("artifact")
         if not isinstance(upload_url, str) or not upload_url:
             raise LaunchPassportRequestError("Launch Passport zip init did not return a signed upload URL")
-        if not isinstance(bucket, str) or not bucket or not isinstance(path, str) or not path:
-            raise LaunchPassportRequestError("Launch Passport zip init did not return storage details")
         if not isinstance(artifact_stub, dict):
             raise LaunchPassportRequestError("Launch Passport zip init did not return an artifact stub")
+        artifact_id = _artifact_id_from_payload(artifact_stub) or _string_payload_value(init, "artifactId")
+        bucket = init.get("storageBucket") or init.get("bucket") or artifact_stub.get("storageBucket")
+        path = init.get("storagePath") or init.get("path") or artifact_stub.get("storagePath")
+        if not artifact_id or not isinstance(bucket, str) or not bucket or not isinstance(path, str) or not path:
+            raise LaunchPassportRequestError("Launch Passport zip init did not return artifact and storage details")
 
         method = upload.get("method", "PUT") if isinstance(upload, dict) else "PUT"
         if not isinstance(method, str) or method.upper() not in {"PUT", "POST"}:
@@ -151,7 +152,17 @@ class LaunchPassportClient:
 
         complete = self._post_json(
             f"/api/collector/projects/{project_id}/artifacts/zip/complete",
-            json.dumps({"storageBucket": bucket, "storagePath": path, "sha256": digest}),
+            json.dumps(
+                {
+                    "artifactId": artifact_id,
+                    "storageBucket": bucket,
+                    "storagePath": path,
+                    "fileName": "collector-bundle.zip",
+                    "contentType": "application/zip",
+                    "byteSize": len(zipped),
+                    "sha256": digest,
+                }
+            ),
         )
         return self._upload_result(complete, fallback=artifact_stub)
 
@@ -259,3 +270,29 @@ class LaunchPassportClient:
         )
         status = payload.get("status") or artifact_payload.get("status") or fallback_payload.get("status") or "uploaded"
         return UploadResult(str(artifact_id), str(status), payload)
+
+
+def validate_launch_passport_base_url(base_url: str) -> None:
+    """Reject malformed or credential-bearing Launch Passport endpoints."""
+    try:
+        parsed = urlsplit(base_url)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("Launch Passport base URL is invalid") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("Launch Passport base URL must use http or https without embedded credentials")
+
+
+def _artifact_id_from_payload(payload: dict[str, Any]) -> str:
+    value = payload.get("artifactId") or payload.get("artifact_id") or payload.get("id")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _string_payload_value(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    return value.strip() if isinstance(value, str) else ""

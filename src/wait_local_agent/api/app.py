@@ -25,9 +25,11 @@ from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
     FounderPackUnavailableError,
+    FounderUploadConflictError,
     founder_not_configured_handler,
     founder_pack_unavailable_handler,
     founder_privacy_handler,
+    founder_upload_conflict_handler,
     launch_passport_error_handler,
 )
 from wait_local_agent.api.founder import (
@@ -201,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(FounderPackUnavailableError, founder_pack_unavailable_handler)
     app.add_exception_handler(FounderNotConfiguredError, founder_not_configured_handler)
     app.add_exception_handler(FounderPackContractError, _founder_contract_error_handler)
+    app.add_exception_handler(FounderUploadConflictError, founder_upload_conflict_handler)
     app.add_exception_handler(PrivacyViolation, founder_privacy_handler)
     app.add_exception_handler(LaunchPassportError, launch_passport_error_handler)
     app.add_exception_handler(LaunchPassportUnauthorized, launch_passport_error_handler)

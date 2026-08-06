@@ -128,8 +128,12 @@ def test_large_bundle_uses_collector_zip_flow_with_signed_storage_upload(monkeyp
     assert result.status == "uploaded"
     assert signed_zip is not None
     assert complete_body == {
+        "artifactId": "artifact-1",
         "storageBucket": "artifacts",
         "storagePath": "org/projects/project-1/artifacts/zip/artifact-1/collector-bundle.zip",
+        "fileName": "collector-bundle.zip",
+        "contentType": "application/zip",
+        "byteSize": len(signed_zip),
         "sha256": hashlib.sha256(signed_zip).hexdigest(),
     }
     assert calls == [

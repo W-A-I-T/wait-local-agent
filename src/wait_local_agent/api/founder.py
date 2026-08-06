@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
 from uuid import uuid4
@@ -19,6 +20,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportPayloadTooLarge,
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
+    validate_launch_passport_base_url,
 )
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.store import Store
@@ -31,6 +33,7 @@ FOUNDER_NOT_CONFIGURED = {
     "hint": "configure a Launch Passport base URL, project id, and vault token first",
 }
 OPERATION_CONFIRMED = True
+PREVIEW_MAX_AGE_SECONDS = 3600
 
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 
@@ -45,6 +48,10 @@ class FounderPackContractError(RuntimeError):
 
 class FounderNotConfiguredError(RuntimeError):
     """Raised when the optional Launch Passport integration has no safe config."""
+
+
+class FounderUploadConflictError(RuntimeError):
+    """Raised when an artifact is not eligible for the requested upload."""
 
 
 class FounderScanRequest(BaseModel):
@@ -87,8 +94,9 @@ def create_router() -> APIRouter:
         _: AdminAccess,
     ) -> dict[str, object]:
         pack = get_pack("founder")
+        store = cast(Store, request.app.state.store)
         if pack is not None:
-            bundle = json_object(invoke_founder(pack, "export_bundle", artifact_id), operation="export_bundle")
+            bundle = sanitized_pack_bundle(pack, artifact_id)
             preview = build_upload_preview(artifact_id, bundle)
         else:
             _settings, store, _config = require_open_config(request)
@@ -96,9 +104,7 @@ def create_router() -> APIRouter:
                 preview = open_founder_preview(store, artifact_id)
             except KeyError as exc:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found") from exc
-        previewed_artifacts(request).add(artifact_id)
-        if pack is None:
-            store.mark_founder_artifact_previewed(artifact_id)
+        store.mark_founder_artifact_previewed(artifact_id)
         return preview
 
     @router.post("/founder/upload/{artifact_id}")
@@ -109,16 +115,14 @@ def create_router() -> APIRouter:
         _: AdminAccess,
     ) -> dict[str, object]:
         pack = get_pack("founder")
+        store = cast(Store, request.app.state.store)
         if pack is None:
             settings, store, config = require_open_config(request)
         if not payload.confirm:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm must be true")
-        if artifact_id not in previewed_artifacts(request):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="upload preview required before upload",
-            )
         if pack is not None:
+            sanitized_pack_bundle(pack, artifact_id)
+            require_fresh_preview(store, artifact_id)
             return json_object(invoke_founder(pack, "upload", artifact_id), operation="upload")
         try:
             return open_founder_upload(settings, store, config, artifact_id)
@@ -150,6 +154,10 @@ def founder_pack_unavailable_handler(_: Request, __: Exception) -> JSONResponse:
 
 def founder_not_configured_handler(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=FOUNDER_NOT_CONFIGURED)
+
+
+def founder_upload_conflict_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"error": str(exc)})
 
 
 def founder_privacy_handler(_: Request, exc: Exception) -> JSONResponse:
@@ -229,8 +237,8 @@ def configure_founder(
     project_id: str,
     token: str,
 ) -> dict[str, object]:
-    if not base_url.strip().startswith(("http://", "https://")):
-        raise ValueError("base URL must use http or https")
+    normalized_base_url = base_url.strip().rstrip("/")
+    validate_launch_passport_base_url(normalized_base_url)
     if not project_id.strip() or "/" in project_id or "\\" in project_id:
         raise ValueError("project id must be a non-empty path segment")
     if not token.strip():
@@ -238,13 +246,13 @@ def configure_founder(
     token_ref = f"founder.lp.{uuid4().hex}"
     SecretVault.initialize(settings.vault_path).set(token_ref, token)
     store.save_founder_config(
-        lp_base_url=base_url.strip().rstrip("/"),
+        lp_base_url=normalized_base_url,
         lp_project_id=project_id.strip(),
         token_vault_ref=token_ref,
     )
     return {
         "status": "configured",
-        "lp_base_url": base_url.strip().rstrip("/"),
+        "lp_base_url": normalized_base_url,
         "lp_project_id": project_id.strip(),
         "token_stored_in_vault": OPERATION_CONFIRMED,
     }
@@ -272,7 +280,7 @@ def open_founder_scan(
         "bundle_hash": digest,
         "status": "preview_ready",
         "file_count": len(cast(list[object], bundle.get("files", []))),
-        "dependency_count": len(cast(list[object], bundle.get("dependencies", []))),
+        "dependency_count": _dependency_count(bundle),
         "env_key_count": len(cast(list[object], bundle.get("environment", {}).get("keys", [])))
         if isinstance(bundle.get("environment"), dict)
         else 0,
@@ -288,12 +296,12 @@ def open_founder_preview(store: Store, artifact_id: str) -> dict[str, object]:
         "artifact_id": artifact_id,
         "project_id": record["project_id"],
         "bundle_hash": record["bundle_hash"],
-        "schema": bundle.get("schema"),
+        "schemaVersion": bundle.get("schemaVersion"),
         "sourceCode": False,
         "file_count": len(cast(list[object], bundle.get("files", []))),
-        "dependency_count": len(cast(list[object], bundle.get("dependencies", []))),
+        "dependency_count": _dependency_count(bundle),
         "env_key_names": _open_env_keys(bundle),
-        "finding_count": len(cast(list[object], bundle.get("findings", []))),
+        "finding_count": _finding_count(bundle),
     }
 
 
@@ -306,6 +314,9 @@ def open_founder_upload(
     record = store.get_founder_artifact(artifact_id)
     if record is None:
         raise KeyError(artifact_id)
+    if record["project_id"] != config["lp_project_id"]:
+        raise FounderUploadConflictError("artifact does not belong to the configured Launch Passport project")
+    require_fresh_preview(store, artifact_id, record=record)
     bundle = sanitize_bundle(cast(dict[str, Any], record["bundle"]))
     if bundle_hash(bundle) != record["bundle_hash"]:
         raise PrivacyViolation("stored bundle hash does not match")
@@ -355,8 +366,13 @@ def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportCl
 
 def _open_env_keys(bundle: dict[str, Any]) -> list[str]:
     environment = bundle.get("environment")
-    if isinstance(environment, dict) and isinstance(environment.get("keys"), list):
-        return [str(key) for key in environment["keys"]]
+    if isinstance(environment, dict) and isinstance(environment.get("keys"), dict):
+        return sorted(
+            str(key)
+            for values in environment["keys"].values()
+            if isinstance(values, list)
+            for key in values
+        )
     return []
 
 
@@ -386,11 +402,20 @@ def json_value(value: object, *, operation: str) -> object:
 
 
 def build_upload_preview(artifact_id: str, bundle: dict[str, object]) -> dict[str, object]:
-    file_tree = ensure_list(bundle.get("file_tree"), key="file_tree")
+    file_tree = ensure_list(bundle.get("files", bundle.get("file_tree")), key="files")
     manifests = ensure_list(bundle.get("manifests"), key="manifests")
     routes = ensure_list(bundle.get("routes"), key="routes")
-    env_keys = ensure_list(bundle.get("env_keys"), key="env_keys")
-    findings = ensure_list(bundle.get("findings"), key="findings")
+    environment = bundle.get("environment")
+    if isinstance(environment, dict) and isinstance(environment.get("keys"), dict):
+        env_keys = [key for values in environment["keys"].values() if isinstance(values, list) for key in values]
+    else:
+        env_keys = ensure_list(bundle.get("env_keys"), key="env_keys")
+    raw_findings = bundle.get("findings")
+    findings = (
+        list(raw_findings.get("items", []))
+        if isinstance(raw_findings, dict) and isinstance(raw_findings.get("items", []), list)
+        else ensure_list(raw_findings, key="findings")
+    )
 
     env_key_names: list[str] = []
     for item in env_keys:
@@ -408,7 +433,7 @@ def build_upload_preview(artifact_id: str, bundle: dict[str, object]) -> dict[st
 
     return {
         "artifact_id": artifact_id,
-        "schema_version": bundle.get("schema_version"),
+        "schema_version": bundle.get("schemaVersion", bundle.get("schema_version")),
         "project_name": bundle.get("project_name"),
         "file_count": len(file_tree),
         "manifest_count": len(manifests),
@@ -418,12 +443,50 @@ def build_upload_preview(artifact_id: str, bundle: dict[str, object]) -> dict[st
     }
 
 
-def previewed_artifacts(request: Request) -> set[str]:
-    cached = getattr(request.app.state, "founder_previewed_artifacts", None)
-    if cached is None:
-        cached = set()
-        request.app.state.founder_previewed_artifacts = cached
-    return cached
+def sanitized_pack_bundle(pack: LoadedPack, artifact_id: str) -> dict[str, Any]:
+    raw_bundle = json_object(invoke_founder(pack, "export_bundle", artifact_id), operation="export_bundle")
+    return sanitize_bundle(raw_bundle)
+
+
+def require_fresh_preview(
+    store: Store,
+    artifact_id: str,
+    *,
+    record: dict[str, object] | None = None,
+) -> None:
+    previewed_at = (
+        str(record.get("previewed_at", ""))
+        if record is not None
+        else store.get_founder_artifact_previewed_at(artifact_id)
+    )
+    if not previewed_at:
+        raise FounderUploadConflictError("upload preview required before upload; run founder preview first")
+    try:
+        preview_time = datetime.fromisoformat(previewed_at)
+    except ValueError as exc:
+        raise FounderUploadConflictError("upload preview is stale; run founder preview again") from exc
+    age = (datetime.now(UTC) - preview_time).total_seconds()
+    if age < 0 or age > PREVIEW_MAX_AGE_SECONDS:
+        raise FounderUploadConflictError("upload preview is stale; run founder preview again")
+
+
+def _dependency_count(bundle: dict[str, Any]) -> int:
+    dependencies = bundle.get("dependencies")
+    if isinstance(dependencies, dict):
+        return sum(
+            len(values)
+            for key in ("productionDependencies", "developmentDependencies")
+            if isinstance(values := dependencies.get(key), list)
+        )
+    return len(cast(list[object], dependencies)) if isinstance(dependencies, list) else 0
+
+
+def _finding_count(bundle: dict[str, Any]) -> int:
+    findings = bundle.get("findings")
+    if isinstance(findings, dict):
+        items = findings.get("items")
+        return len(items) if isinstance(items, list) else len(findings)
+    return len(findings) if isinstance(findings, list) else 0
 
 
 def ensure_list(value: object, *, key: str) -> list[object]:

@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 import wait_local_agent.api.founder as founder_module
 import wait_local_agent.cli as cli_module
 from wait_local_agent.api.app import create_app
+from wait_local_agent.api.founder import FounderUploadConflictError
 from wait_local_agent.api.packs.loader import LoadedPack
 from wait_local_agent.founder_bundle import PrivacyViolation, build_founder_bundle, sanitize_bundle
 from wait_local_agent.lp_client import LaunchPassportClient
@@ -98,6 +99,37 @@ def test_configuration_stores_token_only_in_encrypted_vault(settings) -> None:
     assert settings.vault_path.joinpath("secrets.json.enc").read_bytes().find(b"top-secret-token") == -1
 
 
+def test_configure_cli_prefers_hidden_prompt(monkeypatch, settings, tmp_path: Path) -> None:
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_store", lambda: Store(tmp_path / "cli-state.db"))
+
+    def fake_configure(_settings, _store, base_url, project_id, token):
+        captured.update(base_url=base_url, project_id=project_id, token=token)
+        return {"status": "configured"}
+
+    monkeypatch.setattr(cli_module, "configure_founder", fake_configure)
+    result = CliRunner().invoke(
+        cli_module.app,
+        ["founder", "configure", "--base-url", "https://lp.test", "--project-id", "project-1"],
+        input="prompt-token\n",
+    )
+
+    assert result.exit_code == 0
+    assert captured["token"] == "prompt-token"
+
+
+def test_configure_rejects_credential_bearing_base_url(settings) -> None:
+    with pytest.raises(ValueError, match="embedded credentials"):
+        founder_module.configure_founder(
+            settings,
+            Store(settings.data_path),
+            "https://user:pass@lp.test",
+            "project-1",
+            "t",
+        )
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
@@ -120,8 +152,102 @@ def test_bundle_builder_uses_hashes_and_never_file_contents(tmp_path: Path) -> N
     assert "private source" not in serialized
     assert "hidden" not in serialized
     assert bundle["metadata"]["sourceCode"] is False
-    assert bundle["files"][0]["path"] == "app.py"
-    assert len(bundle["files"][0]["sha256"]) == 64
+    assert bundle["schemaVersion"] == "collector_bundle_v1"
+    assert bundle["files"][0] == {"path": "app.py", "ext": ".py", "sizeBytes": len("private source")}
+    assert len(bundle["hashes"][0]["sha256"]) == 64
+    assert isinstance(bundle["dependencies"], dict)
+    assert isinstance(bundle["findings"], dict)
+    assert bundle["environment"]["keys"] == {}
+
+
+def test_sanitize_bundle_scrubs_finding_text_and_dependency_url_credentials() -> None:
+    sanitized = sanitize_bundle(
+        {
+            "findings": [
+                {
+                    "message": "stripe sk_live_SUPERSECRET",
+                    "description": "Authorization: Bearer very-secret-token",
+                    "file": "config/password=hunter2",
+                }
+            ],
+            "dependencies": {
+                "productionDependencies": ["git+https://user:password@example.test/repo.git"],
+            },
+            "files": [{"path": "docs/api_key=FILESECRET.txt", "ext": ".txt", "sizeBytes": 1}],
+        }
+    )
+    wire = json.dumps(sanitized)
+    assert "sk_live_SUPERSECRET" not in wire
+    assert "very-secret-token" not in wire
+    assert "hunter2" not in wire
+    assert "FILESECRET" not in wire
+    assert "user:password@" not in wire
+    assert sanitized["dependencies"]["productionDependencies"] == ["git+https://example.test/repo.git"]
+
+
+def test_builder_emits_environment_key_map_and_structured_findings(tmp_path: Path) -> None:
+    (tmp_path / ".env.example").write_text("DATABASE_URL=example\nPUBLIC_NAME=ok\n", encoding="utf-8")
+    bundle = build_founder_bundle(tmp_path, findings=[{"type": "warning", "message": "safe"}])
+
+    assert bundle["environment"]["keys"] == {".env.example": ["DATABASE_URL", "PUBLIC_NAME"]}
+    assert bundle["environment"]["entries"] == [
+        {"file": ".env.example", "keyNames": ["DATABASE_URL", "PUBLIC_NAME"]}
+    ]
+    assert bundle["findings"]["items"] == [{"type": "warning", "message": "safe"}]
+
+
+def test_pack_bundle_boundary_sanitizes_before_delegated_upload(monkeypatch) -> None:
+    module = ModuleType("packs.founder")
+    module.export_bundle = lambda artifact_id: {  # type: ignore[attr-defined]
+        "findings": [{"message": "sk_live_PACK_SECRET"}],
+    }
+    pack = LoadedPack(manifest={"name": "founder"}, module=module)
+    calls: list[dict[str, object]] = []
+    original = founder_module.sanitize_bundle
+
+    def spy(bundle):
+        calls.append(bundle)
+        return original(bundle)
+
+    monkeypatch.setattr(founder_module, "sanitize_bundle", spy)
+
+    sanitized = founder_module.sanitized_pack_bundle(pack, "artifact-1")
+
+    assert calls
+    assert "sk_live_PACK_SECRET" not in json.dumps(sanitized)
+
+
+def test_preview_marker_is_persisted_and_stale_markers_conflict(settings) -> None:
+    store = Store(settings.data_path)
+    store.mark_founder_artifact_previewed("pack-artifact")
+    second_store = Store(settings.data_path)
+    assert second_store.get_founder_artifact_previewed_at("pack-artifact")
+    with pytest.raises(FounderUploadConflictError, match="preview"):
+        founder_module.require_fresh_preview(second_store, "missing-artifact")
+    with second_store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update founder_artifact_previews set previewed_at = ? where artifact_id = ?",
+            ("2000-01-01T00:00:00+00:00", "pack-artifact"),
+        )
+    with pytest.raises(FounderUploadConflictError, match="stale"):
+        founder_module.require_fresh_preview(second_store, "pack-artifact")
+
+
+def test_cross_project_upload_is_rejected_before_network(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    founder_module.configure_founder(settings, store, "https://lp.test", "project-B", "vault-token")
+    bundle = sanitize_bundle({"metadata": {"sourceCode": False}})
+    store.save_founder_artifact(
+        artifact_id="artifact-project-a",
+        project_id="project-A",
+        bundle_hash=founder_module.bundle_hash(bundle),
+        bundle=bundle,
+    )
+    store.mark_founder_artifact_previewed("artifact-project-a")
+    monkeypatch.setattr(founder_module, "_open_client", lambda *_args: pytest.fail("network must not be reached"))
+
+    with pytest.raises(FounderUploadConflictError, match="project"):
+        founder_module.open_founder_upload(settings, store, store.get_founder_config() or {}, "artifact-project-a")
 
 
 def test_pack_behavior_takes_precedence(monkeypatch, settings) -> None:

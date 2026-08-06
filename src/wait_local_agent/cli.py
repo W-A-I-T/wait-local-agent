@@ -17,6 +17,7 @@ from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
     FounderPackUnavailableError,
+    FounderUploadConflictError,
     build_upload_preview,
     configure_founder,
     invoke_founder,
@@ -27,7 +28,9 @@ from wait_local_agent.api.founder import (
     open_founder_status,
     open_founder_upload,
     require_founder_pack,
+    require_fresh_preview,
     resolve_open_config,
+    sanitized_pack_bundle,
 )
 from wait_local_agent.api.founder import (
     render_json as render_founder_json,
@@ -225,10 +228,17 @@ def founder_scan(path: Path) -> None:
 def founder_configure(
     base_url: Annotated[str, typer.Option("--base-url")],
     project_id: Annotated[str, typer.Option("--project-id")],
-    token: Annotated[str, typer.Option("--token", hide_input=True)],
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help="Token for scripting only; visible in shell history/process arguments. Prefer the hidden prompt.",
+        ),
+    ] = None,
 ) -> None:
+    token_value = token if token is not None else typer.prompt("Launch Passport token", hide_input=True)
     try:
-        response = configure_founder(load_settings(), _store(), base_url, project_id, token)
+        response = configure_founder(load_settings(), _store(), base_url, project_id, token_value)
     except (ValueError, SecretVaultError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(render_founder_json(response))
@@ -245,8 +255,9 @@ def founder_preview(artifact_id: Annotated[str, typer.Argument()]) -> None:
             raise typer.BadParameter("artifact not found") from exc
         store.mark_founder_artifact_previewed(artifact_id)
     else:
-        bundle = json_object(invoke_founder(pack, "export_bundle", artifact_id), operation="export_bundle")
+        bundle = sanitized_pack_bundle(pack, artifact_id)
         response = build_upload_preview(artifact_id, bundle)
+        _store().mark_founder_artifact_previewed(artifact_id)
     typer.echo(render_founder_json(response))
 
 
@@ -286,22 +297,24 @@ def founder_upload(
     pack = _founder_pack_or_none()
     if pack is None:
         settings, store, config = _open_cli_config()
-        try:
-            preview = open_founder_preview(store, artifact_id)
-        except KeyError as exc:
-            raise typer.BadParameter("artifact not found") from exc
-        store.mark_founder_artifact_previewed(artifact_id)
-        typer.echo(render_founder_json(preview))
         if not yes:
-            typer.echo("re-run with --yes to confirm upload")
+            typer.echo("upload requires a prior preview; run `founder preview ARTIFACT_ID`, then re-run with --yes")
             raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(store, artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         response = open_founder_upload(settings, store, config, artifact_id)
     else:
-        bundle = json_object(invoke_founder(pack, "export_bundle", artifact_id), operation="export_bundle")
+        bundle = sanitized_pack_bundle(pack, artifact_id)
         typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
         if not yes:
-            typer.echo("re-run with --yes to confirm upload")
+            typer.echo("re-run with --yes after this preview to confirm upload")
             raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(_store(), artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         response = json_object(invoke_founder(pack, "upload", artifact_id), operation="upload")
     typer.echo(render_founder_json(response))
 
