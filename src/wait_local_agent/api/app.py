@@ -50,7 +50,7 @@ from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.renderers import report_as_dict
+from wait_local_agent.reports.renderers import redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
@@ -320,12 +320,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [asdict(manifest) for manifest in smart_action_service.list()]
 
     @app.get("/smart-actions/runs")
-    def smart_action_runs(_: ViewerAccess) -> list[dict[str, object]]:
-        return [_smart_action_run_view(run) for run in smart_action_service.store.list_smart_action_runs()]
+    def smart_action_runs(
+        _: ViewerAccess, client_id: str | None = None
+    ) -> list[dict[str, object]]:
+        return [
+            _smart_action_run_view(run)
+            for run in smart_action_service.store.list_smart_action_runs(client_id=client_id)
+        ]
 
     @app.get("/smart-actions/runs/{run_id}")
-    def smart_action_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
-        run = smart_action_service.store.get_smart_action_run(run_id)
+    def smart_action_run_detail(
+        run_id: int, _: ViewerAccess, client_id: str | None = None
+    ) -> dict[str, object]:
+        run = smart_action_service.store.get_smart_action_run(run_id, client_id=client_id)
         if run is None:
             raise HTTPException(status_code=404, detail="smart action run not found")
         return _smart_action_run_view(run)
@@ -419,26 +426,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
-            approval = store.update_approval_request(
-                request_id,
-                payload.status,
-                payload.comment,
-                approver_id=context.approver_id,
-            )
+            existing_approval = store.get_approval_request(request_id)
+            if existing_approval is None:
+                raise KeyError(request_id)
+            if existing_approval.action_type.startswith("smart_action:"):
+                smart_action_service.update_approval(
+                    request_id,
+                    payload.status,
+                    payload.comment,
+                    approver=context.approver_id or "api",
+                    approver_role=context.role,
+                )
+                approval = store.get_approval_request(request_id) or existing_approval
+            else:
+                approval = store.update_approval_request(
+                    request_id,
+                    payload.status,
+                    payload.comment,
+                    approver_id=context.approver_id,
+                    allow_completed=store.get_workflow_run_for_approval(request_id) is not None,
+                )
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
-            if approval.action_type.startswith("smart_action:"):
-                smart_action_service.complete_approval(
-                    request_id,
-                    approver=context.approver_id,
-                )
-                approval = store.get_approval_request(request_id) or approval
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/collectors/modules")
     def collector_modules(_: ViewerAccess) -> list[dict[str, object]]:
@@ -1062,8 +1081,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def _smart_action_run_view(run) -> dict[str, object]:
-    output = _safe_json_object(run.output_json)
-    evidence = _safe_json_list(run.evidence_json)
+    output = redact_value(_safe_json_object(run.output_json))
+    evidence = redact_value(_safe_json_list(run.evidence_json))
     return {
         "id": run.id,
         "action_id": run.action_id,
@@ -1075,6 +1094,7 @@ def _smart_action_run_view(run) -> dict[str, object]:
         "approval_id": run.approval_id,
         "created_at": run.created_at,
         "updated_at": run.updated_at,
+        "client_id": run.client_id,
     }
 
 

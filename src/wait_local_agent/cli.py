@@ -10,6 +10,7 @@ from typing import Annotated
 
 import typer
 import uvicorn
+from fastapi import HTTPException
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
@@ -45,7 +46,9 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
@@ -360,18 +363,33 @@ def update_approval_request(
     request_id: int,
     status: str,
     comment: str = "",
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
     store = _store()
-    approval = store.update_approval_request(request_id, status, comment)
+    existing = store.get_approval_request(request_id)
+    if existing is None:
+        raise typer.BadParameter("approval request not found")
+    if existing.action_type.startswith("smart_action:"):
+        settings = load_settings()
+        context = _cli_access(settings, token, Role.TECHNICIAN)
+        service = SmartActionService(store, settings)
+        try:
+            approval = service.update_approval(
+                request_id,
+                status,
+                comment,
+                approver=context.approver_id or "cli",
+                approver_role=context.role,
+            )
+        except (PermissionError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    else:
+        approval = store.update_approval_request(request_id, status, comment)
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
-    if approval.action_type.startswith("smart_action:"):
-        settings = load_settings()
-        SmartActionService(store, settings).complete_approval(request_id, approver="cli")
-        approval = store.get_approval_request(request_id) or approval
     typer.echo(
         f"{approval.id} {approval.status} {approval.subject_id} {approval.action_type} "
         f"execution_status={approval.execution_status} "
@@ -630,16 +648,20 @@ def invoke_smart_action(
         typer.Option("--payload", help="JSON object or path to a JSON object."),
     ] = None,
     confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
 ) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
     service = SmartActionService(store, settings)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
     try:
         result = service.invoke(
             action_id,
             _load_smart_action_payload(payload),
-            "cli",
+            context.approver_id or "cli",
             confirm=confirm,
+            client_id=client_id,
         )
     except (KeyError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -647,10 +669,12 @@ def invoke_smart_action(
 
 
 @smart_actions_app.command("runs")
-def list_smart_action_runs() -> None:
+def list_smart_action_runs(
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
-    for run in store.list_smart_action_runs():
+    for run in store.list_smart_action_runs(client_id=client_id):
         typer.echo(
             f"{run.id} {run.action_id} {run.status} actor={run.actor} "
             f"approval_id={run.approval_id}"
@@ -939,8 +963,19 @@ def _approval_cli_view(approval) -> dict[str, object]:
     payload = json.loads(approval.payload_json)
     return {
         **asdict(approval),
-        "payload": payload if isinstance(payload, dict) else {},
+        "payload": redact_value(payload) if isinstance(payload, dict) else {},
     }
+
+
+def _cli_access(settings, token: str | None, minimum: Role):
+    authorization = f"Bearer {token}" if token else None
+    try:
+        context = resolve_auth_context(settings, authorization)
+    except HTTPException as exc:
+        raise typer.BadParameter(str(exc.detail)) from exc
+    if context.role < minimum:
+        raise typer.BadParameter("insufficient role")
+    return context
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:

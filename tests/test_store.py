@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from wait_local_agent.store import Store
 
 
@@ -21,6 +23,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         workflow_columns = _columns(connection, "workflow_runs")
         scheduled_columns = _columns(connection, "scheduled_jobs")
         knowledge_columns = _columns(connection, "knowledge_documents")
+        smart_action_columns = _columns(connection, "smart_action_runs")
         event_history_columns = _columns(connection, "event_history")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
@@ -37,6 +40,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in workflow_columns
     assert "client_id" in scheduled_columns
     assert "client_id" in knowledge_columns
+    assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
     assert approval is not None and approval["client_id"] is None and approval["approver_id"] is None
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
@@ -109,6 +113,18 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     assert len(store.list_approval_requests()) == 2
     assert len(store.list_workflow_runs()) == 2
     assert len(store.list_knowledge_documents()) == 2
+
+
+def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {})
+
+    store.update_approval_request(approval.id or 0, "approved")
+
+    with pytest.raises(ValueError, match="approval status"):
+        store.update_approval_request(approval.id or 0, "unknown")
+    with pytest.raises(PermissionError, match="already completed"):
+        store.update_approval_request(approval.id or 0, "rejected")
 
 
 def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:

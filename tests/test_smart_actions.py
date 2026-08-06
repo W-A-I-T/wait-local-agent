@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from wait_local_agent.models import SourceReference, Ticket
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.rbac import Role
+from wait_local_agent.smart_actions import (
+    ActionResult,
+    SmartActionManifest,
+    SmartActionRegistry,
+    SmartActionService,
+)
 from wait_local_agent.store import Store
 
 
@@ -63,6 +72,34 @@ def test_ai_actions_report_missing_provider(settings) -> None:
     assert store.get_smart_action_run(result.run_id).status == "provider_not_configured"  # type: ignore[union-attr]
 
 
+def test_deterministic_provider_never_reports_ai_when_inference_is_enabled(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, replace(settings, allow_llm_inference=True))
+
+    result = service.invoke("ticket-summary", {"ticket_id": "TCK-1001"}, "technician")
+
+    assert result.status == "provider_not_configured"
+    assert result.output == {}
+
+
+def test_suggest_resolution_rejects_zero_positive_retrieval_hits(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    (doc_root / "unrelated.md").write_text("# Unrelated\n\nOther material.", encoding="utf-8")
+    active_settings = replace(settings, allowed_doc_root=doc_root)
+    store = Store(active_settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, active_settings, provider=FakeProvider(), provider_configured=True)
+
+    result = service.invoke("suggest-resolution", {"ticket_id": "TCK-1001"}, "technician")
+
+    assert result.status == "failed"
+    assert result.error_detail == "no_relevant_sources"
+    assert result.output == {}
+    assert result.evidence == []
+
+
 def test_resolution_has_retrieval_citations_and_provider_label(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
@@ -98,7 +135,11 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert pending.approval_id is not None
     assert pending.run_id is not None
     approval = store.update_approval_request(pending.approval_id, "approved", "reviewed")
-    completed = service.complete_approval(approval.id or 0, approver="approver")
+    completed = service.complete_approval(
+        approval.id or 0,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
 
     assert completed is not None
     assert completed.status == "success"
@@ -106,3 +147,98 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert isinstance(completed.output["recommendation"], dict)
     assert completed.output["recommendation"]["technician_id"] == "tech-a"
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_approval_completion_requires_authorized_different_approver(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke(
+        "dispatch-suggestion",
+        {"ticket_id": "TCK-1001", "technicians": []},
+        "requester",
+    )
+    assert pending.approval_id is not None
+    store.update_approval_request(pending.approval_id, "approved")
+
+    with pytest.raises(PermissionError, match="approver is required"):
+        service.complete_approval(pending.approval_id, approver=None, approver_role=Role.TECHNICIAN)
+    with pytest.raises(PermissionError, match="technician or admin"):
+        service.complete_approval(pending.approval_id, approver="viewer", approver_role=Role.VIEWER)
+    with pytest.raises(PermissionError, match="cannot approve"):
+        service.complete_approval(
+            pending.approval_id,
+            approver="requester",
+            approver_role=Role.TECHNICIAN,
+        )
+
+
+def test_unknown_approved_action_is_failed_and_audited(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme' where id = 'TCK-1001'")
+    service = SmartActionService(store, settings)
+    pending = service.invoke(
+        "dispatch-suggestion",
+        {"ticket_id": "TCK-1001", "technicians": []},
+        "requester",
+        client_id="acme",
+    )
+    assert pending.approval_id is not None and pending.run_id is not None
+    store.update_approval_request(pending.approval_id, "approved")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set action_type = ? where id = ?",
+            ("smart_action:missing-action", pending.approval_id),
+        )
+
+    result = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert result is not None and result.status == "failed"
+    assert store.get_smart_action_run(pending.run_id).status == "failed"  # type: ignore[union-attr]
+    assert any(
+        event.event_type == "smart_action.completed"
+        and event.client_id == "acme"
+        and "failed" in event.detail
+        for event in store.list_audit_events(client_id="acme")
+    )
+
+
+def test_smart_action_json_storage_redacts_secrets(settings) -> None:
+    class SecretAction:
+        manifest = SmartActionManifest(
+            action_id="secret-test",
+            title="Secret test",
+            description="test",
+            kind="deterministic",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            requires_approval=False,
+            estimated_minutes_saved=0,
+        )
+
+        def run(self, context, payload):
+            return ActionResult(
+                status="success",
+                output={"api_key": "raw-key", "nested": {"password": "raw-password"}},
+                evidence=[{"token": "raw-token"}],
+            )
+
+    registry = SmartActionRegistry()
+    registry.register(SecretAction())
+    store = Store(settings.data_path)
+    result = SmartActionService(store, settings, registry=registry).invoke(
+        "secret-test", {"token": "payload-token"}, "actor"
+    )
+
+    assert result.output["api_key"] == "[redacted]"
+    assert result.evidence[0]["token"] == "[redacted]"
+    run = store.get_smart_action_run(result.run_id or 0)
+    assert run is not None
+    assert "raw-key" not in run.output_json
+    assert "raw-token" not in run.evidence_json

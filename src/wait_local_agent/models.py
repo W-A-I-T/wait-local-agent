@@ -245,6 +245,7 @@ class SmartActionRun:
     approval_id: int | None
     created_at: str
     updated_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)

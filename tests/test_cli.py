@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
+from wait_local_agent.config import load_settings
 from wait_local_agent.models import (
     HaloClient,
     HaloReadResult,
@@ -13,6 +14,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 
 
@@ -350,8 +352,8 @@ def test_approval_show_and_edit_field_commands(monkeypatch, tmp_path) -> None:
         {
             "connector": "halopsa",
             "ticket_id": "HALO-1",
-            "action_type": "add_note",
-            "fields": {"note": "Original"},
+        "action_type": "add_note",
+            "fields": {"note": "Original", "api_key": "raw-secret"},
         },
     )
     runner = CliRunner()
@@ -363,6 +365,8 @@ def test_approval_show_and_edit_field_commands(monkeypatch, tmp_path) -> None:
 
     assert shown.exit_code == 0
     assert "Original" in shown.output
+    assert "raw-secret" not in shown.output
+    assert "[redacted]" in shown.output
     assert edited.exit_code == 0
     assert "payload_updated=True" in edited.output
     assert rejected.exit_code != 0
@@ -406,6 +410,47 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
     assert "unsupported HaloPSA" in bad_draft_action.output
     assert missing_execute.exit_code != 0
     assert "approval request not found" in missing_execute.output
+
+
+def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    store = Store(data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-CLI', 'Acme', 'MFA reset', 'Sign-in blocked', 'High', 'Open', 'acme')
+            """
+        )
+    runner = CliRunner()
+
+    denied_invoke = runner.invoke(
+        app,
+        ["smart-actions", "invoke", "ticket-triage", "--payload", '{"ticket_id":"TCK-CLI"}'],
+    )
+    pending = SmartActionService(store, load_settings()).invoke(
+        "dispatch-suggestion", {"ticket_id": "TCK-CLI", "technicians": []}, "requester"
+    )
+    denied_approval = runner.invoke(app, ["approvals", "update", str(pending.approval_id), "approved"])
+    approved = runner.invoke(
+        app,
+        [
+            "approvals",
+            "update",
+            str(pending.approval_id),
+            "approved",
+            "--token",
+            "tech-token",
+        ],
+    )
+
+    assert denied_invoke.exit_code != 0
+    assert denied_approval.exit_code != 0
+    assert approved.exit_code == 0
+    assert store.get_smart_action_run(pending.run_id or 0).status == "success"  # type: ignore[union-attr]
 
 
 def _read_response(items):

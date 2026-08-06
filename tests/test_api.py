@@ -961,6 +961,46 @@ def test_event_history_filters_by_client_id(settings) -> None:
     assert len(blank.json()) == len(all_events.json())
 
 
+def test_smart_action_runs_and_ticket_lookup_are_client_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.executemany(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
+                ("TCK-BETA", "Beta", "MFA reset", "Sign-in blocked", "High", "Open", "beta"),
+            ],
+        )
+    client = TestClient(create_app(settings))
+
+    acme = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-ACME"}, "client_id": "acme"},
+    )
+    beta = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "beta"},
+    )
+    listed = client.get("/smart-actions/runs", params={"client_id": "acme"})
+    hidden = client.get(
+        f"/smart-actions/runs/{beta.json()['run_id']}", params={"client_id": "acme"}
+    )
+    cross_tenant = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "acme"},
+    )
+
+    assert acme.status_code == 200
+    assert beta.status_code == 200
+    assert listed.status_code == 200
+    assert [run["client_id"] for run in listed.json()] == ["acme"]
+    assert hidden.status_code == 404
+    assert cross_tenant.json()["status"] == "failed"
+
+
 def test_halopsa_manual_execute_rejects_non_approved_and_non_halopsa(settings) -> None:
     store = Store(settings.data_path)
     halo = store.create_approval_request(

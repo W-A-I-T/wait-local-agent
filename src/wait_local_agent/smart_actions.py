@@ -7,12 +7,15 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import SourceReference, Ticket
+from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
     ModelProvider,
+    ProviderUnavailableError,
     provider_from_settings,
 )
+from wait_local_agent.rbac import Role
+from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import Store
@@ -104,7 +107,7 @@ class TicketTriageAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        ticket = _ticket_from_payload(context.store, payload)
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         if ticket is None:
             return _failed("ticket_id must identify an existing ticket")
         classification = classify_ticket(ticket.subject, ticket.body)
@@ -134,7 +137,7 @@ class TicketSummaryAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        ticket = _ticket_from_payload(context.store, payload)
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         if ticket is None:
             return _failed("ticket_id must identify an existing ticket")
         if not context.provider_available or context.provider is None:
@@ -143,6 +146,8 @@ class TicketSummaryAction:
         try:
             summary = context.provider.summarize_ticket(ticket, sources)
             suggested_response = context.provider.draft_response(ticket, sources)
+        except ProviderUnavailableError as exc:
+            return _provider_not_configured(str(exc))
         except Exception as exc:
             return _failed(f"provider request failed: {exc}")
         citations = [
@@ -178,7 +183,7 @@ class SuggestResolutionAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        ticket = _ticket_from_payload(context.store, payload)
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         if ticket is None:
             return _failed("ticket_id must identify an existing ticket")
         if not context.provider_available or context.provider is None:
@@ -186,9 +191,11 @@ class SuggestResolutionAction:
         sources = _sources_for_ticket(context, ticket)
         citations = [_source_citation(source) for source in sources]
         if not citations:
-            return _failed("suggest-resolution requires retrieval citations")
+            return _failed("no_relevant_sources")
         try:
             suggestion = context.provider.draft_response(ticket, sources)
+        except ProviderUnavailableError as exc:
+            return _provider_not_configured(str(exc))
         except Exception as exc:
             return _failed(f"provider request failed: {exc}")
         return ActionResult(
@@ -218,7 +225,7 @@ class FindSimilarTicketsAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        ticket = _ticket_from_payload(context.store, payload)
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         if ticket is None:
             return _failed("ticket_id must identify an existing ticket")
         query_tokens = _tokens(f"{ticket.subject} {ticket.body}")
@@ -269,7 +276,7 @@ class DispatchSuggestionAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        ticket = _ticket_from_payload(context.store, payload)
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         if ticket is None:
             return _failed("ticket_id must identify an existing ticket")
         raw_candidates = payload.get("technicians", [])
@@ -341,7 +348,7 @@ class SmartActionService:
         self.provider = provider or provider_from_settings(settings)
         self.registry = registry or default_registry
         self.provider_configured = (
-            provider_configured
+            bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
             if provider_configured is not None
             else _provider_is_configured(settings, self.provider)
         )
@@ -365,52 +372,61 @@ class SmartActionService:
         normalized_id = action.manifest.action_id
         normalized_payload = dict(payload)
         digest = _payload_digest(normalized_payload)
-        context = self._context(actor, client_id)
+        effective_client_id = _effective_client_id(self.store, normalized_payload, client_id)
+        context = self._context(actor, effective_client_id)
         if not actor or not actor.strip():
             result = ActionResult(status="not_authorized", error_detail="actor is required")
             run = self.store.create_smart_action_run(
-                normalized_id, "", result.status, digest, result.output, result.evidence
+                normalized_id,
+                "",
+                result.status,
+                digest,
+                result.output,
+                result.evidence,
+                client_id=effective_client_id,
             )
             if run.id is None:
                 raise RuntimeError("smart action run was not persisted")
-            self.store.add_audit_event("smart_action.invoked", str(run.id), f"{normalized_id} unauthorized")
-            self.store.add_audit_event("smart_action.completed", str(run.id), f"{normalized_id} not_authorized")
+            self.store.add_audit_event(
+                "smart_action.invoked",
+                str(run.id),
+                f"{normalized_id} unauthorized",
+                client_id=effective_client_id,
+            )
+            self.store.add_audit_event(
+                "smart_action.completed",
+                str(run.id),
+                f"{normalized_id} not_authorized",
+                client_id=effective_client_id,
+            )
             return _result_with_run(result, run.id)
 
         if action.manifest.requires_approval:
             draft = _safe_run(action, context, normalized_payload)
             if draft.status != "success":
-                return self._persist_result(normalized_id, actor, digest, draft, confirm=confirm)
-            pending_output = {**draft.output, "approval_required": True}
-            run = self.store.create_smart_action_run(
+                return self._persist_result(
+                    normalized_id,
+                    actor,
+                    digest,
+                    draft,
+                    confirm=confirm,
+                    client_id=effective_client_id,
+                )
+            pending_output = cast(dict[str, object], redact_value({**draft.output, "approval_required": True}))
+            run, approval = self.store.create_pending_smart_action(
                 normalized_id,
                 actor,
-                "pending_approval",
                 digest,
                 pending_output,
                 draft.evidence,
-            )
-            if run.id is None:
-                raise RuntimeError("smart action run was not persisted")
-            approval = self.store.create_approval_request(
-                str(run.id),
-                f"smart_action:{normalized_id}",
                 {
-                    "run_id": run.id,
                     "action_id": normalized_id,
                     "payload": normalized_payload,
                 },
-                client_id=client_id,
+                client_id=effective_client_id,
             )
             if approval.id is None:
                 raise RuntimeError("smart action approval was not persisted")
-            self.store.set_smart_action_run_approval(run.id, approval.id)
-            self.store.add_audit_event(
-                "smart_action.invoked",
-                str(run.id),
-                f"{normalized_id} pending approval confirmed={confirm}",
-                client_id=client_id,
-            )
             return _result_with_run(
                 ActionResult(
                     status="pending_approval",
@@ -418,13 +434,26 @@ class SmartActionService:
                     evidence=draft.evidence,
                     approval_id=approval.id,
                 ),
-                run.id,
+                run.id or 0,
             )
 
         result = _safe_run(action, context, normalized_payload)
-        return self._persist_result(normalized_id, actor, digest, result, confirm=confirm, client_id=client_id)
+        return self._persist_result(
+            normalized_id,
+            actor,
+            digest,
+            result,
+            confirm=confirm,
+            client_id=effective_client_id,
+        )
 
-    def complete_approval(self, approval_id: int, *, approver: str | None = None) -> ActionResult | None:
+    def complete_approval(
+        self,
+        approval_id: int,
+        *,
+        approver: str | None = None,
+        approver_role: Role | None = None,
+    ) -> ActionResult | None:
         approval = self.store.get_approval_request(approval_id)
         if approval is None or not approval.action_type.startswith("smart_action:"):
             return None
@@ -434,6 +463,12 @@ class SmartActionService:
         )
         if run is None or run.id is None:
             raise KeyError(f"smart action run for approval {approval_id} not found")
+        if not approver or not approver.strip():
+            raise PermissionError("approver is required")
+        if approver_role is None or approver_role < Role.TECHNICIAN:
+            raise PermissionError("approver must have technician or admin authority")
+        if approver == run.actor:
+            raise PermissionError("requesting actor cannot approve its own smart action")
         action_id = approval.action_type.removeprefix("smart_action:")
         if approval.status == "rejected":
             self.store.complete_smart_action_run(
@@ -443,7 +478,11 @@ class SmartActionService:
                 _json_list(run.evidence_json),
             )
             self.store.add_audit_event(
-                "smart_action.completed", str(run.id), f"{action_id} rejected", approver_id=approver
+                "smart_action.completed",
+                str(run.id),
+                f"{action_id} rejected",
+                client_id=approval.client_id,
+                approver_id=approver,
             )
             return ActionResult(
                 status="rejected",
@@ -474,8 +513,12 @@ class SmartActionService:
         if not isinstance(payload, dict):
             result = _failed("smart action approval payload is malformed")
         else:
-            action = self.registry.get(action_id)
-            result = _safe_run(action, self._context(run.actor, approval.client_id), payload)
+            try:
+                action = self.registry.get(action_id)
+            except KeyError:
+                result = _failed(f"smart action {action_id} is not registered")
+            else:
+                result = _safe_run(action, self._context(run.actor, approval.client_id), payload)
         if result.status == "success":
             result = ActionResult(
                 status=result.status,
@@ -483,6 +526,7 @@ class SmartActionService:
                 evidence=result.evidence,
                 error_detail=result.error_detail,
             )
+        result = _redact_result(result)
         self.store.complete_smart_action_run(run.id, result.status, result.output, result.evidence)
         self.store.add_audit_event(
             "smart_action.completed",
@@ -500,6 +544,42 @@ class SmartActionService:
                 approval_id=approval_id,
             ),
             run.id,
+        )
+
+    def update_approval(
+        self,
+        approval_id: int,
+        status: str,
+        comment: str = "",
+        *,
+        approver: str | None = None,
+        approver_role: Role | None = None,
+    ) -> ApprovalRequest:
+        approval = self.store.get_approval_request(approval_id)
+        if approval is None:
+            raise KeyError(approval_id)
+        if approval.action_type.startswith("smart_action:"):
+            if not approver or not approver.strip():
+                raise PermissionError("approver is required")
+            if approver_role is None or approver_role < Role.TECHNICIAN:
+                raise PermissionError("approver must have technician or admin authority")
+            updated = self.store.update_approval_request(
+                approval_id,
+                status,
+                comment,
+                approver_id=approver,
+            )
+            self.complete_approval(
+                approval_id,
+                approver=approver,
+                approver_role=approver_role,
+            )
+            return self.store.get_approval_request(approval_id) or updated
+        return self.store.update_approval_request(
+            approval_id,
+            status,
+            comment,
+            approver_id=approver,
         )
 
     def _context(self, actor: str | None, client_id: str | None) -> ActionContext:
@@ -522,13 +602,15 @@ class SmartActionService:
         confirm: bool,
         client_id: str | None = None,
     ) -> ActionResult:
+        safe_result = _redact_result(result)
         run = self.store.create_smart_action_run(
             action_id,
             actor,
             result.status,
             digest,
-            result.output,
-            result.evidence,
+            safe_result.output,
+            safe_result.evidence,
+            client_id=client_id,
         )
         if run.id is None:
             raise RuntimeError("smart action run was not persisted")
@@ -544,7 +626,7 @@ class SmartActionService:
             f"{action_id} {result.status}",
             client_id=client_id,
         )
-        return _result_with_run(result, run.id)
+        return _result_with_run(safe_result, run.id)
 
 
 def _safe_run(action: SmartAction, context: ActionContext, payload: dict[str, object]) -> ActionResult:
@@ -554,11 +636,13 @@ def _safe_run(action: SmartAction, context: ActionContext, payload: dict[str, ob
         return _failed(f"action failed: {exc}")
 
 
-def _ticket_from_payload(store: Store, payload: dict[str, object]) -> Ticket | None:
+def _ticket_from_payload(
+    store: Store, payload: dict[str, object], client_id: str | None = None
+) -> Ticket | None:
     ticket_id = payload.get("ticket_id")
     if not isinstance(ticket_id, str) or not ticket_id.strip():
         return None
-    return store.get_ticket(ticket_id.strip())
+    return store.get_ticket(ticket_id.strip(), client_id)
 
 
 def _sources_for_ticket(context: ActionContext, ticket: Ticket) -> list[SourceReference]:
@@ -600,20 +684,43 @@ def _workload_value(candidate: dict[str, object]) -> float:
 
 
 def _provider_is_configured(settings: Settings, provider: ModelProvider) -> bool:
-    if settings.allow_llm_inference:
-        return True
-    return not isinstance(provider, DeterministicLocalProvider)
+    return settings.allow_llm_inference and not isinstance(provider, DeterministicLocalProvider)
 
 
-def _provider_not_configured() -> ActionResult:
+def _provider_not_configured(detail: str = "") -> ActionResult:
     return ActionResult(
         status="provider_not_configured",
-        error_detail="no local model provider is configured for this action",
+        error_detail=detail or "no local model provider is configured for this action",
     )
 
 
 def _failed(detail: str) -> ActionResult:
     return ActionResult(status="failed", error_detail=detail)
+
+
+def _redact_result(result: ActionResult) -> ActionResult:
+    output = redact_value(result.output)
+    evidence = redact_value(result.evidence)
+    return ActionResult(
+        status=result.status,
+        output=cast(dict[str, object], output),
+        evidence=cast(list[dict[str, object]], evidence),
+        error_detail=result.error_detail,
+        run_id=result.run_id,
+        approval_id=result.approval_id,
+    )
+
+
+def _effective_client_id(
+    store: Store, payload: dict[str, object], client_id: str | None
+) -> str | None:
+    if client_id and client_id.strip():
+        return client_id.strip()
+    ticket_id = payload.get("ticket_id")
+    if not isinstance(ticket_id, str) or not ticket_id.strip():
+        return None
+    ticket = store.get_ticket(ticket_id.strip())
+    return ticket.client_id if ticket is not None else None
 
 
 def _result_with_run(result: ActionResult, run_id: int) -> ActionResult:

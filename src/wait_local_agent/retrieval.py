@@ -36,6 +36,9 @@ def retrieve_sources(
                 for chunk in chunks
             ]
 
+    if store is not None and store.knowledge_chunk_count() > 0:
+        return []
+
     if not doc_root.exists():
         return []
 
@@ -59,7 +62,8 @@ def retrieve_sources(
             )
         )
 
-    positive_matches = [item for item in scored_sources if item[0] > 0]
-    ranked = positive_matches or scored_sources
+    # Never turn an empty retrieval result into citations to arbitrary documents.
+    # Callers can distinguish this empty positive-hit result from a real source hit.
+    ranked = [item for item in scored_sources if item[0] > 0]
     ranked.sort(key=lambda item: (-item[0], item[1].title))
     return [source for _, source in ranked[:3]]
