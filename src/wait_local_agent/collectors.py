@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import platform
 import platform as _process_inventory_platform
 import re
 import socket
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path as _ProcessInventoryPath
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from wait_local_agent.models import (
     AssetObservationWrite,
@@ -46,6 +48,8 @@ class CollectorManifest:
     capabilities: tuple[str, ...] = ()
     scopes: tuple[str, ...] = ()
     report_types: tuple[str, ...] = ("collector_bundle",)
+    platforms: tuple[str, ...] = ()
+    config_schema: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,24 @@ class CollectorPreview:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class CollectionStatus(StrEnum):
+    SUCCESS = "success"
+    EMPTY = "empty"
+    NOT_AUTHORIZED = "not_authorized"
+    UNAVAILABLE = "unavailable"
+    PARTIAL = "partial"
+
+
+@dataclass(frozen=True)
+class SourceOutcome:
+    source_id: str
+    status: CollectionStatus
+    record_count: int = 0
+    error_code: str | None = None
+    error_detail: str | None = None
+    remediation_hint: str | None = None
+
+
 @dataclass(frozen=True)
 class CollectorResult:
     assets: list[CollectorAssetWrite] = field(default_factory=list)
@@ -77,6 +99,9 @@ class CollectorResult:
     config_diffs: list[ConfigDiffWrite] = field(default_factory=list)
     restore_exercises: list[RestoreExerciseWrite] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    status: CollectionStatus = CollectionStatus.SUCCESS
+    source_outcomes: tuple[SourceOutcome, ...] = ()
+    collection_scope: Literal["host", "container"] = "host"
 
 
 class CollectorModule(Protocol):
@@ -192,10 +217,27 @@ class CollectorService:
                 result,
                 client_id=client_id,
             )
+            result_payload = asdict(result)
+            error_outcome = next(
+                (
+                    outcome
+                    for outcome in result.source_outcomes
+                    if outcome.error_code is not None or outcome.error_detail is not None
+                ),
+                None,
+            )
+            if error_outcome is not None:
+                result_payload["error_code"] = error_outcome.error_code
+                result_payload["error_detail"] = error_outcome.error_detail
+            run_status = (
+                "failed"
+                if result.status in {CollectionStatus.NOT_AUTHORIZED, CollectionStatus.UNAVAILABLE}
+                else "completed"
+            )
             return self.store.complete_collector_run(
                 run.id,
-                "completed",
-                result=asdict(result),
+                run_status,
+                result=result_payload,
             )
         except Exception as exc:
             self.store.complete_collector_run(
@@ -243,6 +285,16 @@ class CollectorService:
             client_id=run.client_id,
         )
         return report
+
+
+def collector_run_result_status(run: CollectorRun) -> str | None:
+    """Return the typed collection status persisted in a collector run."""
+    try:
+        payload = json.loads(run.result_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    return status if isinstance(status, str) else None
 
 
 class HostRuntimeCollector:
@@ -612,7 +664,7 @@ class ProcessInventoryCollectorModule:
             },
         ]
 
-    def _process_records(self, limit=None):
+    def _process_records(self, limit=None, *, strict=False):
         if limit == 0:
             return []
 
@@ -627,13 +679,15 @@ class ProcessInventoryCollectorModule:
         try:
             entries = list(proc_path.iterdir())
         except OSError:
+            if strict:
+                raise
             return []
 
         for entry in entries:
             if not entry.name.isdigit():
                 continue
 
-            record = self._read_proc_entry(entry)
+            record = self._read_proc_entry(entry, strict=strict)
             if record is None:
                 continue
 
@@ -645,13 +699,13 @@ class ProcessInventoryCollectorModule:
         return records
 
     @staticmethod
-    def _read_proc_entry(entry):
+    def _read_proc_entry(entry, *, strict=False):
         try:
             pid = int(entry.name)
         except ValueError:
             return None
 
-        status = _read_process_inventory_text(entry / "status")
+        status = _read_process_inventory_text(entry / "status", strict=strict)
         name = ""
         state = ""
         for line in status.splitlines():
@@ -660,9 +714,9 @@ class ProcessInventoryCollectorModule:
             elif line.startswith("State:"):
                 state = line.split(":", 1)[1].strip()
 
-        cmdline = _read_process_inventory_cmdline(entry / "cmdline")
+        cmdline = _read_process_inventory_cmdline(entry / "cmdline", strict=strict)
         if not name:
-            comm = _read_process_inventory_text(entry / "comm").strip()
+            comm = _read_process_inventory_text(entry / "comm", strict=strict).strip()
             name = comm
 
         if not name and not cmdline:
@@ -834,7 +888,7 @@ class ListeningPortsCollectorModule:
             },
         ]
 
-    def _socket_records(self, limit=None):
+    def _socket_records(self, limit=None, *, strict=False):
         if limit == 0:
             return []
 
@@ -850,7 +904,7 @@ class ListeningPortsCollectorModule:
         records: list[dict[str, Any]] = []
 
         for protocol, path in files:
-            records.extend(self._read_socket_file(_ListeningPortsPath(path), protocol))
+            records.extend(self._read_socket_file(_ListeningPortsPath(path), protocol, strict=strict))
             if limit is not None and len(records) >= limit:
                 break
 
@@ -859,10 +913,14 @@ class ListeningPortsCollectorModule:
             return records
         return records[:limit]
 
-    def _read_socket_file(self, path, protocol):
+    def _read_socket_file(self, path, protocol, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return []
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return []
 
         if not lines:
@@ -1119,7 +1177,7 @@ class NetworkInterfacesCollectorModule:
             },
         ]
 
-    def _interface_records(self, limit=None):
+    def _interface_records(self, limit=None, *, strict=False):
         if limit == 0:
             return []
 
@@ -1133,6 +1191,8 @@ class NetworkInterfacesCollectorModule:
         try:
             entries = list(sys_net_root.iterdir())
         except OSError:
+            if strict:
+                raise
             return []
 
         records = []
@@ -1141,7 +1201,7 @@ class NetworkInterfacesCollectorModule:
             if not interface_name:
                 continue
 
-            record = self._read_interface_record(entry)
+            record = self._read_interface_record(entry, strict=strict)
             if record is None:
                 continue
 
@@ -1152,26 +1212,30 @@ class NetworkInterfacesCollectorModule:
             return records
         return records[:limit]
 
-    def _read_interface_record(self, entry):
+    def _read_interface_record(self, entry, *, strict=False):
         interface_name = entry.name
         if not interface_name:
             return None
 
-        mtu_raw = self._read_interface_file(entry / "mtu")
+        mtu_raw = self._read_interface_file(entry / "mtu", strict=strict)
         return {
             "interface": interface_name,
-            "operstate": self._read_interface_file(entry / "operstate"),
-            "mac": self._read_interface_file(entry / "address"),
+            "operstate": self._read_interface_file(entry / "operstate", strict=strict),
+            "mac": self._read_interface_file(entry / "address", strict=strict),
             "mtu": self._coerce_mtu(mtu_raw),
-            "type": self._read_interface_file(entry / "type"),
-            "flags": self._read_interface_file(entry / "flags"),
+            "type": self._read_interface_file(entry / "type", strict=strict),
+            "flags": self._read_interface_file(entry / "flags", strict=strict),
         }
 
     @staticmethod
-    def _read_interface_file(path):
+    def _read_interface_file(path, *, strict=False):
         try:
             return path.read_text(encoding="utf-8", errors="replace").strip()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return ""
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return ""
 
     @staticmethod
@@ -1181,6 +1245,288 @@ class NetworkInterfacesCollectorModule:
             return int(value)
         except (ValueError, TypeError):
             return value
+
+
+def _typed_legacy_validation(
+    module_id: str,
+    legacy_module: Any,
+    config: dict[str, Any],
+) -> CollectorValidationResult:
+    if not isinstance(config, dict):
+        return CollectorValidationResult(
+            module_id=module_id,
+            passed=False,
+            message="collector config must be a mapping",
+            errors=["config must be a mapping when provided"],
+        )
+
+    legacy_result = legacy_module.validate_config(config)
+    errors = list(legacy_result.get("errors", []))
+    if errors:
+        return CollectorValidationResult(
+            module_id=module_id,
+            passed=False,
+            message="collector configuration is invalid",
+            errors=errors,
+        )
+    return CollectorValidationResult(
+        module_id=module_id,
+        passed=True,
+        message="ok",
+        normalized_config=dict(config),
+    )
+
+
+def _typed_result_from_legacy(
+    module_id: str,
+    legacy_result: dict[str, Any],
+    *,
+    status: CollectionStatus,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    remediation_hint: str | None = None,
+) -> CollectorResult:
+    assets: list[CollectorAssetWrite] = []
+    for asset in legacy_result.get("assets", []):
+        asset_id = str(asset["asset_id"])
+        attributes = asset.get("attributes", {})
+        assets.append(
+            CollectorAssetWrite(
+                canonical_id=asset_id,
+                asset_type=str(asset["asset_type"]),
+                display_name=str(asset.get("name") or asset_id),
+                attributes=dict(attributes) if isinstance(attributes, dict) else {},
+                source_module=module_id,
+                source_id=asset_id,
+            )
+        )
+
+    observations: list[AssetObservationWrite] = []
+    for observation in legacy_result.get("observations", []):
+        observation_key = str(observation.get("key", "value"))
+        observations.append(
+            AssetObservationWrite(
+                canonical_id=str(observation["asset_id"]),
+                observation_type=f"{module_id}.metadata",
+                payload={
+                    "asset_type": observation.get("asset_type", ""),
+                    "key": observation_key,
+                    "value": observation.get("value"),
+                },
+            )
+        )
+
+    outcome = SourceOutcome(
+        source_id=module_id,
+        status=status,
+        record_count=len(assets),
+        error_code=error_code,
+        error_detail=error_detail,
+        remediation_hint=remediation_hint,
+    )
+    return CollectorResult(
+        assets=assets,
+        observations=observations,
+        metadata={"legacy_module_id": module_id},
+        status=status,
+        source_outcomes=(outcome,),
+    )
+
+
+class _TypedLegacyCollector:
+    """Adapter shared by the first typed wrappers around legacy collectors."""
+
+    manifest: CollectorManifest
+    _legacy_type: type[Any]
+    _platform_hint: str
+
+    def __init__(self) -> None:
+        self._legacy_module = self._legacy_type()
+
+    def validate_config(self, config: dict[str, Any]) -> CollectorValidationResult:
+        return _typed_legacy_validation(self.manifest.id, self._legacy_module, config)
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def _legacy_result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
+        return self._legacy_module._result(records, preview=preview)
+
+    def preview(self, config: dict[str, Any]) -> CollectorPreview:
+        validation = self.validate_config(config)
+        if not validation.passed:
+            raise ValueError(validation.message)
+        normalized_config = validation.normalized_config
+        if _process_inventory_platform.system() != "Linux":
+            return CollectorPreview(
+                module_id=self.manifest.id,
+                source_name=self.manifest.id,
+                scopes=list(self.manifest.scopes),
+                estimated_assets=0,
+                estimated_observations=0,
+                expected_reports=list(self.manifest.report_types),
+                warnings=[self._platform_hint],
+                metadata={"status": CollectionStatus.EMPTY.value},
+            )
+
+        records = self._records(
+            normalized_config,
+            limit=self._config_limit(normalized_config, default=10),
+            strict=False,
+        )
+        legacy_result = self._legacy_result(records, preview=True)
+        return CollectorPreview(
+            module_id=self.manifest.id,
+            source_name=self.manifest.id,
+            scopes=list(self.manifest.scopes),
+            estimated_assets=len(legacy_result.get("assets", [])),
+            estimated_observations=len(legacy_result.get("observations", [])),
+            expected_reports=list(self.manifest.report_types),
+            metadata={"status": CollectionStatus.SUCCESS.value},
+        )
+
+    def _config_limit(self, config: dict[str, Any], *, default: int | None) -> int | None:
+        limit = config.get("limit", default)
+        return limit if isinstance(limit, int) else default
+
+    def collect(self, config: dict[str, Any]) -> CollectorResult:
+        validation = self.validate_config(config)
+        if not validation.passed:
+            raise ValueError(validation.message)
+        normalized_config = validation.normalized_config
+        if _process_inventory_platform.system() != "Linux":
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.EMPTY,
+                remediation_hint=self._platform_hint,
+            )
+
+        limit = self._config_limit(normalized_config, default=None)
+        if limit == 0:
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.EMPTY,
+            )
+
+        try:
+            records = self._records(normalized_config, limit=limit, strict=True)
+            legacy_result = self._legacy_result(records, preview=False)
+        except PermissionError as exc:
+            detail = str(exc) or exc.__class__.__name__
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.NOT_AUTHORIZED,
+                error_code="permission_denied",
+                error_detail=detail,
+                remediation_hint="Grant read access to the local collector source and retry.",
+            )
+        except Exception as exc:
+            detail = str(exc) or exc.__class__.__name__
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.UNAVAILABLE,
+                error_code="collection_unavailable",
+                error_detail=detail,
+                remediation_hint="Verify that the local collector source is available and retry.",
+            )
+
+        status = CollectionStatus.SUCCESS if legacy_result.get("assets") else CollectionStatus.EMPTY
+        return _typed_result_from_legacy(self.manifest.id, legacy_result, status=status)
+
+
+class ProcessInventoryCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="process-inventory",
+        name="Process Inventory",
+        version="1.0",
+        description="Read-only inventory of local running processes.",
+        capabilities=("local_process_inventory", "safe_read_only"),
+        scopes=("local_host", "processes"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum processes",
+                "help": "Limit the number of process records returned; omit for all readable processes.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = ProcessInventoryCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /proc process metadata."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._process_records(limit=limit, strict=strict)
+
+
+class ListeningPortsCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="listening-ports",
+        name="Listening Ports",
+        version="1.0",
+        description="Read-only inventory of local listening sockets.",
+        capabilities=("local_socket_inventory", "safe_read_only"),
+        scopes=("local_host", "network_sockets"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum listening sockets",
+                "help": "Limit the number of socket records returned; omit for all readable sockets.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = ListeningPortsCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /proc/net socket tables."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._socket_records(limit=limit, strict=strict)
+
+
+class NetworkInterfacesCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="network-interfaces",
+        name="Network Interfaces",
+        version="1.0",
+        description="Read-only inventory of local network interface metadata.",
+        capabilities=("local_network_interface_inventory", "safe_read_only"),
+        scopes=("local_host", "network_interfaces"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum interfaces",
+                "help": "Limit the number of interface records returned; omit for all readable interfaces.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = NetworkInterfacesCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /sys/class/net interface metadata."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._interface_records(limit=limit, strict=strict)
+
+
+TypedProcessInventoryCollector = ProcessInventoryCollector
+TypedListeningPortsCollector = ListeningPortsCollector
+TypedNetworkInterfacesCollector = NetworkInterfacesCollector
+
+
+default_registry.register(ProcessInventoryCollector())
+default_registry.register(ListeningPortsCollector())
+default_registry.register(NetworkInterfacesCollector())
 
 
 class FirewallRulesCollectorModule:
@@ -3018,17 +3364,25 @@ class WebServicesCollectorModule:
         return cleaned.strip()
 
 
-def _read_process_inventory_text(path):
+def _read_process_inventory_text(path, *, strict=False):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+    except FileNotFoundError:
+        return ""
+    except (PermissionError, ProcessLookupError, OSError):
+        if strict:
+            raise
         return ""
 
 
-def _read_process_inventory_cmdline(path):
+def _read_process_inventory_cmdline(path, *, strict=False):
     try:
         raw = path.read_bytes()
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+    except FileNotFoundError:
+        return ""
+    except (PermissionError, ProcessLookupError, OSError):
+        if strict:
+            raise
         return ""
 
     parts = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]

@@ -4,6 +4,13 @@ from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
+from wait_local_agent.collectors import (
+    HostRuntimeCollector,
+    ListeningPortsCollector,
+    NetworkInterfacesCollector,
+    ProcessInventoryCollector,
+    default_registry,
+)
 from wait_local_agent.models import (
     HaloClient,
     HaloReadResult,
@@ -28,6 +35,31 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "timeout_seconds=20" in result.output
     assert "llm_inference_enabled=False" in result.output
     assert "write_actions_enabled=False" in result.output
+
+
+def test_collectors_list_shows_exactly_four_modules(monkeypatch, tmp_path) -> None:
+    default_registry.clear()
+    for module in (
+        HostRuntimeCollector(),
+        ListeningPortsCollector(),
+        NetworkInterfacesCollector(),
+        ProcessInventoryCollector(),
+    ):
+        default_registry.register(module)
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["collectors", "list"])
+
+    module_lines = [line for line in result.output.splitlines() if line.strip()]
+    assert result.exit_code == 0
+    assert len(module_lines) == 4
+    assert [line.split()[0] for line in module_lines] == [
+        "host-runtime",
+        "listening-ports",
+        "network-interfaces",
+        "process-inventory",
+    ]
 
 
 def test_doctor_requires_all_halopsa_credentials(monkeypatch, tmp_path) -> None:

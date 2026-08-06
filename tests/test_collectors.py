@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
 from wait_local_agent.collectors import (
+    CollectionStatus,
     CollectorManifest,
     CollectorPreview,
     CollectorRegistry,
@@ -17,6 +18,7 @@ from wait_local_agent.collectors import (
     CollectorService,
     CollectorValidationResult,
     HostRuntimeCollector,
+    SourceOutcome,
     default_registry,
 )
 from wait_local_agent.models import (
@@ -33,6 +35,31 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.store import Store
+
+
+def test_default_registry_exposes_typed_local_collectors() -> None:
+    modules = default_registry.list()
+
+    assert [module.manifest.id for module in modules] == [
+        "host-runtime",
+        "listening-ports",
+        "network-interfaces",
+        "process-inventory",
+    ]
+    for module in modules[1:]:
+        assert module.manifest.platforms == ("linux",)
+        assert len(module.manifest.config_schema) == 1
+        field = module.manifest.config_schema[0]
+        assert set(field) >= {"name", "label", "help", "type", "required", "default"}
+        assert field["type"] == "number"
+
+
+def test_collection_result_status_defaults_additively() -> None:
+    result = CollectorResult()
+
+    assert result.status is CollectionStatus.SUCCESS
+    assert result.source_outcomes == ()
+    assert result.collection_scope == "host"
 
 
 class FakeCollectorModule:
@@ -135,6 +162,49 @@ class ExplodingCollectorModule(FakeCollectorModule):
         raise RuntimeError(f"collector failure for {config['source_name']}")
 
 
+class StatusCollectorModule:
+    def __init__(self, status: CollectionStatus) -> None:
+        self.status = status
+        self.manifest = CollectorManifest(
+            id=f"status-{status.value}",
+            name="Status Fixture Collector",
+            version="0.1.0",
+            description="Unit-test collector for typed run statuses.",
+        )
+
+    def validate_config(self, config: dict[str, Any]) -> CollectorValidationResult:
+        return CollectorValidationResult(
+            module_id=self.manifest.id,
+            passed=True,
+            message="ok",
+            normalized_config=config,
+        )
+
+    def preview(self, config: dict[str, Any]) -> CollectorPreview:
+        return CollectorPreview(
+            module_id=self.manifest.id,
+            source_name=self.manifest.id,
+            scopes=[],
+            estimated_assets=0,
+            estimated_observations=0,
+        )
+
+    def collect(self, config: dict[str, Any]) -> CollectorResult:
+        outcome = SourceOutcome(
+            source_id=self.manifest.id,
+            status=self.status,
+            error_code="fixture_error" if self.status in {
+                CollectionStatus.NOT_AUTHORIZED,
+                CollectionStatus.UNAVAILABLE,
+            } else None,
+            error_detail="fixture detail" if self.status in {
+                CollectionStatus.NOT_AUTHORIZED,
+                CollectionStatus.UNAVAILABLE,
+            } else None,
+        )
+        return CollectorResult(status=self.status, source_outcomes=(outcome,))
+
+
 def test_host_runtime_preview_run_persists_host_asset_observations_and_exports(settings) -> None:
     registry = CollectorRegistry()
     registry.register(HostRuntimeCollector())
@@ -154,6 +224,7 @@ def test_host_runtime_preview_run_persists_host_asset_observations_and_exports(s
     assert preview.estimated_observations == 3
     assert preview.metadata["external_network_scanning"] is False
     assert run.status == "completed"
+    assert json.loads(run.result_json)["status"] == "success"
     assert len(assets) == 1
     assert assets[0].asset_type == "host"
     assert assets[0].canonical_id.startswith("host-runtime:host:")
@@ -255,6 +326,47 @@ def test_collector_service_marks_run_failed_when_module_collect_raises(settings)
     assert any(event.event_type == "collector.run_failed" for event in store.list_audit_events(client_id="acme"))
 
 
+@pytest.mark.parametrize(
+    ("collection_status", "run_status"),
+    [
+        (CollectionStatus.SUCCESS, "completed"),
+        (CollectionStatus.EMPTY, "completed"),
+        (CollectionStatus.PARTIAL, "completed"),
+        (CollectionStatus.NOT_AUTHORIZED, "failed"),
+        (CollectionStatus.UNAVAILABLE, "failed"),
+    ],
+)
+def test_collector_service_maps_typed_result_status_to_run_status(
+    settings,
+    collection_status: CollectionStatus,
+    run_status: str,
+) -> None:
+    registry = CollectorRegistry()
+    module = StatusCollectorModule(collection_status)
+    registry.register(module)
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    run = service.run(module.manifest.id, {}, confirm=True)
+    payload = json.loads(run.result_json)
+
+    assert run.status == run_status
+    assert payload["status"] == collection_status.value
+    if run_status == "failed":
+        assert payload["error_code"] == "fixture_error"
+        assert payload["error_detail"] == "fixture detail"
+        assert any(
+            event.event_type == "collector.run_failed"
+            for event in store.list_audit_events()
+        )
+    else:
+        assert "error_code" not in payload
+        assert any(
+            event.event_type == "collector.run_completed"
+            for event in store.list_audit_events()
+        )
+
+
 def test_collector_api_surfaces_preview_run_and_export(settings) -> None:
     default_registry.clear()
     default_registry.register(FakeCollectorModule())
@@ -310,10 +422,13 @@ def test_collector_api_surfaces_preview_run_and_export(settings) -> None:
         assert unconfirmed.status_code == 409
         assert run.status_code == 200
         assert run.json()["status"] == "completed"
+        assert run.json()["result_status"] == "success"
         assert runs.status_code == 200
         assert runs.json()[0]["id"] == run_id
+        assert runs.json()[0]["result_status"] == "success"
         assert detail.status_code == 200
         assert detail.json()["assets"][0]["display_name"] == "Endpoint 1"
+        assert detail.json()["result_status"] == "success"
         assert export.status_code == 200
         assert export.json()["report_type"] == "collector_bundle"
         assert unsupported_export.status_code == 400
@@ -360,6 +475,7 @@ def test_collector_cli_surfaces_preview_run_and_bundle_export(monkeypatch, tmp_p
         assert json.loads(preview.output)["source_name"] == "cli"
         assert run.exit_code == 0
         assert "status=completed" in run.output
+        assert "result_status=success" in run.output
         assert export.exit_code == 0
         assert output_path.exists()
         assert json.loads(output_path.read_text(encoding="utf-8"))["report_type"] == "collector_bundle"
