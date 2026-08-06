@@ -7,6 +7,7 @@ import pytest
 
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.rbac import Role
+from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.smart_actions import (
     ActionResult,
     SmartActionManifest,
@@ -14,6 +15,42 @@ from wait_local_agent.smart_actions import (
     SmartActionService,
 )
 from wait_local_agent.store import Store
+
+
+def test_redacts_embedded_secrets_in_free_text_payload_values() -> None:
+    payload = redact_value({"note": "token=abc password=def secret=ghi key=jkl AKIA1234567890ABCDEF"})
+
+    assert payload == {"note": "token=[redacted] password=[redacted] secret=[redacted] key=[redacted] [redacted]"}
+
+
+def test_event_history_redacts_legacy_payloads_at_read_time(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into event_history "
+            "(event_type, subject_id, status, message, payload_json, created_at) "
+            "values (?, ?, ?, ?, ?, ?)",
+            ("legacy", "TCK-1", "done", "token=old", '{"note":"password=old"}', "2026-01-01T00:00:00+00:00"),
+        )
+
+    event = store.list_event_history_for_subject("TCK-1")[0]
+    assert "old" not in event.message
+    assert "old" not in event.payload_json
+
+
+def test_approval_payload_is_redacted_when_read_from_legacy_row(settings) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request("TCK-1", "halopsa.add_note", {})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id = ?",
+            ('{"note":"key=old AKIA1234567890ABCDEF"}', approval.id),
+        )
+
+    assert approval.id is not None
+    loaded = store.get_approval_request(approval.id)
+    assert loaded is not None
+    assert "old" not in loaded.payload_json
 
 
 def _seed_tickets(store: Store) -> None:

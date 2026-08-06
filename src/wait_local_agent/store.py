@@ -699,6 +699,8 @@ class Store:
             return None
         payload = dict(row)
         payload["comment"] = _redact_text(str(payload["comment"]))
+        payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+        payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
         return ApprovalRequest(**payload)
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
@@ -717,6 +719,8 @@ class Store:
         for row in rows:
             payload = dict(row)
             payload["comment"] = _redact_text(str(payload["comment"]))
+            payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+            payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
             requests.append(ApprovalRequest(**payload))
         return requests
 
@@ -824,7 +828,7 @@ class Store:
                     "select * from event_history where client_id = ? order by id desc",
                     (normalized_client_id,),
                 ).fetchall()
-        return [EventHistoryEntry(**dict(row)) for row in rows]
+        return [_event_history_from_row(row) for row in rows]
 
     def create_workflow_run(
         self,
@@ -1324,7 +1328,7 @@ class Store:
                 "select * from event_history where subject_id = ? order by id desc",
                 (subject_id,),
             ).fetchall()
-        return [EventHistoryEntry(**dict(row)) for row in rows]
+        return [_event_history_from_row(row) for row in rows]
 
     def upsert_knowledge_document(
         self,
@@ -2395,6 +2399,13 @@ def _redact_text(value: str) -> str:
     from wait_local_agent.reports.renderers import redact_text
 
     return redact_text(value)
+
+
+def _event_history_from_row(row: sqlite3.Row) -> EventHistoryEntry:
+    payload = dict(row)
+    payload["message"] = _redact_text(str(payload["message"]))
+    payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+    return EventHistoryEntry(**payload)
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

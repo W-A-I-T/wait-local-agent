@@ -761,7 +761,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _: TechnicianAccess,
     ) -> dict[str, object]:
         try:
-            return asdict(execute_halopsa_approval_request(store, halopsa_client, request_id))
+            return _approval_view(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:

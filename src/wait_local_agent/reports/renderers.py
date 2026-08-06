@@ -26,10 +26,11 @@ SENSITIVE_KEY_PARTS = (
 REDACTED = "[redacted]"
 
 _SENSITIVE_TEXT_PATTERN = re.compile(
-    r"(?i)(\b(?:secret|token|api[_-]?key|password|apikey|auth[_-]?token|"
+    r"(?i)(\b(?:secret|token|key|api[_-]?key|password|apikey|auth[_-]?token|"
     r"bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token|"
     r"credential|private[_-]?key)\b\s*[:=]\s*)([^\s,;]+)"
 )
+_AWS_ACCESS_KEY_PATTERN = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 
 
 def redact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
@@ -47,13 +48,15 @@ def redact_value(value: Any) -> Any:
         return redact_mapping(value)
     if isinstance(value, list):
         return [redact_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 
 def redact_text(value: str) -> str:
     """Redact secret-looking key/value pairs in human-readable text."""
 
-    return _SENSITIVE_TEXT_PATTERN.sub(r"\1" + REDACTED, value)
+    return _AWS_ACCESS_KEY_PATTERN.sub(REDACTED, _SENSITIVE_TEXT_PATTERN.sub(r"\1" + REDACTED, value))
 
 
 def report_as_dict(report: GeneratedReport) -> dict[str, Any]:
