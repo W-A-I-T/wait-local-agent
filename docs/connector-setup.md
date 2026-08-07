@@ -51,6 +51,8 @@ wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>'
 wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY '<secret>'
 wait-local-agent secrets set WAIT_SYNCRO_API_TOKEN '<secret>'
 wait-local-agent secrets set WAIT_SERVICENOW_PASSWORD '<secret>'
+wait-local-agent secrets set WAIT_AUTOTASK_SECRET '<secret>'
+wait-local-agent secrets set WAIT_AUTOTASK_INTEGRATION_CODE '<tracking-identifier>'
 wait-local-agent secrets list
 ```
 
@@ -250,3 +252,37 @@ wait-local-agent connectors servicenow-company <sys-id>
 
 The API mirrors these commands under `/connectors/servicenow/health`,
 `/connectors/servicenow/incidents`, and `/connectors/servicenow/companies`.
+
+## Autotask PSA
+
+### Required settings
+
+```text
+WAIT_AUTOTASK_BASE_URL=
+WAIT_AUTOTASK_USERNAME=
+WAIT_AUTOTASK_SECRET=
+WAIT_AUTOTASK_INTEGRATION_CODE=
+WAIT_AUTOTASK_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The read-only adapter uses Autotask REST GET operations for ticket and company
+inventory. It sends the username, secret, and integration code only in
+request headers, bounds list pagination, validates resource identifiers, and
+distinguishes blocked, missing, unauthorized, and failed states ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm)).
+No mutation endpoint is exposed.
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate autotask
+wait-local-agent connectors autotask-health
+wait-local-agent connectors autotask-tickets
+wait-local-agent connectors autotask-ticket <ticket-id>
+wait-local-agent connectors autotask-companies
+wait-local-agent connectors autotask-company <company-id>
+```
+
+The API mirrors these commands under `/connectors/autotask/health`,
+`/connectors/autotask/tickets`, `/connectors/autotask/companies`, and the
+company detail route `/connectors/autotask/companies/{company_id}`.

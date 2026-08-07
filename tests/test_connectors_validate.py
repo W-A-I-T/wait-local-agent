@@ -53,6 +53,16 @@ class _FakeServiceNowClient:
         return ConnectorReadResult("ready", "ServiceNow read prerequisites are ready.")
 
 
+class _FakeAutotaskClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "Autotask live reads are blocked.")
+        return ConnectorReadResult("ready", "Autotask read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -204,3 +214,23 @@ def test_validate_servicenow_cli_success_and_missing_config(monkeypatch, tmp_pat
     assert "layer=config" in missing.output
     assert success.exit_code == 0
     assert "PASS connector=servicenow layer=connector" in success.output
+
+
+def test_validate_autotask_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "autotask"])
+
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "AutotaskClient", _FakeAutotaskClient)
+    success = runner.invoke(app, ["connectors", "validate", "autotask"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=autotask layer=connector" in success.output

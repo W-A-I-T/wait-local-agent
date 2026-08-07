@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
+from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
@@ -2084,6 +2085,68 @@ def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> No
 def test_servicenow_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/servicenow/health")
+    assert response.status_code == 401
+
+
+def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Autotask ready", 0)
+
+        def list_tickets(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "7", "ticket_number": "T-7"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "ticket_number": "T-7"}],
+            )
+
+        def list_companies(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "3", "name": "Contoso"}],
+            )
+
+        def get_company(self, company_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"id": company_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "AutotaskClient", FakeAutotaskClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/autotask/health")
+    tickets = client.get(
+        "/connectors/autotask/tickets",
+        params={"page": 2, "page_size": 10},
+    )
+    ticket = client.get("/connectors/autotask/tickets/7")
+    companies = client.get("/connectors/autotask/companies")
+    company = client.get("/connectors/autotask/companies/3")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["ticket_number"] == "T-7"
+    assert ticket.json()["items"][0]["id"] == "7"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert company.json()["items"][0]["id"] == "3"
+    assert any(connector["id"] == "autotask" for connector in connectors.json())
+    assert any(event["event_type"] == "autotask.read" for event in audit.json())
+
+
+def test_autotask_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/autotask/health")
     assert response.status_code == 401
 
 
