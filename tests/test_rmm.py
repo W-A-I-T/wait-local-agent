@@ -222,6 +222,63 @@ def test_ninjaone_maps_transport_and_token_failures(settings) -> None:
     assert "before receiving a response" in connect_client.health().message
 
 
+def test_ninjaone_guard_and_get_error_edges(settings) -> None:
+    blocked = NinjaOneClient(settings)
+    assert blocked.get_device("17").result.status == "blocked"
+
+    missing_settings = replace(settings, allow_http_probing=True)
+    missing = NinjaOneClient(missing_settings)
+    assert missing.list_devices().result.status == "not_configured"
+    assert missing.get_device("17").result.status == "not_configured"
+    try:
+        missing._access_token()  # noqa: SLF001
+    except RmmReadError as exc:
+        assert "credentials are incomplete" in str(exc)
+    else:
+        raise AssertionError("missing credentials unexpectedly returned a token")
+
+    def get_timeout(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        raise httpx.ReadTimeout("timed out")
+
+    timeout = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(get_timeout))
+    assert "before receiving a response" in timeout.list_devices().result.message
+
+    def get_read_error(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        raise httpx.ReadError("read failed")
+
+    read_error = NinjaOneClient(
+        _configured(settings), transport=httpx.MockTransport(get_read_error)
+    )
+    assert read_error.list_devices().result.message == "NinjaOne request failed."
+
+    def get_http_failure(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        return httpx.Response(503, text="private body")
+
+    http_failure = NinjaOneClient(
+        _configured(settings), transport=httpx.MockTransport(get_http_failure)
+    )
+    failed = http_failure.list_devices()
+    assert failed.result.message == "NinjaOne GET devices failed with HTTP 503."
+    assert "private body" not in failed.result.message
+
+    def normalizer_edge(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        if request.url.path == "/api/v2/alerts":
+            return httpx.Response(200, json=[{"id": "alert-2", "priority": 2}])
+        return httpx.Response(200, json=[{"id": 17, "offline": 0}])
+
+    client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(normalizer_edge))
+    assert client.list_alerts().items[0]["id"] == "alert-2"
+    assert client.list_devices().items[0]["offline"] is False
+
+
 def test_ninjaone_connector_status_and_validation(settings) -> None:
     blocked = list_connector_statuses(_configured(settings, allow_http_probing=False))
     ninjaone = next(item for item in blocked if item.id == "ninjaone")
