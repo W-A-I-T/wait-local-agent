@@ -47,6 +47,11 @@ def test_analytics_summary_returns_all_metric_groups(settings) -> None:
         {"status": "failed", "count": 1},
         {"status": "pending_approval", "count": 1},
     ]
+    assert summary["activity_breakdown"] == [
+        {"run_kind": "workflow", "trigger_source": "api", "status": "completed", "count": 1},
+        {"run_kind": "workflow", "trigger_source": "api", "status": "failed", "count": 1},
+        {"run_kind": "workflow", "trigger_source": "scheduler", "status": "pending_approval", "count": 1},
+    ]
 
 
 def test_analytics_summary_labels_time_saved_as_estimate(settings) -> None:
@@ -110,3 +115,4 @@ def test_analytics_summary_empty_range_is_zeroed(settings) -> None:
     assert summary["failures_by_status"] == []
     assert summary["estimated_minutes_saved"]["minutes"] == 0
     assert summary["estimated_minutes_saved"]["estimate"] is True
+    assert summary["activity_breakdown"] == []

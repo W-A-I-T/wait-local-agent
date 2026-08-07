@@ -3764,6 +3764,47 @@ class Store:
             ).fetchall()
         return [(str(row["action_id"]), int(row["count"])) for row in rows]
 
+    def execution_activity_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str, str, int]]:
+        """Return explainable activity counts without double-counting recorded runs."""
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at,
+                           er.client_id, er.trigger_source
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at,
+                           sr.client_id, sr.trigger_source
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.run_kind, er.trigger_source, er.status, count(*) as count
+                from all_runs er{clauses}
+                group by er.run_kind, er.trigger_source, er.status
+                order by er.run_kind, er.trigger_source, er.status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [
+            (str(row["run_kind"]), str(row["trigger_source"]), str(row["status"]), int(row["count"]))
+            for row in rows
+        ]
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None

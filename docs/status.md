@@ -40,6 +40,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   workflows through the existing approval path. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`.
+- Analytics now includes a redacted, tenant-scoped activity breakdown by run
+  kind, trigger source, and outcome alongside the existing time-series and
+  estimated-time-saved metrics.
 - A `/tools` API catalog that exposes existing smart-action schemas, risk,
   required role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.

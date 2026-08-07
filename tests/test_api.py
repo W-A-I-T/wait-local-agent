@@ -2033,6 +2033,7 @@ def test_analytics_summary_api_returns_metric_groups(settings) -> None:
     assert summary["success_rate"]["succeeded"] == 1
     assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
     assert len(summary["executions_over_time"]) == 1
+    assert summary["activity_breakdown"]
     time_saved = summary["estimated_minutes_saved"]
     assert time_saved["estimate"] is True
     assert time_saved["minutes"] == 4
