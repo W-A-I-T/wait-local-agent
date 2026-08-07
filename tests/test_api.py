@@ -22,6 +22,7 @@ from wait_local_agent.models import (
     HuduFolder,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroReadResponse
 
 
 def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default_registry) -> None:
@@ -1964,6 +1965,62 @@ def test_connectwise_routes_keep_viewer_auth_boundary(settings) -> None:
     response = client.get("/connectors/connectwise/health")
 
     assert response.status_code == 401
+
+
+def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeSyncroClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Syncro ready", 0)
+
+        def list_tickets(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "42", "subject": "Printer offline"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "subject": "Printer offline"}],
+            )
+
+        def list_customers(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "7", "name": "Contoso"}],
+            )
+
+        def get_customer(self, customer_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "customer ready", 1),
+                [{"id": customer_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "SyncroClient", FakeSyncroClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/syncro/health")
+    tickets = client.get(
+        "/connectors/syncro/tickets",
+        params={"page": 2, "query": "printer", "customer_id": "7", "status": "Open"},
+    )
+    ticket = client.get("/connectors/syncro/tickets/42")
+    customers = client.get("/connectors/syncro/customers", params={"query": "Contoso"})
+    customer = client.get("/connectors/syncro/customers/7")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["id"] == "42"
+    assert ticket.json()["items"][0]["id"] == "42"
+    assert customers.json()["items"][0]["name"] == "Contoso"
+    assert customer.json()["items"][0]["id"] == "7"
+    assert any(connector["id"] == "syncro" for connector in connectors.json())
+    assert any(event["event_type"] == "syncro.read" for event in audit.json())
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

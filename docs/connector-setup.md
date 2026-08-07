@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, and ConnectWise HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, ConnectWise, and Syncro HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -49,6 +49,7 @@ wait-local-agent secrets init
 wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
 wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>'
 wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY '<secret>'
+wait-local-agent secrets set WAIT_SYNCRO_API_TOKEN '<secret>'
 wait-local-agent secrets list
 ```
 
@@ -187,3 +188,32 @@ wait-local-agent connectors connectwise-companies
 The API mirrors these commands under `/connectors/connectwise/health`,
 `/connectors/connectwise/tickets`, and `/connectors/connectwise/companies`.
 All routes remain viewer-authenticated and rate-limited.
+
+## Syncro
+
+### Required settings
+
+```text
+WAIT_SYNCRO_BASE_URL=
+WAIT_SYNCRO_API_TOKEN=
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The Syncro adapter is read-only and uses the documented ticket/customer GET
+surfaces with bearer authentication ([official Syncro API docs](https://api-docs.syncromsp.com/)).
+It keeps credentials in settings/vault, does not place them in URLs or
+payloads, and has no write path.
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate syncro
+wait-local-agent connectors syncro-health
+wait-local-agent connectors syncro-tickets
+wait-local-agent connectors syncro-ticket <ticket-id>
+wait-local-agent connectors syncro-customers
+wait-local-agent connectors syncro-customer <customer-id>
+```
+
+The API mirrors these commands under `/connectors/syncro/health`,
+`/connectors/syncro/tickets`, and `/connectors/syncro/customers`.

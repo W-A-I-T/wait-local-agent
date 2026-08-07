@@ -12,6 +12,7 @@ from wait_local_agent.collectors import (
 )
 from wait_local_agent.config import load_settings
 from wait_local_agent.models import (
+    ConnectorReadResult,
     HaloClient,
     HaloReadResult,
     HaloTicket,
@@ -23,6 +24,7 @@ from wait_local_agent.models import (
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroReadResponse
 
 
 def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
@@ -369,6 +371,53 @@ def test_hudu_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
     assert "A-1" in article.output
     assert folders.exit_code == 0
     assert "Ops" in folders.output
+
+
+def test_syncro_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeSyncroClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_tickets(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "42", "subject": "Printer offline"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"id": ticket_id}]
+            )
+
+        def list_customers(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1), [{"id": "7", "name": "Contoso"}]
+            )
+
+        def get_customer(self, customer_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"id": customer_id}]
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "SyncroClient", FakeSyncroClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "syncro-health"])
+    tickets = runner.invoke(app, ["connectors", "syncro-tickets", "--query", "printer"])
+    ticket = runner.invoke(app, ["connectors", "syncro-ticket", "42"])
+    customers = runner.invoke(app, ["connectors", "syncro-customers"])
+    customer = runner.invoke(app, ["connectors", "syncro-customer", "7"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert tickets.exit_code == 0 and "Printer offline" in tickets.output
+    assert ticket.exit_code == 0 and "42" in ticket.output
+    assert customers.exit_code == 0 and "Contoso" in customers.output
+    assert customer.exit_code == 0 and "7" in customer.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

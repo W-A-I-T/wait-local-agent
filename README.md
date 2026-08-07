@@ -22,11 +22,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - HaloPSA read paths, approval-gated write drafts, and execution history.
 - ConnectWise PSA read-only ticket and company lookup with explicit HTTP
   probing opt-in; no ConnectWise mutation path is enabled.
+- Syncro read-only ticket and customer lookup with explicit HTTP probing
+  opt-in; no Syncro mutation path is enabled.
 - Hudu read-only documentation context.
 - A preview-only communication draft tool for email, Microsoft Teams, Slack,
   and SMS. Drafts are tenant-scoped, require technician approval, and never
   send network traffic in the public core.
-- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, or `connectwise`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `connectwise`, or `syncro`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`.
 - Scheduled jobs support cron, interval, and future one-time schedules with
@@ -149,6 +151,9 @@ wait-local-agent connectors validate hudu
 wait-local-agent connectors connectwise-health
 wait-local-agent connectors connectwise-tickets
 wait-local-agent connectors connectwise-companies
+wait-local-agent connectors syncro-health
+wait-local-agent connectors syncro-tickets
+wait-local-agent connectors syncro-customers
 wait-local-agent update check
 wait-local-agent packs status
 ```
@@ -336,6 +341,19 @@ Read commands are available through the CLI and the `/connectors/connectwise/*`
 API routes. Set `WAIT_ALLOW_HTTP_PROBING=true` before any network request;
 credentials are read from settings/vault and are never accepted in request
 payloads. Writes are not implemented in the public core.
+
+### Syncro
+
+Required settings:
+
+```text
+WAIT_SYNCRO_BASE_URL=
+WAIT_SYNCRO_API_TOKEN=
+```
+
+Read commands are available through the CLI and `/connectors/syncro/*` API
+routes. The adapter uses bearer authentication, keeps the token out of query
+strings and request payloads, and exposes no mutation endpoint.
 
 ## Scheduled Workflows and Tenancy Filters
 

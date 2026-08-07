@@ -31,6 +31,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_CONNECTWISE_PRIVATE_KEY", raising=False)
     monkeypatch.delenv("WAIT_CONNECTWISE_CLIENT_ID", raising=False)
     monkeypatch.delenv("WAIT_CONNECTWISE_API_VERSION", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_API_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -73,6 +75,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.connectwise_client_id == ""
     assert settings.connectwise_api_version == "2022.1"
     assert settings.connectwise_page_size == 25
+    assert settings.syncro_base_url == ""
+    assert settings.syncro_api_token == ""
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -141,6 +145,16 @@ def test_connectwise_env_values(monkeypatch) -> None:
     assert settings.connectwise_client_id == "client"
     assert settings.connectwise_api_version == "2023.1"
     assert settings.connectwise_page_size == 10
+
+
+def test_syncro_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SYNCRO_BASE_URL", "https://acme.syncromsp.com")
+    monkeypatch.setenv("WAIT_SYNCRO_API_TOKEN", "syncro-token")
+
+    settings = load_settings()
+
+    assert settings.syncro_base_url == "https://acme.syncromsp.com"
+    assert settings.syncro_api_token == "syncro-token"
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

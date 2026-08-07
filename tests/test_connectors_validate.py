@@ -33,6 +33,16 @@ class _FakeConnectWiseClient:
         return ConnectorReadResult("ready", "ConnectWise PSA read prerequisites are ready.")
 
 
+class _FakeSyncroClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "Syncro live reads are blocked.")
+        return ConnectorReadResult("ready", "Syncro read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -147,3 +157,21 @@ def test_validate_connectwise_cli_success_and_safety(monkeypatch, tmp_path) -> N
     assert "layer=safety" in blocked.output
     assert success.exit_code == 0
     assert "PASS connector=connectwise layer=connector" in success.output
+
+
+def test_validate_syncro_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "syncro"])
+
+    monkeypatch.setenv("WAIT_SYNCRO_BASE_URL", "https://acme.syncromsp.com")
+    monkeypatch.setenv("WAIT_SYNCRO_API_TOKEN", "syncro-token")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "SyncroClient", _FakeSyncroClient)
+    success = runner.invoke(app, ["connectors", "validate", "syncro"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=syncro layer=connector" in success.output
