@@ -19,7 +19,7 @@ NeoAgent documentation is used only as a feature-class reference.
 | PSA | HaloPSA reads and approval-gated writes | Shared connector patterns exist | ConnectWise, Autotask, Syncro, ServiceNow | Prove a thin read-only adapter with fakes |
 | RMM | Local endpoint collectors | No RMM adapter | NinjaOne, Datto, ConnectWise, N-able, ScreenConnect, Kaseya | Define a read-only RMM interface and one adapter |
 | Documentation | Local knowledge ingestion/search and Hudu reads | Company scoping exists in local records | IT Glue, Confluence, SharePoint adapters | Add one read-only adapter behind existing provider patterns |
-| Microsoft 365 | Code-level adapter groundwork | Not exposed as operator tools | Identity, groups, licenses, mailbox, Intune actions | Expose read-only identity lookup first |
+| Microsoft 365 | Code-level adapter groundwork and tenant-scoped read-only identity lookup over collected `m365-user` inventory | Live Graph identity reads and broader resource tools are not yet exposed | Groups, licenses, mailbox, Intune actions | Add a governed live identity read after connector wiring is available |
 | Communication | Approval-gated connector drafts and ticket actions | No common outbound communication interface | Email, Teams, Slack, SMS adapters | Define preview-first message capability |
 | Technician teammate | Run-now APIs, tool catalog, execution and approval history | No conversational surface | Technician chat | Reuse runtime through a bounded command surface |
 | End-user support | Tenant and approval primitives | No end-user mode | White-label end-user agent | Add after technician surface and safe-tool policy |

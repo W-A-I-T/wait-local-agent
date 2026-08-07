@@ -17,6 +17,7 @@ from wait_local_agent.smart_actions import (
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
+    M365IdentityLookupAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -174,11 +175,31 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
     context = _action_context(store, settings, FakeProvider(), available=True)
+    store.upsert_canonical_asset(
+        canonical_id="m365:user:user-1",
+        asset_type="m365-user",
+        display_name="Acme Admin",
+        attributes={
+            "user_id": "user-1",
+            "display_name": "Acme Admin",
+            "user_principal_name": "admin@acme.example",
+            "mail": "admin@acme.example",
+            "account_enabled": True,
+            "job_title": "Administrator",
+            "department": "IT",
+        },
+        client_id="acme",
+        source_module="cloud-m365",
+    )
 
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
     knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
+    identity = M365IdentityLookupAction().run(
+        replace(context, client_id="acme"),
+        {"identity": "ADMIN@ACME.EXAMPLE"},
+    )
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
     escalation = TicketEscalationAction().run(context, {"ticket_id": "TCK-1001"})
@@ -193,6 +214,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == summary.status
         == resolution.status
         == knowledge.status
+        == identity.status
         == quality.status
         == sentiment.status
         == escalation.status
@@ -203,6 +225,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
     assert resolution.output["citations"]
     assert knowledge.output["ticket_id"] == "TCK-1001"
+    assert identity.output["count"] == 1
+    assert identity.output["matches"][0]["user_principal_name"] == "admin@acme.example"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"
@@ -231,6 +255,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         TicketSummaryAction(),
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
+        M365IdentityLookupAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -467,6 +492,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-identity-lookup",
         "suggest-resolution",
         "ticket-escalation",
         "ticket-quality",

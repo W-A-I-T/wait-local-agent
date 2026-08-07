@@ -50,7 +50,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   estimated-time-saved metrics.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
   read-only local knowledge search, ticket-quality, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
-  and read/write classification.
+  and read/write classification. The catalog also exposes a technician-gated,
+  read-only Microsoft 365 identity lookup over tenant-scoped collected
+  `m365-user` inventory; no credentials or write operation are accepted by the
+  action.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
 - Founder API and CLI public contract with stable "pack not installed" behavior when proprietary founder code is absent.

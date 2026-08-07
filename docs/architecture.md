@@ -59,6 +59,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   are supported.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
+- The read-first Microsoft 365 identity tool searches only tenant-scoped,
+  previously collected `m365-user` inventory. It does not make live Graph
+  writes or accept credentials through the action payload.
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and
