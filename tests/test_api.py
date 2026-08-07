@@ -10,11 +10,14 @@ import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import (
     DatabaseInventoryCollector,
+    EndpointAgentsCollector,
     FirewallRulesCollector,
     HostRuntimeCollector,
     ListeningPortsCollector,
     NetworkInterfacesCollector,
     ProcessInventoryCollector,
+    RoutingTableCollector,
+    WebServicesCollector,
     WifiInventoryCollector,
     default_registry,
 )
@@ -29,15 +32,18 @@ from wait_local_agent.models import (
 from wait_local_agent.store import Store
 
 
-def test_api_lists_exactly_seven_collector_modules(settings, isolated_default_registry) -> None:
+def test_api_lists_exactly_ten_collector_modules(settings, isolated_default_registry) -> None:
     default_registry.clear()
     for module in (
         DatabaseInventoryCollector(),
+        EndpointAgentsCollector(),
         FirewallRulesCollector(),
         HostRuntimeCollector(),
         ListeningPortsCollector(),
         NetworkInterfacesCollector(),
         ProcessInventoryCollector(),
+        RoutingTableCollector(),
+        WebServicesCollector(),
         WifiInventoryCollector(),
     ):
         default_registry.register(module)
@@ -49,15 +55,18 @@ def test_api_lists_exactly_seven_collector_modules(settings, isolated_default_re
     modules = response.json()
     assert [module["id"] for module in modules] == [
         "database-inventory",
+        "endpoint-agents",
         "firewall-rules",
         "host-runtime",
         "listening-ports",
         "network-interfaces",
         "process-inventory",
+        "routing-table",
+        "web-services",
         "wifi-inventory",
     ]
-    assert len(modules) == 7
-    assert len(default_registry.list()) == 7
+    assert len(modules) == 10
+    assert len(default_registry.list()) == 10
 
 
 def test_health_reports_safe_defaults(settings) -> None:

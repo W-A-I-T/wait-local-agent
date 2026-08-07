@@ -42,11 +42,14 @@ def test_default_registry_exposes_typed_local_collectors() -> None:
 
     assert [module.manifest.id for module in modules] == [
         "database-inventory",
+        "endpoint-agents",
         "firewall-rules",
         "host-runtime",
         "listening-ports",
         "network-interfaces",
         "process-inventory",
+        "routing-table",
+        "web-services",
         "wifi-inventory",
     ]
     for module in modules:

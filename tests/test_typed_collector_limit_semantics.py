@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -161,6 +162,158 @@ def test_wifi_limit_scans_later_sources(monkeypatch: pytest.MonkeyPatch) -> None
     assert len(collection.records) == 1
     assert collection.source_outcomes[0].status is CollectionStatus.NOT_AUTHORIZED
     assert result.status is CollectionStatus.PARTIAL
+
+
+def test_routing_table_limit_scans_later_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = collectors.RoutingTableCollectorModule()
+    record = {
+        "family": "ipv4",
+        "interface": "eth0",
+        "destination": "0.0.0.0",
+        "gateway": "192.168.1.1",
+        "mask": "0.0.0.0",
+        "flags": "0003",
+        "index": 0,
+    }
+    monkeypatch.setattr(module, "_read_ipv4_route_file", lambda *args, **kwargs: [record])
+    monkeypatch.setattr(
+        module,
+        "_read_ipv6_route_file",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("later route source failed")),
+    )
+
+    collection = module._route_records_with_outcomes(limit=1, strict=True)
+    typed = collectors.RoutingTableCollector()
+    typed._legacy_module = module
+    result = typed.collect({"limit": 1})
+
+    assert len(collection.records) == 1
+    assert collection.source_outcomes[0].status is CollectionStatus.UNAVAILABLE
+    assert result.status is CollectionStatus.PARTIAL
+
+
+def test_endpoint_agents_limit_scans_later_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = collectors.EndpointAgentsCollectorModule()
+    first_markers = module._AGENT_MARKERS[0][2]
+
+    def detect(markers: tuple[str, ...], *, strict: bool = False) -> str:
+        if markers == first_markers:
+            return "/opt/CrowdStrike"
+        raise PermissionError("later endpoint-agent source failed")
+
+    monkeypatch.setattr(module, "_first_existing_marker", detect)
+    collection = module._agent_records_with_outcomes(limit=1, strict=True)
+    typed = collectors.EndpointAgentsCollector()
+    typed._legacy_module = module
+    result = typed.collect({"limit": 1})
+
+    assert len(collection.records) == 1
+    assert collection.source_outcomes[0].status is CollectionStatus.NOT_AUTHORIZED
+    assert result.status is CollectionStatus.PARTIAL
+
+
+def test_web_services_limit_scans_later_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = collectors.WebServicesCollectorModule()
+    record = {
+        "config_file": "/etc/nginx/nginx.conf",
+        "server_name": "example.test",
+        "port": "443",
+        "document_root": "/srv/www",
+    }
+
+    def read(path: Path, *, strict: bool = False) -> str:
+        if str(path) == "/etc/nginx/nginx.conf":
+            return "server { listen 443; server_name example.test; }"
+        raise OSError("later web-service source failed")
+
+    monkeypatch.setattr(module, "_read_web_config", read)
+    monkeypatch.setattr(module, "_parse_nginx_config", lambda text, config_file: [record])
+    collection = module._web_service_records_with_outcomes(limit=1, strict=True)
+    typed = collectors.WebServicesCollector()
+    typed._legacy_module = module
+    result = typed.collect({"limit": 1})
+
+    assert len(collection.records) == 1
+    assert collection.source_outcomes
+    assert collection.source_outcomes[0].status is CollectionStatus.UNAVAILABLE
+    assert result.status is CollectionStatus.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "collector_type",
+    [
+        collectors.ProcessInventoryCollector,
+        collectors.ListeningPortsCollector,
+        collectors.NetworkInterfacesCollector,
+        collectors.FirewallRulesCollector,
+        collectors.DatabaseInventoryCollector,
+        collectors.WifiInventoryCollector,
+        collectors.RoutingTableCollector,
+        collectors.EndpointAgentsCollector,
+        collectors.WebServicesCollector,
+    ],
+    ids=lambda collector_type: collector_type.manifest.id,
+)
+def test_typed_collect_maps_unexpected_exception_for_every_collector(
+    monkeypatch: pytest.MonkeyPatch,
+    collector_type: type[Any],
+) -> None:
+    monkeypatch.setattr(collectors._process_inventory_platform, "system", lambda: "Linux")
+    module = collector_type()
+
+    def explode(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("unexpected collector parser failure")
+
+    monkeypatch.setattr(module, "_records_with_outcomes", explode)
+    result = module.collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert len(result.source_outcomes) == 1
+    outcome = result.source_outcomes[0]
+    assert outcome.source_id == module.manifest.id
+    assert outcome.error_code == "collection_unavailable"
+    assert outcome.error_detail == "unexpected collector parser failure"
+
+
+def test_routing_table_legacy_path_propagates_unexpected_parser_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = collectors.RoutingTableCollectorModule()
+    monkeypatch.setattr(
+        module,
+        "_read_ipv4_route_file",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parser bug")),
+    )
+
+    with pytest.raises(RuntimeError, match="parser bug"):
+        module._route_records()
+
+
+def test_endpoint_agents_legacy_path_propagates_unexpected_parser_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = collectors.EndpointAgentsCollectorModule()
+    monkeypatch.setattr(
+        module,
+        "_first_existing_marker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parser bug")),
+    )
+
+    with pytest.raises(RuntimeError, match="parser bug"):
+        module._agent_records()
+
+
+def test_web_services_legacy_path_propagates_unexpected_parser_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = collectors.WebServicesCollectorModule()
+    monkeypatch.setattr(
+        module,
+        "_parse_nginx_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parser bug")),
+    )
+    monkeypatch.setattr(module, "_read_web_config", lambda *args, **kwargs: "server {}")
+
+    with pytest.raises(RuntimeError, match="parser bug"):
+        module._web_service_records()
 
 
 def test_firewall_legacy_path_propagates_unexpected_parser_error(monkeypatch: pytest.MonkeyPatch) -> None:

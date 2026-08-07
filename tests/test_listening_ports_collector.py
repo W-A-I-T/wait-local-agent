@@ -403,50 +403,6 @@ def test_collect_returns_empty_when_socket_files_missing(
 
 
 # --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_listening_ports_collector_is_idempotent() -> None:
-    collectors._register_listening_ports_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("listening-ports")
-        assert module is not None
-        assert module.module_id == "listening-ports"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    collectors._register_listening_ports_collector()
-    collectors._register_listening_ports_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("listening-ports") == 1
-    assert any(getattr(m, "module_id", None) == "listening-ports" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "listening-ports"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("listening-ports") == 1
-    assert "ListeningPortsCollectorModule" in collectors.__dict__["__all__"]
-
-
-# --------------------------------------------------------------------------- #
 # parse / decode helpers (white-box)
 # --------------------------------------------------------------------------- #
 

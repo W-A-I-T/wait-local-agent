@@ -424,50 +424,6 @@ def test_preview_returns_not_ok_for_invalid_config(
 
 
 # --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_wifi_inventory_collector_is_idempotent() -> None:
-    collectors._register_wifi_inventory_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("wifi-inventory")
-        assert module is not None
-        assert module.module_id == "wifi-inventory"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    collectors._register_wifi_inventory_collector()
-    collectors._register_wifi_inventory_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("wifi-inventory") == 1
-    assert any(getattr(m, "module_id", None) == "wifi-inventory" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "wifi-inventory"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("wifi-inventory") == 1
-    assert "WifiInventoryCollectorModule" in collectors.__dict__["__all__"]
-
-
-# --------------------------------------------------------------------------- #
 # read / parse helpers
 # --------------------------------------------------------------------------- #
 

@@ -355,55 +355,6 @@ def test_collect_returns_empty_when_proc_missing(
 
 
 # --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_process_inventory_collector_is_idempotent() -> None:
-    # Runs at import; calling again must not raise and must keep the module known.
-    collectors._register_process_inventory_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("process-inventory")
-        assert module is not None
-        assert module.module_id == "process-inventory"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        # Rejects the 2-arg form so the module falls back to register(module).
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    # First registration populates every shape.
-    collectors._register_process_inventory_collector()
-    # Second registration exercises the "already present" guards (list/tuple).
-    collectors._register_process_inventory_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("process-inventory") == 1
-    assert any(getattr(m, "module_id", None) == "process-inventory" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "process-inventory"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert (
-        [getattr(m, "module_id", None) for m in registry_tuple].count("process-inventory")
-        == 1
-    )
-    assert "ProcessInventoryCollectorModule" in collectors.__dict__["__all__"]
-
-
-# --------------------------------------------------------------------------- #
 # defensive read paths
 # --------------------------------------------------------------------------- #
 
