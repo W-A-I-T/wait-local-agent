@@ -29,7 +29,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   cron, interval, and future one-time schedules with validated IANA timezones
   (UTC by default), plus pause/resume/delete and reschedule controls.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
-  `/tools`, tenant-scoped ticket runs, and approval pause/resume. Agents may
+  `/tools` including read-only local knowledge search, tenant-scoped ticket
+  runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity
   protection. Scheduled and event agents can also enforce a persisted local
