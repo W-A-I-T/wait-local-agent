@@ -299,6 +299,9 @@ class ScheduledJob:
     job_kind: str = "workflow"
     agent_id: str | None = None
     entity_id: str | None = None
+    schedule_type: str = "cron"
+    interval_seconds: int | None = None
+    run_at: str | None = None
 
 
 @dataclass(frozen=True)

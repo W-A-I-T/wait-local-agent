@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import ScheduledJob
@@ -58,8 +60,11 @@ class SchedulerManager:
         job_kind: str = "workflow",
         agent_id: str | None = None,
         entity_id: str | None = None,
+        schedule_type: str = "cron",
+        interval_seconds: int | None = None,
+        run_at: str | None = None,
     ) -> ScheduledJob:
-        validate_cron_expression(cron)
+        validate_schedule(schedule_type, cron, interval_seconds, run_at)
         _validate_schedule_target(job_kind, template_id, agent_id, entity_id)
         client_id = _string_or_none(params.get("client_id"))
         scheduled_job = self._store.create_scheduled_job(
@@ -70,6 +75,9 @@ class SchedulerManager:
             job_kind=job_kind,
             agent_id=agent_id,
             entity_id=entity_id,
+            schedule_type=schedule_type,
+            interval_seconds=interval_seconds,
+            run_at=run_at,
         )
         if self._scheduler is not None:
             self._register_live_job(scheduled_job)
@@ -189,7 +197,7 @@ class SchedulerManager:
     def _register_live_job(self, scheduled_job: ScheduledJob) -> None:
         if self._scheduler is None or scheduled_job.id is None:
             return
-        trigger = CronTrigger.from_crontab(scheduled_job.cron, timezone=UTC)
+        trigger = _schedule_trigger(scheduled_job)
         self._scheduler.add_job(
             self._build_job_callable(scheduled_job),
             trigger=trigger,
@@ -225,6 +233,55 @@ def validate_cron_expression(cron: str) -> None:
         CronTrigger.from_crontab(cron, timezone=UTC)
     except ValueError as exc:
         raise ValueError("invalid cron expression; expected standard 5-field crontab syntax") from exc
+
+
+def validate_schedule(
+    schedule_type: str,
+    cron: str,
+    interval_seconds: int | None,
+    run_at: str | None,
+) -> None:
+    if schedule_type == "cron":
+        validate_cron_expression(cron)
+        if interval_seconds is not None or run_at is not None:
+            raise ValueError("cron schedules cannot include interval_seconds or run_at")
+        return
+    if schedule_type == "interval":
+        if not isinstance(interval_seconds, int) or isinstance(interval_seconds, bool):
+            raise ValueError("interval schedules require interval_seconds")
+        if interval_seconds < 1 or interval_seconds > 31_536_000:
+            raise ValueError("interval_seconds must be between 1 and 31536000")
+        if cron or run_at is not None:
+            raise ValueError("interval schedules cannot include cron or run_at")
+        return
+    if schedule_type == "once":
+        if not isinstance(run_at, str) or not run_at.strip():
+            raise ValueError("one-time schedules require run_at")
+        if cron or interval_seconds is not None:
+            raise ValueError("one-time schedules cannot include cron or interval_seconds")
+        parsed = _parse_run_at(run_at)
+        if parsed <= datetime.now(UTC):
+            raise ValueError("run_at must be in the future")
+        return
+    raise ValueError("schedule_type must be cron, interval, or once")
+
+
+def _schedule_trigger(scheduled_job: ScheduledJob) -> Any:
+    if scheduled_job.schedule_type == "interval":
+        return IntervalTrigger(seconds=scheduled_job.interval_seconds or 0, timezone=UTC)
+    if scheduled_job.schedule_type == "once":
+        return DateTrigger(run_date=_parse_run_at(scheduled_job.run_at or ""), timezone=UTC)
+    return CronTrigger.from_crontab(scheduled_job.cron, timezone=UTC)
+
+
+def _parse_run_at(run_at: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(run_at)
+    except ValueError as exc:
+        raise ValueError("run_at must be a valid ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("run_at must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 def _validate_schedule_target(

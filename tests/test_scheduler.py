@@ -9,7 +9,12 @@ import pytest
 from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ScheduledJob
-from wait_local_agent.scheduler import SchedulerManager, validate_cron_expression
+from wait_local_agent.scheduler import (
+    SchedulerManager,
+    _schedule_trigger,
+    validate_cron_expression,
+    validate_schedule,
+)
 from wait_local_agent.security import require_bearer_authorization
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -134,6 +139,57 @@ def test_scheduler_validation_rejects_invalid_cron() -> None:
         assert "invalid cron expression" in str(exc)
     else:
         raise AssertionError("expected invalid cron expression to fail")
+
+
+def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
+    validate_schedule("interval", "", 60, None)
+    validate_schedule("once", "", None, "2099-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="interval_seconds"):
+        validate_schedule("interval", "", None, None)
+    with pytest.raises(ValueError, match="between 1"):
+        validate_schedule("interval", "", 0, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("interval", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="cannot include interval"):
+        validate_schedule("cron", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require run_at"):
+        validate_schedule("once", "", None, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("once", "0 9 * * *", None, "2099-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="timezone"):
+        validate_schedule("once", "", None, "2099-01-01T00:00:00")
+    with pytest.raises(ValueError, match="ISO-8601"):
+        validate_schedule("once", "", None, "not-a-date")
+    with pytest.raises(ValueError, match="future"):
+        validate_schedule("once", "", None, "2020-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="schedule_type"):
+        validate_schedule("unknown", "", None, None)
+    assert _schedule_trigger(  # noqa: SLF001
+        ScheduledJob(
+            id=1,
+            template_id="template",
+            cron="",
+            params_json="{}",
+            paused=False,
+            created_at="",
+            updated_at="",
+            schedule_type="interval",
+            interval_seconds=60,
+        )
+    ) is not None
+    assert _schedule_trigger(  # noqa: SLF001
+        ScheduledJob(
+            id=2,
+            template_id="template",
+            cron="",
+            params_json="{}",
+            paused=False,
+            created_at="",
+            updated_at="",
+            schedule_type="once",
+            run_at="2099-01-01T00:00:00+00:00",
+        )
+    ) is not None
 
 
 def test_scheduler_ignores_jobs_without_runtime_identity(tmp_path: Path) -> None:

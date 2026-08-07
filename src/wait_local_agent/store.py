@@ -248,7 +248,10 @@ class Store:
                     client_id text,
                     job_kind text not null default 'workflow',
                     agent_id text,
-                    entity_id text
+                    entity_id text,
+                    schedule_type text not null default 'cron',
+                    interval_seconds integer,
+                    run_at text
                 )
                 """
             )
@@ -353,6 +356,9 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
             self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
+            self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
+            self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -2222,6 +2228,9 @@ class Store:
         job_kind: str = "workflow",
         agent_id: str | None = None,
         entity_id: str | None = None,
+        schedule_type: str = "cron",
+        interval_seconds: int | None = None,
+        run_at: str | None = None,
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -2240,9 +2249,12 @@ class Store:
                     client_id,
                     job_kind,
                     agent_id,
-                    entity_id
+                    entity_id,
+                    schedule_type,
+                    interval_seconds,
+                    run_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -2255,6 +2267,9 @@ class Store:
                     job_kind,
                     agent_id,
                     entity_id,
+                    schedule_type,
+                    interval_seconds,
+                    run_at,
                 ),
             )
             if cursor.lastrowid is None:

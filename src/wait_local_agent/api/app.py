@@ -200,7 +200,10 @@ class ScheduledJobCreateRequest(BaseModel):
     template_id: str | None = None
     agent_id: str | None = None
     entity_id: str | None = None
-    cron: str
+    cron: str = ""
+    schedule_type: Literal["cron", "interval", "once"] = "cron"
+    interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
+    run_at: str | None = None
     params: dict[str, object] = Field(default_factory=dict)
 
 
@@ -1662,6 +1665,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.template_id,
                 request.cron,
                 params,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1710,6 +1716,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 job_kind="agent",
                 agent_id=definition.id,
                 entity_id=request.entity_id,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1985,6 +1994,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "agent_id": job.agent_id,
             "entity_id": job.entity_id,
             "cron": job.cron,
+            "schedule_type": job.schedule_type,
+            "interval_seconds": job.interval_seconds,
+            "run_at": job.run_at,
             "paused": job.paused,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
