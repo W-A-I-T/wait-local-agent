@@ -126,6 +126,104 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.steps[0]["status"] == "success"
 
 
+def test_pending_run_continues_from_its_revision_after_definition_update(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Dispatch then triage",
+        description="Keep the pending run tied to its original definition.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion", "ticket-triage"],
+        steps=[
+            {"tool_id": "dispatch-suggestion", "payload": {"technicians": []}},
+            {"tool_id": "ticket-triage", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.status == "pending_approval"
+    assert pending.revision_version == 1
+
+    updated = service.update(
+        definition,
+        name="Only triage now",
+        description="The active definition changed after the run started.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+    )
+    assert updated.version == 2
+
+    resumed = service.resume(
+        updated,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert resumed.status == "completed"
+    assert len(resumed.steps) == 2
+    assert resumed.steps[1]["tool_id"] == "ticket-triage"
+
+
+def test_agent_run_can_cancel_pending_approval_and_retry(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Cancellable dispatch",
+        description="Cancel the pending run before retrying it.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    cancelled = service.cancel(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        actor="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert cancelled.status == "cancelled"
+    assert cancelled.steps[0]["status"] == "cancelled"
+    assert service.store.get_approval_request(pending.approval_id or 0).status == "rejected"  # type: ignore[union-attr]
+
+    retried = service.retry(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        actor="requester",
+    )
+    assert retried.status == "pending_approval"
+    assert retried.revision_version == definition.version
+
+
+def test_agent_retry_rejects_completed_runs(settings) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    completed = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert completed.status == "completed"
+    with pytest.raises(AgentDefinitionError, match="only failed"):
+        service.retry(
+            definition,
+            service.store.get_agent_run(completed.run_id, client_id="acme"),  # type: ignore[arg-type]
+            actor="requester",
+        )
+
+
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
     service = _service(settings)
     definition = _create(service)
@@ -422,6 +520,33 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     detail = client.get(f"/agent-runs/{run.json()['run_id']}")
     assert detail.status_code == 200
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
+    assert detail.json()["revision_version"] == 1
+    assert detail.json()["definition_revision"]["version"] == 1
+    assert client.post(f"/agent-runs/{run.json()['run_id']}/retry").status_code == 409
+    assert client.post(f"/agent-runs/{run.json()['run_id']}/cancel").status_code == 409
+
+    approval_agent = client.post(
+        "/agents",
+        json={
+            "name": "Approval agent",
+            "enabled_tools": ["dispatch-suggestion"],
+            "steps": [{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert approval_agent.status_code == 200
+    pending = client.post(
+        f"/agents/{approval_agent.json()['id']}/run",
+        json={"entity_id": "TCK-1001"},
+    )
+    assert pending.status_code == 200
+    cancelled = client.post(f"/agent-runs/{pending.json()['run_id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    retried = client.post(f"/agent-runs/{pending.json()['run_id']}/retry")
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "pending_approval"
 
     updated = client.put(
         f"/agents/{agent_id}",
