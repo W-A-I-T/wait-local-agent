@@ -58,6 +58,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
+from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -96,6 +97,8 @@ reports_app = typer.Typer(help="Stored report list, detail, and export commands.
 collectors_app = typer.Typer(help="Collector module protocol commands.")
 collector_bundle_app = typer.Typer(help="Collector evidence bundle commands.")
 smart_actions_app = typer.Typer(help="Smart action commands.")
+executions_app = typer.Typer(help="Execution observability commands.")
+analytics_app = typer.Typer(help="Execution analytics commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -115,6 +118,8 @@ app.add_typer(reports_app, name="reports")
 collectors_app.add_typer(collector_bundle_app, name="bundle")
 app.add_typer(collectors_app, name="collectors")
 app.add_typer(smart_actions_app, name="smart-actions")
+app.add_typer(executions_app, name="executions")
+app.add_typer(analytics_app, name="analytics")
 
 
 def _store() -> Store:
@@ -750,7 +755,7 @@ def list_workflows() -> None:
 
 @workflows_app.command("run")
 def run_workflow(template_id: str, ticket_id: str) -> None:
-    run = run_workflow_template(_store(), template_id, ticket_id)
+    run = run_workflow_template(_store(), template_id, ticket_id, actor="cli", trigger_source="cli")
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 
 
@@ -859,6 +864,120 @@ def list_smart_action_runs(
             f"{run.id} {run.action_id} {run.status} actor={run.actor} "
             f"approval_id={run.approval_id}"
         )
+
+
+def _cli_execution_scope(settings, token: str | None, client_id: str | None) -> str | None:
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    if context.role < Role.ADMIN and not scoped_client_id:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    return scoped_client_id
+
+
+@executions_app.command("list")
+def list_executions(
+    run_kind: Annotated[str | None, typer.Option("--kind")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    started_from: Annotated[str | None, typer.Option("--from")] = None,
+    started_to: Annotated[str | None, typer.Option("--to")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    for run in store.list_execution_runs(
+        client_id=scoped_client_id,
+        run_kind=run_kind,
+        status=status,
+        started_from=started_from,
+        started_to=started_to,
+    ):
+        typer.echo(
+            f"{run.id} {run.run_kind} {run.status} actor={run.actor} "
+            f"source_run_id={run.source_run_id} trigger={run.trigger_source}"
+        )
+
+
+@executions_app.command("show")
+def show_execution(
+    execution_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+    if run is None or run.id is None:
+        raise typer.BadParameter("execution not found")
+    payload = {
+        **asdict(run),
+        "steps": [
+            _execution_cli_step_view(step) for step in store.list_execution_steps(run.id)
+        ],
+        "artifacts": [
+            {
+                "id": artifact.id,
+                "step_ordinal": artifact.step_ordinal,
+                "name": artifact.name,
+                "media_type": artifact.media_type,
+                "byte_size": artifact.byte_size,
+                "sha256": artifact.sha256,
+            }
+            for artifact in store.list_execution_artifacts(run.id)
+        ],
+    }
+    typer.echo(json.dumps(payload, sort_keys=True, indent=2))
+
+
+@analytics_app.command("summary")
+def analytics_summary_command(
+    started_from: Annotated[str | None, typer.Option("--from")] = None,
+    started_to: Annotated[str | None, typer.Option("--to")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    service = SmartActionService(store, settings)
+    estimates = {
+        manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()
+    }
+    summary = build_analytics_summary(
+        store,
+        estimates,
+        started_from=started_from,
+        started_to=started_to,
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(summary, sort_keys=True, indent=2))
+
+
+def _execution_cli_step_view(step) -> dict[str, object]:
+    try:
+        step_input = json.loads(step.input_json)
+    except json.JSONDecodeError:
+        step_input = None
+    try:
+        step_output = json.loads(step.output_json)
+    except json.JSONDecodeError:
+        step_output = None
+    return {
+        "id": step.id,
+        "ordinal": step.ordinal,
+        "kind": step.kind,
+        "name": step.name,
+        "status": step.status,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+        "input_digest": step.input_digest,
+        "output_digest": step.output_digest,
+        "input": redact_value(step_input),
+        "output": redact_value(step_output),
+        "error_detail": redact_text(step.error_detail),
+    }
 
 
 @collectors_app.command("list")
