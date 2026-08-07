@@ -80,6 +80,7 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
 
     assert result.status == "completed"
+    assert service.store.get_agent_run(result.run_id, client_id="acme").revision_version == definition.version  # type: ignore[union-attr]
     assert [step["status"] for step in result.steps] == ["success", "success"]
     executions = service.store.list_execution_runs(client_id="acme", run_kind="agent")
     assert len(executions) == 1
@@ -440,6 +441,12 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     revisions = client.get(f"/agents/{agent_id}/revisions")
     assert revisions.status_code == 200
     assert [revision["version"] for revision in revisions.json()] == [2, 1]
+    diff = client.get(f"/agents/{agent_id}/revisions/1/diff/2")
+    assert diff.status_code == 200
+    assert diff.json()["changed"] is True
+    assert {change["field"] for change in diff.json()["changes"]} >= {"name", "description"}
+    assert client.get(f"/agents/{agent_id}/revisions/1/diff/99").status_code == 404
+    assert client.get("/agents/no-such-agent/revisions/1/diff/2").status_code == 404
     restored = client.post(f"/agents/{agent_id}/revisions/1/restore")
     assert restored.status_code == 200
     assert restored.json()["version"] == 3
@@ -483,6 +490,10 @@ def test_agent_revision_restore_requires_tenant_for_authenticated_technicians(se
         headers={"Authorization": "Bearer tech-token"},
     )
     assert response.status_code == 404
+    assert client.get(
+        "/agents/anything/revisions/1/diff/2",
+        headers={"Authorization": "Bearer viewer-token"},
+    ).status_code == 404
     assert client.get(
         "/agents/anything/revisions",
         headers={"Authorization": "Bearer viewer-token"},

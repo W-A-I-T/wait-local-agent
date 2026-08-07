@@ -33,8 +33,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Event-triggered agent APIs under `/automation/events` and
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
   tenant checks, and auditable delivery history.
-- Agent revision history and bounded rollback under `/agents/{id}/revisions`,
-  with immutable redacted snapshots and tenant-scoped restore-as-new-version.
+- Agent revision history, redacted revision diffs, run-to-version links, and
+  bounded rollback under `/agents/{id}/revisions`, with immutable snapshots and
+  tenant-scoped restore-as-new-version.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.

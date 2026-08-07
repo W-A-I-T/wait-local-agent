@@ -236,6 +236,7 @@ class AgentService:
             "queued",
             0,
             state,
+            revision_version=definition.version,
             client_id=client_id,
         )
         return self._continue(definition, run, actor, start_step=0, state=state)

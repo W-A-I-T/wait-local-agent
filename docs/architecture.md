@@ -64,7 +64,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   same runtime, deterministic filters, tenant scope, idempotency keys, and
   run-once-per-entity protection. Definition changes create immutable redacted
   revision snapshots; rollback validates a prior snapshot and persists it as a
-  new version. Event agents can depend on same-tenant agents; the dispatcher
+  new version. Revision diffs are field-level and redacted, and each run records
+  the definition version used. Event agents can depend on same-tenant agents; the dispatcher
   applies cycle prevention at definition time and waits for upstream completion
   with a bounded sequential pass. Backfills and conversational agents remain
   future extensions.
