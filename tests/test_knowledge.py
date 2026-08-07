@@ -558,7 +558,7 @@ def test_chunk_text_empty_input_returns_empty_list() -> None:
     assert chunk_text("") == []
 
 
-def test_retrieval_falls_back_when_index_has_no_hits(settings, tmp_path) -> None:
+def test_retrieval_marks_zero_index_hits_as_no_sources(settings, tmp_path) -> None:
     doc_root = tmp_path / "docs"
     doc_root.mkdir()
     (doc_root / "mfa-reset.md").write_text(
@@ -578,8 +578,7 @@ def test_retrieval_falls_back_when_index_has_no_hits(settings, tmp_path) -> None
 
     sources = retrieve_sources(ticket, active_settings.allowed_doc_root, store)
 
-    assert sources
-    assert sources[0].title == "MFA Reset"
+    assert sources == []
 
 
 def test_retrieval_returns_empty_when_doc_root_missing(settings, tmp_path) -> None:

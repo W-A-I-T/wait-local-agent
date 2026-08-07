@@ -10,16 +10,28 @@ from typing import Annotated
 
 import typer
 import uvicorn
+from fastapi import HTTPException
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
     FOUNDER_INSTALL_HINT,
+    FounderNotConfiguredError,
     FounderPackContractError,
     FounderPackUnavailableError,
+    FounderUploadConflictError,
     build_upload_preview,
+    configure_founder,
     invoke_founder,
     json_object,
+    open_founder_preview,
+    open_founder_results,
+    open_founder_scan,
+    open_founder_status,
+    open_founder_upload,
     require_founder_pack,
+    require_fresh_preview,
+    resolve_open_config,
+    sanitized_pack_bundle,
 )
 from wait_local_agent.api.founder import (
     render_json as render_founder_json,
@@ -45,16 +57,19 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
     build_restore_evidence_report,
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -78,6 +93,7 @@ founder_app = typer.Typer(help="Founder pack commands.")
 reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 collectors_app = typer.Typer(help="Collector module protocol commands.")
 collector_bundle_app = typer.Typer(help="Collector evidence bundle commands.")
+smart_actions_app = typer.Typer(help="Smart action commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -96,6 +112,7 @@ _PACK_CLI_NAMES: set[str] = set()
 app.add_typer(reports_app, name="reports")
 collectors_app.add_typer(collector_bundle_app, name="bundle")
 app.add_typer(collectors_app, name="collectors")
+app.add_typer(smart_actions_app, name="smart-actions")
 
 
 def _store() -> Store:
@@ -211,7 +228,49 @@ def install_pack(
 
 @founder_app.command("scan")
 def founder_scan(path: Path) -> None:
-    response = json_object(_invoke_founder_cli("scan", path), operation="scan")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        response = open_founder_scan(store, settings, config, path)
+    else:
+        response = json_object(invoke_founder(pack, "scan", path), operation="scan")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("configure")
+def founder_configure(
+    base_url: Annotated[str, typer.Option("--base-url")],
+    project_id: Annotated[str, typer.Option("--project-id")],
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help="Token for scripting only; visible in shell history/process arguments. Prefer the hidden prompt.",
+        ),
+    ] = None,
+) -> None:
+    token_value = token if token is not None else typer.prompt("Launch Passport token", hide_input=True)
+    try:
+        response = configure_founder(load_settings(), _store(), base_url, project_id, token_value)
+    except (ValueError, SecretVaultError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("preview")
+def founder_preview(artifact_id: Annotated[str, typer.Argument()]) -> None:
+    pack = _founder_pack_or_none()
+    if pack is None:
+        _, store, _ = _open_cli_config()
+        try:
+            response = open_founder_preview(store, artifact_id)
+        except KeyError as exc:
+            raise typer.BadParameter("artifact not found") from exc
+        store.mark_founder_artifact_previewed(artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        response = build_upload_preview(artifact_id, bundle)
+        _store().mark_founder_artifact_previewed(artifact_id)
     typer.echo(render_founder_json(response))
 
 
@@ -248,12 +307,50 @@ def founder_upload(
     artifact_id: Annotated[str, typer.Option("--artifact-id")],
     yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
 ) -> None:
-    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
-    typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
-    if not yes:
-        typer.echo("re-run with --yes to confirm upload")
-        raise typer.Exit(code=1)
-    response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        if not yes:
+            typer.echo("upload requires a prior preview; run `founder preview ARTIFACT_ID`, then re-run with --yes")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(store, artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = open_founder_upload(settings, store, config, artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
+        if not yes:
+            typer.echo("re-run with --yes after this preview to confirm upload")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(_store(), artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("status")
+def founder_status() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_status(settings, config)
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("results")
+def founder_results() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "results"), operation="results")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_results(settings, config)
     typer.echo(render_founder_json(response))
 
 
@@ -324,7 +421,7 @@ def list_approval_requests() -> None:
     for approval in _store().list_approval_requests():
         typer.echo(
             f"{approval.id} {approval.status} {approval.subject_id} "
-            f"{approval.action_type} {approval.comment}"
+            f"{approval.action_type} {redact_text(approval.comment)}"
         )
 
 
@@ -364,9 +461,33 @@ def update_approval_request(
     request_id: int,
     status: str,
     comment: str = "",
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
     store = _store()
-    approval = store.update_approval_request(request_id, status, comment)
+    existing = store.get_approval_request(request_id)
+    if existing is None:
+        raise typer.BadParameter("approval request not found")
+    if existing.action_type.startswith("smart_action:"):
+        settings = load_settings()
+        context = _cli_access(settings, token, Role.TECHNICIAN)
+        service = SmartActionService(store, settings)
+        try:
+            approval = service.update_approval(
+                request_id,
+                status,
+                comment,
+                approver=context.approver_id or "cli",
+                approver_role=context.role,
+            )
+        except (PermissionError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    else:
+        approval = store.update_approval_request(
+            request_id,
+            status,
+            comment,
+            allow_completed=store.get_workflow_run_for_approval(request_id) is not None,
+        )
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
@@ -597,6 +718,73 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
     for chunk in search_backend_from_settings(settings, store).search(query, limit=limit):
         typer.echo(f"{chunk.id} {chunk.title} ({chunk.path})")
         typer.echo(chunk.excerpt)
+
+
+@smart_actions_app.command("list")
+def list_smart_actions() -> None:
+    settings = load_settings()
+    service = SmartActionService(Store(settings.data_path), settings)
+    for manifest in service.list():
+        typer.echo(
+            f"{manifest.action_id} kind={manifest.kind} "
+            f"approval_required={manifest.requires_approval} "
+            f"estimate={manifest.estimated_minutes_saved}"
+        )
+
+
+@smart_actions_app.command("describe")
+def describe_smart_action(action_id: str) -> None:
+    settings = load_settings()
+    service = SmartActionService(Store(settings.data_path), settings)
+    try:
+        manifest = service.describe(action_id)
+    except KeyError as exc:
+        raise typer.BadParameter("smart action not found") from exc
+    typer.echo(json.dumps(asdict(manifest), sort_keys=True, indent=2))
+
+
+@smart_actions_app.command("invoke")
+def invoke_smart_action(
+    action_id: str,
+    payload: Annotated[
+        str | None,
+        typer.Option("--payload", help="JSON object or path to a JSON object."),
+    ] = None,
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = SmartActionService(store, settings)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    if context.role < Role.ADMIN and not context.client_id:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    try:
+        result = service.invoke(
+            action_id,
+            _load_smart_action_payload(payload),
+            context.approver_id or "cli",
+            confirm=confirm,
+            client_id=scoped_client_id,
+        )
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+
+
+@smart_actions_app.command("runs")
+def list_smart_action_runs(
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    for run in store.list_smart_action_runs(client_id=client_id):
+        typer.echo(
+            f"{run.id} {run.action_id} {run.status} actor={run.actor} "
+            f"approval_id={run.approval_id}"
+        )
 
 
 @collectors_app.command("list")
@@ -909,16 +1097,41 @@ def update_check() -> None:
 
 
 def _doctor_founder_lp_status() -> str:
-    try:
-        payload = json_object(invoke_founder(require_founder_pack(), "lp_status"), operation="lp_status")
-    except FounderPackUnavailableError:
-        return "not_installed"
-    except FounderPackContractError:
-        return "contract_error"
+    pack = _founder_pack_or_none()
+    if pack is None:
+        try:
+            settings = load_settings()
+            store = _store()
+            payload = open_founder_status(settings, resolve_open_config(settings, store))
+        except FounderNotConfiguredError:
+            return "not_configured"
+    else:
+        try:
+            payload = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+        except FounderPackContractError:
+            return "contract_error"
     status = payload.get("status")
     if isinstance(status, str):
         return status
     return json.dumps(payload, sort_keys=True)
+
+
+def _founder_pack_or_none():
+    try:
+        return require_founder_pack()
+    except FounderPackUnavailableError:
+        return None
+
+
+def _open_cli_config():
+    settings = load_settings()
+    store = _store()
+    try:
+        config = resolve_open_config(settings, store)
+    except FounderNotConfiguredError as exc:
+        typer.echo("launch passport not configured")
+        raise typer.Exit(code=1) from exc
+    return settings, store, config
 
 
 def _invoke_founder_cli(operation: str, *args: object) -> object:
@@ -955,11 +1168,33 @@ def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
 
 
 def _approval_cli_view(approval) -> dict[str, object]:
-    payload = json.loads(approval.payload_json)
+    try:
+        payload = json.loads(approval.payload_json)
+    except json.JSONDecodeError:
+        payload = {}
+    try:
+        output = json.loads(approval.execution_result_json)
+    except json.JSONDecodeError:
+        output = {}
     return {
         **asdict(approval),
-        "payload": payload if isinstance(payload, dict) else {},
+        "payload_json": json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":")),
+        "execution_result_json": json.dumps(redact_value(output), sort_keys=True, separators=(",", ":")),
+        "comment": redact_text(approval.comment),
+        "payload": redact_value(payload) if isinstance(payload, dict) else {},
+        "output": redact_value(output) if isinstance(output, dict) else {},
     }
+
+
+def _cli_access(settings, token: str | None, minimum: Role):
+    authorization = f"Bearer {token}" if token else None
+    try:
+        context = resolve_auth_context(settings, authorization)
+    except HTTPException as exc:
+        raise typer.BadParameter(str(exc.detail)) from exc
+    if context.role < minimum:
+        raise typer.BadParameter("insufficient role")
+    return context
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:
@@ -968,6 +1203,20 @@ def _load_json_config(path: Path | None) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise typer.BadParameter("collector config must be a JSON object")
+    return payload
+
+
+def _load_smart_action_payload(value: str | None) -> dict[str, object]:
+    if value is None:
+        return {}
+    candidate = Path(value)
+    raw = candidate.read_text(encoding="utf-8") if candidate.is_file() else value
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("payload must be a JSON object or JSON file") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("payload must be a JSON object")
     return payload
 
 

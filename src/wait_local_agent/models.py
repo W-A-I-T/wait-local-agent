@@ -234,6 +234,21 @@ class WorkflowRun:
 
 
 @dataclass(frozen=True)
+class SmartActionRun:
+    id: int | None
+    action_id: str
+    actor: str
+    status: str
+    payload_digest: str
+    output_json: str
+    evidence_json: str
+    approval_id: int | None
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ScheduledJob:
     id: int | None
     template_id: str

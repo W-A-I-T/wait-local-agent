@@ -15,6 +15,7 @@ from wait_local_agent.models import (
     HaloWriteResult,
     SecretRecord,
 )
+from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.store import Store
 
 HALOPSA_ACTION_TYPES = {
@@ -198,7 +199,7 @@ def draft_halopsa_ticket_action(
     return HaloTicketDraft(
         ticket_id=ticket_id,
         action_type=action_type,
-        payload_json=json.dumps(payload, sort_keys=True),
+        payload_json=json.dumps(redact_value(payload), sort_keys=True),
         approval_required=True,
         status="pending",
         approval_request_id=approval.id,
