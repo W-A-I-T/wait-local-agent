@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
+    AgentDefinition,
+    AgentRun,
     ApprovalRequest,
     AssetObservation,
     AuditEvent,
@@ -197,6 +199,43 @@ class Store:
                     paused integer not null default 0,
                     created_at text not null,
                     updated_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists agent_definitions (
+                    id text primary key,
+                    name text not null,
+                    description text not null,
+                    enabled integer not null default 1,
+                    trigger text not null,
+                    entity_type text not null,
+                    filters_json text not null,
+                    enabled_tools_json text not null,
+                    steps_json text not null,
+                    max_steps integer not null,
+                    execution_timeout_seconds real not null,
+                    client_id text,
+                    version integer not null default 1,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists agent_runs (
+                    id integer primary key autoincrement,
+                    agent_id text not null,
+                    entity_id text not null,
+                    actor text not null,
+                    status text not null,
+                    current_step integer not null default 0,
+                    state_json text not null,
+                    started_at text not null,
+                    finished_at text not null,
                     client_id text
                 )
                 """
@@ -1092,6 +1131,216 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def create_agent_definition(
+        self,
+        definition: AgentDefinition,
+    ) -> AgentDefinition:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into agent_definitions
+                  (id, name, description, enabled, trigger, entity_type,
+                   filters_json, enabled_tools_json, steps_json, max_steps,
+                   execution_timeout_seconds, client_id, version, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    definition.id,
+                    definition.name,
+                    definition.description,
+                    int(definition.enabled),
+                    definition.trigger,
+                    definition.entity_type,
+                    _json_dumps(definition.filters),
+                    _json_dumps_value(definition.enabled_tools),
+                    _json_dumps_value(definition.steps),
+                    definition.max_steps,
+                    definition.execution_timeout_seconds,
+                    _normalize_client_id(definition.client_id),
+                    definition.version,
+                    definition.created_at,
+                    definition.updated_at,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "agent.created",
+                definition.id,
+                f"agent {definition.name} created",
+                client_id=definition.client_id,
+            )
+        created = self.get_agent_definition(definition.id)
+        if created is None:
+            raise RuntimeError("agent definition was not persisted")
+        return created
+
+    def get_agent_definition(self, agent_id: str, client_id: str | None = None) -> AgentDefinition | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from agent_definitions where id = ?",
+                    (agent_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from agent_definitions where id = ? and client_id = ?",
+                    (agent_id, normalized_client_id),
+                ).fetchone()
+        return _agent_definition_from_row(row) if row else None
+
+    def list_agent_definitions(self, client_id: str | None = None) -> list[AgentDefinition]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from agent_definitions order by name, id"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from agent_definitions where client_id = ? order by name, id",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_agent_definition_from_row(row) for row in rows]
+
+    def update_agent_definition(self, definition: AgentDefinition) -> AgentDefinition:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update agent_definitions
+                set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
+                    filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
+                    execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    definition.name,
+                    definition.description,
+                    int(definition.enabled),
+                    definition.trigger,
+                    definition.entity_type,
+                    _json_dumps(definition.filters),
+                    _json_dumps_value(definition.enabled_tools),
+                    _json_dumps_value(definition.steps),
+                    definition.max_steps,
+                    definition.execution_timeout_seconds,
+                    _normalize_client_id(definition.client_id),
+                    definition.version,
+                    definition.updated_at,
+                    definition.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(definition.id)
+            self._add_audit_event(
+                connection,
+                "agent.updated",
+                definition.id,
+                f"agent {definition.name} updated to version {definition.version}",
+                client_id=definition.client_id,
+            )
+        updated = self.get_agent_definition(definition.id)
+        if updated is None:
+            raise RuntimeError("agent definition was not persisted")
+        return updated
+
+    def create_agent_run(
+        self,
+        agent_id: str,
+        entity_id: str,
+        actor: str,
+        status: str,
+        current_step: int,
+        state: dict[str, object],
+        *,
+        client_id: str | None = None,
+    ) -> AgentRun:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        state_json = _json_dumps(state)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into agent_runs
+                  (agent_id, entity_id, actor, status, current_step, state_json,
+                   started_at, finished_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_id,
+                    entity_id,
+                    actor,
+                    status,
+                    current_step,
+                    state_json,
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("agent run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "agent.run_created",
+                str(run_id),
+                f"agent {agent_id} started for {entity_id}",
+                client_id=normalized_client_id,
+            )
+        run = self.get_agent_run(run_id)
+        if run is None:
+            raise RuntimeError("agent run was not persisted")
+        return run
+
+    def update_agent_run(
+        self,
+        run_id: int,
+        status: str,
+        current_step: int,
+        state: dict[str, object],
+    ) -> AgentRun:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update agent_runs
+                set status = ?, current_step = ?, state_json = ?, finished_at = ?
+                where id = ?
+                """,
+                (status, current_step, _json_dumps(state), now, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_agent_run(run_id)
+        if run is None:
+            raise RuntimeError("agent run was not persisted")
+        return run
+
+    def get_agent_run(self, run_id: int, client_id: str | None = None) -> AgentRun | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute("select * from agent_runs where id = ?", (run_id,)).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from agent_runs where id = ? and client_id = ?",
+                    (run_id, normalized_client_id),
+                ).fetchone()
+        return _agent_run_from_row(row) if row else None
+
+    def list_agent_runs(self, client_id: str | None = None) -> list[AgentRun]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute("select * from agent_runs order by id desc").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from agent_runs where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_agent_run_from_row(row) for row in rows]
 
     def create_smart_action_run(
         self,
@@ -3167,6 +3416,22 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     return ScheduledJob(**payload)
 
 
+def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
+    payload = dict(row)
+    payload["enabled"] = bool(payload["enabled"])
+    payload["filters"] = _json_object_or_empty(payload.pop("filters_json"))
+    payload["enabled_tools"] = cast(list[str], _json_list_or_empty(payload.pop("enabled_tools_json")))
+    payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return AgentDefinition(**payload)
+
+
+def _agent_run_from_row(row: sqlite3.Row) -> AgentRun:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return AgentRun(**payload)
+
+
 def _json_dumps(payload: dict[str, object]) -> str:
     return _json_dumps_value(payload)
 
@@ -3187,6 +3452,11 @@ def _json_value_or_empty(payload: object) -> object:
 def _json_object_or_empty(payload: object) -> dict[str, object]:
     value = _json_value_or_empty(payload)
     return value if isinstance(value, dict) else {}
+
+
+def _json_list_or_empty(payload: object) -> list[object]:
+    value = _json_value_or_empty(payload)
+    return value if isinstance(value, list) else []
 
 
 def _redact_json_text(payload_json: str) -> str:

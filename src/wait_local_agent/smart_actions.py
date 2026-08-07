@@ -41,6 +41,9 @@ class SmartActionManifest:
     output_schema: dict[str, object]
     requires_approval: bool
     estimated_minutes_saved: int
+    risk_level: str = "low"
+    required_role: str = "technician"
+    access_mode: str = "read"
 
 
 @dataclass
