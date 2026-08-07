@@ -55,7 +55,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   `m365-user` inventory; no credentials or write operation are accepted by the
   action. A matching read-only RMM device lookup normalizes collected
   `endpoint-agent` assets through the local adapter boundary; remote control
-  and vendor credentials are not accepted.
+  and vendor credentials are not accepted. Existing HaloPSA ticket reads and
+  Hudu article search are available as tenant-scoped read tools using the
+  guarded connector clients; connector credentials are never action payloads.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
 - Founder API and CLI public contract with stable "pack not installed" behavior when proprietary founder code is absent.
@@ -110,8 +112,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | IT Glue connector | Future paid pack or open-core interface |
 | ConnectWise PSA connector | Future paid pack or open-core interface |
 | Autotask connector | Future paid pack or open-core interface |
-| RMM connectors | Future paid pack or open-core interface |
-| M365 / Entra read-only | Future connector phase |
+| RMM connectors | Local read-only adapter built; vendor adapters future |
+| M365 / Entra read-only | Collected-inventory identity lookup built; live connector phase future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+import wait_local_agent.api.app as app_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
+from wait_local_agent.models import HaloTicket, HuduArticle
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
@@ -55,6 +58,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "m365-identity-lookup",
+        "halopsa-ticket-lookup",
+        "hudu-documentation-search",
         "rmm-device-lookup",
         "ticket-quality",
         "ticket-escalation",
@@ -503,6 +508,64 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
     assert beta.json()["output"]["count"] == 0
     assert rmm.status_code == 200
     assert rmm.json()["output"]["count"] == 1
+
+
+def test_connector_read_tools_reuse_existing_clients_and_tenant_scope(settings, monkeypatch) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure.data_path)
+    _seed(store, client_id="acme")
+    halo = SimpleNamespace(
+        get_ticket=lambda ticket_id: SimpleNamespace(
+            result=SimpleNamespace(status="ready", message="ok", count=1),
+            items=[HaloTicket(ticket_id, "Remote ticket", "Open", "P2", "acme", "Acme")],
+        )
+    )
+    hudu = SimpleNamespace(
+        list_articles=lambda company_id, page, page_size: SimpleNamespace(
+            result=SimpleNamespace(status="ready", message="ok", count=1),
+            items=[HuduArticle("article-1", "VPN setup", company_id or "", "folder-1", "2026-08-01", "https://hudu")],
+        )
+    )
+    monkeypatch.setattr(app_module, "HaloPSAClient", lambda settings: halo)
+    monkeypatch.setattr(app_module, "HuduClient", lambda settings: hudu)
+    client = TestClient(create_app(secure))
+
+    viewer = client.post(
+        "/smart-actions/halopsa-ticket-lookup/invoke",
+        headers={"Authorization": "Bearer viewer-token"},
+        json={"payload": {"ticket_id": "TCK-1001"}},
+    )
+    ticket = client.post(
+        "/smart-actions/halopsa-ticket-lookup/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"ticket_id": "TCK-1001"}},
+    )
+    docs = client.post(
+        "/smart-actions/hudu-documentation-search/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"query": "vpn", "company_id": "acme"}},
+    )
+    foreign_docs = client.post(
+        "/smart-actions/hudu-documentation-search/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"query": "vpn", "company_id": "other"}},
+    )
+
+    assert viewer.status_code == 403
+    assert ticket.status_code == 200
+    assert ticket.json()["output"]["ticket"]["id"] == "TCK-1001"
+    assert docs.status_code == 200
+    assert docs.json()["output"]["count"] == 1
+    assert foreign_docs.status_code == 200
+    assert foreign_docs.json()["status"] == "failed"
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:

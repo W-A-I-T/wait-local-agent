@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from wait_local_agent.collectors import CollectorPreview
-from wait_local_agent.models import SourceReference, Ticket
+from wait_local_agent.models import HaloTicket, HuduArticle, SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
@@ -18,6 +18,8 @@ from wait_local_agent.smart_actions import (
     CollectorPreviewAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
+    HaloPSATicketLookupAction,
+    HuduDocumentationSearchAction,
     KnowledgeSearchAction,
     M365IdentityLookupAction,
     RmmDeviceLookupAction,
@@ -202,6 +204,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         client_id="acme",
         source_module="endpoint-agents",
     )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
 
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
@@ -214,6 +218,27 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     rmm = RmmDeviceLookupAction().run(
         replace(context, client_id="acme"),
         {"query": "sentinel"},
+    )
+    connector_context = replace(
+        context,
+        client_id="acme",
+        halopsa_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[HaloTicket(ticket_id, "Remote ticket", "Open", "P2", "acme", "Acme")],
+            )
+        ),
+        hudu_client=SimpleNamespace(
+            list_articles=lambda company_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[HuduArticle("article-1", "VPN setup", company_id, "folder-1", "2026-08-01", "https://hudu")],
+            )
+        ),
+    )
+    halopsa = HaloPSATicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    hudu = HuduDocumentationSearchAction().run(
+        connector_context,
+        {"query": "vpn", "company_id": "acme"},
     )
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
@@ -231,6 +256,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == knowledge.status
         == identity.status
         == rmm.status
+        == halopsa.status
+        == hudu.status
         == quality.status
         == sentiment.status
         == escalation.status
@@ -245,6 +272,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert identity.output["matches"][0]["user_principal_name"] == "admin@acme.example"  # type: ignore[index]
     assert rmm.output["count"] == 1
     assert rmm.output["devices"][0]["device_id"] == "agent:sentinelone"  # type: ignore[index]
+    assert halopsa.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"
@@ -275,6 +304,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         KnowledgeSearchAction(),
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
+        HaloPSATicketLookupAction(),
+        HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -284,8 +315,13 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     for action in actions:
         assert action.run(context, {}) .status == "failed"
     assert RmmDeviceLookupAction().run(context, {"query": "agent", "limit": 0}).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        replace(context, client_id="acme"),
+        {"query": "vpn", "company_id": "other"},
+    ).status == "failed"
 
     assert CollectorPreviewAction().run(context, {}).status == "failed"
+    assert CollectorPreviewAction().run(context, {"module_id": "process-inventory"}).status == "failed"
     assert CollectorPreviewAction().run(
         replace(context, collector_service=FakeCollectorPreviewService()),
         {"module_id": ""},
@@ -511,6 +547,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "collector-preview",
         "dispatch-suggestion",
         "find-similar-tickets",
+        "halopsa-ticket-lookup",
+        "hudu-documentation-search",
         "knowledge-search",
         "m365-identity-lookup",
         "rmm-device-lookup",
@@ -522,6 +560,115 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    context = _action_context(store, settings, client_id="acme")
+    foreign_halo = replace(
+        context,
+        halopsa_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[HaloTicket(ticket_id, "Foreign", "Open", "P2", "beta", "Beta")],
+            )
+        ),
+    )
+    foreign_hudu = replace(
+        context,
+        hudu_client=SimpleNamespace(
+            list_articles=lambda company_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[HuduArticle("article-1", "Foreign", "beta", "folder-1", "", "")],
+            )
+        ),
+    )
+    malformed_halo = replace(
+        context,
+        halopsa_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1), items={}
+            )
+        ),
+    )
+    blocked_halo = replace(
+        context,
+        halopsa_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0), items=[]
+            )
+        ),
+    )
+    blocked_hudu = replace(
+        context,
+        hudu_client=SimpleNamespace(
+            list_articles=lambda company_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0), items=[]
+            )
+        ),
+    )
+    unavailable_hudu = replace(
+        context,
+        hudu_client=SimpleNamespace(
+            list_articles=lambda company_id, page, page_size: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    malformed_hudu = replace(
+        context,
+        hudu_client=SimpleNamespace(
+            list_articles=lambda company_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1), items={}
+            ),
+        ),
+    )
+    unavailable_rmm = replace(
+        context,
+        rmm_provider=SimpleNamespace(
+            adapter_id="fake",
+            list_devices=lambda client_id: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    malformed_assets = [
+        SimpleNamespace(asset_type="m365-user", attributes_json="{bad"),
+        SimpleNamespace(asset_type="m365-user", attributes_json="[]"),
+    ]
+    monkeypatch.setattr(store, "list_canonical_assets", lambda *, client_id=None: malformed_assets)
+
+    assert HaloPSATicketLookupAction().run(foreign_halo, {"ticket_id": "TCK-1001"}).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        foreign_hudu,
+        {"query": "foreign", "company_id": "acme"},
+    ).output["articles"] == []
+    assert HaloPSATicketLookupAction().run(malformed_halo, {"ticket_id": "TCK-1001"}).status == "failed"
+    assert HaloPSATicketLookupAction().run(blocked_halo, {"ticket_id": "TCK-1001"}).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        blocked_hudu,
+        {"query": "vpn", "company_id": "acme"},
+    ).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        unavailable_hudu,
+        {"query": "vpn", "company_id": "acme"},
+    ).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        malformed_hudu,
+        {"query": "vpn", "company_id": "acme"},
+    ).status == "failed"
+    assert RmmDeviceLookupAction().run(unavailable_rmm, {"query": "agent"}).status == "failed"
+    assert M365IdentityLookupAction().run(
+        replace(context, client_id="acme"),
+        {"identity": "admin", "limit": 0},
+    ).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        context,
+        {"query": "vpn", "company_id": "acme", "limit": 0},
+    ).status == "failed"
+    assert HuduDocumentationSearchAction().run(
+        context,
+        {"query": "vpn", "company_id": 1},
+    ).status == "failed"
 
 
 def test_local_rmm_adapter_skips_malformed_assets(settings, monkeypatch) -> None:
