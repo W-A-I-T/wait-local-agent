@@ -85,6 +85,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
+  const roleRequestIdRef = useRef(0);
   const configuration = useConfiguredState();
 
   useEffect(() => {
@@ -92,11 +93,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [selectedTicketId]);
 
   const refresh = useCallback(async () => {
+    const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
     setRoleResolved(false);
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
         apiFetch<HaloReadResult>("/connectors/halopsa/write-health"),
@@ -115,6 +120,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         items: []
       });
 
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
       setRole(auth.role);
       setRoleResolved(true);
       setConnectors(asArray(connectorRows));
@@ -128,11 +136,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
     } catch (error) {
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
       setRole("viewer");
       setRoleResolved(false);
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
     } finally {
-      setLoading(false);
+      if (roleRequestId === roleRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
