@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import wait_local_agent.agents as agents_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.models import AgentRun
@@ -314,6 +315,90 @@ def test_agent_run_guards_reject_unsupported_and_malformed_states(settings) -> N
     )
     with pytest.raises(AgentDefinitionError, match="approval could not be found"):
         service.resume(definition, missing, approver="approver", approver_role=Role.TECHNICIAN)
+
+
+def test_agent_runtime_fails_closed_for_malformed_disabled_and_missing_tools(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+
+    malformed = replace(definition, steps=[{"tool_id": None, "payload": {}}])
+    malformed_result = service.run(malformed, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert malformed_result.status == "failed"
+    assert malformed_result.error_detail == "agent step is malformed"
+
+    disabled_tool = replace(
+        definition,
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+    )
+    disabled_tool_result = service.run(
+        disabled_tool, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
+    assert disabled_tool_result.status == "failed"
+    assert "not enabled" in disabled_tool_result.error_detail
+
+    def missing_invoke(*args, **kwargs):
+        raise KeyError
+
+    monkeypatch.setattr(service.smart_actions, "invoke", missing_invoke)
+    missing_tool = replace(
+        definition,
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+    )
+    missing_tool_result = service.run(
+        missing_tool, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
+    assert missing_tool_result.status == "failed"
+    assert missing_tool_result.steps[0]["error_detail"] == "tool ticket-triage is not registered"
+
+
+def test_agent_runtime_timeout_and_rejected_approval_are_terminal(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(agents_module.time, "monotonic", lambda: next(clock))
+
+    timed_out = service.run(
+        replace(definition, execution_timeout_seconds=0.5),
+        entity_id="TCK-1001",
+        actor="requester",
+        input_payload={},
+    )
+    assert timed_out.status == "failed"
+    assert timed_out.error_detail == "agent execution timed out"
+
+    monkeypatch.undo()
+    approval_definition = service.update(
+        definition,
+        name="Approval agent",
+        description="",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+    )
+    pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.approval_id is not None
+    from wait_local_agent.smart_actions import ActionResult
+
+    monkeypatch.setattr(service.smart_actions, "update_approval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        service.smart_actions,
+        "complete_approval",
+        lambda *args, **kwargs: ActionResult(status="rejected", approval_id=pending.approval_id),
+    )
+    rejected = service.resume(
+        approval_definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert rejected.status == "rejected"
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
