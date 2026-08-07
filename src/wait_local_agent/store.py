@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -41,6 +42,7 @@ from wait_local_agent.models import (
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
 SMART_ACTION_APPROVAL_CAPABILITY = object()
+DEFAULT_APPROVAL_TTL = timedelta(hours=24)
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
@@ -120,7 +122,8 @@ class Store:
                     executed_at text not null default '',
                     execution_result_json text not null default '{}',
                     client_id text,
-                    approver_id text
+                    approver_id text,
+                    expires_at text
                 )
                 """
             )
@@ -148,6 +151,7 @@ class Store:
                 "execution_result_json",
                 "text not null default '{}'",
             )
+            self._ensure_column(connection, "approval_requests", "expires_at", "text")
             connection.execute(
                 """
                 create table if not exists event_history (
@@ -827,10 +831,12 @@ class Store:
         payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_at: str | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         payload_json = _json_dumps(payload)
         normalized_client_id = _normalize_client_id(client_id)
+        normalized_expires_at = _approval_expiry(now, expires_at)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -843,11 +849,22 @@ class Store:
                     comment,
                     created_at,
                     updated_at,
-                    client_id
+                    client_id,
+                    expires_at
                   )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject_id, action_type, payload_json, "pending", "", now, now, normalized_client_id),
+                (
+                    subject_id,
+                    action_type,
+                    payload_json,
+                    "pending",
+                    "",
+                    now,
+                    now,
+                    normalized_client_id,
+                    normalized_expires_at,
+                ),
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("approval request insert did not return an id")
@@ -891,6 +908,14 @@ class Store:
             if row is None:
                 raise KeyError(request_id)
             current_status = str(row["status"])
+            if current_status == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("approval request disappeared during expiry")
+                current_status = str(row["status"])
             is_smart_action = str(row["action_type"]).startswith("smart_action:")
             if is_smart_action and _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
                 raise PermissionError("smart-action approvals must be updated through SmartActionService")
@@ -948,6 +973,13 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            if str(row["status"]) == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("approval request disappeared during expiry")
             if str(row["status"]) != "pending":
                 raise PermissionError("approval payload can only be edited while pending")
             connection.execute(
@@ -1037,6 +1069,11 @@ class Store:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
             ).fetchone()
+            if row is not None and str(row["status"]) == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
         if row is None:
             return None
         payload = dict(row)
@@ -1046,6 +1083,7 @@ class Store:
         return ApprovalRequest(**payload)
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
+        self.expire_pending_approvals()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
@@ -1065,6 +1103,64 @@ class Store:
             payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
             requests.append(ApprovalRequest(**payload))
         return requests
+
+    def expire_pending_approvals(self) -> int:
+        expired = 0
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from approval_requests where status = 'pending' and expires_at is not null"
+            ).fetchall()
+            for row in rows:
+                if _approval_expired(str(row["expires_at"] or "")):
+                    self._expire_approval_request(connection, row)
+                    expired += 1
+        return expired
+
+    @staticmethod
+    def _expire_approval_request(connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+        now = utc_now()
+        request_id = int(row["id"])
+        connection.execute(
+            """
+            update approval_requests
+            set status = 'expired', comment = ?, updated_at = ?
+            where id = ? and status = 'pending'
+            """,
+            ("Approval expired before it was completed.", now, request_id),
+        )
+        connection.execute(
+            """
+            update workflow_runs
+            set status = 'rejected', updated_at = ?
+            where approval_request_id = ?
+            """,
+            (now, request_id),
+        )
+        client_id = str(row["client_id"]) if row["client_id"] is not None else None
+        subject_id = str(row["subject_id"])
+        self_event = _redact_text(f"{row['action_type']} approval expired")
+        connection.execute(
+            """
+            insert into audit_events (event_type, subject_id, detail, created_at, client_id, approver_id)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("approval_request.expired", subject_id, self_event, now, client_id, None),
+        )
+        connection.execute(
+            """
+            insert into event_history (event_type, subject_id, status, message, payload_json, created_at, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "approval_request.expired",
+                subject_id,
+                "expired",
+                self_event,
+                _redact_json_text(str(row["payload_json"])),
+                now,
+                client_id,
+            ),
+        )
 
     def add_audit_event(
         self,
@@ -2016,10 +2112,12 @@ class Store:
         approval_payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_at: str | None = None,
     ) -> tuple[SmartActionRun, ApprovalRequest]:
         """Create a pending run, approval, and audit trail in one transaction."""
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
+        normalized_expires_at = _approval_expiry(now, expires_at)
         output_json = _json_dumps(output)
         evidence_json = _json_dumps_value(evidence)
         approval_payload_json = _json_dumps(approval_payload)
@@ -2054,8 +2152,8 @@ class Store:
                 """
                 insert into approval_requests
                   (subject_id, action_type, payload_json, status, comment,
-                   created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                   created_at, updated_at, client_id, expires_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(run_id),
@@ -2066,6 +2164,7 @@ class Store:
                     now,
                     now,
                     normalized_client_id,
+                    normalized_expires_at,
                 ),
             )
             if approval_cursor.lastrowid is None:
@@ -2154,9 +2253,9 @@ class Store:
             ).fetchone()
             if approval is None or not str(approval["action_type"]).startswith("smart_action:"):
                 raise PermissionError("smart action completion requires a linked smart-action approval")
-            if str(approval["status"]) not in {"approved", "rejected"}:
+            if str(approval["status"]) not in {"approved", "rejected", "expired"}:
                 raise PermissionError("smart action completion requires a completed approval")
-            if str(approval["approver_id"] or "") != approver_id:
+            if str(approval["status"]) != "expired" and str(approval["approver_id"] or "") != approver_id:
                 raise PermissionError("smart action completion requires the approval approver")
             cursor = connection.execute(
                 """
@@ -4142,7 +4241,7 @@ def _bounded_search_limit(limit: int) -> int:
 def _workflow_status_for_approval(status: str) -> str:
     if status == "approved":
         return "approved"
-    if status == "rejected":
+    if status in {"rejected", "expired"}:
         return "rejected"
     return "pending_approval"
 
@@ -4331,3 +4430,30 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _approval_expiry(created_at: str, expires_at: str | None) -> str:
+    if expires_at is not None and expires_at.strip():
+        try:
+            parsed = datetime.fromisoformat(expires_at)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC).isoformat()
+        except ValueError as exc:
+            raise ValueError("expires_at must be a valid ISO-8601 timestamp") from exc
+    created = datetime.fromisoformat(created_at)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return (created.astimezone(UTC) + DEFAULT_APPROVAL_TTL).isoformat()
+
+
+def _approval_expired(expires_at: str) -> bool:
+    if not expires_at.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC) <= datetime.now(UTC)

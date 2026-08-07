@@ -39,6 +39,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in tickets_columns
     assert "client_id" in approval_columns
     assert "approver_id" in approval_columns
+    assert "expires_at" in approval_columns
     assert "client_id" in audit_columns
     assert "approver_id" in audit_columns
     assert "client_id" in event_history_columns
@@ -216,6 +217,41 @@ def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
         store.update_approval_request(approval.id or 0, "unknown")
     with pytest.raises(PermissionError, match="already completed"):
         store.update_approval_request(approval.id or 0, "rejected")
+
+
+def test_store_expires_pending_approval_and_blocks_late_update(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "TCK-1",
+        "ticket.assign",
+        {"ticket_id": "TCK-1", "secret": "password=hidden"},
+        expires_at="2020-01-01T00:00:00+00:00",
+    )
+
+    expired = store.get_approval_request(approval.id or 0)
+    assert expired is not None
+    assert expired.status == "expired"
+    assert expired.expires_at == "2020-01-01T00:00:00+00:00"
+    assert "hidden" not in expired.payload_json
+    with pytest.raises(PermissionError, match="already completed"):
+        store.update_approval_request(approval.id or 0, "approved")
+    with pytest.raises(PermissionError, match="only be edited while pending"):
+        store.update_approval_request_payload(approval.id or 0, {"note": "late edit"})
+    assert any(event.event_type == "approval_request.expired" for event in store.list_audit_events())
+
+
+def test_store_normalizes_approval_expiry_and_rejects_invalid_deadlines(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "TCK-1",
+        "ticket.assign",
+        {},
+        expires_at="2030-01-01T00:00:00",
+    )
+
+    assert approval.expires_at == "2030-01-01T00:00:00+00:00"
+    with pytest.raises(ValueError, match="valid ISO-8601"):
+        store.create_approval_request("TCK-2", "ticket.assign", {}, expires_at="not-a-date")
 
 
 def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:

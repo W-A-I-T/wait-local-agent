@@ -23,6 +23,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs persist in SQLite
 - Stored views accept `client_id` filters so operators can scope data per tenant
 - Approval execution captures a hashed approver identifier instead of raw token material
+- Approval requests persist an expiry timestamp (24 hours by default); expiry transitions the request to an audited terminal state and blocks late edits or execution
 
 ## Knowledge and Ticket Intelligence
 
@@ -60,6 +61,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   are supported.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
+- Approval-paused work persists a 24-hour default deadline; expired approvals
+  transition to an audited terminal state and cannot resume or execute later.
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and

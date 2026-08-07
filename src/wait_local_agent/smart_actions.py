@@ -527,6 +527,35 @@ class SmartActionService:
                 step_kind="smart_action.approval_completed",
             )
             return rejected_result
+        if approval.status == "expired":
+            self.store.complete_smart_action_run(
+                run.id,
+                "rejected",
+                _json_object(run.output_json),
+                _json_list(run.evidence_json),
+                approval_id=approval_id,
+                approver_id=approver,
+                _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+            )
+            expired_result = ActionResult(
+                status="rejected",
+                output=_json_object(run.output_json),
+                evidence=_json_list(run.evidence_json),
+                error_detail="approval expired",
+                run_id=run.id,
+                approval_id=approval_id,
+            )
+            self._record_execution(
+                action_id,
+                run.id,
+                {"approval_id": approval_id, "approval_status": approval.status},
+                expired_result,
+                actor=run.actor,
+                client_id=approval.client_id,
+                trigger_source="approval_completion",
+                step_kind="smart_action.approval_expired",
+            )
+            return expired_result
         if approval.status != "approved":
             return ActionResult(
                 status="pending_approval",

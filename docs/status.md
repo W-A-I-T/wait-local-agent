@@ -7,6 +7,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - FastAPI operator API and Typer CLI.
 - Optional bearer token API gate outside local demo mode, with admin, technician, and viewer roles.
 - SQLite-backed tickets, approvals, approval requests, workflow runs, audit events, event history, documents, and FTS5 chunks.
+- Approval requests persist a 24-hour default expiry; expired requests are
+  audited and cannot be approved, edited, or executed.
 - Tenant and client scoping on stored workflow, approval, scheduled job, and audit records.
 - Markdown, text, and text-based PDF ingestion.
 - Optional Docling parser/OCR configuration for scanned or richer documents when the optional dependency is installed and OCR is explicitly enabled.

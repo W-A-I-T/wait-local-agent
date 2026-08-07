@@ -473,6 +473,36 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
 
 
+def test_expired_smart_action_approval_is_rejected_without_execution(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke(
+        "dispatch-suggestion",
+        {"ticket_id": "TCK-1001", "technicians": []},
+        "requester",
+    )
+
+    assert pending.approval_id is not None and pending.run_id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2020-01-01T00:00:00+00:00", pending.approval_id),
+        )
+
+    result = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert result is not None
+    assert result.status == "rejected"
+    assert result.error_detail == "approval expired"
+    assert store.get_approval_request(pending.approval_id).status == "expired"  # type: ignore[union-attr]
+    assert store.get_smart_action_run(pending.run_id).status == "rejected"  # type: ignore[union-attr]
+
+
 def test_approval_completion_requires_authorized_different_approver(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)

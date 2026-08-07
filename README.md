@@ -20,6 +20,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
+- Approval requests receive a persisted 24-hour default expiry; expired requests
+  are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
 - Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
@@ -274,6 +276,7 @@ Live HaloPSA writes require:
 - configured credentials
 - a pending draft
 - explicit approval
+- an unexpired approval request
 
 ### Hudu
 
