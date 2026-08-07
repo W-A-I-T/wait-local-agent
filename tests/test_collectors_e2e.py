@@ -18,12 +18,19 @@ def _module_ids() -> list[str]:
     return [module.manifest.id for module in _REGISTERED_MODULES]
 
 
-def _round_trip_config(module) -> dict[str, int]:
-    return {} if module.manifest.id == "host-runtime" else {"limit": 0}
+def _round_trip_config(module) -> dict[str, object]:
+    if module.manifest.id == "host-runtime":
+        return {}
+    if module.manifest.id.startswith("cloud-"):
+        config: dict[str, object] = {"credential_ref": "missing-cloud-test", "limit": 0}
+        if module.manifest.id == "cloud-azure":
+            config["subscription_id"] = "subscription-test"
+        return config
+    return {"limit": 0}
 
 
-def test_default_registry_has_ten_modules() -> None:
-    assert len(_REGISTERED_MODULES) == 10
+def test_default_registry_has_fourteen_modules() -> None:
+    assert len(_REGISTERED_MODULES) == 14
     assert _module_ids() == [module.manifest.id for module in default_registry.list()]
 
 

@@ -5,6 +5,13 @@ from datetime import date, datetime
 from importlib import import_module
 from typing import Any
 
+from wait_local_agent.cloud_connectors._safe import (
+    provider_outcome,
+    result_errors,
+    result_status,
+    truncation_outcome,
+)
+
 
 class _FallbackGcpError(Exception):
     """Fallback for test environments where Google Cloud SDKs are not installed yet."""
@@ -35,19 +42,30 @@ GcpConfig = Mapping[str, Any] | None
 
 
 class _GoogleCloudSession:
+    def __init__(self, *, credentials: Any | None = None, project_id: str = "") -> None:
+        self.credentials = credentials
+        self.project_id = project_id
+
     def client(self, service_name: str) -> Any:
         if service_name == "resource-manager":
             resource_manager = import_module("google.cloud.resourcemanager_v3")
-            return resource_manager.ProjectsClient()
+            return (
+                resource_manager.ProjectsClient(credentials=self.credentials)
+                if self.credentials
+                else resource_manager.ProjectsClient()
+            )
         if service_name == "compute":
             compute = import_module("google.cloud.compute_v1")
-            return compute.InstancesClient()
+            return (
+                compute.InstancesClient(credentials=self.credentials) if self.credentials else compute.InstancesClient()
+            )
         if service_name == "storage":
             storage = import_module("google.cloud.storage")
-            return storage.Client()
+            kwargs = {"credentials": self.credentials, "project": self.project_id} if self.credentials else {}
+            return storage.Client(**kwargs)
         if service_name == "iam":
             iam = import_module("google.cloud.iam_admin_v1")
-            return iam.IAMClient()
+            return iam.IAMClient(credentials=self.credentials) if self.credentials else iam.IAMClient()
         raise ValueError(f"unsupported GCP service: {service_name}")
 
 
@@ -97,6 +115,27 @@ class GCPInventoryConnector:
             "shell": False,
         }
 
+    def preflight(self, config: GcpConfig = None) -> None:
+        """Verify project visibility with a read-only Resource Manager call."""
+        session = self._session(config)
+        resource_manager = self._client(session, "resource-manager")
+        project_id = config.get("project_id") if isinstance(config, Mapping) else None
+        if isinstance(project_id, str) and project_id:
+            if callable(getattr(resource_manager, "get_project", None)):
+                resource_manager.get_project(name=f"projects/{project_id}")
+            elif callable(getattr(resource_manager, "get", None)):
+                resource_manager.get(name=f"projects/{project_id}")
+            else:
+                response = resource_manager.search_projects()
+                if response is not None:
+                    next(iter(response), None)
+        else:
+            response = resource_manager.search_projects()
+            if response is not None:
+                # Resource Manager returns a lazy pager; force its first request so
+                # invalid credentials do not pass preflight unnoticed.
+                next(iter(response), None)
+
     def validate_config(self, config: GcpConfig = None) -> dict[str, Any]:
         errors: list[str] = []
         if config is not None and not isinstance(config, Mapping):
@@ -142,29 +181,7 @@ class GCPInventoryConnector:
         return self._collect_result(config, preview=False, default_limit=None)
 
     def _collect_result(self, config: GcpConfig, *, preview: bool, default_limit: int | None) -> dict[str, Any]:
-        limit = self._config_limit(config, default=default_limit)
-        if limit == 0:
-            return self._result([], preview=preview)
-
-        session = self._session(config)
-        project_records = self._project_records(session)
-        project_ids = self._project_ids(config, project_records)
-        records = [
-            *project_records,
-            *[
-                record
-                for project_id in project_ids
-                for record in (
-                    *self._compute_instance_records(session, config, project_id),
-                    *self._storage_bucket_records(session, project_id),
-                    *self._iam_service_account_records(session, project_id),
-                )
-            ],
-        ]
-        records.sort(key=lambda record: str(record["asset_id"]))
-        if limit is not None:
-            records = records[:limit]
-        return self._result(records, preview=preview)
+        return self.collect_detailed(config, preview=preview)["result"]
 
     @staticmethod
     def _config_limit(config: GcpConfig, default: int | None) -> int | None:
@@ -183,12 +200,12 @@ class GCPInventoryConnector:
     def _client(session: Any, service_name: str) -> Any:
         return session.client(service_name)
 
-    def _project_records(self, session: Any) -> list[dict[str, Any]]:
+    def _project_records(self, session: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             resource_manager = self._client(session, "resource-manager")
             response = resource_manager.search_projects()
         except GCP_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for project in self._iterable(response):
@@ -211,7 +228,9 @@ class GCPInventoryConnector:
             )
         return records
 
-    def _compute_instance_records(self, session: Any, config: GcpConfig, project_id: str) -> list[dict[str, Any]]:
+    def _compute_instance_records(
+        self, session: Any, config: GcpConfig, project_id: str, *, strict: bool = True
+    ) -> list[dict[str, Any]]:
         try:
             compute = self._client(session, "compute")
             zone = config.get("zone") if isinstance(config, Mapping) else None
@@ -225,7 +244,7 @@ class GCPInventoryConnector:
                     for zone_name, scoped_list in self._iter_aggregated(response)
                 ]
         except GCP_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for zone, instances in zone_instances:
@@ -253,12 +272,12 @@ class GCPInventoryConnector:
                 )
         return records
 
-    def _storage_bucket_records(self, session: Any, project_id: str) -> list[dict[str, Any]]:
+    def _storage_bucket_records(self, session: Any, project_id: str, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             storage = self._client(session, "storage")
             response = storage.list_buckets(project=project_id)
         except GCP_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for bucket in self._iterable(response):
@@ -281,12 +300,14 @@ class GCPInventoryConnector:
             )
         return records
 
-    def _iam_service_account_records(self, session: Any, project_id: str) -> list[dict[str, Any]]:
+    def _iam_service_account_records(
+        self, session: Any, project_id: str, *, strict: bool = True
+    ) -> list[dict[str, Any]]:
         try:
             iam = self._client(session, "iam")
             response = iam.list_service_accounts(name=f"projects/{project_id}")
         except GCP_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for account in self._iterable(response):
@@ -309,6 +330,74 @@ class GCPInventoryConnector:
             )
         return records
 
+    def collect_detailed(self, config: GcpConfig = None, *, preview: bool = False) -> dict[str, Any]:
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
+        limit = self._config_limit(config, default=10 if preview else None)
+        if limit == 0:
+            limit_outcomes = [truncation_outcome(f"{self.module_id}:limit", limit=limit)]
+            return {
+                "result": self._result([], preview=preview, outcomes=limit_outcomes),
+                "outcomes": limit_outcomes,
+            }
+        session = self._session(config)
+        outcomes: list[dict[str, Any]] = []
+        project_records: list[dict[str, Any]] = []
+        explicit_project = isinstance(config, Mapping) and bool(config.get("project_id"))
+        if not explicit_project:
+            try:
+                project_records = self._project_records(session, strict=True)
+            except Exception as exc:
+                outcomes.append(
+                    provider_outcome(
+                        "resourcemanager:projects",
+                        exc,
+                        permission_hint="Grant the GCP read-only roles listed in docs/cloud-permissions-gcp.md.",
+                    )
+                )
+        project_ids = self._project_ids(config, project_records)
+        records = list(project_records)
+        for project_id in project_ids:
+            sources = (
+                (
+                    "compute:instances",
+                    lambda project_id=project_id: self._compute_instance_records(
+                        session, config, project_id, strict=True
+                    ),
+                ),
+                (
+                    "storage:buckets",
+                    lambda project_id=project_id: self._storage_bucket_records(
+                        session, project_id, strict=True
+                    ),
+                ),
+                (
+                    "iam:service-accounts",
+                    lambda project_id=project_id: self._iam_service_account_records(
+                        session, project_id, strict=True
+                    ),
+                ),
+            )
+            for source_id, read_source in sources:
+                try:
+                    records.extend(read_source())
+                except Exception as exc:
+                    outcomes.append(
+                        provider_outcome(
+                            f"{source_id}:{project_id}",
+                            exc,
+                            permission_hint="Grant the GCP read-only roles listed in docs/cloud-permissions-gcp.md.",
+                        )
+                    )
+        records.sort(key=lambda record: str(record["asset_id"]))
+        truncated = limit is not None and len(records) > limit
+        if limit is not None:
+            records = records[:limit]
+        if truncated and limit is not None:
+            outcomes.append(truncation_outcome(f"{self.module_id}:limit", limit=limit))
+        return {"result": self._result(records, preview=preview, outcomes=outcomes), "outcomes": outcomes}
+
     @staticmethod
     def _project_ids(config: GcpConfig, project_records: list[dict[str, Any]]) -> list[str]:
         project_ids: list[str] = []
@@ -320,16 +409,20 @@ class GCPInventoryConnector:
                 project_ids.append(project_id)
         return project_ids
 
-    def _result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
+    def _result(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        preview: bool,
+        outcomes: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> dict[str, Any]:
         assets = [self._asset(record) for record in records]
-        observations = [
-            observation
-            for record in records
-            for observation in self._observations(record)
-        ]
-        return {
+        observations = [observation for record in records for observation in self._observations(record)]
+        status = result_status(len(assets), outcomes)
+        result = {
             "module_id": self.module_id,
-            "ok": True,
+            "ok": status in {"success", "empty"},
+            "status": status,
             "preview": preview,
             "assets": assets,
             "observations": observations,
@@ -342,6 +435,10 @@ class GCPInventoryConnector:
             ],
             "count": len(assets),
         }
+        errors = result_errors(outcomes)
+        if errors:
+            result["errors"] = errors
+        return result
 
     @staticmethod
     def _invalid_result(errors: list[str]) -> dict[str, Any]:
