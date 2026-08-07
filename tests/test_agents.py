@@ -144,6 +144,12 @@ def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
     )
     assert updated.version == 2
     assert updated.name == "Updated triage agent"
+    revisions = service.store.list_agent_definition_revisions(definition.id, client_id="acme")
+    assert [revision.version for revision in revisions] == [2, 1]
+    assert "Ticket triage agent" in revisions[-1].definition_json
+    assert service.store.get_agent_definition_revision(definition.id, 1) is not None
+    assert len(service.store.list_agent_definition_revisions(definition.id)) == 2
+    Store(settings.data_path)
 
     disabled = service.update(
         updated,
@@ -358,6 +364,18 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert updated.status_code == 200
     assert updated.json()["version"] == 2
 
+    revisions = client.get(f"/agents/{agent_id}/revisions")
+    assert revisions.status_code == 200
+    assert [revision["version"] for revision in revisions.json()] == [2, 1]
+    restored = client.post(f"/agents/{agent_id}/revisions/1/restore")
+    assert restored.status_code == 200
+    assert restored.json()["version"] == 3
+    assert restored.json()["name"] == "Triage agent"
+    missing_revision = client.post(f"/agents/{agent_id}/revisions/99/restore")
+    assert missing_revision.status_code == 404
+    missing_agent_revision = client.post("/agents/no-such-agent/revisions/1/restore")
+    assert missing_agent_revision.status_code == 404
+
     disabled = client.put(
         f"/agents/{agent_id}",
         json={
@@ -375,3 +393,24 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
 
     cross_tenant = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1002", "client_id": "beta"})
     assert cross_tenant.status_code in {404, 403}
+
+
+def test_agent_revision_restore_requires_tenant_for_authenticated_technicians(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure))
+    response = client.post(
+        "/agents/anything/revisions/1/restore",
+        headers={"Authorization": "Bearer tech-token"},
+    )
+    assert response.status_code == 404
+    assert client.get(
+        "/agents/anything/revisions",
+        headers={"Authorization": "Bearer viewer-token"},
+    ).json() == []

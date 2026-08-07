@@ -31,7 +31,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, and delivery history APIs. Conversational and
-  unrestricted agent execution are not shipped.
+  unrestricted agent execution are not shipped. Immutable revision history and
+  restore-as-new-version are available under `/agents/{id}/revisions`.
 - A `/tools` API catalog that exposes existing smart-action schemas, risk,
   required role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.

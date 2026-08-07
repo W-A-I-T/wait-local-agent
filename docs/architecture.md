@@ -62,8 +62,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and
-  run-once-per-entity protection. Dependencies, backfills, and conversational
-  agents remain future extensions.
+  run-once-per-entity protection. Definition changes create immutable redacted
+  revision snapshots; rollback validates a prior snapshot and persists it as a
+  new version. Dependencies, backfills, and conversational agents remain
+  future extensions.
 
 ## Event-triggered agents
 
