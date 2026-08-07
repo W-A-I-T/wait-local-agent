@@ -38,6 +38,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - HaloPSA write path modeled as local draft, approval review, and explicit execution
 - Hudu read-only documentation context
 - IT Glue read-only organization-scoped documentation context
+- Confluence Cloud read-only page listing and detail through REST API v2
 - ConnectWise PSA read-only ticket and company lookup through a guarded,
   credential-isolated adapter; mutation endpoints are intentionally absent.
 - Syncro read-only ticket and customer lookup through the same guarded,

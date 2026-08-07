@@ -99,6 +99,10 @@ class Settings:
     itglue_base_url: str = ""
     itglue_api_key: str = ""
     itglue_page_size: int = 25
+    confluence_base_url: str = ""
+    confluence_email: str = ""
+    confluence_api_token: str = ""
+    confluence_page_size: int = 25
     connectwise_base_url: str = ""
     connectwise_company: str = ""
     connectwise_public_key: str = ""
@@ -222,6 +226,25 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         itglue_page_size=_int_env("WAIT_ITGLUE_PAGE_SIZE", 25),
+        confluence_base_url=_secret_value(
+            "WAIT_CONFLUENCE_BASE_URL",
+            os.getenv("WAIT_CONFLUENCE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_email=_secret_value(
+            "WAIT_CONFLUENCE_EMAIL",
+            os.getenv("WAIT_CONFLUENCE_EMAIL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_api_token=_secret_value(
+            "WAIT_CONFLUENCE_API_TOKEN",
+            os.getenv("WAIT_CONFLUENCE_API_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_page_size=_int_env("WAIT_CONFLUENCE_PAGE_SIZE", 25),
         connectwise_base_url=_secret_value(
             "WAIT_CONNECTWISE_BASE_URL",
             os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),

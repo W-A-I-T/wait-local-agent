@@ -33,6 +33,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_CONNECTWISE_API_VERSION", raising=False)
     monkeypatch.delenv("WAIT_SYNCRO_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_SYNCRO_API_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_EMAIL", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_API_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -90,6 +93,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.itglue_base_url == ""
     assert settings.itglue_api_key == ""
     assert settings.itglue_page_size == 25
+    assert settings.confluence_base_url == ""
+    assert settings.confluence_email == ""
+    assert settings.confluence_api_token == ""
+    assert settings.confluence_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -168,6 +175,20 @@ def test_syncro_env_values(monkeypatch) -> None:
 
     assert settings.syncro_base_url == "https://acme.syncromsp.com"
     assert settings.syncro_api_token == "syncro-token"
+
+
+def test_confluence_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_CONFLUENCE_BASE_URL", "https://acme.atlassian.net")
+    monkeypatch.setenv("WAIT_CONFLUENCE_EMAIL", "agent@example.test")
+    monkeypatch.setenv("WAIT_CONFLUENCE_API_TOKEN", "api-token")
+    monkeypatch.setenv("WAIT_CONFLUENCE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.confluence_base_url == "https://acme.atlassian.net"
+    assert settings.confluence_email == "agent@example.test"
+    assert settings.confluence_api_token == "api-token"
+    assert settings.confluence_page_size == 10
 
 
 def test_servicenow_env_values(monkeypatch) -> None:

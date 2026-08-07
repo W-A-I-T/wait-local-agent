@@ -189,6 +189,36 @@ The API mirrors these commands under `/connectors/itglue/health`,
 `/connectors/itglue/organizations`, and the organization-scoped document and
 folder routes.
 
+## Confluence Cloud
+
+### Required settings
+
+```text
+WAIT_CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+WAIT_CONFLUENCE_EMAIL=
+WAIT_CONFLUENCE_API_TOKEN=
+WAIT_CONFLUENCE_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The read-only adapter uses Confluence Cloud REST API v2 page listing and page
+detail. Direct API access uses basic authentication with the account email and
+API token; the token is never placed in a URL or request payload. Listing is
+bounded with `limit` and exposes the documented next cursor for continuation.
+No mutation endpoint is exposed ([Confluence REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/)).
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate confluence
+wait-local-agent connectors confluence-health
+wait-local-agent connectors confluence-pages
+wait-local-agent connectors confluence-page <page-id>
+```
+
+The API mirrors these commands under `/connectors/confluence/health`,
+`/connectors/confluence/pages`, and `/connectors/confluence/pages/{page-id}`.
+
 ## ConnectWise PSA
 
 ### Required settings

@@ -73,6 +73,16 @@ class _FakeItGlueClient:
         return ConnectorReadResult("ready", "IT Glue read prerequisites are ready.")
 
 
+class _FakeConfluenceClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "Confluence live reads are blocked.")
+        return ConnectorReadResult("ready", "Confluence read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -262,3 +272,22 @@ def test_validate_itglue_cli_success_and_missing_config(monkeypatch, tmp_path) -
     assert "layer=config" in missing.output
     assert success.exit_code == 0
     assert "PASS connector=itglue layer=connector" in success.output
+
+
+def test_validate_confluence_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "confluence"])
+
+    monkeypatch.setenv("WAIT_CONFLUENCE_BASE_URL", "https://acme.atlassian.net")
+    monkeypatch.setenv("WAIT_CONFLUENCE_EMAIL", "agent@example.test")
+    monkeypatch.setenv("WAIT_CONFLUENCE_API_TOKEN", "api-token")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "ConfluenceClient", _FakeConfluenceClient)
+    success = runner.invoke(app, ["connectors", "validate", "confluence"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=confluence layer=connector" in success.output

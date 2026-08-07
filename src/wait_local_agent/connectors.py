@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
+from wait_local_agent.confluence import ConfluenceClient
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
@@ -58,6 +59,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     itglue_status: ConnectorStatusValue = "not_configured"
     if itglue_configured:
         itglue_status = "configured" if settings.allow_http_probing else "blocked"
+    confluence_configured = bool(
+        settings.confluence_base_url
+        and settings.confluence_email
+        and settings.confluence_api_token
+    )
+    confluence_status: ConnectorStatusValue = "not_configured"
+    if confluence_configured:
+        confluence_status = "configured" if settings.allow_http_probing else "blocked"
     connectwise_configured = bool(
         settings.connectwise_base_url
         and settings.connectwise_company
@@ -133,6 +142,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else "IT Glue credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if itglue_status == "blocked"
                 else "Set WAIT_ITGLUE_BASE_URL and WAIT_ITGLUE_API_KEY to enable IT Glue reads."
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
+            id="confluence",
+            kind="documentation",
+            name="Confluence Cloud",
+            status=confluence_status,
+            message=(
+                "Confluence credentials are configured for read-only page lookup."
+                if confluence_status == "configured"
+                else "Confluence credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if confluence_status == "blocked"
+                else (
+                    "Set WAIT_CONFLUENCE_BASE_URL, WAIT_CONFLUENCE_EMAIL, and "
+                    "WAIT_CONFLUENCE_API_TOKEN to enable Confluence reads."
+                )
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
@@ -239,6 +265,10 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_ITGLUE_BASE_URL", bool(settings.itglue_base_url), "itglue"),
         SecretRecord("WAIT_ITGLUE_API_KEY", bool(settings.itglue_api_key), "itglue"),
         SecretRecord("WAIT_ITGLUE_PAGE_SIZE", bool(settings.itglue_page_size), "itglue"),
+        SecretRecord("WAIT_CONFLUENCE_BASE_URL", bool(settings.confluence_base_url), "confluence"),
+        SecretRecord("WAIT_CONFLUENCE_EMAIL", bool(settings.confluence_email), "confluence"),
+        SecretRecord("WAIT_CONFLUENCE_API_TOKEN", bool(settings.confluence_api_token), "confluence"),
+        SecretRecord("WAIT_CONFLUENCE_PAGE_SIZE", bool(settings.confluence_page_size), "confluence"),
         SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_COMPANY", bool(settings.connectwise_company), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
@@ -276,6 +306,7 @@ def validate_connector_credentials(
     servicenow_client: ServiceNowClient | None = None,
     autotask_client: AutotaskClient | None = None,
     itglue_client: ItGlueClient | None = None,
+    confluence_client: ConfluenceClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -330,6 +361,24 @@ def validate_connector_credentials(
                 f"IT Glue credentials are incomplete: {', '.join(missing)}.",
             )
         result = (itglue_client or ItGlueClient(settings)).health()
+    elif connector == "confluence":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_CONFLUENCE_BASE_URL": settings.confluence_base_url,
+                "WAIT_CONFLUENCE_EMAIL": settings.confluence_email,
+                "WAIT_CONFLUENCE_API_TOKEN": settings.confluence_api_token,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Confluence credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (confluence_client or ConfluenceClient(settings)).health()
     elif connector == "connectwise":
         missing = [
             key
