@@ -44,7 +44,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
-  read-only local knowledge search, risk, required role, approval requirement,
+  read-only local knowledge search and ticket-quality checks, risk, required role, approval requirement,
   and read/write classification.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.

@@ -247,6 +247,51 @@ class KnowledgeSearchAction:
         )
 
 
+class TicketQualityAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-quality",
+        title="Ticket quality check",
+        description="Check required ticket fields and controlled priority/status values.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"issues": "array", "quality_score": "number", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        issues: list[str] = []
+        if not ticket.client.strip():
+            issues.append("missing_client")
+        if not ticket.subject.strip():
+            issues.append("missing_subject")
+        if not ticket.body.strip():
+            issues.append("missing_body")
+        if ticket.priority.strip().lower() not in {
+            "low", "medium", "high", "critical", "p1", "p2", "p3", "p4"
+        }:
+            issues.append("unknown_priority")
+        if ticket.status.strip().lower() not in {"new", "open", "pending", "resolved", "closed"}:
+            issues.append("unknown_status")
+        score = max(0, 100 - (len(issues) * 20))
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "issues": issues,
+                "quality_score": score,
+                "passed": not issues,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["client", "subject", "body", "priority", "status"])],
+        )
+
+
 class FindSimilarTicketsAction:
     manifest = SmartActionManifest(
         action_id="find-similar-tickets",
@@ -360,6 +405,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketSummaryAction(),
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
+        TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     ):
