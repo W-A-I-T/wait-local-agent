@@ -44,6 +44,27 @@ ActionStatus = Literal[
     "rejected",
 ]
 
+_POSITIVE_SENTIMENT_TERMS = frozenset(
+    {"thanks", "thank", "great", "resolved", "working", "success", "appreciate", "helpful", "excellent", "fixed"}
+)
+_NEGATIVE_SENTIMENT_TERMS = frozenset(
+    {
+        "urgent",
+        "down",
+        "blocked",
+        "broken",
+        "failure",
+        "failed",
+        "error",
+        "angry",
+        "unhappy",
+        "outage",
+        "problem",
+        "critical",
+        "cannot",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SmartActionManifest:
@@ -307,6 +328,90 @@ class TicketQualityAction:
         )
 
 
+class TicketSentimentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sentiment",
+        title="Assess ticket sentiment",
+        description="Classify customer-facing ticket language with bounded lexical heuristics.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"sentiment": "string", "score": "number", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        tokens = _tokens(f"{ticket.subject} {ticket.body}")
+        positive = sorted(tokens & _POSITIVE_SENTIMENT_TERMS)
+        negative = sorted(tokens & _NEGATIVE_SENTIMENT_TERMS)
+        raw_score = len(positive) - len(negative)
+        score = max(-1.0, min(1.0, raw_score / 3.0))
+        sentiment = "positive" if score > 0 else "negative" if score < 0 else "neutral"
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "sentiment": sentiment,
+                "score": score,
+                "positive_terms": positive,
+                "negative_terms": negative,
+                "escalation_signal": sentiment == "negative" or ticket.priority.lower() in {"critical", "p1"},
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["subject", "body", "priority"])],
+        )
+
+
+class TicketEscalationAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-escalation",
+        title="Assess ticket escalation",
+        description="Recommend a bounded response urgency from ticket priority, status, and impact language.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"urgency": "string", "recommendation": "string", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        priority = ticket.priority.strip().lower()
+        status = ticket.status.strip().lower()
+        impact_tokens = _tokens(f"{ticket.subject} {ticket.body}")
+        broad_impact = bool(impact_tokens & {"outage", "everyone", "users", "production"})
+        if status in {"closed", "resolved"}:
+            urgency, recommendation = "none", "no escalation for a resolved ticket"
+        elif priority in {"critical", "p1"} or broad_impact:
+            urgency, recommendation = "immediate", "notify the on-call or senior technician"
+        elif priority in {"high", "p2"}:
+            urgency, recommendation = "same_day", "assign a senior technician today"
+        else:
+            urgency, recommendation = "standard", "keep the ticket in the normal triage queue"
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "urgency": urgency,
+                "recommendation": recommendation,
+                "priority": ticket.priority,
+                "status": ticket.status,
+                "broad_impact": broad_impact,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["subject", "body", "priority", "status"])],
+        )
+
+
 class FindSimilarTicketsAction:
     manifest = SmartActionManifest(
         action_id="find-similar-tickets",
@@ -478,6 +583,8 @@ def _build_default_registry() -> SmartActionRegistry:
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
         TicketQualityAction(),
+        TicketSentimentAction(),
+        TicketEscalationAction(),
         CollectorPreviewAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

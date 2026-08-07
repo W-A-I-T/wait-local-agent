@@ -21,7 +21,9 @@ from wait_local_agent.smart_actions import (
     SmartActionRegistry,
     SmartActionService,
     SuggestResolutionAction,
+    TicketEscalationAction,
     TicketQualityAction,
+    TicketSentimentAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -178,6 +180,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
     knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
+    sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
+    escalation = TicketEscalationAction().run(context, {"ticket_id": "TCK-1001"})
     similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
     dispatch = DispatchSuggestionAction().run(
         context,
@@ -190,6 +194,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == resolution.status
         == knowledge.status
         == quality.status
+        == sentiment.status
+        == escalation.status
         == similar.status
         == dispatch.status
         == "success"
@@ -198,6 +204,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert resolution.output["citations"]
     assert knowledge.output["ticket_id"] == "TCK-1001"
     assert quality.output["passed"] is True
+    assert sentiment.output["sentiment"] == "negative"
+    assert escalation.output["urgency"] == "same_day"
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
 
@@ -224,6 +232,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
         TicketQualityAction(),
+        TicketSentimentAction(),
+        TicketEscalationAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     )
@@ -458,7 +468,9 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "suggest-resolution",
+        "ticket-escalation",
         "ticket-quality",
+        "ticket-sentiment",
         "ticket-summary",
         "ticket-triage",
     ]
