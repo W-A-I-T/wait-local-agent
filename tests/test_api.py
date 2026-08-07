@@ -657,6 +657,7 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -697,6 +698,7 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_i
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -827,6 +829,7 @@ def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
     )
     pause = client.post("/scheduled-jobs/999/pause")
     resume = client.post("/scheduled-jobs/999/resume")
+    reschedule = client.post("/scheduled-jobs/999/reschedule", json={"cron": "0 2 * * *"})
     delete = client.delete("/scheduled-jobs/999")
 
     assert missing_template.status_code == 404
@@ -834,6 +837,7 @@ def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
     assert missing_param.status_code == 422
     assert pause.status_code == 404
     assert resume.status_code == 404
+    assert reschedule.status_code == 404
     assert delete.status_code == 404
 
 
@@ -970,11 +974,15 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
     )
-    Store(secure_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
 
     app = create_app(secure_settings)
 
@@ -1049,6 +1057,16 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
 
         paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
         resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
+        rescheduled = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"schedule_type": "interval", "interval_seconds": 120},
+        )
+        invalid_reschedule = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"cron": "bad cron"},
+        )
         deleted = client.delete(f"/scheduled-jobs/{job_id}", headers=_auth("tech-token"))
 
         assert paused.status_code == 200
@@ -1057,6 +1075,10 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert resumed.status_code == 200
         assert resumed.json()["paused"] is False
         assert resumed.json()["next_run_at"] is not None
+        assert rescheduled.status_code == 200
+        assert rescheduled.json()["schedule_type"] == "interval"
+        assert rescheduled.json()["interval_seconds"] == 120
+        assert invalid_reschedule.status_code == 422
         assert deleted.status_code == 200
         assert deleted.json()["id"] == job_id
         assert client.delete(

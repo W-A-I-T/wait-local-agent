@@ -47,7 +47,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
-- Pause, resume, delete, and audit tracking for scheduled jobs
+- Pause, resume, tenant-scoped reschedule, delete, and audit tracking for
+  scheduled jobs
 
 ## Bounded agents
 

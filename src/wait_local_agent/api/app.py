@@ -207,6 +207,13 @@ class ScheduledJobCreateRequest(BaseModel):
     params: dict[str, object] = Field(default_factory=dict)
 
 
+class ScheduledJobRescheduleRequest(BaseModel):
+    cron: str = ""
+    schedule_type: Literal["cron", "interval", "once"] = "cron"
+    interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
+    run_at: str | None = None
+
+
 class CollectorConfigRequest(BaseModel):
     config: dict[str, object] = Field(default_factory=dict)
     client_id: str | None = None
@@ -1688,10 +1695,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/scheduled-jobs")
     def scheduled_jobs(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        return [_scheduled_job_view(job) for job in scheduler.list_jobs(client_id=client_id)]
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [_scheduled_job_view(job) for job in scheduler.list_jobs(client_id=scoped_client_id)]
 
     @app.post("/scheduled-jobs")
     def create_scheduled_job(
@@ -1705,15 +1715,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if get_workflow_template(request.template_id) is None:
             raise HTTPException(status_code=404, detail="workflow template not found")
         ticket_id = _scheduled_ticket_id(request.params)
-        ticket = store.get_ticket(ticket_id)
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        ticket = store.get_ticket(ticket_id, client_id=scoped_client_id)
         if ticket is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         params = dict(request.params)
-        raw_client_id = params.get("client_id")
-        normalized_client_id = (
-            _normalize_client_id(raw_client_id) if raw_client_id is None or isinstance(raw_client_id, str) else None
-        )
-        if normalized_client_id is None and ticket.client_id:
+        if (requested_client_id is None or not requested_client_id.strip()) and ticket.client_id:
             params["client_id"] = ticket.client_id
         try:
             scheduled_job = scheduler.register(
@@ -1780,22 +1792,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _scheduled_job_view(scheduled_job)
 
     @app.post("/scheduled-jobs/{job_id}/pause")
-    def pause_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+    def pause_scheduled_job(job_id: int, context: TechnicianAccess) -> dict[str, object]:
         try:
+            _scheduled_job_for_context(store, job_id, context)
             return _scheduled_job_view(scheduler.pause(job_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="scheduled job not found") from exc
 
     @app.post("/scheduled-jobs/{job_id}/resume")
-    def resume_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+    def resume_scheduled_job(job_id: int, context: TechnicianAccess) -> dict[str, object]:
         try:
+            _scheduled_job_for_context(store, job_id, context)
             return _scheduled_job_view(scheduler.resume(job_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="scheduled job not found") from exc
 
-    @app.delete("/scheduled-jobs/{job_id}")
-    def delete_scheduled_job(job_id: int, _: TechnicianAccess) -> dict[str, object]:
+    @app.post("/scheduled-jobs/{job_id}/reschedule")
+    def reschedule_scheduled_job(
+        job_id: int,
+        payload: ScheduledJobRescheduleRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
         try:
+            _scheduled_job_for_context(store, job_id, context)
+            return _scheduled_job_view(
+                scheduler.reschedule(
+                    job_id,
+                    cron=payload.cron,
+                    schedule_type=payload.schedule_type,
+                    interval_seconds=payload.interval_seconds,
+                    run_at=payload.run_at,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/scheduled-jobs/{job_id}")
+    def delete_scheduled_job(job_id: int, context: TechnicianAccess) -> dict[str, object]:
+        try:
+            _scheduled_job_for_context(store, job_id, context)
             return _scheduled_job_view(scheduler.remove(job_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="scheduled job not found") from exc
@@ -2324,6 +2361,18 @@ def _smart_action_client_scope(context: AuthContext, requested_client_id: str | 
     if context.role >= Role.ADMIN:
         return _normalize_client_id(requested_client_id)
     return _normalize_client_id(context.client_id)
+
+
+def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
+    scoped_client_id = _smart_action_client_scope(context, None)
+    if context.role < Role.ADMIN and scoped_client_id is None:
+        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+    job = store.get_scheduled_job(job_id)
+    if job is None or (
+        scoped_client_id is not None and _normalize_client_id(job.client_id) != scoped_client_id
+    ):
+        raise HTTPException(status_code=404, detail="scheduled job not found")
+    return job
 
 
 def _halopsa_draft_view(draft) -> dict[str, object]:
