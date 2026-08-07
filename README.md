@@ -26,8 +26,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
-  UTC cron, interval, and future one-time schedules plus pause/resume/delete
-  and reschedule controls.
+  cron, interval, and future one-time schedules with validated IANA timezones
+  (UTC by default), plus pause/resume/delete and reschedule controls.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
   `/tools`, tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated

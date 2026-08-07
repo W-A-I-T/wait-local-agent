@@ -205,6 +205,7 @@ class ScheduledJobCreateRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = "UTC"
     params: dict[str, object] = Field(default_factory=dict)
 
 
@@ -213,6 +214,7 @@ class ScheduledJobRescheduleRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = "UTC"
 
 
 class CollectorConfigRequest(BaseModel):
@@ -1747,6 +1749,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1798,6 +1801,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1838,6 +1842,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cron=request.cron,
                     interval_seconds=request.interval_seconds,
                     run_at=request.run_at,
+                    timezone=request.timezone,
                 )
             )
         except KeyError as exc:
@@ -2097,6 +2102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "schedule_type": job.schedule_type,
             "interval_seconds": job.interval_seconds,
             "run_at": job.run_at,
+            "timezone": job.timezone,
             "paused": job.paused,
             "created_at": job.created_at,
             "updated_at": job.updated_at,

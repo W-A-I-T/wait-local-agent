@@ -310,6 +310,7 @@ class ScheduledJob:
     schedule_type: str = "cron"
     interval_seconds: int | None = None
     run_at: str | None = None
+    timezone: str = "UTC"
 
 
 @dataclass(frozen=True)

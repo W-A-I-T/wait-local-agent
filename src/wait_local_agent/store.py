@@ -255,7 +255,8 @@ class Store:
                     entity_id text,
                     schedule_type text not null default 'cron',
                     interval_seconds integer,
-                    run_at text
+                    run_at text,
+                    timezone text not null default 'UTC'
                 )
                 """
             )
@@ -363,6 +364,7 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
             self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
             self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
+            self._ensure_column(connection, "scheduled_jobs", "timezone", "text not null default 'UTC'")
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -2330,6 +2332,7 @@ class Store:
         schedule_type: str = "cron",
         interval_seconds: int | None = None,
         run_at: str | None = None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -2351,9 +2354,10 @@ class Store:
                     entity_id,
                     schedule_type,
                     interval_seconds,
-                    run_at
+                    run_at,
+                    timezone
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -2369,6 +2373,7 @@ class Store:
                     schedule_type,
                     interval_seconds,
                     run_at,
+                    timezone,
                 ),
             )
             if cursor.lastrowid is None:
@@ -2465,6 +2470,7 @@ class Store:
         cron: str,
         interval_seconds: int | None,
         run_at: str | None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         with self._connect() as connection:
@@ -2477,10 +2483,10 @@ class Store:
             connection.execute(
                 """
                 update scheduled_jobs
-                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, updated_at = ?
+                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, timezone = ?, updated_at = ?
                 where id = ?
                 """,
-                (cron, schedule_type, interval_seconds, run_at, now, job_id),
+                (cron, schedule_type, interval_seconds, run_at, timezone, now, job_id),
             )
             client_id = str(row["client_id"]) if row["client_id"] is not None else None
             detail = f"{schedule_type} schedule updated"
@@ -2503,6 +2509,7 @@ class Store:
                         "schedule_type": schedule_type,
                         "interval_seconds": interval_seconds,
                         "run_at": run_at,
+                        "timezone": timezone,
                     },
                     sort_keys=True,
                 ),

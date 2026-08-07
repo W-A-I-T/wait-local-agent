@@ -153,7 +153,10 @@ def test_scheduler_validation_rejects_invalid_cron() -> None:
 
 def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
     validate_schedule("interval", "", 60, None)
+    validate_schedule("cron", "0 9 * * *", None, None, "America/Vancouver")
     validate_schedule("once", "", None, "2099-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="valid IANA timezone"):
+        validate_schedule("cron", "0 9 * * *", None, None, "Not/AZone")
     with pytest.raises(ValueError, match="interval_seconds"):
         validate_schedule("interval", "", None, None)
     with pytest.raises(ValueError, match="timezone"):
@@ -171,6 +174,7 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             updated_at="",
             schedule_type="interval",
             interval_seconds=60,
+            timezone="America/Vancouver",
         )
     ) is not None
     assert _schedule_trigger(  # noqa: SLF001
