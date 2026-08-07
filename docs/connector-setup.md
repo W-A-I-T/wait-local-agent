@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, NinjaOne, and Autotask HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, and Autotask HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -153,6 +153,40 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo. There is no Hudu write surface to enable.
+
+## IT Glue
+
+The public IT Glue adapter is read-only. It lists organizations, organization
+documents, and document folders, and retrieves one document at a time. It does
+not call IT Glue create, update, or delete endpoints.
+
+### Required settings
+
+```text
+WAIT_ITGLUE_BASE_URL=https://api.itglue.com
+WAIT_ITGLUE_API_KEY=
+WAIT_ITGLUE_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+IT Glue API keys are sent only in the `x-api-key` request header, matching the
+[IT Glue API authentication documentation](https://api.itglue.com/developer/).
+Store the key in the Fernet vault for appliance deployments:
+
+```bash
+wait-local-agent secrets set WAIT_ITGLUE_API_KEY '<secret>'
+wait-local-agent connectors validate itglue
+```
+
+Read-only commands use organization-scoped document and folder paths:
+
+```bash
+wait-local-agent connectors itglue-health
+wait-local-agent connectors itglue-organizations
+wait-local-agent connectors itglue-documents <organization-id>
+wait-local-agent connectors itglue-document <document-id>
+wait-local-agent connectors itglue-folders <organization-id>
+```
 
 ## NinjaOne RMM
 

@@ -66,6 +66,7 @@ from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.lp_client import (
     LaunchPassportError,
@@ -281,6 +282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    itglue_client = ItGlueClient(active_settings)
     ninjaone_client = NinjaOneClient(active_settings)
     autotask_client = AutotaskClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
@@ -1700,6 +1702,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _hudu_response("folders.list", response)
 
+    @app.get("/connectors/itglue/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = itglue_client.health()
+        _audit_itglue_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/itglue/organizations")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_organizations(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_organizations(page=page, page_size=page_size)
+        return _itglue_response("organizations.list", response)
+
+    @app.get("/connectors/itglue/organizations/{organization_id}/documents")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_documents(
+        organization_id: str,
+        request: Request,
+        _: ViewerAccess,
+        folder_id: str | None = None,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_documents(
+            organization_id,
+            folder_id=folder_id,
+            page=page,
+            page_size=page_size,
+        )
+        return _itglue_response("documents.list", response)
+
+    @app.get("/connectors/itglue/documents/{document_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_document(document_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = itglue_client.get_document(document_id)
+        return _itglue_response("documents.get", response)
+
+    @app.get("/connectors/itglue/organizations/{organization_id}/folders")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_folders(
+        organization_id: str,
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_folders(organization_id, page=page, page_size=page_size)
+        return _itglue_response("folders.list", response)
+
     @app.get("/connectors/ninjaone/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def ninjaone_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -2226,6 +2282,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_hudu_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+    def _itglue_response(read_type: str, response: ItGlueReadResponse) -> dict[str, object]:
+        _audit_itglue_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+        }
+
+    def _audit_itglue_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("itglue.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

@@ -7,6 +7,7 @@ from wait_local_agent.autotask import AutotaskClient, PsaClient
 from wait_local_agent.config import Settings
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
+from wait_local_agent.itglue import ItGlueClient
 from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
@@ -51,6 +52,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     hudu_status: ConnectorStatusValue = "not_configured"
     if hudu_configured:
         hudu_status = "configured" if settings.allow_http_probing else "blocked"
+    itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
+    itglue_status: ConnectorStatusValue = "not_configured"
+    if itglue_configured:
+        itglue_status = "configured" if settings.allow_http_probing else "blocked"
     ninjaone_configured = bool(
         settings.ninjaone_base_url
         and settings.ninjaone_client_id
@@ -107,6 +112,22 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="Microsoft 365 / Entra",
             status="not_configured",
             message="Planned read-only identity, group, license, and mailbox lookup connector.",
+        ),
+        ConnectorStatus(
+            id="itglue",
+            kind="documentation",
+            name="IT Glue",
+            status=itglue_status,
+            message=(
+                "IT Glue read-only organization and documentation lookup is configured."
+                if itglue_status == "configured"
+                else (
+                    "IT Glue credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if itglue_status == "blocked"
+                    else "Set WAIT_ITGLUE_API_KEY to enable read-only documentation lookup."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
             id="ninjaone",
@@ -167,6 +188,9 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_HUDU_BASE_URL", bool(settings.hudu_base_url), "hudu"),
         SecretRecord("WAIT_HUDU_API_KEY", bool(settings.hudu_api_key), "hudu"),
         SecretRecord("WAIT_HUDU_PAGE_SIZE", bool(settings.hudu_page_size), "hudu"),
+        SecretRecord("WAIT_ITGLUE_BASE_URL", bool(settings.itglue_base_url), "itglue"),
+        SecretRecord("WAIT_ITGLUE_API_KEY", bool(settings.itglue_api_key), "itglue"),
+        SecretRecord("WAIT_ITGLUE_PAGE_SIZE", bool(settings.itglue_page_size), "itglue"),
         SecretRecord("WAIT_NINJAONE_BASE_URL", bool(settings.ninjaone_base_url), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_CLIENT_ID", bool(settings.ninjaone_client_id), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_CLIENT_SECRET", bool(settings.ninjaone_client_secret), "ninjaone"),
@@ -190,6 +214,7 @@ def validate_connector_credentials(
     *,
     halopsa_client: HaloPSAClient | None = None,
     hudu_client: HuduClient | None = None,
+    itglue_client: ItGlueClient | None = None,
     ninjaone_client: RmmClient | None = None,
     autotask_client: PsaClient | None = None,
 ) -> ConnectorValidationResult:
@@ -229,6 +254,23 @@ def validate_connector_credentials(
                 f"Hudu credentials are incomplete: {', '.join(missing)}.",
             )
         result = (hudu_client or HuduClient(settings)).health()
+    elif connector == "itglue":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_ITGLUE_BASE_URL": settings.itglue_base_url,
+                "WAIT_ITGLUE_API_KEY": settings.itglue_api_key,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"IT Glue credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (itglue_client or ItGlueClient(settings)).health()
     elif connector == "ninjaone":
         missing = [
             key

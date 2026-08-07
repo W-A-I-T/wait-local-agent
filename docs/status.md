@@ -24,6 +24,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- IT Glue read-only organization, document, and folder lookup; no IT Glue write
+  operations are enabled.
 - NinjaOne read-only RMM adapter for device inventory, active alerts, automation
   script metadata, and safe script execution previews. Script execution and all
   NinjaOne management mutations remain disabled.
@@ -118,7 +120,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
-| IT Glue connector | Future paid pack or open-core interface |
+| IT Glue connector | Built in open core as a read-only adapter; writes and richer mapping remain future work |
 | ConnectWise PSA connector | Future paid pack or open-core interface |
 | Autotask connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | NinjaOne RMM read-only | Built in open core; execution and additional RMM vendors remain future work |

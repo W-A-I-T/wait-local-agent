@@ -25,6 +25,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_PAGE_SIZE", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_CLIENT_ID", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_CLIENT_SECRET", raising=False)
@@ -70,6 +73,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.itglue_base_url == "https://api.itglue.com"
+    assert settings.itglue_api_key == ""
+    assert settings.itglue_page_size == 25
     assert settings.ninjaone_base_url == ""
     assert settings.ninjaone_client_id == ""
     assert settings.ninjaone_client_secret == ""
@@ -126,6 +132,9 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_HUDU_BASE_URL", "https://hudu.example.test")
     monkeypatch.setenv("WAIT_HUDU_API_KEY", "api-key")
     monkeypatch.setenv("WAIT_HUDU_PAGE_SIZE", "10")
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://itglue.example.test")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "itglue-key")
+    monkeypatch.setenv("WAIT_ITGLUE_PAGE_SIZE", "10")
     monkeypatch.setenv("WAIT_NINJAONE_BASE_URL", "https://app.ninjarmm.com")
     monkeypatch.setenv("WAIT_NINJAONE_CLIENT_ID", "ninja-client")
     monkeypatch.setenv("WAIT_NINJAONE_CLIENT_SECRET", "ninja-secret")
@@ -146,6 +155,9 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+    assert settings.itglue_base_url == "https://itglue.example.test"
+    assert settings.itglue_api_key == "itglue-key"
+    assert settings.itglue_page_size == 10
     assert settings.ninjaone_base_url == "https://app.ninjarmm.com"
     assert settings.ninjaone_client_id == "ninja-client"
     assert settings.ninjaone_client_secret == "ninja-secret"

@@ -12,6 +12,7 @@ from wait_local_agent.autotask import PsaReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
+from wait_local_agent.itglue import ItGlueDocument, ItGlueFolder, ItGlueOrganization, ItGlueReadResponse
 from wait_local_agent.models import (
     ConnectorReadResult,
     HaloReadResult,
@@ -2012,6 +2013,43 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
     assert any(event["event_type"] == "hudu.read" for event in audit.json())
 
 
+def test_itglue_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_organizations(self, *, page=1, page_size=None):
+            return _itglue_response([ItGlueOrganization("O-1", "Contoso", "active")])
+
+        def list_documents(self, organization_id, *, folder_id=None, page=1, page_size=None):
+            return _itglue_response([ItGlueDocument("D-1", "Runbook", organization_id, "F-1", "", "")])
+
+        def get_document(self, document_id):
+            return _itglue_response([ItGlueDocument(document_id, "Runbook", "O-1", "F-1", "", "")])
+
+        def list_folders(self, organization_id, *, page=1, page_size=None):
+            return _itglue_response([ItGlueFolder("F-1", "Ops", organization_id, "")])
+
+    blocked = TestClient(create_app(settings)).get("/connectors/itglue/health")
+    monkeypatch.setattr(app_module, "ItGlueClient", FakeItGlueClient)
+    client = TestClient(app_module.create_app(settings))
+    health = client.get("/connectors/itglue/health")
+    organizations = client.get("/connectors/itglue/organizations")
+    documents = client.get("/connectors/itglue/organizations/O-1/documents")
+    document = client.get("/connectors/itglue/documents/D-1")
+    folders = client.get("/connectors/itglue/organizations/O-1/folders")
+    assert blocked.json()["status"] == "blocked"
+    assert health.json()["status"] == "ready"
+    assert organizations.json()["items"][0]["name"] == "Contoso"
+    assert documents.json()["items"][0]["name"] == "Runbook"
+    assert document.json()["items"][0]["id"] == "D-1"
+    assert folders.json()["items"][0]["name"] == "Ops"
+    assert any(event["event_type"] == "itglue.read" for event in client.get("/audit").json())
+
+
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
     client = TestClient(create_app(settings))
 
@@ -2240,6 +2278,10 @@ def _read_response(items):
 
 def _hudu_response(items):
     return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _itglue_response(items):
+    return ItGlueReadResponse(ConnectorReadResult("ready", "ok", len(items)), items)
 
 
 def _auth(token: str) -> dict[str, str]:

@@ -23,6 +23,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Approval requests receive a persisted 24-hour default expiry; expired requests
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
+- IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
 - Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, and `ninjaone`.
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
@@ -315,6 +316,23 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo.
+
+### IT Glue
+
+The public IT Glue adapter is read-only and requires explicit HTTP probing.
+Configure `WAIT_ITGLUE_BASE_URL` (normally `https://api.itglue.com`) and
+`WAIT_ITGLUE_API_KEY`, then use:
+
+```bash
+wait-local-agent connectors validate itglue
+wait-local-agent connectors itglue-health
+wait-local-agent connectors itglue-organizations
+wait-local-agent connectors itglue-documents <organization-id>
+wait-local-agent connectors itglue-document <document-id>
+wait-local-agent connectors itglue-folders <organization-id>
+```
+
+No IT Glue write operation is performed by these commands.
 
 ### NinjaOne RMM
 

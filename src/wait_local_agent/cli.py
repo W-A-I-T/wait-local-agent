@@ -62,6 +62,7 @@ from wait_local_agent.connectors import (
 )
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
@@ -144,6 +145,10 @@ def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
 
 
+def _itglue_client() -> ItGlueClient:
+    return ItGlueClient(load_settings())
+
+
 def _ninjaone_client() -> NinjaOneClient:
     return NinjaOneClient(load_settings())
 
@@ -194,6 +199,8 @@ def doctor() -> None:
     typer.echo(f"halopsa_configured={halopsa_configured}")
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
+    itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
+    typer.echo(f"itglue_configured={itglue_configured}")
     ninjaone_configured = bool(
         settings.ninjaone_base_url
         and settings.ninjaone_client_id
@@ -632,6 +639,7 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             settings,
             halopsa_client=_halopsa_client(),
             hudu_client=_hudu_client(),
+            itglue_client=_itglue_client(),
             ninjaone_client=_ninjaone_client(),
             autotask_client=_autotask_client(),
         )
@@ -771,6 +779,52 @@ def hudu_folders(
     _print_hudu_response(
         "folders.list",
         _hudu_client().list_folders(company_id=company_id, page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("itglue-health")
+def itglue_health() -> None:
+    result = _itglue_client().health()
+    _audit_itglue_cli_read("itglue.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("itglue-organizations")
+def itglue_organizations(page: int = 1, page_size: int | None = None) -> None:
+    _print_itglue_response(
+        "organizations.list",
+        _itglue_client().list_organizations(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("itglue-documents")
+def itglue_documents(
+    organization_id: str,
+    folder_id: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_itglue_response(
+        "documents.list",
+        _itglue_client().list_documents(
+            organization_id,
+            folder_id=folder_id,
+            page=page,
+            page_size=page_size,
+        ),
+    )
+
+
+@connectors_app.command("itglue-document")
+def itglue_document(document_id: str) -> None:
+    _print_itglue_response("documents.get", _itglue_client().get_document(document_id))
+
+
+@connectors_app.command("itglue-folders")
+def itglue_folders(organization_id: str, page: int = 1, page_size: int | None = None) -> None:
+    _print_itglue_response(
+        "folders.list",
+        _itglue_client().list_folders(organization_id, page=page, page_size=page_size),
     )
 
 
@@ -1452,6 +1506,13 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
         typer.echo(asdict(item))
 
 
+def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None:
+    _audit_itglue_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(asdict(item))
+
+
 def _print_rmm_response(read_type: str, response: RmmReadResponse) -> None:
     _audit_rmm_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
@@ -1472,6 +1533,10 @@ def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
 
 def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+
+def _audit_itglue_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("itglue.read", read_type, f"{status} count={count}")
 
 
 def _audit_rmm_cli_read(read_type: str, status: str, count: int) -> None:

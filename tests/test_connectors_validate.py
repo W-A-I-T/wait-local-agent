@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 import wait_local_agent.cli as cli_module
 from wait_local_agent.autotask import PsaReadResponse
 from wait_local_agent.cli import app
+from wait_local_agent.itglue import ItGlueDocument, ItGlueFolder, ItGlueOrganization, ItGlueReadResponse
 from wait_local_agent.models import ConnectorReadResult, HaloReadResult
 from wait_local_agent.rmm import RmmReadResponse
 
@@ -120,6 +121,28 @@ def test_validate_hudu_cli_success_and_unreachable(monkeypatch, tmp_path) -> Non
     assert "layer=connectivity" in failed.output
 
 
+def test_validate_itglue_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "IT Glue read prerequisites are ready.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "itglue"])
+    assert missing.exit_code == 1
+    assert "WAIT_ITGLUE_API_KEY" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://api.itglue.com")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "api-key")
+    monkeypatch.setattr(cli_module, "ItGlueClient", FakeItGlueClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "itglue"])
+    assert ready.exit_code == 0
+    assert "PASS connector=itglue layer=connector" in ready.output
+
+
 def test_validate_ninjaone_cli_requires_read_only_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
     class FakeNinjaOneClient:
         def __init__(self, _settings) -> None:
@@ -233,5 +256,38 @@ def test_autotask_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> 
         ["connectors", "autotask-companies"],
     ]
     results = [runner.invoke(app, command) for command in commands]
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)
+
+
+def test_itglue_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake IT Glue response", 1)
+
+    class FakeItGlueClient:
+        def health(self):
+            return result
+
+        def list_organizations(self, *, page=1, page_size=None):
+            return ItGlueReadResponse(result, [ItGlueOrganization("organization-1", "Org", "active")])
+
+        def list_documents(self, organization_id, *, folder_id=None, page=1, page_size=None):
+            return ItGlueReadResponse(result, [ItGlueDocument("document-1", "Doc", organization_id, "", "", "")])
+
+        def get_document(self, document_id):
+            return ItGlueReadResponse(result, [ItGlueDocument(document_id, "Doc", "organization-1", "", "", "")])
+
+        def list_folders(self, organization_id, *, page=1, page_size=None):
+            return ItGlueReadResponse(result, [ItGlueFolder("folder-1", "Folder", organization_id, "")])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_itglue_client", lambda: FakeItGlueClient())
+    commands = [
+        ["connectors", "itglue-health"],
+        ["connectors", "itglue-organizations"],
+        ["connectors", "itglue-documents", "organization-1"],
+        ["connectors", "itglue-document", "document-1"],
+        ["connectors", "itglue-folders", "organization-1"],
+    ]
+    results = [CliRunner().invoke(app, command) for command in commands]
     assert all(item.exit_code == 0 for item in results)
     assert all("ready count=1" in item.output for item in results)
