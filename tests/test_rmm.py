@@ -4,7 +4,11 @@ from dataclasses import replace
 
 import httpx
 
-from wait_local_agent.connectors import list_connector_statuses, validate_connector_credentials
+from wait_local_agent.connectors import (
+    _classify_validation_result,
+    list_connector_statuses,
+    validate_connector_credentials,
+)
 from wait_local_agent.rmm import (
     NinjaOneClient,
     RmmReadError,
@@ -271,11 +275,14 @@ def test_ninjaone_guard_and_get_error_edges(settings) -> None:
         if request.url.path == "/ws/oauth/token":
             return httpx.Response(200, json={"access_token": "token"})
         if request.url.path == "/api/v2/alerts":
-            return httpx.Response(200, json=[{"id": "alert-2", "priority": 2}])
+            return httpx.Response(200, json=[{"message": "missing id"}, {"id": "alert-2", "priority": 2}])
+        if request.url.path == "/api/v2/automation/scripts":
+            return httpx.Response(200, json=[{"name": "missing id"}, {"id": "script-2"}])
         return httpx.Response(200, json=[{"id": 17, "offline": 0}])
 
     client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(normalizer_edge))
     assert client.list_alerts().items[0]["id"] == "alert-2"
+    assert client.list_scripts().items[0]["id"] == "script-2"
     assert client.list_devices().items[0]["offline"] is False
 
 
@@ -297,3 +304,31 @@ def test_ninjaone_connector_status_and_validation(settings) -> None:
     )
     assert result.passed is True
     assert result.layer == "connector"
+
+
+def test_connector_validation_edges_remain_explicit(settings) -> None:
+    configured_hudu = replace(
+        settings,
+        allow_http_probing=False,
+        hudu_base_url="https://hudu.example.test",
+        hudu_api_key="api-key",
+    )
+    assert next(item for item in list_connector_statuses(configured_hudu) if item.id == "hudu").status == "blocked"
+    assert validate_connector_credentials("halopsa", settings).layer == "config"
+    assert validate_connector_credentials("ninjaone", settings).layer == "config"
+
+    ready = _classify_validation_result("ninjaone", "ready", "ready")
+    configured = _classify_validation_result("ninjaone", "not_configured", "missing")
+    blocked_result = _classify_validation_result("ninjaone", "blocked", "blocked")
+    unknown = _classify_validation_result("ninjaone", "failed", "unexpected failure")
+    assert ready.passed is True
+    assert configured.layer == "config"
+    assert blocked_result.layer == "safety"
+    assert unknown.layer == "connector"
+
+    try:
+        validate_connector_credentials("unknown", settings)
+    except ValueError as exc:
+        assert "unsupported connector" in str(exc)
+    else:
+        raise AssertionError("unsupported connector was accepted")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -104,6 +105,39 @@ def test_agent_execution_window_is_validated_and_persisted(settings) -> None:
             client_id="acme",
             execution_window_start="09:00",
         )
+
+
+def test_agent_definition_validation_rejects_invalid_shape_edges(settings) -> None:
+    service = _service(settings)
+    base: dict[str, Any] = {
+        "name": "Validation edge",
+        "description": "",
+        "enabled": True,
+        "trigger": "manual",
+        "entity_type": "ticket",
+        "filters": {},
+        "enabled_tools": ["ticket-triage"],
+        "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+        "max_steps": 1,
+        "execution_timeout_seconds": 30,
+        "client_id": "acme",
+    }
+    cases: list[tuple[dict[str, Any], str]] = [
+        ({"name": " "}, "name must contain"),
+        ({"description": "x" * 4001}, "description is too long"),
+        ({"trigger": "unknown"}, "only manual"),
+        ({"entity_type": "asset"}, "only ticket"),
+        ({"filters": []}, "filters must be an object"),
+        ({"enabled_tools": []}, "enabled_tools must contain"),
+        ({"enabled_tools": ["ticket-triage", "ticket-triage"]}, "duplicates"),
+        ({"steps": []}, "steps must contain"),
+        ({"steps": [{"tool_id": "unknown", "payload": {}}]}, "every step tool_id"),
+    ]
+    for overrides, message in cases:
+        with pytest.raises(AgentDefinitionError, match=message):
+            service.create(**{**base, **overrides})
+
+
 def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> None:
     service = _service(settings)
     definition = service.create(
