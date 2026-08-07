@@ -324,6 +324,31 @@ wait-local-agent connectors hudu-folders
 
 Hudu is read-only in the public repo.
 
+### IT Glue
+
+Required settings:
+
+```text
+WAIT_ITGLUE_BASE_URL=https://api.itglue.com
+WAIT_ITGLUE_API_KEY=
+WAIT_ITGLUE_PAGE_SIZE=25
+```
+
+Read commands cover organization-scoped documents and document folders:
+
+```bash
+wait-local-agent connectors validate itglue
+wait-local-agent connectors itglue-health
+wait-local-agent connectors itglue-organizations
+wait-local-agent connectors itglue-documents <organization-id>
+wait-local-agent connectors itglue-document <document-id>
+wait-local-agent connectors itglue-folders <organization-id>
+```
+
+The API mirrors these commands under `/connectors/itglue/*`. The API key stays
+in the settings/vault boundary, requests are read-only and bounded, and live
+network access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([IT Glue API documentation](https://api.itglue.com/developer/)).
+
 ### ConnectWise PSA
 
 Required settings:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import httpx
+import pytest
 
 from wait_local_agent.itglue import (
     ItGlueClient,
@@ -151,7 +152,8 @@ def test_itglue_sanitizes_failures_and_bounds_paths(settings) -> None:
 
 def test_itglue_helpers_cover_json_shapes_and_bounds() -> None:
     assert _api_base_url("https://api.itglue.com/") == "https://api.itglue.com"
-    assert _bounded_page_size(0) == 1
+    with pytest.raises(ItGlueReadError):
+        _bounded_page_size(0)
     assert _bounded_page_size(1000) == 100
     assert _payload_rows({"data": {"id": "1"}}) == [{"id": "1"}]
     assert _payload_rows({"meta": {}}) == [{"meta": {}}]

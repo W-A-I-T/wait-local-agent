@@ -63,6 +63,16 @@ class _FakeAutotaskClient:
         return ConnectorReadResult("ready", "Autotask read prerequisites are ready.")
 
 
+class _FakeItGlueClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "IT Glue live reads are blocked.")
+        return ConnectorReadResult("ready", "IT Glue read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -234,3 +244,21 @@ def test_validate_autotask_cli_success_and_missing_config(monkeypatch, tmp_path)
     assert "layer=config" in missing.output
     assert success.exit_code == 0
     assert "PASS connector=autotask layer=connector" in success.output
+
+
+def test_validate_itglue_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "itglue"])
+
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://api.itglue.com")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "api-key")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "ItGlueClient", _FakeItGlueClient)
+    success = runner.invoke(app, ["connectors", "validate", "itglue"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=itglue layer=connector" in success.output

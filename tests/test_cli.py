@@ -12,6 +12,12 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.config import load_settings
+from wait_local_agent.itglue import (
+    ItGlueDocument,
+    ItGlueFolder,
+    ItGlueOrganization,
+    ItGlueReadResponse,
+)
 from wait_local_agent.models import (
     ConnectorReadResult,
     HaloClient,
@@ -514,6 +520,56 @@ def test_autotask_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> No
     assert ticket.exit_code == 0 and "7" in ticket.output
     assert companies.exit_code == 0 and "Contoso" in companies.output
     assert company.exit_code == 0 and "3" in company.output
+
+
+def test_itglue_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_organizations(self, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueOrganization("1", "Contoso", "active")],
+            )
+
+        def list_documents(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "")],
+            )
+
+        def get_document(self, document_id):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "")],
+            )
+
+        def list_folders(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueFolder("7", "Ops", organization_id, "0")],
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "ItGlueClient", FakeItGlueClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "itglue-health"])
+    organizations = runner.invoke(app, ["connectors", "itglue-organizations"])
+    documents = runner.invoke(app, ["connectors", "itglue-documents", "1"])
+    document = runner.invoke(app, ["connectors", "itglue-document", "9"])
+    folders = runner.invoke(app, ["connectors", "itglue-folders", "1"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert organizations.exit_code == 0 and "Contoso" in organizations.output
+    assert documents.exit_code == 0 and "Runbook" in documents.output
+    assert document.exit_code == 0 and "Runbook" in document.output
+    assert folders.exit_code == 0 and "Ops" in folders.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

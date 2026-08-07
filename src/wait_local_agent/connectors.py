@@ -8,6 +8,7 @@ from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
+from wait_local_agent.itglue import ItGlueClient
 from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
@@ -53,6 +54,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     hudu_status: ConnectorStatusValue = "not_configured"
     if hudu_configured:
         hudu_status = "configured" if settings.allow_http_probing else "blocked"
+    itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
+    itglue_status: ConnectorStatusValue = "not_configured"
+    if itglue_configured:
+        itglue_status = "configured" if settings.allow_http_probing else "blocked"
     connectwise_configured = bool(
         settings.connectwise_base_url
         and settings.connectwise_company
@@ -114,6 +119,20 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else "Hudu credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if hudu_status == "blocked"
                 else "Set WAIT_HUDU_BASE_URL and WAIT_HUDU_API_KEY to enable documentation reads."
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
+            id="itglue",
+            kind="documentation",
+            name="IT Glue",
+            status=itglue_status,
+            message=(
+                "IT Glue credentials are configured for read-only documentation lookup."
+                if itglue_status == "configured"
+                else "IT Glue credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if itglue_status == "blocked"
+                else "Set WAIT_ITGLUE_BASE_URL and WAIT_ITGLUE_API_KEY to enable IT Glue reads."
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
@@ -217,6 +236,9 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_HUDU_BASE_URL", bool(settings.hudu_base_url), "hudu"),
         SecretRecord("WAIT_HUDU_API_KEY", bool(settings.hudu_api_key), "hudu"),
         SecretRecord("WAIT_HUDU_PAGE_SIZE", bool(settings.hudu_page_size), "hudu"),
+        SecretRecord("WAIT_ITGLUE_BASE_URL", bool(settings.itglue_base_url), "itglue"),
+        SecretRecord("WAIT_ITGLUE_API_KEY", bool(settings.itglue_api_key), "itglue"),
+        SecretRecord("WAIT_ITGLUE_PAGE_SIZE", bool(settings.itglue_page_size), "itglue"),
         SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_COMPANY", bool(settings.connectwise_company), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
@@ -253,6 +275,7 @@ def validate_connector_credentials(
     syncro_client: SyncroClient | None = None,
     servicenow_client: ServiceNowClient | None = None,
     autotask_client: AutotaskClient | None = None,
+    itglue_client: ItGlueClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -290,6 +313,23 @@ def validate_connector_credentials(
                 f"Hudu credentials are incomplete: {', '.join(missing)}.",
             )
         result = (hudu_client or HuduClient(settings)).health()
+    elif connector == "itglue":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_ITGLUE_BASE_URL": settings.itglue_base_url,
+                "WAIT_ITGLUE_API_KEY": settings.itglue_api_key,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"IT Glue credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (itglue_client or ItGlueClient(settings)).health()
     elif connector == "connectwise":
         missing = [
             key

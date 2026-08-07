@@ -14,6 +14,12 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.connectwise import ConnectWiseReadResponse
+from wait_local_agent.itglue import (
+    ItGlueDocument,
+    ItGlueFolder,
+    ItGlueOrganization,
+    ItGlueReadResponse,
+)
 from wait_local_agent.models import (
     ConnectorReadResult,
     HaloReadResult,
@@ -2147,6 +2153,68 @@ def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None
 def test_autotask_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/autotask/health")
+    assert response.status_code == 401
+
+
+def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "IT Glue ready", 0)
+
+        def list_organizations(self, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueOrganization("1", "Contoso", "active")],
+            )
+
+        def list_documents(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "https://docs.test/9")],
+            )
+
+        def get_document(self, document_id):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", "document ready", 1),
+                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "https://docs.test/9")],
+            )
+
+        def list_folders(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueFolder("7", "Ops", organization_id, "0")],
+            )
+
+    monkeypatch.setattr(app_module, "ItGlueClient", FakeItGlueClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/itglue/health")
+    organizations = client.get("/connectors/itglue/organizations")
+    documents = client.get(
+        "/connectors/itglue/organizations/1/documents",
+        params={"folder_id": "7"},
+    )
+    document = client.get("/connectors/itglue/documents/9")
+    folders = client.get("/connectors/itglue/organizations/1/folders")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert organizations.json()["items"][0]["name"] == "Contoso"
+    assert documents.json()["items"][0]["name"] == "Runbook"
+    assert document.json()["items"][0]["id"] == "9"
+    assert folders.json()["items"][0]["name"] == "Ops"
+    assert any(connector["id"] == "itglue" for connector in connectors.json())
+    assert any(event["event_type"] == "itglue.read" for event in audit.json())
+
+
+def test_itglue_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/itglue/health")
     assert response.status_code == 401
 
 

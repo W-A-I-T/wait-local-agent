@@ -96,6 +96,9 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    itglue_base_url: str = ""
+    itglue_api_key: str = ""
+    itglue_page_size: int = 25
     connectwise_base_url: str = ""
     connectwise_company: str = ""
     connectwise_public_key: str = ""
@@ -206,6 +209,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        itglue_base_url=_secret_value(
+            "WAIT_ITGLUE_BASE_URL",
+            os.getenv("WAIT_ITGLUE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_api_key=_secret_value(
+            "WAIT_ITGLUE_API_KEY",
+            os.getenv("WAIT_ITGLUE_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_page_size=_int_env("WAIT_ITGLUE_PAGE_SIZE", 25),
         connectwise_base_url=_secret_value(
             "WAIT_CONNECTWISE_BASE_URL",
             os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),

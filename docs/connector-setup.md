@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, ConnectWise, Syncro, and ServiceNow HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound PSA and documentation connector HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -158,6 +158,36 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo. There is no Hudu write surface to enable.
+
+## IT Glue
+
+### Required settings
+
+```text
+WAIT_ITGLUE_BASE_URL=https://api.itglue.com
+WAIT_ITGLUE_API_KEY=
+WAIT_ITGLUE_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The adapter uses the documented IT Glue JSON:API organization relationship
+routes for documents and folders. API keys are sent only in the request header;
+no write operation is exposed ([IT Glue API documentation](https://api.itglue.com/developer/)).
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate itglue
+wait-local-agent connectors itglue-health
+wait-local-agent connectors itglue-organizations
+wait-local-agent connectors itglue-documents <organization-id>
+wait-local-agent connectors itglue-document <document-id>
+wait-local-agent connectors itglue-folders <organization-id>
+```
+
+The API mirrors these commands under `/connectors/itglue/health`,
+`/connectors/itglue/organizations`, and the organization-scoped document and
+folder routes.
 
 ## ConnectWise PSA
 
