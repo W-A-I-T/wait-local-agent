@@ -55,6 +55,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "m365-identity-lookup",
+        "rmm-device-lookup",
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
@@ -464,6 +465,14 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
         client_id="beta",
         source_module="cloud-m365",
     )
+    store.upsert_canonical_asset(
+        canonical_id="agent:acme-rmm",
+        asset_type="endpoint-agent",
+        display_name="Acme RMM",
+        attributes={"agent": "Acme RMM", "category": "rmm"},
+        client_id="acme",
+        source_module="endpoint-agents",
+    )
     client = TestClient(create_app(secure))
     viewer = client.post(
         "/smart-actions/m365-identity-lookup/invoke",
@@ -480,6 +489,11 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
         headers={"Authorization": "Bearer tech-token"},
         json={"payload": {"identity": "admin@beta.example"}},
     )
+    rmm = client.post(
+        "/smart-actions/rmm-device-lookup/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"query": "acme"}},
+    )
 
     assert viewer.status_code == 403
     assert acme.status_code == 200
@@ -487,6 +501,8 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
     assert acme.json()["output"]["matches"][0]["user_principal_name"] == "admin@acme.example"
     assert beta.status_code == 200
     assert beta.json()["output"]["count"] == 0
+    assert rmm.status_code == 200
+    assert rmm.json()["output"]["count"] == 1
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
