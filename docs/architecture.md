@@ -82,7 +82,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 The local gallery stores provenance-bearing copies of the fixed core workflow
 catalog. Gallery entries retain the source template identity and tenant scope;
 execution resolves back to the reviewed core implementation, so the gallery
-does not create an unrestricted code or prompt execution surface.
+does not create an unrestricted code or prompt execution surface. A versioned
+JSON export/import envelope carries only reviewed template IDs, display names,
+and provenance; imports validate every ID before creating tenant-scoped copies.
 
 ## Backfills
 

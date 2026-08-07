@@ -151,6 +151,17 @@ class TemplateGalleryCreateRequest(BaseModel):
     client_id: str | None = None
 
 
+class TemplateGalleryImportEntry(BaseModel):
+    source_template_id: str
+    provenance: str = Field(min_length=1, max_length=1000)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class TemplateGalleryImportRequest(BaseModel):
+    entries: list[TemplateGalleryImportEntry] = Field(min_length=1, max_length=100)
+    client_id: str | None = None
+
+
 class SmartActionInvokeRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     confirm: bool = False
@@ -1867,6 +1878,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for entry in store.list_template_gallery_entries(scoped_client_id)
         ]
 
+    @app.get("/workflow-templates/gallery/export")
+    def export_template_gallery(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return {"format": "wait.template-gallery", "version": 1, "entries": []}
+        entries = store.list_template_gallery_entries(scoped_client_id)
+        return {
+            "format": "wait.template-gallery",
+            "version": 1,
+            "entries": [_template_gallery_export_view(entry) for entry in entries],
+        }
+
+    @app.post("/workflow-templates/gallery/import")
+    def import_template_gallery(
+        payload: TemplateGalleryImportRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        templates = [get_workflow_template(item.source_template_id) for item in payload.entries]
+        if any(template is None for template in templates):
+            raise HTTPException(status_code=422, detail="import contains an unknown workflow template")
+        imported = [
+            store.create_template_gallery_entry(
+                template,
+                provenance=item.provenance,
+                client_id=scoped_client_id,
+                name=item.display_name,
+            )
+            for item, template in zip(payload.entries, templates, strict=True)
+            if template is not None
+        ]
+        return {
+            "format": "wait.template-gallery",
+            "version": 1,
+            "imported": [_template_gallery_view(entry) for entry in imported],
+        }
+
     @app.post("/workflow-templates/gallery")
     def create_template_gallery_entry(
         payload: TemplateGalleryCreateRequest,
@@ -2444,6 +2497,14 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
         "client_id": entry.client_id,
+    }
+
+
+def _template_gallery_export_view(entry) -> dict[str, object]:
+    return {
+        "source_template_id": entry.source_template_id,
+        "display_name": entry.name,
+        "provenance": redact_text(entry.provenance),
     }
 
 

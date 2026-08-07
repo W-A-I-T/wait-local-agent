@@ -1243,6 +1243,28 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
     assert detail.status_code == 200
     assert detail.json()["id"] == entry_id
 
+    exported = client.get("/workflow-templates/gallery/export", params={"client_id": "acme"})
+    assert exported.status_code == 200
+    assert exported.json()["format"] == "wait.template-gallery"
+    assert exported.json()["entries"] == [
+        {
+            "source_template_id": "ticket-triage",
+            "display_name": "Acme triage starter",
+            "provenance": "Reviewed by the local operator",
+        }
+    ]
+
+    imported = client.post(
+        "/workflow-templates/gallery/import",
+        json={
+            "client_id": "acme",
+            "entries": exported.json()["entries"],
+        },
+    )
+    assert imported.status_code == 200
+    assert len(imported.json()["imported"]) == 1
+    assert imported.json()["imported"][0]["client_id"] == "acme"
+
     run = client.post(
         f"/workflow-templates/gallery/{entry_id}/runs",
         json={"ticket_id": "TCK-1001", "client_id": "acme"},
@@ -1264,10 +1286,18 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
         f"/workflow-templates/gallery/{entry_id}/runs",
         json={"ticket_id": "NO-SUCH-TICKET", "client_id": "acme"},
     )
+    unknown_import = client.post(
+        "/workflow-templates/gallery/import",
+        json={
+            "client_id": "acme",
+            "entries": [{"source_template_id": "not-a-template", "provenance": "review"}],
+        },
+    )
     assert unknown_source.status_code == 404
     assert foreign_run.status_code == 404
     assert missing_entry.status_code == 404
     assert missing_ticket.status_code == 404
+    assert unknown_import.status_code == 422
 
     secure = settings.__class__(
         **{
@@ -1286,10 +1316,19 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
         "/workflow-templates/gallery/anything",
         headers=_auth("viewer-token"),
     ).status_code == 404
+    assert secure_client.get(
+        "/workflow-templates/gallery/export",
+        headers=_auth("viewer-token"),
+    ).json()["entries"] == []
     assert secure_client.post(
         "/workflow-templates/gallery",
         headers=_auth("tech-token"),
         json={"source_template_id": "ticket-triage", "provenance": "review"},
+    ).status_code == 403
+    assert secure_client.post(
+        "/workflow-templates/gallery/import",
+        headers=_auth("tech-token"),
+        json={"entries": [{"source_template_id": "ticket-triage", "provenance": "review"}]},
     ).status_code == 403
     assert secure_client.post(
         "/workflow-templates/gallery/anything/runs",

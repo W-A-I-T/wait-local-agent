@@ -63,7 +63,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   bounded retry; event
   agents also support same-tenant dependency chains with cycle prevention. A
   provenance-bearing tenant-scoped template gallery can run reviewed core
-  workflows through the existing approval path. Persisted sequential agent
+  workflows through the existing approval path. Gallery metadata can be
+  exported and imported through a versioned JSON envelope; imports validate all
+  source template IDs before creating copies. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
