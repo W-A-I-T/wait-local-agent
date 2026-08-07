@@ -76,6 +76,14 @@ class M365InventoryConnector:
             "shell": False,
         }
 
+    def preflight(self, config: M365Config = None) -> None:
+        """Verify the tenant with the read-only Microsoft Graph organization endpoint."""
+        client = self._client(config)
+        organization = getattr(client, "organization", None)
+        if organization is None or not callable(getattr(organization, "get", None)):
+            raise RuntimeError("Microsoft Graph organization request builder is unavailable")
+        self._resolve(organization.get())
+
     def validate_config(self, config: M365Config = None) -> dict[str, Any]:
         errors: list[str] = []
         if config is not None and not isinstance(config, Mapping):
@@ -170,10 +178,12 @@ class M365InventoryConnector:
     def _collection(client: Any, collection_name: str) -> Any:
         return getattr(client, collection_name)
 
-    def _user_records(self, client: Any) -> list[dict[str, Any]]:
+    def _user_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "users"))
         except M365_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -200,10 +210,12 @@ class M365InventoryConnector:
             )
         return records
 
-    def _group_records(self, client: Any) -> list[dict[str, Any]]:
+    def _group_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "groups"))
         except M365_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -229,10 +241,12 @@ class M365InventoryConnector:
             )
         return records
 
-    def _application_records(self, client: Any) -> list[dict[str, Any]]:
+    def _application_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "applications"))
         except M365_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -256,10 +270,12 @@ class M365InventoryConnector:
             )
         return records
 
-    def _service_principal_records(self, client: Any) -> list[dict[str, Any]]:
+    def _service_principal_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "service_principals"))
         except M365_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -288,11 +304,13 @@ class M365InventoryConnector:
             )
         return records
 
-    def _conditional_access_policy_records(self, client: Any) -> list[dict[str, Any]]:
+    def _conditional_access_policy_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             conditional_access = self._collection(client, "identity").conditional_access
             response = self._collection_response(conditional_access.policies)
         except M365_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -315,6 +333,33 @@ class M365InventoryConnector:
                 }
             )
         return records
+
+    def collect_detailed(self, config: M365Config = None, *, preview: bool = False) -> dict[str, Any]:
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
+        limit = self._config_limit(config, default=10 if preview else None)
+        if limit == 0:
+            return {"result": self._result([], preview=preview), "outcomes": []}
+        client = self._client(config)
+        records: list[dict[str, Any]] = []
+        outcomes: list[dict[str, Any]] = []
+        sources = (
+            ("users", lambda: self._user_records(client, strict=True)),
+            ("groups", lambda: self._group_records(client, strict=True)),
+            ("applications", lambda: self._application_records(client, strict=True)),
+            ("service-principals", lambda: self._service_principal_records(client, strict=True)),
+            ("conditional-access-policies", lambda: self._conditional_access_policy_records(client, strict=True)),
+        )
+        for source_id, read_source in sources:
+            try:
+                records.extend(read_source())
+            except Exception as exc:
+                outcomes.append({"source_id": source_id, "exception": exc})
+        records.sort(key=lambda record: str(record["asset_id"]))
+        if limit is not None:
+            records = records[:limit]
+        return {"result": self._result(records, preview=preview), "outcomes": outcomes}
 
     def _collection_response(self, collection: Any) -> Any:
         return self._resolve(collection.get())

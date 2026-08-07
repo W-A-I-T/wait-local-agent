@@ -76,6 +76,15 @@ class AzureInventoryConnector:
             "shell": False,
         }
 
+    def preflight(self, config: AzureConfig = None) -> None:
+        """Verify access to the configured subscription with a read-only GET."""
+        session = self._session(config)
+        subscription_id = config.get("subscription_id", "") if isinstance(config, Mapping) else ""
+        if not subscription_id:
+            subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+        subscriptions = self._client(session, "subscriptions")
+        subscriptions.subscriptions.get(subscription_id)
+
     def validate_config(self, config: AzureConfig = None) -> dict[str, Any]:
         errors: list[str] = []
         if config is not None and not isinstance(config, Mapping):
@@ -159,11 +168,13 @@ class AzureInventoryConnector:
     def _client(session: Any, service_name: str) -> Any:
         return session.client(service_name)
 
-    def _virtual_machine_records(self, session: Any) -> list[dict[str, Any]]:
+    def _virtual_machine_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             compute = self._client(session, "compute")
             response = compute.virtual_machines.list_all()
         except AZURE_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -192,11 +203,13 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _storage_account_records(self, session: Any) -> list[dict[str, Any]]:
+    def _storage_account_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             storage = self._client(session, "storage")
             response = storage.storage_accounts.list()
         except AZURE_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -224,11 +237,13 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _network_security_group_records(self, session: Any) -> list[dict[str, Any]]:
+    def _network_security_group_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             network = self._client(session, "network")
             response = network.network_security_groups.list_all()
         except AZURE_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -255,11 +270,13 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _role_assignment_records(self, session: Any) -> list[dict[str, Any]]:
+    def _role_assignment_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             authorization = self._client(session, "authorization")
             response = authorization.role_assignments.list_for_subscription()
         except AZURE_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -286,13 +303,37 @@ class AzureInventoryConnector:
             )
         return records
 
+    def collect_detailed(self, config: AzureConfig = None, *, preview: bool = False) -> dict[str, Any]:
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
+        limit = self._config_limit(config, default=10 if preview else None)
+        if limit == 0:
+            return {"result": self._result([], preview=preview), "outcomes": []}
+        session = self._session(config)
+        records: list[dict[str, Any]] = []
+        outcomes: list[dict[str, Any]] = []
+        sources = (
+            ("compute:virtual-machines", lambda: self._virtual_machine_records(session, strict=True)),
+            ("storage:accounts", lambda: self._storage_account_records(session, strict=True)),
+            ("network:security-groups", lambda: self._network_security_group_records(session, strict=True)),
+            ("authorization:role-assignments", lambda: self._role_assignment_records(session, strict=True)),
+        )
+        for source_id, read_source in sources:
+            try:
+                source_records = read_source()
+            except Exception as exc:
+                outcomes.append({"source_id": source_id, "exception": exc})
+            else:
+                records.extend(source_records)
+        records.sort(key=lambda record: str(record["asset_id"]))
+        if limit is not None:
+            records = records[:limit]
+        return {"result": self._result(records, preview=preview), "outcomes": outcomes}
+
     def _result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
         assets = [self._asset(record) for record in records]
-        observations = [
-            observation
-            for record in records
-            for observation in self._observations(record)
-        ]
+        observations = [observation for record in records for observation in self._observations(record)]
         return {
             "module_id": self.module_id,
             "ok": True,
@@ -370,6 +411,8 @@ class _AzureSdkSession:
         self.subscription_id = subscription_id
 
     def client(self, service_name: str) -> Any:
+        if service_name == "subscriptions":
+            return import_module("azure.mgmt.resource.subscriptions").SubscriptionClient(self.credential)
         if service_name == "compute":
             return import_module("azure.mgmt.compute").ComputeManagementClient(
                 self.credential,

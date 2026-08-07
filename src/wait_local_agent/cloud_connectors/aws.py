@@ -66,6 +66,11 @@ class AwsInventoryConnector:
             "shell": False,
         }
 
+    def preflight(self, config: AwsConfig = None) -> None:
+        """Perform the smallest authenticated AWS read before inventory calls."""
+        session = self._session(config)
+        self._client(session, "sts").get_caller_identity()
+
     def validate_config(self, config: AwsConfig = None) -> dict[str, Any]:
         errors: list[str] = []
         if config is not None and not isinstance(config, Mapping):
@@ -145,11 +150,15 @@ class AwsInventoryConnector:
     def _client(session: Any, service_name: str) -> Any:
         return session.client(service_name)
 
-    def _ec2_instance_records(self, session: Any, config: AwsConfig) -> list[dict[str, Any]]:
+    def _ec2_instance_records(
+        self, session: Any, config: AwsConfig, *, strict: bool = False
+    ) -> list[dict[str, Any]]:
         try:
             ec2 = self._client(session, "ec2")
             response = ec2.describe_instances()
         except AWS_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         region = self._region_name(config, session, ec2)
@@ -177,11 +186,13 @@ class AwsInventoryConnector:
                 )
         return records
 
-    def _s3_bucket_records(self, session: Any) -> list[dict[str, Any]]:
+    def _s3_bucket_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             s3 = self._client(session, "s3")
             response = s3.list_buckets()
         except AWS_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -202,11 +213,13 @@ class AwsInventoryConnector:
             )
         return records
 
-    def _security_group_records(self, session: Any) -> list[dict[str, Any]]:
+    def _security_group_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             ec2 = self._client(session, "ec2")
             response = ec2.describe_security_groups()
         except AWS_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -229,11 +242,13 @@ class AwsInventoryConnector:
             )
         return records
 
-    def _iam_user_records(self, session: Any) -> list[dict[str, Any]]:
+    def _iam_user_records(self, session: Any, *, strict: bool = False) -> list[dict[str, Any]]:
         try:
             iam = self._client(session, "iam")
             response = iam.list_users()
         except AWS_ERROR_TYPES:
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -254,6 +269,34 @@ class AwsInventoryConnector:
                 }
             )
         return records
+
+    def collect_detailed(self, config: AwsConfig = None, *, preview: bool = False) -> dict[str, Any]:
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
+        limit = self._config_limit(config, default=10 if preview else None)
+        if limit == 0:
+            return {"result": self._result([], preview=preview), "outcomes": []}
+        session = self._session(config)
+        records: list[dict[str, Any]] = []
+        outcomes: list[dict[str, Any]] = []
+        sources = (
+            ("ec2:instances", lambda: self._ec2_instance_records(session, config, strict=True)),
+            ("s3:buckets", lambda: self._s3_bucket_records(session, strict=True)),
+            ("ec2:security-groups", lambda: self._security_group_records(session, strict=True)),
+            ("iam:users", lambda: self._iam_user_records(session, strict=True)),
+        )
+        for source_id, read_source in sources:
+            try:
+                source_records = read_source()
+            except Exception as exc:
+                outcomes.append({"source_id": source_id, "exception": exc})
+            else:
+                records.extend(source_records)
+        records.sort(key=lambda record: str(record["asset_id"]))
+        if limit is not None:
+            records = records[:limit]
+        return {"result": self._result(records, preview=preview), "outcomes": outcomes}
 
     @staticmethod
     def _region_name(config: AwsConfig, session: Any, ec2_client: Any) -> str:
