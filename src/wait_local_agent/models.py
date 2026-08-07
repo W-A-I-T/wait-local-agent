@@ -240,6 +240,24 @@ class WorkflowTemplate:
 
 
 @dataclass(frozen=True)
+class TemplateGalleryEntry:
+    id: str
+    source_template_id: str
+    name: str
+    trigger: str
+    description: str
+    action_type: str
+    approval_required: bool
+    risk_level: str
+    preview_fields_json: str
+    provenance: str
+    version: int
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkflowRun:
     id: int | None
     template_id: str

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -29,8 +30,10 @@ from wait_local_agent.models import (
     RestoreExercise,
     ScheduledJob,
     SmartActionRun,
+    TemplateGalleryEntry,
     Ticket,
     WorkflowRun,
+    WorkflowTemplate,
     utc_now,
 )
 
@@ -205,6 +208,26 @@ class Store:
                     output_json text not null,
                     evidence_json text not null,
                     approval_id integer,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists template_gallery_entries (
+                    id text primary key,
+                    source_template_id text not null,
+                    name text not null,
+                    trigger text not null,
+                    description text not null,
+                    action_type text not null,
+                    approval_required integer not null,
+                    risk_level text not null,
+                    preview_fields_json text not null,
+                    provenance text not null,
+                    version integer not null default 1,
                     created_at text not null,
                     updated_at text not null,
                     client_id text
@@ -1376,6 +1399,98 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def create_template_gallery_entry(
+        self,
+        template: WorkflowTemplate,
+        *,
+        provenance: str,
+        client_id: str | None = None,
+        name: str | None = None,
+    ) -> TemplateGalleryEntry:
+        entry_id = f"gallery-{uuid.uuid4().hex}"
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        template_id = template.id
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into template_gallery_entries
+                  (id, source_template_id, name, trigger, description, action_type,
+                   approval_required, risk_level, preview_fields_json, provenance,
+                   version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry_id,
+                    template_id,
+                    _redact_text(name or template.name),
+                    template.trigger,
+                    _redact_text(template.description),
+                    template.action_type,
+                    int(template.approval_required),
+                    template.risk_level,
+                    _json_dumps_value(template.preview_fields),
+                    _redact_text(provenance),
+                    1,
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "template_gallery.created",
+                entry_id,
+                f"template {template_id} added to local gallery",
+                client_id=normalized_client_id,
+            )
+        entry = self.get_template_gallery_entry(entry_id, normalized_client_id)
+        if entry is None:
+            raise RuntimeError("template gallery entry was not persisted")
+        return entry
+
+    def get_template_gallery_entry(
+        self,
+        entry_id: str,
+        client_id: str | None = None,
+    ) -> TemplateGalleryEntry | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from template_gallery_entries where id = ?",
+                    (entry_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from template_gallery_entries
+                    where id = ? and client_id = ?
+                    """,
+                    (entry_id, normalized_client_id),
+                ).fetchone()
+        return _template_gallery_entry_from_row(row) if row else None
+
+    def list_template_gallery_entries(
+        self,
+        client_id: str | None = None,
+    ) -> list[TemplateGalleryEntry]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from template_gallery_entries order by name, id"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from template_gallery_entries
+                    where client_id = ? order by name, id
+                    """,
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_template_gallery_entry_from_row(row) for row in rows]
 
     def create_agent_definition(
         self,
@@ -3783,6 +3898,15 @@ def _agent_definition_revision_from_row(row: sqlite3.Row) -> AgentDefinitionRevi
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
     return AgentDefinitionRevision(**payload)
+
+
+def _template_gallery_entry_from_row(row: sqlite3.Row) -> TemplateGalleryEntry:
+    payload = dict(row)
+    payload["approval_required"] = bool(payload["approval_required"])
+    payload["preview_fields_json"] = _redact_json_text(str(payload["preview_fields_json"]))
+    payload["provenance"] = _redact_text(str(payload["provenance"]))
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return TemplateGalleryEntry(**payload)
 
 
 def _agent_definition_snapshot(definition: AgentDefinition) -> str:

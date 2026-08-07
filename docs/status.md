@@ -33,7 +33,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   redacted delivery records, and delivery history APIs. Conversational and
   unrestricted agent execution are not shipped. Immutable revision history and
   restore-as-new-version are available under `/agents/{id}/revisions`; event
-  agents also support same-tenant dependency chains with cycle prevention.
+  agents also support same-tenant dependency chains with cycle prevention. A
+  provenance-bearing tenant-scoped template gallery can run reviewed core
+  workflows through the existing approval path.
 - A `/tools` API catalog that exposes existing smart-action schemas, risk,
   required role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.

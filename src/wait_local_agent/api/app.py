@@ -140,6 +140,13 @@ class WorkflowRunRequest(BaseModel):
     client_id: str | None = None
 
 
+class TemplateGalleryCreateRequest(BaseModel):
+    source_template_id: str
+    provenance: str = Field(min_length=1, max_length=1000)
+    display_name: str | None = Field(default=None, max_length=120)
+    client_id: str | None = None
+
+
 class SmartActionInvokeRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     confirm: bool = False
@@ -1316,6 +1323,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
 
+    @app.get("/workflow-templates/gallery")
+    def template_gallery(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [
+            _template_gallery_view(entry)
+            for entry in store.list_template_gallery_entries(scoped_client_id)
+        ]
+
+    @app.post("/workflow-templates/gallery")
+    def create_template_gallery_entry(
+        payload: TemplateGalleryCreateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        template = get_workflow_template(payload.source_template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail="workflow template not found")
+        try:
+            entry = store.create_template_gallery_entry(
+                template,
+                provenance=payload.provenance,
+                client_id=scoped_client_id,
+                name=payload.display_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _template_gallery_view(entry)
+
+    @app.get("/workflow-templates/gallery/{entry_id}")
+    def template_gallery_detail(entry_id: str, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        return _template_gallery_view(entry)
+
+    @app.post("/workflow-templates/gallery/{entry_id}/runs")
+    def run_template_gallery_entry(
+        entry_id: str,
+        request: WorkflowRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
+        return asdict(
+            run_workflow_template(
+                store,
+                entry.source_template_id,
+                request.ticket_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "api",
+                trigger_source="template_gallery",
+            )
+        )
+
     @app.get("/scheduled-jobs")
     def scheduled_jobs(
         _: ViewerAccess,
@@ -1755,6 +1832,25 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,
         "client_id": delivery.client_id,
+    }
+
+
+def _template_gallery_view(entry) -> dict[str, object]:
+    return {
+        "id": entry.id,
+        "source_template_id": entry.source_template_id,
+        "name": entry.name,
+        "trigger": entry.trigger,
+        "description": entry.description,
+        "action_type": entry.action_type,
+        "approval_required": entry.approval_required,
+        "risk_level": entry.risk_level,
+        "preview_fields": _safe_json_values(entry.preview_fields_json),
+        "provenance": redact_text(entry.provenance),
+        "version": entry.version,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+        "client_id": entry.client_id,
     }
 
 
