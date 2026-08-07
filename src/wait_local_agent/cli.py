@@ -30,7 +30,7 @@ from wait_local_agent.api.packs.loader import (
     install_pack_tarball,
     load_pack_registry,
 )
-from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
+from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
 from wait_local_agent.collectors import CollectorService, collector_run_result_status
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
@@ -45,6 +45,11 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.reports.builders import (
+    build_appliance_hardening_report,
+    build_restore_evidence_report,
+)
+from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
@@ -65,6 +70,7 @@ workflows_app = typer.Typer(help="Workflow template and run commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
+hardening_app = typer.Typer(help="Appliance hardening check commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
@@ -80,6 +86,7 @@ app.add_typer(workflows_app, name="workflows")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
+app.add_typer(hardening_app, name="hardening")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
 app.add_typer(packs_app, name="packs")
@@ -774,6 +781,80 @@ def restore_backup(
     except BackupEncryptionError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"restored={path}")
+
+
+@hardening_app.command("run")
+def run_hardening() -> None:
+    settings = load_settings()
+    store = _store()
+    store.add_audit_event("hardening.run_requested", "hardening", "operator requested hardening checks")
+    context = HardeningContext.from_settings(
+        settings,
+        store=store,
+        backup_paths=tuple(
+            path
+            for path in settings.data_path.parent.glob("*")
+            if path.is_file() and path != settings.data_path
+        ),
+        audit_event_count=len(store.list_audit_events()),
+    )
+    run = run_hardening_checks(context, store=store)
+    if run.id is None:
+        raise typer.BadParameter("hardening run was not persisted")
+    sections, metadata = build_appliance_hardening_report(store, run.id)
+    report = ReportService(store).create_report(
+        ReportType.APPLIANCE_HARDENING,
+        f"Appliance Hardening Evidence {run.id}",
+        sections,
+        metadata=metadata,
+    )
+    store.add_audit_event("hardening.run_completed", str(run.id), run.status)
+    typer.echo(json.dumps({"run": asdict(run), "report": asdict(report)}, sort_keys=True, indent=2))
+
+
+@hardening_app.command("list")
+def list_hardening_runs() -> None:
+    runs = _store().list_hardening_runs()
+    for run in runs:
+        typer.echo(
+            f"{run.id} status={run.status} results={run.result_count}/{run.expected_check_count} "
+            f"started_at={run.started_at}"
+        )
+    typer.echo(f"count={len(runs)}")
+
+
+@backup_app.command("restore-exercise")
+def restore_exercise(
+    backup_id: str,
+    encrypted: Annotated[
+        bool,
+        typer.Option("--encrypted", help="The backup artifact is Fernet encrypted."),
+    ] = False,
+) -> None:
+    settings = load_settings()
+    store = _store()
+    store.add_audit_event(
+        "backup.restore_exercise_requested",
+        backup_id,
+        "operator requested restore exercise",
+    )
+    try:
+        result = run_restore_exercise(
+            backup_id,
+            store=store,
+            settings=settings,
+            encrypted=encrypted,
+        )
+    except OSError as exc:
+        raise typer.BadParameter("restore exercise could not be started") from exc
+    sections, metadata = build_restore_evidence_report(store)
+    report = ReportService(store).create_report(
+        ReportType.RESTORE_EVIDENCE,
+        "Restore Evidence",
+        sections,
+        metadata=metadata,
+    )
+    typer.echo(json.dumps({"exercise": asdict(result), "report": asdict(report)}, sort_keys=True, indent=2))
 
 
 @secrets_app.command("init")

@@ -34,7 +34,12 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
     install_pack_tarball,
 )
-from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
+from wait_local_agent.backup import (
+    BackupEncryptionError,
+    backup_state,
+    restore_state,
+    run_restore_exercise,
+)
 from wait_local_agent.collectors import CollectorService, collector_run_result_status, default_registry
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
@@ -49,6 +54,11 @@ from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import AuthContext, Role, require_role
+from wait_local_agent.reports.builders import (
+    build_appliance_hardening_report,
+    build_restore_evidence_report,
+)
+from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import report_as_dict
 from wait_local_agent.reports.service import ReportService
@@ -136,6 +146,15 @@ class BackupCreateRequest(BaseModel):
 
 class BackupRestoreRequest(BaseModel):
     source: str
+    encrypted: bool = False
+
+
+class HardeningRunRequest(BaseModel):
+    backup_paths: list[str] = Field(default_factory=list)
+
+
+class RestoreExerciseRequest(BaseModel):
+    backup_id: str
     encrypted: bool = False
 
 
@@ -639,6 +658,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except OSError as exc:
             raise HTTPException(status_code=400, detail="backup source could not be restored") from exc
         return {"restored": str(path), "encrypted": payload.encrypted}
+
+    @app.post("/hardening/runs")
+    def create_hardening_run(payload: HardeningRunRequest, context: AdminAccess) -> dict[str, object]:
+        store.add_audit_event("hardening.run_requested", "hardening", "admin requested hardening checks")
+        backup_paths = tuple(Path(item) for item in payload.backup_paths)
+        if not backup_paths:
+            backup_paths = tuple(
+                path
+                for path in active_settings.data_path.parent.glob("*")
+                if path.is_file() and path != active_settings.data_path
+            )
+        hardening_context = HardeningContext.from_settings(
+            active_settings,
+            store=store,
+            backup_paths=backup_paths,
+            audit_event_count=len(store.list_audit_events()),
+        )
+        run = run_hardening_checks(hardening_context, store=store)
+        if run.id is None:
+            raise HTTPException(status_code=500, detail="hardening run was not persisted")
+        sections, metadata = build_appliance_hardening_report(store, run.id)
+        report = report_service.create_report(
+            ReportType.APPLIANCE_HARDENING,
+            f"Appliance Hardening Evidence {run.id}",
+            sections,
+            created_by=context.approver_id or "system",
+            project_id=f"hardening-run-{run.id}",
+            metadata=metadata,
+        )
+        store.add_audit_event("hardening.run_completed", str(run.id), run.status)
+        return {"run": asdict(run), "report": report_as_dict(report)}
+
+    @app.get("/hardening/runs")
+    def list_hardening_runs(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(run) for run in store.list_hardening_runs()]
+
+    @app.post("/backup/restore-exercises")
+    def create_restore_exercise(
+        payload: RestoreExerciseRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        store.add_audit_event(
+            "backup.restore_exercise_requested",
+            payload.backup_id,
+            "admin requested restore exercise",
+        )
+        try:
+            result = run_restore_exercise(
+                payload.backup_id,
+                store=store,
+                settings=active_settings,
+                encrypted=payload.encrypted,
+            )
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="restore exercise could not be started") from exc
+        sections, metadata = build_restore_evidence_report(store)
+        report = report_service.create_report(
+            ReportType.RESTORE_EVIDENCE,
+            "Restore Evidence",
+            sections,
+            created_by=context.approver_id or "system",
+            project_id=f"restore-exercise-{result.exercise_id}",
+            metadata=metadata,
+        )
+        return {"exercise": asdict(result), "report": report_as_dict(report)}
+
+    @app.get("/backup/restore-exercises")
+    def list_restore_exercises(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(exercise) for exercise in store.list_restore_exercises()]
 
     @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
     @limiter.limit(active_settings.rate_limit_connector)

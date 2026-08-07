@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
+import tempfile
+import time
 from pathlib import Path
+from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from wait_local_agent.config import Settings
+from wait_local_agent.models import RestoreExerciseWrite
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 BACKUP_KEY_SECRET_NAME = "WAIT_BACKUP_FERNET_KEY"  # nosec B105: secret name constant, not a secret value
+RESTORE_EXERCISE_SCRATCH_PREFIX = "restore-exercise-scratch-"
 
 
 class BackupEncryptionError(RuntimeError):
@@ -60,6 +66,164 @@ def restore_state(
     shutil.copy2(source, store.path)
     Store(store.path)
     return store.path
+
+
+def run_restore_exercise(
+    backup_id: str | Path,
+    *,
+    store: Store | None = None,
+    settings: Settings | None = None,
+    encrypted: bool = False,
+) -> RestoreExerciseWrite:
+    """Verify a backup in a disposable scratch database without touching live state."""
+
+    active_settings = settings or _default_settings()
+    live_store = store or Store(active_settings.data_path)
+    _remove_stale_restore_exercise_scratch_dirs(live_store.path.parent)
+    source = Path(backup_id)
+    exercise_id = str(uuid4())
+    started_at = time.monotonic()
+    started_iso = _utc_now()
+    scratch_dir = Path(
+        tempfile.mkdtemp(prefix=RESTORE_EXERCISE_SCRATCH_PREFIX, dir=live_store.path.parent)
+    )
+    scratch_db = scratch_dir / "restored.db"
+    validation: dict[str, object] = {"verified_tables": [], "row_counts": {}}
+    evidence: dict[str, object] = {"scratch_path": str(scratch_dir), "backup_artifact_id": str(source)}
+    status = "failed"
+    error_detail: str | None = None
+    try:
+        expected_counts = _live_core_row_counts(live_store.path)
+        scratch_store = Store(scratch_db)
+        restore_state(scratch_store, source, encrypted=encrypted, settings=active_settings)
+        with sqlite3.connect(f"file:{scratch_db}?mode=ro", uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            integrity = str(connection.execute("pragma integrity_check").fetchone()[0])
+            if integrity != "ok":
+                raise ValueError(f"SQLite integrity check returned {integrity}")
+            actual_counts, verified_tables = _restored_core_row_counts(connection)
+            mismatches = {
+                table: {"expected": expected, "actual": actual_counts.get(table)}
+                for table, expected in expected_counts.items()
+                if actual_counts.get(table) != expected
+            }
+            if mismatches:
+                raise ValueError(f"restored row counts did not match expectations: {sorted(mismatches)}")
+            validation.update(
+                {
+                    "integrity_check": integrity,
+                    "verified_tables": verified_tables,
+                    "row_counts": actual_counts,
+                    "expected_row_counts": expected_counts,
+                }
+            )
+        status = "passed"
+    except (OSError, sqlite3.Error, ValueError, BackupEncryptionError) as exc:
+        error_detail = str(exc)
+        validation["error"] = type(exc).__name__
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        evidence["scratch_removed"] = not scratch_dir.exists()
+
+    validation["duration_seconds"] = time.monotonic() - started_at
+    if error_detail:
+        evidence["error_detail"] = error_detail
+    result = RestoreExerciseWrite(
+        exercise_id=exercise_id,
+        status=status,
+        target="temporary scratch database",
+        backup_artifact_id=str(source),
+        validation=validation,
+        evidence=evidence,
+        started_at=started_iso,
+        completed_at=_utc_now(),
+    )
+    live_store.add_restore_exercise(
+        run_id=None,
+        asset_id=None,
+        source_id=None,
+        exercise_id=result.exercise_id,
+        status=result.status,
+        target=result.target,
+        backup_artifact_id=result.backup_artifact_id,
+        validation=result.validation,
+        evidence=result.evidence,
+        started_at=result.started_at,
+        completed_at=result.completed_at,
+    )
+    return result
+
+
+_CORE_RESTORE_TABLES = (
+    "tickets",
+    "approvals",
+    "approval_requests",
+    "event_history",
+    "workflow_runs",
+    "scheduled_jobs",
+    "knowledge_documents",
+    "knowledge_chunks",
+)
+_CORE_RESTORE_COUNT_QUERIES = {
+    "tickets": "select count(*) from tickets",
+    "approvals": "select count(*) from approvals",
+    "approval_requests": "select count(*) from approval_requests",
+    "event_history": "select count(*) from event_history",
+    "workflow_runs": "select count(*) from workflow_runs",
+    "scheduled_jobs": "select count(*) from scheduled_jobs",
+    "knowledge_documents": "select count(*) from knowledge_documents",
+    "knowledge_chunks": "select count(*) from knowledge_chunks",
+}
+
+
+def _live_core_row_counts(path: Path) -> dict[str, int]:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        return _core_row_counts(connection)
+
+
+def _remove_stale_restore_exercise_scratch_dirs(parent: Path) -> None:
+    for candidate in parent.glob(f"{RESTORE_EXERCISE_SCRATCH_PREFIX}*"):
+        if candidate.is_dir():
+            shutil.rmtree(candidate, ignore_errors=True)
+
+
+def _restored_core_row_counts(connection: sqlite3.Connection) -> tuple[dict[str, int], list[str]]:
+    counts = _core_row_counts(connection)
+    return counts, sorted(counts)
+
+
+def _core_row_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    tables = {
+        str(row[0])
+        for row in connection.execute("select name from sqlite_master where type = 'table'")
+    }
+    return {
+        table: int(connection.execute(_CORE_RESTORE_COUNT_QUERIES[table]).fetchone()[0])
+        for table in _CORE_RESTORE_TABLES
+        if table in tables
+    }
+
+
+def _default_settings() -> Settings:
+    return Settings(
+        data_path=Path(".wait-local-agent/state.db"),
+        allowed_doc_root=Path("."),
+        allow_write_actions=False,
+        allow_http_probing=False,
+        allow_cloud_fallback=False,
+        allow_llm_inference=False,
+        local_model_provider="deterministic",
+        local_model_base_url="",
+        local_model_name="",
+        local_model_timeout_seconds=20.0,
+        vector_backend="sqlite",
+    )
+
+
+def _utc_now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat()
 
 
 def _store_bytes(store: Store) -> bytes:
