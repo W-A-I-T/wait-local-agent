@@ -11,12 +11,33 @@ Host collection is an explicit opt-in:
 docker compose --profile host-collect up api-host-collect
 ```
 
+Start `api-host-collect` by name as shown. Do not start the whole profile with
+`docker compose --profile host-collect up`: the normal `api` service publishes
+port 8788, while the host-collection service uses the host network namespace.
+
+The Compose file keeps the host-collection service standalone so the default
+`docker compose up` configuration does not depend on newer Compose YAML tags.
+
 The profile runs a separate API service with the host PID and network
 namespaces, and read-only host mounts at `/host/proc`, `/host/sys`, and
 `/host/etc`. `WAIT_HOST_ROOT=/host` makes the Linux collectors read those
 mounted paths, while `WAIT_COLLECTION_SCOPE=host` records the operator's
 explicit scope assertion. The profile does not enable privileged mode, writable
 host mounts, or additional Linux capabilities.
+
+Collection scope is conservative: automatic detection reports `container` only
+when container evidence is present, and reports `unknown` when the available
+signals do not prove either scope. `unknown` is surfaced in collector results,
+API responses, and CLI output; it must not be read as host scope. The host
+profile supplies an explicit `host` assertion and an absolute `WAIT_HOST_ROOT`.
+
+`WAIT_HOST_ROOT` rebases absolute collector paths only. Relative collector paths
+remain process-local when no host root is configured; when `WAIT_HOST_ROOT` is
+configured, a relative collector path is rejected. A relative
+`WAIT_HOST_ROOT` is also rejected. These fail-closed rules prevent a malformed
+host-collection configuration from reading the container filesystem while
+claiming host scope. Rooted paths containing `..` segments or escaping the
+resolved root are rejected as well.
 
 ## Security implications
 

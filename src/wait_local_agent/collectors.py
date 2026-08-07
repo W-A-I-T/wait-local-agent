@@ -15,7 +15,7 @@ import re
 import socket
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from wait_local_agent.models import (
     AssetObservationWrite,
@@ -32,7 +32,7 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.models import GeneratedReport, ReportType
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.runtime_scope import collection_path, detect_collection_scope
+from wait_local_agent.runtime_scope import CollectionScope, collection_path, detect_collection_scope
 from wait_local_agent.store import Store
 
 _ProcessInventoryPath = collection_path
@@ -114,7 +114,7 @@ class CollectorResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     status: CollectionStatus = CollectionStatus.SUCCESS
     source_outcomes: tuple[SourceOutcome, ...] = ()
-    collection_scope: Literal["host", "container"] = "host"
+    collection_scope: CollectionScope = "unknown"
 
 
 class CollectorModule(Protocol):
@@ -318,7 +318,7 @@ def collector_run_collection_scope(run: CollectorRun) -> str | None:
     except (TypeError, json.JSONDecodeError):
         return None
     scope = payload.get("collection_scope") if isinstance(payload, dict) else None
-    return scope if scope in {"host", "container"} else None
+    return scope if scope in {"host", "container", "unknown"} else None
 
 
 class HostRuntimeCollector:
