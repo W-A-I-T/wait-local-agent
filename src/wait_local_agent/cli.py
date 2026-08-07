@@ -43,7 +43,11 @@ from wait_local_agent.api.packs.loader import (
     load_pack_registry,
 )
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
-from wait_local_agent.collectors import CollectorService, collector_run_result_status
+from wait_local_agent.collectors import (
+    CollectorService,
+    collector_run_collection_scope,
+    collector_run_result_status,
+)
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -850,8 +854,10 @@ def run_collector(
     except (PermissionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     result_status = collector_run_result_status(run) or "unknown"
+    collection_scope = collector_run_collection_scope(run) or "unknown"
     typer.echo(
-        f"run_id={run.id} status={run.status} result_status={result_status} module={run.module_id}"
+        f"run_id={run.id} status={run.status} result_status={result_status} "
+        f"collection_scope={collection_scope} module={run.module_id}"
     )
 
 

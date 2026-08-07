@@ -46,7 +46,12 @@ from wait_local_agent.backup import (
     restore_state,
     run_restore_exercise,
 )
-from wait_local_agent.collectors import CollectorService, collector_run_result_status, default_registry
+from wait_local_agent.collectors import (
+    CollectorService,
+    collector_run_collection_scope,
+    collector_run_result_status,
+    default_registry,
+)
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -556,7 +561,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 client_id=payload.client_id,
                 actor_id=context.approver_id,
             )
-            return {**asdict(run), "result_status": collector_run_result_status(run)}
+            return {
+                **asdict(run),
+                "result_status": collector_run_result_status(run),
+                "collection_scope": collector_run_collection_scope(run),
+            }
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="collector module not found") from exc
         except PermissionError as exc:
@@ -570,7 +579,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
         return [
-            {**asdict(run), "result_status": collector_run_result_status(run)}
+            {
+                **asdict(run),
+                "result_status": collector_run_result_status(run),
+                "collection_scope": collector_run_collection_scope(run),
+            }
             for run in store.list_collector_runs(client_id=client_id)
         ]
 
@@ -582,6 +595,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             **asdict(run),
             "result_status": collector_run_result_status(run),
+            "collection_scope": collector_run_collection_scope(run),
             "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
             "observations": [
                 asdict(observation) for observation in store.list_asset_observations(run_id=run_id)

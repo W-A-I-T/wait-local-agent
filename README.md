@@ -67,6 +67,7 @@ docker compose up --build
 - Persistent SQLite state lives in the `wait-local-agent-data` Docker volume.
 - `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
 - Demo mode still works without a `.env`; Compose falls back to the built-in demo-safe defaults in `docker-compose.yml`.
+- Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/host-collection.md).
 
 The installer helper does the same clone/copy/start flow:
 

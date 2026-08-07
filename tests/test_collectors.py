@@ -330,7 +330,9 @@ def test_collector_service_marks_run_failed_when_module_collect_raises(settings)
 
     failed_run = store.list_collector_runs(client_id="acme")[0]
     assert failed_run.status == "failed"
-    assert json.loads(failed_run.result_json) == {"error": "collector failure for boom"}
+    failed_payload = json.loads(failed_run.result_json)
+    assert failed_payload["error"] == "collector failure for boom"
+    assert failed_payload["collection_scope"] in {"host", "container"}
     assert any(event.event_type == "collector.run_failed" for event in store.list_audit_events(client_id="acme"))
 
 
@@ -360,6 +362,7 @@ def test_collector_service_maps_typed_result_status_to_run_status(
 
     assert run.status == run_status
     assert payload["status"] == collection_status.value
+    assert payload["collection_scope"] in {"host", "container"}
     if run_status == "failed":
         assert payload["error_code"] == "fixture_error"
         assert payload["error_detail"] == "fixture detail"
@@ -430,12 +433,15 @@ def test_collector_api_surfaces_preview_run_and_export(settings, isolated_defaul
     assert run.status_code == 200
     assert run.json()["status"] == "completed"
     assert run.json()["result_status"] == "success"
+    assert run.json()["collection_scope"] in {"host", "container"}
     assert runs.status_code == 200
     assert runs.json()[0]["id"] == run_id
     assert runs.json()[0]["result_status"] == "success"
+    assert runs.json()[0]["collection_scope"] in {"host", "container"}
     assert detail.status_code == 200
     assert detail.json()["assets"][0]["display_name"] == "Endpoint 1"
     assert detail.json()["result_status"] == "success"
+    assert detail.json()["collection_scope"] in {"host", "container"}
     assert export.status_code == 200
     assert export.json()["report_type"] == "collector_bundle"
     assert unsupported_export.status_code == 400
@@ -482,6 +488,7 @@ def test_collector_cli_surfaces_preview_run_and_bundle_export(
     assert run.exit_code == 0
     assert "status=completed" in run.output
     assert "result_status=success" in run.output
+    assert "collection_scope=" in run.output
     assert export.exit_code == 0
     assert output_path.exists()
     assert json.loads(output_path.read_text(encoding="utf-8"))["report_type"] == "collector_bundle"

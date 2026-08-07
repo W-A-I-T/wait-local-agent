@@ -20,6 +20,23 @@ services:
       timeout: 5s
       retries: 5
 
+  api-host-collect:
+    extends:
+      service: api
+    profiles:
+      - host-collect
+    pid: host
+    network_mode: host
+    ports: !reset []
+    environment:
+      WAIT_COLLECTION_SCOPE: host
+      WAIT_HOST_ROOT: /host
+    volumes:
+      - wait-local-agent-data:/data
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc:/host/etc:ro
+
   ui:
     image: node:22-slim
     working_dir: /app/ui
