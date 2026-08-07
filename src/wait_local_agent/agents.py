@@ -257,6 +257,8 @@ class AgentService:
         """Retry a failed or cancelled run with a small persisted attempt cap."""
         if run.status not in {"failed", "cancelled"}:
             raise AgentDefinitionError("only failed or cancelled runs can be retried")
+        if run.revision_version is not None and run.revision_version != definition.version:
+            raise AgentDefinitionError("agent definition changed; retry requires the run's revision")
         state = _state_object(run.state_json)
         retry_count = state.get("retry_count", 0)
         if not isinstance(retry_count, int) or retry_count < 0:

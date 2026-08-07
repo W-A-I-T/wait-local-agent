@@ -228,6 +228,21 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
     assert first.status == "failed"
     previous = service.store.get_agent_run(first.run_id, client_id="acme")
     assert previous is not None
+    updated = service.update(
+        definition,
+        name=definition.name,
+        description=definition.description,
+        enabled=True,
+        trigger=definition.trigger,
+        entity_type=definition.entity_type,
+        filters=definition.filters,
+        enabled_tools=definition.enabled_tools,
+        steps=definition.steps,
+        max_steps=definition.max_steps,
+        execution_timeout_seconds=definition.execution_timeout_seconds,
+    )
+    with pytest.raises(AgentDefinitionError, match="definition changed"):
+        service.retry(updated, previous, actor="requester")
     retry = service.retry(definition, previous, actor="requester")
     assert retry.status == "failed"
     retried_run = service.store.get_agent_run(retry.run_id, client_id="acme")
