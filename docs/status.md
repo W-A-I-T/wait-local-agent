@@ -23,11 +23,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
-- Scheduled workflow registration, pause, resume, delete, and audit trail.
-- Bounded manual agent definitions with an explicit existing-tool allowlist,
-  ticket scope, persisted runs, approval pause/resume, and grouped execution
-  traces. Event-triggered, scheduled, conversational, and unrestricted agent
-  execution are not shipped.
+- Scheduled workflow and ticket-agent registration, pause, resume, delete, and
+  audit trail. Agent schedules use the existing APScheduler path and persist
+  their agent/entity target.
+- Bounded agent definitions with an explicit existing-tool allowlist, ticket
+  scope, persisted runs, approval pause/resume, and grouped execution traces.
+  Event-triggered, conversational, and unrestricted agent execution are not
+  shipped.
 - A `/tools` API catalog that exposes existing smart-action schemas, risk,
   required role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.

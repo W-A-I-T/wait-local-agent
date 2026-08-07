@@ -260,6 +260,9 @@ class ScheduledJob:
     updated_at: str
     client_id: str | None = None
     next_run_at: str | None = None
+    job_kind: str = "workflow"
+    agent_id: str | None = None
+    entity_id: str | None = None
 
 
 @dataclass(frozen=True)

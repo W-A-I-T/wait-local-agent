@@ -39,6 +39,9 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in event_history_columns
     assert "client_id" in workflow_columns
     assert "client_id" in scheduled_columns
+    assert "job_kind" in scheduled_columns
+    assert "agent_id" in scheduled_columns
+    assert "entity_id" in scheduled_columns
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None

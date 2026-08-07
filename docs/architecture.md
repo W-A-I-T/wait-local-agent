@@ -46,21 +46,22 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Fixed workflow template catalog in the public core
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
-- Scheduled workflow routes mounted under `/scheduled-jobs`
+- Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
 - Pause, resume, delete, and audit tracking for scheduled jobs
 
 ## Bounded agents
 
 - Agent definitions persist a short, explicit sequence of existing smart
   actions in SQLite.
-- The first public agent mode is manual and ticket-scoped. Definitions allow
-  only registered tools, cap runs at eight steps and 120 seconds, and retain
-  the configured client scope.
+- The first public agent mode is ticket-scoped. Definitions allow only
+  registered tools, cap runs at eight steps and 120 seconds, and retain the
+  configured client scope. Manual runs and persisted five-field cron schedules
+  are supported.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Agent runs are grouped in the existing execution observability tables with
-  one redacted step record per tool. Event triggers, schedules, dependencies,
-  backfills, and conversational agents remain future extensions.
+  one redacted step record per tool. Event triggers, dependencies, backfills,
+  and conversational agents remain future extensions.
 
 ## Secrets, Backup, and Audit
 

@@ -23,11 +23,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Hudu read-only documentation context.
 - Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
-- Scheduled workflow APIs under `/scheduled-jobs`.
-- Bounded manual agent definitions under `/agents`, an existing-tool catalog
-  under `/tools`, tenant-scoped ticket runs, and approval pause/resume. This
-  initial agent mode is intentionally not event-triggered, scheduled,
-  conversational, or unrestricted.
+- Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`.
+- Bounded agent definitions under `/agents`, an existing-tool catalog under
+  `/tools`, tenant-scoped ticket runs, and approval pause/resume. Agents may
+  run manually or on a persisted five-field cron schedule; event-triggered,
+  conversational, and unrestricted execution remain outside this slice.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
@@ -298,6 +298,10 @@ Workflow runs and scheduled jobs are available over API routes, including:
 - `POST /scheduled-jobs/{job_id}/pause`
 - `POST /scheduled-jobs/{job_id}/resume`
 - `DELETE /scheduled-jobs/{job_id}`
+
+Use `template_id` for a workflow schedule. Use `agent_id` plus `entity_id` for
+an agent schedule; the agent definition must use the `scheduled` trigger and
+the job's `params.input` object is passed to the bounded executor.
 
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 

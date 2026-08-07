@@ -199,7 +199,10 @@ class Store:
                     paused integer not null default 0,
                     created_at text not null,
                     updated_at text not null,
-                    client_id text
+                    client_id text,
+                    job_kind text not null default 'workflow',
+                    agent_id text,
+                    entity_id text
                 )
                 """
             )
@@ -262,6 +265,9 @@ class Store:
             self._ensure_column(connection, "approval_requests", "approver_id", "text")
             self._ensure_column(connection, "workflow_runs", "client_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
+            self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             connection.execute(
@@ -1603,6 +1609,9 @@ class Store:
         *,
         paused: bool = False,
         client_id: str | None = None,
+        job_kind: str = "workflow",
+        agent_id: str | None = None,
+        entity_id: str | None = None,
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -1618,9 +1627,12 @@ class Store:
                     paused,
                     created_at,
                     updated_at,
-                    client_id
-                  )
-                values (?, ?, ?, ?, ?, ?, ?)
+                    client_id,
+                    job_kind,
+                    agent_id,
+                    entity_id
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -1630,6 +1642,9 @@ class Store:
                     now,
                     now,
                     normalized_client_id,
+                    job_kind,
+                    agent_id,
+                    entity_id,
                 ),
             )
             if cursor.lastrowid is None:
@@ -1639,7 +1654,7 @@ class Store:
                 connection,
                 "scheduled_job.created",
                 str(job_id),
-                f"{template_id} scheduled with cron {cron}",
+                f"{_scheduled_target(job_kind, template_id, agent_id)} scheduled with cron {cron}",
                 client_id=normalized_client_id,
             )
             self._add_event_history(
@@ -1647,7 +1662,7 @@ class Store:
                 "scheduled_job.created",
                 str(job_id),
                 "paused" if paused else "scheduled",
-                f"{template_id} scheduled with cron {cron}",
+                f"{_scheduled_target(job_kind, template_id, agent_id)} scheduled with cron {cron}",
                 params_json,
                 normalized_client_id,
             )
@@ -3414,6 +3429,12 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     payload = dict(row)
     payload["paused"] = bool(payload["paused"])
     return ScheduledJob(**payload)
+
+
+def _scheduled_target(job_kind: str, template_id: str, agent_id: str | None) -> str:
+    if job_kind == "agent":
+        return f"agent {agent_id or 'unknown'}"
+    return template_id
 
 
 def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
