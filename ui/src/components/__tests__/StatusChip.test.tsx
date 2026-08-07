@@ -10,7 +10,7 @@ describe("StatusChip", () => {
     ["not_authorized", "No permission — check the credentials"],
     ["unavailable", "Couldn't reach it"],
     ["completed", "Done"],
-    ["failed", "Didn't finish"],
+    ["failed", "Failed — needs attention"],
     ["running", "Running"]
   ])("maps %s to plain language", (status, label) => {
     render(<StatusChip status={status} />);
@@ -31,6 +31,14 @@ describe("StatusChip", () => {
   it("renders unknown statuses without protocol styling", () => {
     render(<StatusChip status="mystery_state" />);
     expect(screen.getByText("Mystery state")).toBeInTheDocument();
+  });
+
+  it("visually distinguishes evidence that was not run from partial evidence", () => {
+    const { rerender } = render(<StatusChip status="evidence_not_run" />);
+    expect(screen.getByText("Not run yet")).toHaveClass("neutral");
+
+    rerender(<StatusChip status="evidence_partial" />);
+    expect(screen.getByText("Needs attention")).toHaveClass("warn");
   });
 });
 

@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
@@ -38,7 +38,7 @@ export function Settings() {
       setStatus(updateRows);
       setStatusMessage("Settings loaded.");
     } catch (error) {
-      if (error instanceof Error && /403/.test(error.message)) {
+      if (error instanceof ApiRequestError && error.status === 403) {
         setStatusMessage("Insufficient role for admin settings.");
         return;
       }

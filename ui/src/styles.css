@@ -946,6 +946,144 @@ dd svg {
   font-size: 0.9rem;
 }
 
+.evidence-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.evidence-panel .panel-heading {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.evidence-state {
+  align-items: center;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px;
+}
+
+.evidence-state strong {
+  color: #253633;
+}
+
+.evidence-state span,
+.evidence-result > span,
+.evidence-result > div span {
+  color: #60706a;
+  font-size: 0.9rem;
+}
+
+.evidence-loading {
+  background: #eaf0ff;
+  border-color: #c4cff2;
+}
+
+.evidence-not_run {
+  background: #eef2f0;
+  border-color: #d2dbd7;
+}
+
+.evidence-partial {
+  background: #fff8e6;
+  border-color: #ead49b;
+}
+
+.evidence-no_evidence {
+  background: #fff0ed;
+  border-color: #f2c7bc;
+}
+
+.evidence-unavailable {
+  background: #fff0ed;
+  border-color: #f2c7bc;
+}
+
+.evidence-completed {
+  background: #e4f5ed;
+  border-color: #b6ddca;
+}
+
+.evidence-actions,
+.export-actions,
+.restore-drill-form {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.export-actions {
+  margin-left: auto;
+}
+
+.restore-drill-form {
+  flex: 1;
+}
+
+.restore-drill-form label {
+  color: #40504b;
+  display: grid;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.restore-drill-form > label:first-child {
+  flex: 1 1 260px;
+}
+
+.restore-drill-form input:not([type="checkbox"]) {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.restore-drill-form .checkbox-label {
+  align-items: center;
+  display: flex;
+  font-weight: 600;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-result {
+  align-items: center;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px 14px;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 0.7fr);
+  padding: 12px;
+}
+
+.evidence-result > div strong,
+.evidence-result > div span {
+  display: block;
+}
+
+.evidence-result .technical-details,
+.evidence-result .remediation-hint {
+  grid-column: 1 / -1;
+}
+
+.remediation-hint {
+  color: #8a2f1d;
+  font-weight: 700;
+  margin: 0;
+}
+
+.technical-details .code-panel {
+  margin: 8px 0 0;
+}
+
 .confirm-panel {
   align-items: flex-start;
   flex-direction: column;
@@ -963,6 +1101,7 @@ dd svg {
   .connector-summary,
   .flag-grid,
   .table-row,
+  .evidence-result,
   .event-row {
     grid-template-columns: 1fr;
   }
@@ -981,5 +1120,9 @@ dd svg {
 
   .ticket-meta {
     justify-content: flex-start;
+  }
+
+  .export-actions {
+    margin-left: 0;
   }
 }
