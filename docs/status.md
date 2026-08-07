@@ -20,13 +20,15 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
 - JSON and CSV event history export.
 - Optional Fernet-backed local secrets vault for connector credentials.
-- Connector setup validation commands for HaloPSA, Hudu, and NinjaOne.
+- Connector setup validation commands for HaloPSA, Hudu, NinjaOne, and Autotask.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
 - NinjaOne read-only RMM adapter for device inventory, active alerts, automation
   script metadata, and safe script execution previews. Script execution and all
   NinjaOne management mutations remain disabled.
+- Autotask PSA read-only ticket and company inventory; mutation endpoints remain
+  disabled.
 - Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
   CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
@@ -112,7 +114,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Air-gap compatible default path | Built |
 | IT Glue connector | Future paid pack or open-core interface |
 | ConnectWise PSA connector | Future paid pack or open-core interface |
-| Autotask connector | Future paid pack or open-core interface |
+| Autotask connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | NinjaOne RMM read-only | Built in open core; execution and additional RMM vendors remain future work |
 | M365 / Entra read-only inventory | Built through governed collector modules |
 | Scheduled / proactive workflows | Built |

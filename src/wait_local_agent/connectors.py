@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from wait_local_agent.autotask import AutotaskClient, PsaClient
 from wait_local_agent.config import Settings
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
@@ -58,6 +59,15 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ninjaone_status: ConnectorStatusValue = "not_configured"
     if ninjaone_configured:
         ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
+    autotask_configured = bool(
+        settings.autotask_base_url
+        and settings.autotask_username
+        and settings.autotask_secret
+        and settings.autotask_integration_code
+    )
+    autotask_status: ConnectorStatusValue = "not_configured"
+    if autotask_configured:
+        autotask_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -114,6 +124,22 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
+        ConnectorStatus(
+            id="autotask",
+            kind="psa",
+            name="Autotask PSA",
+            status=autotask_status,
+            message=(
+                "Autotask read-only ticket and company inventory is configured."
+                if autotask_status == "configured"
+                else (
+                    "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if autotask_status == "blocked"
+                    else "Set WAIT_AUTOTASK_* values to enable read-only PSA inventory."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
     ]
 
 
@@ -146,6 +172,15 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_NINJAONE_CLIENT_SECRET", bool(settings.ninjaone_client_secret), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_SCOPE", bool(settings.ninjaone_scope), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
+        SecretRecord("WAIT_AUTOTASK_BASE_URL", bool(settings.autotask_base_url), "autotask"),
+        SecretRecord("WAIT_AUTOTASK_USERNAME", bool(settings.autotask_username), "autotask"),
+        SecretRecord("WAIT_AUTOTASK_SECRET", bool(settings.autotask_secret), "autotask"),
+        SecretRecord(
+            "WAIT_AUTOTASK_INTEGRATION_CODE",
+            bool(settings.autotask_integration_code),
+            "autotask",
+        ),
+        SecretRecord("WAIT_AUTOTASK_PAGE_SIZE", bool(settings.autotask_page_size), "autotask"),
     ]
 
 
@@ -156,6 +191,7 @@ def validate_connector_credentials(
     halopsa_client: HaloPSAClient | None = None,
     hudu_client: HuduClient | None = None,
     ninjaone_client: RmmClient | None = None,
+    autotask_client: PsaClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -211,6 +247,25 @@ def validate_connector_credentials(
                 f"NinjaOne credentials are incomplete: {', '.join(missing)}.",
             )
         result = (ninjaone_client or NinjaOneClient(settings)).health()
+    elif connector == "autotask":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_AUTOTASK_BASE_URL": settings.autotask_base_url,
+                "WAIT_AUTOTASK_USERNAME": settings.autotask_username,
+                "WAIT_AUTOTASK_SECRET": settings.autotask_secret,
+                "WAIT_AUTOTASK_INTEGRATION_CODE": settings.autotask_integration_code,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Autotask credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (autotask_client or AutotaskClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

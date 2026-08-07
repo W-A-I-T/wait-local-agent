@@ -3,6 +3,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
+from wait_local_agent.autotask import PsaReadResponse
 from wait_local_agent.cli import app
 from wait_local_agent.models import ConnectorReadResult, HaloReadResult
 from wait_local_agent.rmm import RmmReadResponse
@@ -142,6 +143,30 @@ def test_validate_ninjaone_cli_requires_read_only_credentials_and_accepts_ready(
     assert "PASS connector=ninjaone layer=connector" in ready.output
 
 
+def test_validate_autotask_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Autotask read prerequisites are ready.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "autotask"])
+    assert missing.exit_code == 1
+    assert "WAIT_AUTOTASK_BASE_URL" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://autotask.example.test")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "code")
+    monkeypatch.setattr(cli_module, "AutotaskClient", FakeAutotaskClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "autotask"])
+    assert ready.exit_code == 0
+    assert "PASS connector=autotask layer=connector" in ready.output
+
+
 def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
     result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
 
@@ -178,5 +203,35 @@ def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> 
     ]
     results = [runner.invoke(app, command) for command in commands]
 
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)
+
+
+def test_autotask_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake Autotask response", 1)
+
+    class FakeAutotaskClient:
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_autotask_client", lambda: FakeAutotaskClient())
+    runner = CliRunner()
+    commands = [
+        ["connectors", "autotask-health"],
+        ["connectors", "autotask-tickets"],
+        ["connectors", "autotask-ticket", "ticket-1"],
+        ["connectors", "autotask-companies"],
+    ]
+    results = [runner.invoke(app, command) for command in commands]
     assert all(item.exit_code == 0 for item in results)
     assert all("ready count=1" in item.output for item in results)

@@ -44,6 +44,7 @@ from wait_local_agent.api.packs.loader import (
     install_pack_tarball,
     load_pack_registry,
 )
+from wait_local_agent.autotask import AutotaskClient, PsaReadResponse
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
 from wait_local_agent.collectors import (
     CollectorService,
@@ -147,6 +148,10 @@ def _ninjaone_client() -> NinjaOneClient:
     return NinjaOneClient(load_settings())
 
 
+def _autotask_client() -> AutotaskClient:
+    return AutotaskClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -195,6 +200,13 @@ def doctor() -> None:
         and settings.ninjaone_client_secret
     )
     typer.echo(f"ninjaone_configured={ninjaone_configured}")
+    autotask_configured = bool(
+        settings.autotask_base_url
+        and settings.autotask_username
+        and settings.autotask_secret
+        and settings.autotask_integration_code
+    )
+    typer.echo(f"autotask_configured={autotask_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -621,6 +633,7 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             halopsa_client=_halopsa_client(),
             hudu_client=_hudu_client(),
             ninjaone_client=_ninjaone_client(),
+            autotask_client=_autotask_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -799,6 +812,34 @@ def ninjaone_script_preview(device_id: str, script_id: str) -> None:
     _print_rmm_response(
         "ninjaone.script.preview",
         _ninjaone_client().preview_script(device_id, script_id),
+    )
+
+
+@connectors_app.command("autotask-health")
+def autotask_health() -> None:
+    result = _autotask_client().health()
+    _audit_autotask_cli_read("autotask.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("autotask-tickets")
+def autotask_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_autotask_response(
+        "tickets.list",
+        _autotask_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("autotask-ticket")
+def autotask_ticket(ticket_id: str) -> None:
+    _print_autotask_response("tickets.get", _autotask_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("autotask-companies")
+def autotask_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_autotask_response(
+        "companies.list",
+        _autotask_client().list_companies(page=page, page_size=page_size),
     )
 
 
@@ -1418,6 +1459,13 @@ def _print_rmm_response(read_type: str, response: RmmReadResponse) -> None:
         typer.echo(item)
 
 
+def _print_autotask_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_autotask_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
@@ -1428,6 +1476,10 @@ def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
 
 def _audit_rmm_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("rmm.read", read_type, f"{status} count={count}")
+
+
+def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("autotask.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

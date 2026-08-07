@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, and NinjaOne HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, NinjaOne, and Autotask HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -192,3 +192,18 @@ wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
 
 The API equivalents are under `/connectors/ninjaone`. The script preview
 returns variable names only; variable values are never echoed or persisted.
+
+## Autotask PSA
+
+The public Autotask adapter is read-only. It lists tickets and companies and
+does not call mutation endpoints. Configure the API-only user credentials and
+integration code in the local vault when possible:
+
+```bash
+wait-local-agent secrets init
+wait-local-agent secrets set WAIT_AUTOTASK_BASE_URL
+wait-local-agent secrets set WAIT_AUTOTASK_USERNAME
+wait-local-agent secrets set WAIT_AUTOTASK_SECRET
+wait-local-agent secrets set WAIT_AUTOTASK_INTEGRATION_CODE
+WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate autotask
+```

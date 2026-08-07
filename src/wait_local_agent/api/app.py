@@ -41,6 +41,7 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
     install_pack_tarball,
 )
+from wait_local_agent.autotask import AutotaskClient, PsaReadResponse
 from wait_local_agent.backup import (
     BackupEncryptionError,
     backup_state,
@@ -281,6 +282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
     ninjaone_client = NinjaOneClient(active_settings)
+    autotask_client = AutotaskClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1754,6 +1756,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ninjaone_client.preview_script(device_id, payload.script_id, payload.variables),
         )
 
+    @app.get("/connectors/autotask/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = autotask_client.health()
+        store.add_audit_event("autotask.read", "autotask.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/autotask/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _autotask_response(
+            "tickets.list",
+            autotask_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/autotask/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _autotask_response("tickets.get", autotask_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/autotask/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _autotask_response(
+            "companies.list",
+            autotask_client.list_companies(page=page, page_size=page_size),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2172,6 +2212,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result": asdict(response.result),
             "items": response.items,
         }
+
+    def _autotask_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "autotask.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
 
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")

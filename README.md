@@ -26,6 +26,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, and `ninjaone`.
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
+- Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
   cron, interval, and future one-time schedules with validated IANA timezones
@@ -326,6 +327,13 @@ wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
 ```
 
 No NinjaOne script or management mutation is performed by these commands.
+
+### Autotask PSA
+
+The public Autotask adapter is read-only and requires explicit HTTP probing.
+Configure the API-only user, secret, integration code, and zone base URL, then
+use the `autotask` connector validation and read commands. No Autotask mutation
+endpoint is exposed.
 
 ## Scheduled Workflows and Tenancy Filters
 

@@ -30,6 +30,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_NINJAONE_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_SCOPE", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_USERNAME", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_INTEGRATION_CODE", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_PAGE_SIZE", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -70,6 +75,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.ninjaone_client_secret == ""
     assert settings.ninjaone_scope == "monitoring"
     assert settings.ninjaone_page_size == 50
+    assert settings.autotask_base_url == ""
+    assert settings.autotask_username == ""
+    assert settings.autotask_secret == ""
+    assert settings.autotask_integration_code == ""
+    assert settings.autotask_page_size == 50
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -121,6 +131,11 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_NINJAONE_CLIENT_SECRET", "ninja-secret")
     monkeypatch.setenv("WAIT_NINJAONE_SCOPE", "monitoring")
     monkeypatch.setenv("WAIT_NINJAONE_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "api-secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
+    monkeypatch.setenv("WAIT_AUTOTASK_PAGE_SIZE", "20")
 
     settings = load_settings()
 
@@ -136,6 +151,11 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.ninjaone_client_secret == "ninja-secret"
     assert settings.ninjaone_scope == "monitoring"
     assert settings.ninjaone_page_size == 20
+    assert settings.autotask_base_url == "https://webservices1.autotask.net"
+    assert settings.autotask_username == "api-user"
+    assert settings.autotask_secret == "api-secret"
+    assert settings.autotask_integration_code == "integration-code"
+    assert settings.autotask_page_size == 20
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

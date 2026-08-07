@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
+from wait_local_agent.autotask import PsaReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
@@ -1563,6 +1564,42 @@ def test_ninjaone_api_ready_read_surfaces_use_shared_contract(settings, monkeypa
     )
     assert preview.status_code == 200
     assert preview.json()["items"][0]["variable_names"] == ["token"]
+
+
+def test_autotask_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/autotask/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake Autotask response", 1)
+
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "AutotaskClient", FakeAutotaskClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/autotask/health").json()["status"] == "ready"
+    assert client.get("/connectors/autotask/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/autotask/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/autotask/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(
+        event["event_type"] == "autotask.read"
+        for event in client.get("/audit").json()
+    )
 
 
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
