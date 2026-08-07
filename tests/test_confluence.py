@@ -7,14 +7,17 @@ import pytest
 
 from wait_local_agent.confluence import (
     ConfluenceClient,
+    ConfluencePage,
     ConfluenceReadError,
     _api_base_url,
     _bounded_page_size,
+    _next_cursor,
     _normalize_page,
     _payload_rows,
     _safe_cursor,
     _safe_endpoint,
     _safe_segment,
+    _safe_title,
 )
 
 
@@ -112,6 +115,67 @@ def test_confluence_sanitizes_failures_and_bounds_inputs(settings) -> None:
     blocked = ConfluenceClient(_configured(settings, allow_http_probing=False))
     with pytest.raises(ConfluenceReadError, match="WAIT_ALLOW_HTTP_PROBING=true"):
         blocked._get("pages")
+
+
+def test_confluence_covers_http_statuses_transport_errors_and_normalization_edges(settings) -> None:
+    for status_code, marker in (
+        (401, "authentication failed"),
+        (404, "not found"),
+        (429, "rate limited"),
+        (500, "HTTP 500"),
+    ):
+        def denied(request: httpx.Request, code=status_code) -> httpx.Response:
+            return httpx.Response(code, text="private body")
+
+        response = ConfluenceClient(
+            _configured(settings), transport=httpx.MockTransport(denied)
+        ).list_pages()
+        assert marker in response.result.message
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("private timeout")
+
+    response = ConfluenceClient(
+        _configured(settings), transport=httpx.MockTransport(timeout)
+    ).list_pages()
+    assert response.result.message == "Confluence request failed before receiving a response."
+
+    def protocol_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ProtocolError("private transport detail")
+
+    response = ConfluenceClient(
+        _configured(settings), transport=httpx.MockTransport(protocol_error)
+    ).list_pages()
+    assert response.result.message == "Confluence request failed."
+    assert ConfluenceClient(
+        _configured(settings), transport=httpx.MockTransport(lambda request: httpx.Response(500))
+    ).health().status == "failed"
+
+    assert _normalize_page(
+        {
+            "id": 9,
+            "title": "Page",
+            "space_id": 42,
+            "createdAt": "yesterday",
+            "_links": {"base": "https://acme.atlassian.net"},
+            "body": {"atlas_doc_format": {"value": "doc"}},
+        }
+    ) == ConfluencePage("9", "Page", "42", "", "", "yesterday", "https://acme.atlassian.net", "doc")
+    assert _payload_rows([{"id": "1"}, "ignored"]) == [{"id": "1"}]
+    assert _next_cursor({"_links": {"next": "/pages?cursor=" + "x" * 5000}}) == ""
+
+    for value in ("", "ftp://host", "https://user:pass@host", "https://host?token=x", "https://host\n"):
+        with pytest.raises(ConfluenceReadError):
+            _api_base_url(value)
+    for value in ("", "bad\nname"):
+        with pytest.raises(ConfluenceReadError):
+            _safe_title(value)
+    with pytest.raises(ConfluenceReadError):
+        _safe_cursor("x\nbad")
+    with pytest.raises(ConfluenceReadError):
+        _bounded_page_size(True)
+    with pytest.raises(ConfluenceReadError):
+        _safe_endpoint("pages/$bad")
 
 
 def test_confluence_helpers_cover_shapes_and_bounds() -> None:
