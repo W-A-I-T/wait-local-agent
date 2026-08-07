@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from wait_local_agent.api.app import create_app
+from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.store import Store
 
 
@@ -95,6 +96,28 @@ def test_demo_mode_with_no_tokens_preserves_existing_access(settings) -> None:
     assert health.status_code == 200
     assert secrets.status_code == 200
     assert export.status_code == 200
+
+
+def test_auth_context_resolves_install_tenant_for_demo_and_tokens(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "client_id": " acme ",
+            "demo_mode": False,
+            "tech_token": "tech-token",
+        }
+    )
+
+    technician = resolve_auth_context(secure_settings, "Bearer tech-token")
+    demo = resolve_auth_context(
+        secure_settings.__class__(**{**secure_settings.__dict__, "demo_mode": True}),
+        None,
+    )
+
+    assert technician.role == Role.TECHNICIAN
+    assert technician.client_id == "acme"
+    assert demo.role == Role.ADMIN
+    assert demo.client_id == "acme"
 
 
 def _auth(token: str) -> dict[str, str]:

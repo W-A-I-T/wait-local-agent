@@ -239,6 +239,7 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     role = client.get("/auth/role", headers={"Authorization": "Bearer viewer-token"})
     filtered_tickets = client.get("/tickets", params={"client_id": "acme"}, headers=_auth("viewer-token"))
     filtered_approvals = client.get("/approval-requests", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    narrowed_approvals = client.get("/approval-requests", params={"client_id": "beta"}, headers=_auth("viewer-token"))
     filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token"))
     filtered_documents = client.get("/knowledge/documents", params={"client_id": "acme"}, headers=_auth("viewer-token"))
     filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("viewer-token"))
@@ -259,6 +260,7 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     assert role.json()["role"] == "viewer"
     assert [ticket["id"] for ticket in filtered_tickets.json()] == ["TCK-ACME"]
     assert [request["subject_id"] for request in filtered_approvals.json()] == ["TCK-ACME"]
+    assert [request["subject_id"] for request in narrowed_approvals.json()] == ["TCK-BETA"]
     assert all(event["client_id"] == "acme" for event in filtered_audit.json())
     assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
     assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
@@ -273,6 +275,283 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
         event["event_type"] == "approval_request.updated" and event["approver_id"] == expected_approver_id
         for event in export.json()["events"]
     )
+
+
+def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypatch) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    acme = store.create_approval_request(
+        "TCK-ACME",
+        "ticket.assign",
+        {"ticket_id": "TCK-ACME"},
+        client_id="acme",
+    )
+    globex = store.create_approval_request(
+        "TCK-GLOBEX",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "TCK-GLOBEX",
+            "action_type": "add_note",
+            "fields": {"note": "original"},
+        },
+        client_id="globex",
+    )
+    legacy = store.create_approval_request(
+        "TCK-LEGACY",
+        "ticket.assign",
+        {"ticket_id": "TCK-LEGACY"},
+    )
+    acme_halopsa = store.create_approval_request(
+        "TCK-ACME-HALO",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "TCK-ACME-HALO",
+            "action_type": "add_note",
+            "fields": {"note": "ready"},
+        },
+        client_id="acme",
+    )
+    store.update_approval_request(acme_halopsa.id or 0, "approved")
+    execute_calls: list[int] = []
+
+    def fake_execute(store_arg, _client, request_id: int):
+        execute_calls.append(request_id)
+        return store_arg.get_approval_request(request_id)
+
+    monkeypatch.setattr(app_module, "execute_halopsa_approval_request", fake_execute)
+    client = TestClient(create_app(secure_settings))
+
+    scoped_list = client.get(
+        "/approval-requests",
+        params={"client_id": "globex"},
+        headers=_auth("tech-token"),
+    )
+    foreign_detail = client.get(f"/approval-requests/{globex.id}", headers=_auth("tech-token"))
+    foreign_patch = client.patch(
+        f"/approval-requests/{globex.id}/payload",
+        headers=_auth("tech-token"),
+        json={"fields": {"note": "tampered"}},
+    )
+    foreign_update = client.post(
+        f"/approval-requests/{globex.id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "tampered"},
+    )
+    foreign_execute = client.post(
+        f"/connectors/halopsa/approval-requests/{globex.id}/execute",
+        headers=_auth("tech-token"),
+    )
+    foreign_after_technician = store.get_approval_request(globex.id or 0)
+    acme_detail = client.get(f"/approval-requests/{acme.id}", headers=_auth("tech-token"))
+    acme_update = client.post(
+        f"/approval-requests/{acme.id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "approved"},
+    )
+    legacy_detail = client.get(f"/approval-requests/{legacy.id}", headers=_auth("tech-token"))
+    legacy_update = client.post(
+        f"/approval-requests/{legacy.id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "approved"},
+    )
+    acme_execute = client.post(
+        f"/connectors/halopsa/approval-requests/{acme_halopsa.id}/execute",
+        headers=_auth("tech-token"),
+    )
+    admin_list = client.get("/approval-requests", headers=_auth("admin-token"))
+    admin_filtered = client.get(
+        "/approval-requests",
+        params={"client_id": "globex"},
+        headers=_auth("admin-token"),
+    )
+    admin_detail = client.get(f"/approval-requests/{globex.id}", headers=_auth("admin-token"))
+    admin_update = client.post(
+        f"/approval-requests/{globex.id}",
+        headers=_auth("admin-token"),
+        json={"status": "rejected", "comment": "admin decision"},
+    )
+
+    assert [request["subject_id"] for request in scoped_list.json()] == [
+        "TCK-ACME-HALO",
+        "TCK-ACME",
+    ]
+    assert foreign_detail.status_code == 404
+    assert foreign_patch.status_code == 404
+    assert foreign_update.status_code == 404
+    assert foreign_execute.status_code == 404
+    assert execute_calls == [acme_halopsa.id]
+    assert acme_detail.status_code == 200
+    assert acme_update.status_code == 200
+    assert legacy_detail.status_code == 200
+    assert legacy_update.status_code == 200
+    assert acme_execute.status_code == 200
+    assert admin_list.status_code == 200
+    assert {request["subject_id"] for request in admin_list.json()} == {
+        "TCK-ACME",
+        "TCK-GLOBEX",
+        "TCK-LEGACY",
+        "TCK-ACME-HALO",
+    }
+    assert [request["subject_id"] for request in admin_filtered.json()] == ["TCK-GLOBEX"]
+    assert admin_detail.status_code == 200
+    assert admin_update.status_code == 200
+    assert foreign_after_technician is not None
+    assert foreign_after_technician.status == "pending"
+    assert foreign_after_technician.comment == ""
+    foreign_after = store.get_approval_request(globex.id or 0)
+    assert foreign_after is not None
+    assert foreign_after.status == "rejected"
+    assert foreign_after.comment == "admin decision"
+    assert foreign_after.payload_json == globex.payload_json
+
+
+def test_workflow_run_detail_hides_foreign_approval_payload(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    foreign_approval = store.create_approval_request(
+        "TCK-GLOBEX",
+        "ticket.assign",
+        {"ticket_id": "TCK-GLOBEX", "payload": "foreign"},
+        client_id="globex",
+    )
+    local_approval = store.create_approval_request(
+        "TCK-ACME",
+        "ticket.assign",
+        {"ticket_id": "TCK-ACME", "payload": "local"},
+        client_id="acme",
+    )
+    foreign_run = store.create_workflow_run(
+        "documentation-assisted-response",
+        "TCK-GLOBEX",
+        "pending_approval",
+        "foreign approval link",
+        foreign_approval.id,
+        client_id="acme",
+    )
+    local_run = store.create_workflow_run(
+        "documentation-assisted-response",
+        "TCK-ACME",
+        "pending_approval",
+        "local approval link",
+        local_approval.id,
+        client_id="acme",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    foreign_response = client.get(f"/workflow-runs/{foreign_run.id}", headers=_auth("tech-token"))
+    local_response = client.get(f"/workflow-runs/{local_run.id}", headers=_auth("tech-token"))
+
+    assert foreign_response.status_code == 200
+    foreign_payload = foreign_response.json()
+    assert foreign_payload["approval_request"] is None
+    assert foreign_payload["id"] == foreign_run.id
+    assert foreign_payload["template_id"] == foreign_run.template_id
+    assert foreign_payload["ticket_id"] == foreign_run.ticket_id
+    assert foreign_payload["status"] == foreign_run.status
+    assert foreign_payload["message"] == foreign_run.message
+    assert foreign_payload["approval_request_id"] == foreign_approval.id
+    assert foreign_payload["client_id"] == foreign_run.client_id
+    assert foreign_payload["created_at"] == foreign_run.created_at
+    assert foreign_payload["updated_at"] == foreign_run.updated_at
+    assert foreign_payload["template"]["id"] == foreign_run.template_id
+    assert isinstance(foreign_payload["events"], list)
+
+    assert local_response.status_code == 200
+    local_payload = local_response.json()
+    assert local_payload["approval_request"]["id"] == local_approval.id
+    assert local_payload["approval_request"]["client_id"] == "acme"
+    assert local_payload["approval_request"]["payload"] == {
+        "ticket_id": "TCK-ACME",
+        "payload": "local",
+    }
+    assert local_payload["approval_request"]["workflow_run_id"] == local_run.id
+
+
+def test_bound_technician_can_patch_in_scope_approval_payload(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-ACME",
+        "halopsa.add_note",
+        {
+            "connector": "halopsa",
+            "ticket_id": "TCK-ACME",
+            "action_type": "add_note",
+            "fields": {"note": "before"},
+        },
+        client_id="acme",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.patch(
+        f"/approval-requests/{approval.id}/payload",
+        headers=_auth("tech-token"),
+        json={"fields": {"note": "after"}, "comment": "updated in scope"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["client_id"] == "acme"
+    assert response.json()["payload"]["fields"] == {"note": "after"}
+    assert response.json()["comment"] == "updated in scope"
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.status == "pending"
+    assert persisted.client_id == "acme"
+
+
+def test_bound_non_admin_approval_list_without_filter_is_tenant_scoped(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.create_approval_request(
+        "TCK-ACME",
+        "ticket.assign",
+        {"ticket_id": "TCK-ACME"},
+        client_id="acme",
+    )
+    store.create_approval_request(
+        "TCK-GLOBEX",
+        "ticket.assign",
+        {"ticket_id": "TCK-GLOBEX"},
+        client_id="globex",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.get("/approval-requests", headers=_auth("tech-token"))
+
+    assert response.status_code == 200
+    assert [request["subject_id"] for request in response.json()] == ["TCK-ACME"]
 
 
 def test_missing_ticket_returns_404(settings) -> None:
