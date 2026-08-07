@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from wait_local_agent.collectors import CollectorRegistry
 from wait_local_agent.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -59,3 +61,15 @@ def settings(tmp_path: Path) -> Settings:
         demo_mode=True,
         api_token="",
     )
+
+
+@pytest.fixture()
+def isolated_default_registry() -> Iterator[CollectorRegistry]:
+    """Restore the process-wide collector registry after registry-mutating tests."""
+    from wait_local_agent.collectors import default_registry
+
+    original_modules = default_registry.list()
+    yield default_registry
+    default_registry.clear()
+    for module in original_modules:
+        default_registry.register(module)

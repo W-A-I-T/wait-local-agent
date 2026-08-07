@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.DatabaseInventoryCollectorModule
 
@@ -339,6 +342,75 @@ def test_collect_swallows_glob_error(monkeypatch: pytest.MonkeyPatch, etc_root: 
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"][0]["canonical_asset"]["attributes"]["engine"] == "redis"
+
+
+def test_typed_database_collect_returns_partial_with_source_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
+) -> None:
+    redis_config = _write_redis_config(etc_root)
+    mysql_config = etc_root / "mysql" / "my.cnf"
+    mysql_config.parent.mkdir(parents=True)
+    mysql_config.write_text("port=3306\ndatadir=/var/lib/mysql\n")
+    _use_etc(monkeypatch, etc_root)
+
+    real_read_text = Path.read_text
+
+    def deny_mysql(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == mysql_config:
+            raise PermissionError("mysql config denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_mysql)
+    result = collectors.DatabaseInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["db:redis"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+    assert redis_config.exists()
+
+
+def test_typed_database_collect_maps_total_unavailable_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
+) -> None:
+    redis_config = _write_redis_config(etc_root)
+    _use_etc(monkeypatch, etc_root)
+
+    real_read_text = Path.read_text
+
+    def deny_redis(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == redis_config:
+            raise OSError("database source unavailable")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_redis)
+    result = collectors.DatabaseInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert result.source_outcomes[0].error_code == "collection_unavailable"
+
+
+def test_typed_database_round_trip_persists_and_exports(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
+) -> None:
+    _write_redis_config(etc_root)
+    _use_etc(monkeypatch, etc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.DatabaseInventoryCollector())
+    service = CollectorService(Store(settings.data_path), registry)
+
+    assert service.validate("database-inventory", {}).passed is True
+    preview = service.preview("database-inventory", {})
+    run = service.run("database-inventory", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 # --------------------------------------------------------------------------- #
