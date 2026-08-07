@@ -66,6 +66,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-sentiment",
         "collector-preview",
         "dispatch-suggestion",
+        "communication-draft",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True

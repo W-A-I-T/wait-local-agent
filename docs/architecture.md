@@ -40,6 +40,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Connector credential validation through `wait-local-agent connectors validate ...`
 - Outbound calls gated by `WAIT_ALLOW_HTTP_PROBING`
 - Live writes gated by `WAIT_ALLOW_WRITE_ACTIONS`
+- Communication uses a shared preview-only provider boundary for email, Teams,
+  Slack, and SMS. The public adapters return local drafts only; they do not
+  make outbound requests or imply delivery.
 
 ## Workflow and Scheduler
 
@@ -70,6 +73,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device
   lookup without remote control, remediation, or credential-bearing payloads.
+- Communication drafts use the same smart-action contract, tenant scope,
+  redaction, and approval pause as other proposed actions. Channel-specific
+  preview adapters are deliberately non-sendable until a separately reviewed
+  connector execution path is added.
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and
