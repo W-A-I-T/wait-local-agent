@@ -22,6 +22,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         audit_columns = _columns(connection, "audit_events")
         workflow_columns = _columns(connection, "workflow_runs")
         scheduled_columns = _columns(connection, "scheduled_jobs")
+        event_delivery_columns = _columns(connection, "event_deliveries")
         knowledge_columns = _columns(connection, "knowledge_documents")
         smart_action_columns = _columns(connection, "smart_action_runs")
         event_history_columns = _columns(connection, "event_history")
@@ -42,6 +43,8 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "job_kind" in scheduled_columns
     assert "agent_id" in scheduled_columns
     assert "entity_id" in scheduled_columns
+    assert "idempotency_key" in event_delivery_columns
+    assert "processed_at" in event_delivery_columns
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
@@ -49,6 +52,62 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
     assert workflow is not None and workflow["client_id"] is None
     assert document is not None and document["client_id"] is None
+
+
+def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    delivery, created = store.create_event_delivery(
+        idempotency_key="provider-1",
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1",
+        payload={"priority": "P1", "api_token": "secret-value"},
+        client_id=" acme ",
+    )
+    assert created is True
+    assert delivery.id is not None
+    assert "secret-value" not in delivery.payload_json
+
+    duplicate, duplicate_created = store.create_event_delivery(
+        idempotency_key="provider-1",
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1",
+        payload={"priority": "P1"},
+        client_id="acme",
+    )
+    assert duplicate_created is False
+    assert duplicate.id == delivery.id
+
+    updated = store.update_event_delivery(
+        delivery.id,
+        status="failed",
+        matched_agent_count=1,
+        agent_ids=["agent-1"],
+        run_ids=[7],
+        error_detail="api_token=secret-value",
+    )
+    assert updated.status == "failed"
+    assert updated.matched_agent_count == 1
+    assert store.get_event_delivery(delivery.id, client_id="beta") is None
+    assert store.get_event_delivery(delivery.id, client_id="acme") is not None
+    assert [item.id for item in store.list_event_deliveries(client_id="acme")] == [delivery.id]
+    assert store.has_event_agent_run(
+        agent_id="agent-1", event_type="ticket.created", entity_id="TCK-1", client_id="acme"
+    ) is True
+    assert store.has_event_agent_run(
+        agent_id="agent-1", event_type="ticket.created", entity_id="TCK-1", client_id="beta"
+    ) is False
+
+    with pytest.raises(KeyError):
+        store.update_event_delivery(
+            99999,
+            status="failed",
+            matched_agent_count=0,
+            agent_ids=[],
+            run_ids=[],
+        )
 
 
 def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> None:

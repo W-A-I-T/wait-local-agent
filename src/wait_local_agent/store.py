@@ -17,6 +17,7 @@ from wait_local_agent.models import (
     CollectorSource,
     ConfigDiff,
     ConfigSnapshot,
+    EventDelivery,
     EventHistoryEntry,
     ExecutionArtifact,
     ExecutionRun,
@@ -159,6 +160,26 @@ class Store:
             self._ensure_column(connection, "event_history", "client_id", "text")
             connection.execute(
                 """
+                create table if not exists event_deliveries (
+                    id integer primary key autoincrement,
+                    idempotency_key text not null unique,
+                    event_type text not null,
+                    entity_type text not null,
+                    entity_id text not null,
+                    payload_json text not null,
+                    status text not null,
+                    matched_agent_count integer not null default 0,
+                    agent_ids_json text not null default '[]',
+                    run_ids_json text not null default '[]',
+                    error_detail text not null default '',
+                    received_at text not null,
+                    processed_at text not null default '',
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists workflow_runs (
                     id integer primary key autoincrement,
                     template_id text not null,
@@ -223,7 +244,8 @@ class Store:
                     client_id text,
                     version integer not null default 1,
                     created_at text not null,
-                    updated_at text not null
+                    updated_at text not null,
+                    run_once_per_entity integer not null default 1
                 )
                 """
             )
@@ -268,6 +290,12 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
             self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "run_once_per_entity",
+                "integer not null default 1",
+            )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             connection.execute(
@@ -1049,6 +1077,156 @@ class Store:
                 ).fetchall()
         return [_event_history_from_row(row) for row in rows]
 
+    def create_event_delivery(
+        self,
+        *,
+        idempotency_key: str,
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        payload: dict[str, object],
+        client_id: str | None = None,
+    ) -> tuple[EventDelivery, bool]:
+        received_at = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        payload_json = _json_dumps(payload)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert or ignore into event_deliveries
+                  (idempotency_key, event_type, entity_type, entity_id, payload_json,
+                   status, matched_agent_count, agent_ids_json, run_ids_json,
+                   error_detail, received_at, processed_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    idempotency_key,
+                    event_type,
+                    entity_type,
+                    entity_id,
+                    payload_json,
+                    "received",
+                    0,
+                    "[]",
+                    "[]",
+                    "",
+                    received_at,
+                    "",
+                    normalized_client_id,
+                ),
+            )
+            created = cursor.rowcount == 1
+            row = connection.execute(
+                "select * from event_deliveries where idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("event delivery was not persisted")
+            if created:
+                self._add_audit_event(
+                    connection,
+                    "event.received",
+                    str(row["id"]),
+                    f"{event_type} received for {entity_id}",
+                    client_id=normalized_client_id,
+                )
+                self._add_event_history(
+                    connection,
+                    "event.received",
+                    str(row["id"]),
+                    "received",
+                    f"{event_type} received for {entity_id}",
+                    payload_json,
+                    normalized_client_id,
+                )
+        return _event_delivery_from_row(row), created
+
+    def update_event_delivery(
+        self,
+        delivery_id: int,
+        *,
+        status: str,
+        matched_agent_count: int,
+        agent_ids: list[str],
+        run_ids: list[int],
+        error_detail: str = "",
+    ) -> EventDelivery:
+        processed_at = utc_now()
+        safe_error = _redact_text(error_detail)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update event_deliveries
+                set status = ?, matched_agent_count = ?, agent_ids_json = ?,
+                    run_ids_json = ?, error_detail = ?, processed_at = ?
+                where id = ?
+                """,
+                (
+                    status,
+                    matched_agent_count,
+                    _json_dumps_value(agent_ids),
+                    _json_dumps_value(run_ids),
+                    safe_error,
+                    processed_at,
+                    delivery_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(delivery_id)
+        delivery = self.get_event_delivery(delivery_id)
+        if delivery is None:
+            raise RuntimeError("event delivery was not persisted")
+        return delivery
+
+    def get_event_delivery(self, delivery_id: int, client_id: str | None = None) -> EventDelivery | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from event_deliveries where id = ?", (delivery_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from event_deliveries where id = ? and client_id = ?",
+                    (delivery_id, normalized_client_id),
+                ).fetchone()
+        return _event_delivery_from_row(row) if row else None
+
+    def list_event_deliveries(self, client_id: str | None = None) -> list[EventDelivery]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from event_deliveries order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from event_deliveries where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_event_delivery_from_row(row) for row in rows]
+
+    def has_event_agent_run(
+        self,
+        *,
+        agent_id: str,
+        event_type: str,
+        entity_id: str,
+        client_id: str | None = None,
+    ) -> bool:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select agent_ids_json from event_deliveries
+                where event_type = ? and entity_id = ?
+                  and status in ('completed', 'failed')
+                  and (? is null or client_id = ?)
+                """,
+                (event_type, entity_id, normalized_client_id, normalized_client_id),
+            ).fetchall()
+        return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
+
     def create_workflow_run(
         self,
         template_id: str,
@@ -1148,8 +1326,9 @@ class Store:
                 insert into agent_definitions
                   (id, name, description, enabled, trigger, entity_type,
                    filters_json, enabled_tools_json, steps_json, max_steps,
-                   execution_timeout_seconds, client_id, version, created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   execution_timeout_seconds, client_id, version, created_at, updated_at,
+                   run_once_per_entity)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1167,6 +1346,7 @@ class Store:
                     definition.version,
                     definition.created_at,
                     definition.updated_at,
+                    int(definition.run_once_per_entity),
                 ),
             )
             self._add_audit_event(
@@ -1217,7 +1397,8 @@ class Store:
                 update agent_definitions
                 set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
                     filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
-                    execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?
+                    execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
+                    run_once_per_entity = ?
                 where id = ?
                 """,
                 (
@@ -1234,6 +1415,7 @@ class Store:
                     _normalize_client_id(definition.client_id),
                     definition.version,
                     definition.updated_at,
+                    int(definition.run_once_per_entity),
                     definition.id,
                 ),
             )
@@ -3431,6 +3613,15 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     return ScheduledJob(**payload)
 
 
+def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
+    payload = dict(row)
+    payload["matched_agent_count"] = int(payload["matched_agent_count"])
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+    payload["error_detail"] = _redact_text(str(payload["error_detail"]))
+    return EventDelivery(**payload)
+
+
 def _scheduled_target(job_kind: str, template_id: str, agent_id: str | None) -> str:
     if job_kind == "agent":
         return f"agent {agent_id or 'unknown'}"
@@ -3440,6 +3631,7 @@ def _scheduled_target(job_kind: str, template_id: str, agent_id: str | None) -> 
 def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload = dict(row)
     payload["enabled"] = bool(payload["enabled"])
+    payload["run_once_per_entity"] = bool(payload["run_once_per_entity"])
     payload["filters"] = _json_object_or_empty(payload.pop("filters_json"))
     payload["enabled_tools"] = cast(list[str], _json_list_or_empty(payload.pop("enabled_tools_json")))
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
@@ -3478,6 +3670,10 @@ def _json_object_or_empty(payload: object) -> dict[str, object]:
 def _json_list_or_empty(payload: object) -> list[object]:
     value = _json_value_or_empty(payload)
     return value if isinstance(value, list) else []
+
+
+def _json_string_list(payload: object) -> list[str]:
+    return [item for item in _json_list_or_empty(payload) if isinstance(item, str)]
 
 
 def _redact_json_text(payload_json: str) -> str:

@@ -1094,6 +1094,86 @@ def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target
     assert rejected.status_code == 422
 
 
+def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Created P1 triage",
+            "trigger": "event",
+            "filters": {"event_type": "ticket.created", "priority": "P1"},
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+
+    event = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-event-1"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {"priority": "P1", "api_token": "secret-value"},
+        },
+    )
+    assert event.status_code == 200
+    assert event.json()["duplicate"] is False
+    assert event.json()["delivery"]["status"] == "completed"
+    assert event.json()["run_ids"]
+    assert "secret-value" not in event.text
+
+    duplicate = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-event-1"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {"priority": "P1"},
+        },
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+
+    deliveries = client.get("/automation/event-deliveries")
+    assert deliveries.status_code == 200
+    assert deliveries.json()[0]["idempotency_key"] == "api-event-1"
+    detail = client.get(f"/automation/event-deliveries/{deliveries.json()[0]['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["event_type"] == "ticket.created"
+
+    missing_key = client.post(
+        "/automation/events",
+        json={"event_type": "ticket.created", "entity_id": "TCK-1001"},
+    )
+    assert missing_key.status_code == 422
+
+    unsupported = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-unsupported-event"},
+        json={"event_type": "ticket.deleted", "entity_id": "TCK-1001"},
+    )
+    assert unsupported.status_code == 422
+
+    missing_entity = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-missing-entity"},
+        json={"event_type": "ticket.created", "entity_id": "NO-SUCH-TICKET"},
+    )
+    assert missing_entity.status_code == 404
+    missing_delivery = client.get("/automation/event-deliveries/99999")
+    assert missing_delivery.status_code == 404
+
+
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     client = TestClient(create_app(settings))
 

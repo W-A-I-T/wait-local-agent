@@ -6,7 +6,7 @@
 
 **Local-first MSP and founder automation appliance for tickets, runbooks, approvals, connector drafts, scheduled workflows, and auditable local operations.**
 
-See the [capability roadmap](ROADMAP.md) for the honest status of local-first MSP capabilities and the rationale for deferred work.
+See the [capability roadmap](ROADMAP.md) and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first MSP capabilities and the rationale for deferred work.
 
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 
@@ -26,8 +26,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
   `/tools`, tenant-scoped ticket runs, and approval pause/resume. Agents may
-  run manually or on a persisted five-field cron schedule; event-triggered,
-  conversational, and unrestricted execution remain outside this slice.
+  run manually, on a persisted five-field cron schedule, or from authenticated
+  deterministic event deliveries with idempotency and run-once-per-entity
+  protection; conversational and unrestricted execution remain outside this
+  slice.
+- Event-triggered agent APIs under `/automation/events` and
+  `/automation/event-deliveries`, with deterministic filters, redacted payloads,
+  tenant checks, and auditable delivery history.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
