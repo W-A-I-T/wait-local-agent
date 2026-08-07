@@ -12,6 +12,7 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.models import (
+    ConnectorReadResult,
     HaloReadResult,
     HaloTicket,
     HaloWriteResult,
@@ -19,6 +20,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.rmm import RmmReadResponse
 from wait_local_agent.store import Store
 
 
@@ -1492,6 +1494,75 @@ def test_halopsa_api_read_surfaces_block_without_http_flag(settings) -> None:
     assert tickets.json()["result"]["status"] == "blocked"
     assert tickets.json()["items"] == []
     assert any(event["event_type"] == "halopsa.read" for event in audit.json())
+
+
+def test_ninjaone_api_read_surfaces_block_and_safe_script_preview(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/ninjaone/health")
+    devices = client.get("/connectors/ninjaone/devices")
+    alerts = client.get("/connectors/ninjaone/alerts")
+    scripts = client.get("/connectors/ninjaone/scripts")
+    preview = client.post(
+        "/connectors/ninjaone/devices/17/script-preview",
+        json={"script_id": "4", "variables": {"api_token": "secret-value"}},
+    )
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "blocked"
+    assert devices.json()["result"]["status"] == "blocked"
+    assert alerts.json()["result"]["status"] == "blocked"
+    assert scripts.json()["result"]["status"] == "blocked"
+    assert preview.status_code == 200
+    assert preview.json()["result"]["status"] == "ready"
+    assert preview.json()["items"][0]["execution_enabled"] is False
+    assert preview.json()["items"][0]["variable_names"] == ["api_token"]
+    assert "secret-value" not in preview.text
+    assert any(event["event_type"] == "rmm.read" for event in client.get("/audit").json())
+
+
+def test_ninjaone_api_ready_read_surfaces_use_shared_contract(settings, monkeypatch) -> None:
+    result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
+
+    class FakeNinjaOneClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "script-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(
+                result,
+                [{"device_id": device_id, "script_id": script_id, "variable_names": sorted(variables or {})}],
+            )
+
+    monkeypatch.setattr(app_module, "NinjaOneClient", FakeNinjaOneClient)
+    client = TestClient(create_app(settings))
+
+    assert client.get("/connectors/ninjaone/health").json()["status"] == "ready"
+    assert client.get("/connectors/ninjaone/devices").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/ninjaone/devices/device-1").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/ninjaone/alerts").json()["items"] == [{"id": "alert-1"}]
+    assert client.get("/connectors/ninjaone/scripts").json()["items"] == [{"id": "script-1"}]
+    preview = client.post(
+        "/connectors/ninjaone/devices/device-1/script-preview",
+        json={"script_id": "script-1", "variables": {"token": "never-return"}},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["items"][0]["variable_names"] == ["token"]
 
 
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:

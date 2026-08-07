@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
 from wait_local_agent.models import ConnectorReadResult, HaloReadResult
+from wait_local_agent.rmm import RmmReadResponse
 
 
 class _FakeHaloClient:
@@ -116,3 +117,66 @@ def test_validate_hudu_cli_success_and_unreachable(monkeypatch, tmp_path) -> Non
     assert "PASS connector=hudu layer=connector" in success.output
     assert failed.exit_code == 1
     assert "layer=connectivity" in failed.output
+
+
+def test_validate_ninjaone_cli_requires_read_only_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeNinjaOneClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "NinjaOne monitoring token request succeeded.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "ninjaone"])
+    assert missing.exit_code == 1
+    assert "WAIT_NINJAONE_BASE_URL" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_NINJAONE_BASE_URL", "https://app.ninjarmm.com")
+    monkeypatch.setenv("WAIT_NINJAONE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("WAIT_NINJAONE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(cli_module, "NinjaOneClient", FakeNinjaOneClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "ninjaone"])
+    assert ready.exit_code == 0
+    assert "PASS connector=ninjaone layer=connector" in ready.output
+
+
+def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
+
+    class FakeNinjaOneClient:
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "script-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(result, [{"device_id": device_id, "script_id": script_id}])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_ninjaone_client", lambda: FakeNinjaOneClient())
+    runner = CliRunner()
+
+    commands = [
+        ["connectors", "ninjaone-health"],
+        ["connectors", "ninjaone-devices"],
+        ["connectors", "ninjaone-device", "device-1"],
+        ["connectors", "ninjaone-alerts"],
+        ["connectors", "ninjaone-scripts"],
+        ["connectors", "ninjaone-script-preview", "device-1", "script-1"],
+    ]
+    results = [runner.invoke(app, command) for command in commands]
+
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)

@@ -23,7 +23,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Approval requests receive a persisted 24-hour default expiry; expired requests
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
-- Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, and `ninjaone`.
+- Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
+  safe script execution previews; script execution is not exposed.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
   cron, interval, and future one-time schedules with validated IANA timezones
@@ -308,6 +310,22 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo.
+
+### NinjaOne RMM
+
+The public NinjaOne adapter is read-only and requires explicit HTTP probing.
+Configure `WAIT_NINJAONE_BASE_URL`, `WAIT_NINJAONE_CLIENT_ID`, and
+`WAIT_NINJAONE_CLIENT_SECRET`, then use:
+
+```bash
+wait-local-agent connectors validate ninjaone
+wait-local-agent connectors ninjaone-devices
+wait-local-agent connectors ninjaone-alerts
+wait-local-agent connectors ninjaone-scripts
+wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
+```
+
+No NinjaOne script or management mutation is performed by these commands.
 
 ## Scheduled Workflows and Tenancy Filters
 

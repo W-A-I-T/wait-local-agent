@@ -16,6 +16,7 @@ from wait_local_agent.models import (
     SecretRecord,
 )
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.rmm import NinjaOneClient, RmmClient
 from wait_local_agent.store import Store
 
 HALOPSA_ACTION_TYPES = {
@@ -49,6 +50,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     hudu_status: ConnectorStatusValue = "not_configured"
     if hudu_configured:
         hudu_status = "configured" if settings.allow_http_probing else "blocked"
+    ninjaone_configured = bool(
+        settings.ninjaone_base_url
+        and settings.ninjaone_client_id
+        and settings.ninjaone_client_secret
+    )
+    ninjaone_status: ConnectorStatusValue = "not_configured"
+    if ninjaone_configured:
+        ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -90,11 +99,20 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             message="Planned read-only identity, group, license, and mailbox lookup connector.",
         ),
         ConnectorStatus(
-            id="rmm",
+            id="ninjaone",
             kind="rmm",
-            name="RMM inventory",
-            status="not_configured",
-            message="Planned read-only device inventory before approved script execution.",
+            name="NinjaOne RMM",
+            status=ninjaone_status,
+            message=(
+                "NinjaOne read-only inventory is configured; script execution remains disabled."
+                if ninjaone_status == "configured"
+                else (
+                    "NinjaOne credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if ninjaone_status == "blocked"
+                    else "Set WAIT_NINJAONE_* values to enable read-only RMM inventory."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
         ),
     ]
 
@@ -123,6 +141,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_HUDU_BASE_URL", bool(settings.hudu_base_url), "hudu"),
         SecretRecord("WAIT_HUDU_API_KEY", bool(settings.hudu_api_key), "hudu"),
         SecretRecord("WAIT_HUDU_PAGE_SIZE", bool(settings.hudu_page_size), "hudu"),
+        SecretRecord("WAIT_NINJAONE_BASE_URL", bool(settings.ninjaone_base_url), "ninjaone"),
+        SecretRecord("WAIT_NINJAONE_CLIENT_ID", bool(settings.ninjaone_client_id), "ninjaone"),
+        SecretRecord("WAIT_NINJAONE_CLIENT_SECRET", bool(settings.ninjaone_client_secret), "ninjaone"),
+        SecretRecord("WAIT_NINJAONE_SCOPE", bool(settings.ninjaone_scope), "ninjaone"),
+        SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
     ]
 
 
@@ -132,6 +155,7 @@ def validate_connector_credentials(
     *,
     halopsa_client: HaloPSAClient | None = None,
     hudu_client: HuduClient | None = None,
+    ninjaone_client: RmmClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -169,6 +193,24 @@ def validate_connector_credentials(
                 f"Hudu credentials are incomplete: {', '.join(missing)}.",
             )
         result = (hudu_client or HuduClient(settings)).health()
+    elif connector == "ninjaone":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_NINJAONE_BASE_URL": settings.ninjaone_base_url,
+                "WAIT_NINJAONE_CLIENT_ID": settings.ninjaone_client_id,
+                "WAIT_NINJAONE_CLIENT_SECRET": settings.ninjaone_client_secret,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"NinjaOne credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (ninjaone_client or NinjaOneClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

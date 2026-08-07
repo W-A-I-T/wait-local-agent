@@ -96,6 +96,11 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    ninjaone_base_url: str = ""
+    ninjaone_client_id: str = ""
+    ninjaone_client_secret: str = ""
+    ninjaone_scope: str = "monitoring"
+    ninjaone_page_size: int = 50
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
@@ -187,6 +192,26 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        ninjaone_base_url=_secret_value(
+            "WAIT_NINJAONE_BASE_URL",
+            os.getenv("WAIT_NINJAONE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_client_id=_secret_value(
+            "WAIT_NINJAONE_CLIENT_ID",
+            os.getenv("WAIT_NINJAONE_CLIENT_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_client_secret=_secret_value(
+            "WAIT_NINJAONE_CLIENT_SECRET",
+            os.getenv("WAIT_NINJAONE_CLIENT_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_scope=os.getenv("WAIT_NINJAONE_SCOPE", "monitoring").strip() or "monitoring",
+        ninjaone_page_size=_int_env("WAIT_NINJAONE_PAGE_SIZE", 50),
         license_key=_secret_value(
             "license_key",
             os.getenv("WAIT_LICENSE_KEY", ""),

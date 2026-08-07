@@ -74,6 +74,7 @@ from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.rmm import NinjaOneClient, RmmReadResponse
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
@@ -142,6 +143,10 @@ def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
 
 
+def _ninjaone_client() -> NinjaOneClient:
+    return NinjaOneClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -184,6 +189,12 @@ def doctor() -> None:
     typer.echo(f"halopsa_configured={halopsa_configured}")
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
+    ninjaone_configured = bool(
+        settings.ninjaone_base_url
+        and settings.ninjaone_client_id
+        and settings.ninjaone_client_secret
+    )
+    typer.echo(f"ninjaone_configured={ninjaone_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -609,6 +620,7 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             settings,
             halopsa_client=_halopsa_client(),
             hudu_client=_hudu_client(),
+            ninjaone_client=_ninjaone_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -746,6 +758,47 @@ def hudu_folders(
     _print_hudu_response(
         "folders.list",
         _hudu_client().list_folders(company_id=company_id, page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("ninjaone-health")
+def ninjaone_health() -> None:
+    result = _ninjaone_client().health()
+    _audit_rmm_cli_read("ninjaone.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("ninjaone-devices")
+def ninjaone_devices(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "ninjaone.devices.list",
+        _ninjaone_client().list_devices(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("ninjaone-device")
+def ninjaone_device(device_id: str) -> None:
+    _print_rmm_response("ninjaone.device.get", _ninjaone_client().get_device(device_id))
+
+
+@connectors_app.command("ninjaone-alerts")
+def ninjaone_alerts(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "ninjaone.alerts.list",
+        _ninjaone_client().list_alerts(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("ninjaone-scripts")
+def ninjaone_scripts() -> None:
+    _print_rmm_response("ninjaone.scripts.list", _ninjaone_client().list_scripts())
+
+
+@connectors_app.command("ninjaone-script-preview")
+def ninjaone_script_preview(device_id: str, script_id: str) -> None:
+    _print_rmm_response(
+        "ninjaone.script.preview",
+        _ninjaone_client().preview_script(device_id, script_id),
     )
 
 
@@ -1358,12 +1411,23 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
         typer.echo(asdict(item))
 
 
+def _print_rmm_response(read_type: str, response: RmmReadResponse) -> None:
+    _audit_rmm_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
 
 def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+
+def _audit_rmm_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("rmm.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

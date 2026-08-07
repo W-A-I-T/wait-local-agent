@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA and Hudu HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, and NinjaOne HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -153,3 +153,42 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo. There is no Hudu write surface to enable.
+
+## NinjaOne RMM
+
+The public NinjaOne adapter is read-only. It lists devices, active alerts, and
+automation script metadata, and can create a redacted script execution preview.
+It never calls NinjaOne script execution or management endpoints.
+
+### Required settings
+
+```text
+WAIT_NINJAONE_BASE_URL=https://app.ninjarmm.com
+WAIT_NINJAONE_CLIENT_ID=
+WAIT_NINJAONE_CLIENT_SECRET=
+WAIT_NINJAONE_SCOPE=monitoring
+WAIT_NINJAONE_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Use a NinjaOne OAuth application with monitoring scope. Keep the client secret
+in the Fernet vault for appliance deployments:
+
+```bash
+wait-local-agent secrets set WAIT_NINJAONE_CLIENT_SECRET '<secret>'
+wait-local-agent connectors validate ninjaone
+```
+
+### Read and preview commands
+
+```bash
+wait-local-agent connectors ninjaone-health
+wait-local-agent connectors ninjaone-devices
+wait-local-agent connectors ninjaone-device <device-id>
+wait-local-agent connectors ninjaone-alerts
+wait-local-agent connectors ninjaone-scripts
+wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
+```
+
+The API equivalents are under `/connectors/ninjaone`. The script preview
+returns variable names only; variable values are never echoed or persisted.

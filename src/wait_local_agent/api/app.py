@@ -88,6 +88,7 @@ from wait_local_agent.reports.hardening_checks import HardeningContext, run_hard
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.rmm import NinjaOneClient, RmmReadResponse
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
@@ -230,6 +231,11 @@ class CollectorRunRequest(CollectorConfigRequest):
     confirm: bool = False
 
 
+class NinjaScriptPreviewRequest(BaseModel):
+    script_id: str = Field(min_length=1, max_length=200)
+    variables: dict[str, object] = Field(default_factory=dict)
+
+
 class PackInstallRequest(BaseModel):
     tarball_path: str = Field(validation_alias=AliasChoices("tarball_path", "tarball"))
     license_key: str | None = Field(
@@ -274,6 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    ninjaone_client = NinjaOneClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1691,6 +1698,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _hudu_response("folders.list", response)
 
+    @app.get("/connectors/ninjaone/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = ninjaone_client.health()
+        store.add_audit_event("rmm.read", "ninjaone.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/ninjaone/devices")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_devices(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.devices.list",
+            ninjaone_client.list_devices(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/ninjaone/devices/{device_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_device(device_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("ninjaone.device.get", ninjaone_client.get_device(device_id))
+
+    @app.get("/connectors/ninjaone/alerts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_alerts(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.alerts.list",
+            ninjaone_client.list_alerts(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/ninjaone/scripts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_scripts(request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("ninjaone.scripts.list", ninjaone_client.list_scripts())
+
+    @app.post("/connectors/ninjaone/devices/{device_id}/script-preview")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_script_preview(
+        device_id: str,
+        payload: NinjaScriptPreviewRequest,
+        request: Request,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.script.preview",
+            ninjaone_client.preview_script(device_id, payload.script_id, payload.variables),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2101,6 +2164,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "result": asdict(response.result),
             "items": [asdict(item) for item in response.items],
+        }
+
+    def _rmm_response(read_type: str, response: RmmReadResponse) -> dict[str, object]:
+        store.add_audit_event("rmm.read", read_type, f"{response.result.status} count={response.result.count}")
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
         }
 
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
