@@ -223,6 +223,11 @@ class SchedulerManager:
     def _register_live_job(self, scheduled_job: ScheduledJob) -> None:
         if self._scheduler is None or scheduled_job.id is None:
             return
+        if (
+            scheduled_job.schedule_type == "once"
+            and _parse_run_at(scheduled_job.run_at or "") <= datetime.now(UTC)
+        ):
+            return
         trigger = _schedule_trigger(scheduled_job)
         self._scheduler.add_job(
             self._build_job_callable(scheduled_job),

@@ -192,6 +192,26 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
     ) is not None
 
 
+def test_scheduler_does_not_replay_expired_one_time_jobs(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = Store(tmp_path / "state.db")
+        manager = SchedulerManager(store, enabled=True)
+        manager.start()
+        expired = store.create_scheduled_job(
+            "documentation-assisted-response",
+            "",
+            {"ticket_id": "TCK-1001"},
+            schedule_type="once",
+            run_at="2020-01-01T00:00:00+00:00",
+        )
+        manager._register_live_job(expired)  # noqa: SLF001
+        assert manager._scheduler is not None  # noqa: SLF001
+        assert manager._scheduler.get_job(manager._job_identity(expired.id or 0)) is None  # noqa: SLF001
+        manager.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_scheduler_ignores_jobs_without_runtime_identity(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     manager = SchedulerManager(store, enabled=True)
