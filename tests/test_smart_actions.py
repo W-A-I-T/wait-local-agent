@@ -33,6 +33,38 @@ def test_redacts_embedded_secrets_in_free_text_payload_values() -> None:
     assert payload == {"note": "token=[redacted] password=[redacted] secret=[redacted] key=[redacted] [redacted]"}
 
 
+def test_redacts_secret_key_tokens_without_substring_overreach() -> None:
+    payload = redact_value(
+        {
+            "key": "plain-secret",
+            "api-key": "hyphen-secret",
+            "APIKey": "camel-secret",
+            "passwordValue": "camel-password",
+            "passwd": "password-secret",
+            "authorization": "auth-secret",
+            "bearer": "bearer-secret",
+            "privateKey": "private-secret",
+            "monkey": "benign-monkey",
+            "keyboard": "benign-keyboard",
+            "tokenizer": "benign-tokenizer",
+        }
+    )
+
+    assert payload == {
+        "key": "[redacted]",
+        "api-key": "[redacted]",
+        "APIKey": "[redacted]",
+        "passwordValue": "[redacted]",
+        "passwd": "[redacted]",
+        "authorization": "[redacted]",
+        "bearer": "[redacted]",
+        "privateKey": "[redacted]",
+        "monkey": "benign-monkey",
+        "keyboard": "benign-keyboard",
+        "tokenizer": "benign-tokenizer",
+    }
+
+
 def test_event_history_redacts_legacy_payloads_at_read_time(settings) -> None:
     store = Store(settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
@@ -532,8 +564,12 @@ def test_smart_action_json_storage_redacts_secrets(settings) -> None:
         def run(self, context, payload):
             return ActionResult(
                 status="success",
-                output={"api_key": "raw-key", "nested": {"password": "raw-password"}},
-                evidence=[{"token": "raw-token"}],
+                output={
+                    "key": "raw-plain-key",
+                    "api-key": "raw-api-key",
+                    "nested": {"password": "raw-password"},
+                },
+                evidence=[{"privateKey": "raw-private-key", "token": "raw-token"}],
             )
 
     registry = SmartActionRegistry()
@@ -543,9 +579,49 @@ def test_smart_action_json_storage_redacts_secrets(settings) -> None:
         "secret-test", {"token": "payload-token"}, "actor"
     )
 
-    assert result.output["api_key"] == "[redacted]"
+    assert result.output["key"] == "[redacted]"
+    assert result.output["api-key"] == "[redacted]"
     assert result.evidence[0]["token"] == "[redacted]"
     run = store.get_smart_action_run(result.run_id or 0)
     assert run is not None
     assert "raw-key" not in run.output_json
     assert "raw-token" not in run.evidence_json
+    execution = store.list_execution_runs(run_kind="smart_action")[0]
+    artifact = store.list_execution_artifacts(execution.id or 0)[0]
+    artifact_bytes = Path(artifact.storage_path).read_bytes()
+    assert b"raw-private-key" not in artifact_bytes
+    assert b"raw-token" not in artifact_bytes
+
+
+def test_invoke_records_execution_row_with_ordered_steps(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    result = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
+
+    assert result.status == "success"
+    runs = store.list_execution_runs(run_kind="smart_action")
+    assert len(runs) == 1
+    assert runs[0].source_run_id == result.run_id
+    assert runs[0].status == "success"
+    steps = store.list_execution_steps(runs[0].id or 0)
+    assert [step.ordinal for step in steps] == [0]
+    assert steps[0].kind == "smart_action.invoke"
+    assert "TCK-1001" in steps[0].input_json
+
+
+def test_recorder_failure_does_not_change_action_outcome(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    def exploding_create(*args, **kwargs):
+        raise RuntimeError("recorder storage exploded")
+
+    monkeypatch.setattr(Store, "create_execution_run", exploding_create)
+
+    result = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
+
+    assert result.status == "success"
+    assert store.get_smart_action_run(result.run_id or 0) is not None

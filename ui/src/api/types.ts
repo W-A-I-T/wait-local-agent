@@ -229,6 +229,49 @@ export type ReportExport = {
   sections: Record<string, unknown>[];
 };
 
+export type EvidenceStatus = "not_run" | "no_evidence" | "partial" | "completed";
+
+export type HardeningCheckResult = {
+  id: number | null;
+  run_id: number;
+  check_id: string;
+  title: string;
+  scope: string;
+  severity: string;
+  status: string;
+  evidence: Record<string, unknown>;
+  remediation_hint: string | null;
+};
+
+export type HardeningRun = {
+  id: number | null;
+  status: string;
+  started_at: string;
+  completed_at: string;
+  expected_check_count: number;
+  result_count: number;
+  results: HardeningCheckResult[];
+};
+
+export type RestoreExercise = {
+  id: number | null;
+  exercise_id: string;
+  status: string;
+  target: string;
+  backup_artifact_id: string;
+  validation_json: string;
+  evidence_json: string;
+  started_at: string;
+  completed_at: string;
+};
+
+export type EvidenceReport = ReportSummary & {
+  title?: string;
+  evidence_status?: EvidenceStatus;
+  metadata?: Record<string, unknown>;
+  sections?: Record<string, unknown>[];
+};
+
 export type AuditEvent = {
   id: number;
   event_type: string;

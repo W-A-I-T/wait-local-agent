@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch } from "../../api/client";
+import { ApiRequestError, apiFetch } from "../../api/client";
 import {
   projectFounderResults,
   projectFounderScan,
@@ -58,9 +58,15 @@ export function FounderJourney() {
     }
   }
 
+  function isFounderUnavailable(error: unknown): boolean {
+    return error instanceof ApiRequestError && error.status === 501;
+  }
+
   function handleFounderError(error: unknown) {
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    if (/http 501/.test(message)) {
+    const message = error instanceof Error
+      ? `${error.message} ${error instanceof ApiRequestError ? error.technicalDetail : ""}`.toLowerCase()
+      : "";
+    if (isFounderUnavailable(error) || /http 501/.test(message)) {
       setMissingPack(true);
       setStatusMessage("This journey needs the Founder Pack. Install it from Settings, then return here.");
       return;

@@ -20,13 +20,16 @@ from wait_local_agent.lp_client import (
     LAUNCH_PASSPORT_UPLOAD_STATES,
     LaunchPassportClient,
     LaunchPassportForbidden,
+    LaunchPassportInsufficientCredits,
     LaunchPassportPayloadTooLarge,
+    LaunchPassportRateLimited,
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
     normalize_upstream_state,
     scrub_upstream_value,
     validate_launch_passport_base_url,
 )
+from wait_local_agent.lp_polling import PollOutcome, poll_scan
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -65,6 +68,10 @@ class FounderScanRequest(BaseModel):
 
 class FounderUploadRequest(BaseModel):
     confirm: bool
+
+
+class FounderLaunchRequest(BaseModel):
+    artifact_id: str | None = None
 
 
 def create_router() -> APIRouter:
@@ -159,6 +166,18 @@ def create_router() -> APIRouter:
         settings, _store, config = require_open_config(request)
         return open_founder_results(settings, config)
 
+    @router.post("/founder/launch-scan")
+    def founder_launch_scan(
+        request: Request,
+        _: AdminAccess,
+        payload: FounderLaunchRequest | None = None,
+    ) -> dict[str, object]:
+        pack = get_pack("founder")
+        if pack is not None:
+            return json_object(invoke_founder(pack, "launch_scan"), operation="launch_scan")
+        settings, store, config = require_open_config(request)
+        return open_founder_launch_scan(settings, store, config, payload.artifact_id if payload else None)
+
     return router
 
 
@@ -183,6 +202,10 @@ def launch_passport_error_handler(_: Request, exc: Exception) -> JSONResponse:
         code = status.HTTP_401_UNAUTHORIZED
     elif isinstance(exc, LaunchPassportForbidden):
         code = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, LaunchPassportInsufficientCredits):
+        code = status.HTTP_402_PAYMENT_REQUIRED
+    elif isinstance(exc, LaunchPassportRateLimited):
+        code = status.HTTP_429_TOO_MANY_REQUESTS
     elif isinstance(exc, LaunchPassportPayloadTooLarge):
         code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
     elif isinstance(exc, LaunchPassportRequestError):
@@ -214,6 +237,7 @@ def resolve_founder_member(pack: LoadedPack, operation: str):
         "upload": ("upload_bundle", "upload"),
         "lp_status": ("get_lp_status", "lp_status"),
         "results": ("get_results", "results", "list_results"),
+        "launch_scan": ("launch_scan", "start_scan"),
     }
     for name in candidate_names[operation]:
         candidate = getattr(pack.module, name, None)
@@ -352,8 +376,24 @@ def open_founder_upload(
             result = client.upload_bundle(config["lp_project_id"], bundle)
         except (LaunchPassportUnauthorized, LaunchPassportForbidden, LaunchPassportPayloadTooLarge):
             raise
+        raw_result = getattr(result, "payload", None)
+        result_payload = _sanitize_client_value(
+            client,
+            raw_result if isinstance(raw_result, dict) else result.as_dict(),
+        )
+        if not isinstance(result_payload, dict):
+            result_payload = result.as_dict()
     store.mark_founder_artifact_uploaded(artifact_id)
-    return project_founder_upload(_sanitize_client_value(client, result.as_dict()))
+    scan_id = _scan_id_from_payload(result_payload)
+    if scan_id:
+        store.update_founder_artifact_remote(
+            artifact_id,
+            scan_id=scan_id,
+            scan_status=_scan_status_from_payload(result_payload),
+            scan=result_payload,
+            polling_status="queued",
+        )
+    return project_founder_upload(result_payload)
 
 
 def open_founder_status(settings: Settings, config: dict[str, str]) -> dict[str, object]:
@@ -364,16 +404,91 @@ def open_founder_status(settings: Settings, config: dict[str, str]) -> dict[str,
 
 def open_founder_results(settings: Settings, config: dict[str, str]) -> dict[str, object]:
     with _open_client(settings, config) as client:
-        payload = {
-            "scans": _sanitize_client_value(client, client.list_scans(config["lp_project_id"])),
-            "latest_report": _sanitize_client_value(client, client.latest_report(config["lp_project_id"])),
-        }
-    return project_founder_results(payload, project_id=config["lp_project_id"])
+        scans = _safe_remote_call(
+            lambda: _sanitize_client_value(client, client.list_scans(config["lp_project_id"])),
+            capability="scan_results",
+        )
+        latest_report = _safe_remote_call(
+            lambda: _sanitize_client_value(client, client.latest_report(config["lp_project_id"])),
+            capability="latest_report",
+        )
+        status_payload = client.status()
+    projected = project_founder_results(
+        {"scans": scans, "latest_report": latest_report},
+        project_id=config["lp_project_id"],
+    )
+    if _is_remote_result_error(scans):
+        projected["scans"] = scans
+    if _is_remote_result_error(latest_report):
+        projected["latest_report"] = latest_report
+    latest_report_reference = _report_reference(latest_report)
+    if latest_report_reference:
+        projected["latest_report_reference"] = latest_report_reference
+    capability = _launch_capability(status_payload)
+    if capability.get("status") != "available":
+        projected["capability"] = capability
+    return projected
 
 
 def _sanitize_client_value(client: object, value: object) -> object:
     sanitizer = getattr(client, "sanitize_upstream", None)
     return sanitizer(value) if callable(sanitizer) else scrub_upstream_value(value)
+
+
+def _is_remote_result_error(value: object) -> bool:
+    return isinstance(value, dict) and value.get("status") in {
+        "not_authorized",
+        "unavailable",
+        "insufficient_credits",
+        "rate_limited",
+    }
+
+
+def open_founder_launch_scan(
+    settings: Settings,
+    store: Store,
+    config: dict[str, str],
+    artifact_id: str | None = None,
+) -> dict[str, object]:
+    with _open_client(settings, config) as client:
+        result = _sanitize_client_value(client, client.launch_scan(config["lp_project_id"]))
+    if not isinstance(result, dict):
+        raise FounderPackContractError("Launch Passport launch scan must return an object")
+    response = {"project_id": config["lp_project_id"], **result}
+    if result.get("status") == "not_authorized":
+        response["guidance"] = "This token cannot launch scans; finish the scan in Launch Passport."
+    scan_id = _scan_id_from_payload(result)
+    if artifact_id and scan_id:
+        store.update_founder_artifact_remote(
+            artifact_id,
+            scan_id=scan_id,
+            scan_status=_scan_status_from_payload(result),
+            scan=result,
+            polling_status="queued",
+        )
+    return response
+
+
+def watch_founder_scan(
+    settings: Settings,
+    store: Store,
+    config: dict[str, str],
+    scan_id: str,
+    *,
+    artifact_id: str | None = None,
+    max_duration: float = 3600.0,
+    max_attempts: int = 120,
+) -> dict[str, object]:
+    with _open_client(settings, config) as client:
+        outcome = poll_scan(
+            client,
+            config["lp_project_id"],
+            scan_id,
+            max_duration=max_duration,
+            max_attempts=max_attempts,
+        )
+    _persist_poll_outcome(store, artifact_id, outcome)
+    return outcome.as_dict()
 
 
 def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportClient:
@@ -386,6 +501,88 @@ def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportCl
             return None
 
     return LaunchPassportClient(config["lp_base_url"], token_provider)
+
+
+def _persist_poll_outcome(store: Store, artifact_id: str | None, outcome: PollOutcome) -> None:
+    if not artifact_id:
+        return
+    report_reference = _report_reference(outcome.report)
+    store.update_founder_artifact_remote(
+        artifact_id,
+        scan_id=outcome.scan_id,
+        scan_status=_scan_status_from_payload(outcome.scan or {}),
+        scan=outcome.scan,
+        report_reference=report_reference,
+        report=outcome.report,
+        polling_status=outcome.status,
+    )
+
+
+def _safe_remote_call(call: Any, *, capability: str) -> object:
+    try:
+        return call()
+    except LaunchPassportForbidden:
+        return {"status": "not_authorized", "capability": capability}
+    except LaunchPassportUnauthorized:
+        return {"status": "unavailable", "error": "Launch Passport token was rejected"}
+    except LaunchPassportInsufficientCredits:
+        return {"status": "insufficient_credits", "capability": capability}
+    except LaunchPassportRateLimited as exc:
+        return {"status": "rate_limited", "retry_after": exc.retry_after, "capability": capability}
+    except LaunchPassportRequestError:
+        return {"status": "unavailable", "error": "Launch Passport request failed"}
+
+
+def _launch_capability(status_payload: object) -> dict[str, object]:
+    if not isinstance(status_payload, dict):
+        return {"status": "unknown"}
+    capabilities = status_payload.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return {"status": "unknown"}
+    available = capabilities.get("launch_scan", capabilities.get("scan:launch"))
+    if available is True:
+        return {"status": "available", "scope": "scan:launch"}
+    if available is False:
+        return {
+            "status": "not_authorized",
+            "scope": "scan:launch",
+            "guidance": "This token cannot launch scans; finish the scan in Launch Passport.",
+        }
+    return {"status": "unknown", "scope": "scan:launch"}
+
+
+def _scan_id_from_payload(payload: dict[str, Any]) -> str:
+    nested = payload.get("scan")
+    if isinstance(nested, dict):
+        for key in ("scanId", "scan_id", "id"):
+            value = nested.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("scanId", "scan_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _scan_status_from_payload(payload: dict[str, Any]) -> str:
+    nested = payload.get("scan")
+    candidate = nested if isinstance(nested, dict) else payload
+    value = candidate.get("status") or candidate.get("state")
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _report_reference(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("reportId", "report_id", "id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    report = payload.get("report")
+    if isinstance(report, dict):
+        return _report_reference(report)
+    return ""
 
 
 def _open_env_keys(bundle: dict[str, Any]) -> list[str]:

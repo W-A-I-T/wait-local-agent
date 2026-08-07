@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from wait_local_agent.models import Ticket, WorkflowRun, WorkflowTemplate
+from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import Store
 
@@ -72,6 +73,8 @@ def run_workflow_template(
     ticket_id: str,
     *,
     client_id: str | None = None,
+    actor: str = "",
+    trigger_source: str = "workflow",
 ) -> WorkflowRun:
     template = get_workflow_template(template_id)
     if template is None:
@@ -98,13 +101,44 @@ def run_workflow_template(
         approval_request_id = approval.id
         status = "pending_approval"
 
-    return store.create_workflow_run(
+    run = store.create_workflow_run(
         template_id=template.id,
         ticket_id=ticket.id,
         status=status,
         message=message,
         approval_request_id=approval_request_id,
         client_id=effective_client_id,
+    )
+    _record_workflow_execution(store, run, actor=actor, trigger_source=trigger_source)
+    return run
+
+
+def _record_workflow_execution(
+    store: Store,
+    run: WorkflowRun,
+    *,
+    actor: str,
+    trigger_source: str,
+) -> None:
+    """Record the run for observability; never changes the run outcome."""
+    step = StepRecord(
+        kind="workflow.template",
+        name=run.template_id,
+        status=run.status,
+        input={"template_id": run.template_id, "ticket_id": run.ticket_id},
+        output={
+            "message": run.message,
+            "approval_request_id": run.approval_request_id,
+        },
+    )
+    ExecutionRecorder(store).record_execution(
+        run_kind="workflow",
+        source_run_id=run.id,
+        actor=actor,
+        status=run.status,
+        trigger_source=trigger_source,
+        client_id=run.client_id,
+        steps=(step,),
     )
 
 

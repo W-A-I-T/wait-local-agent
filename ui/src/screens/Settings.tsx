@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import { projectLaunchPassportStatus } from "../api/founder";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
@@ -61,7 +61,7 @@ export function Settings() {
       }
       setStatusMessage("Settings loaded.");
     } catch (error) {
-      if (error instanceof Error && /403/.test(error.message)) {
+      if (error instanceof ApiRequestError && error.status === 403) {
         setStatusMessage("Insufficient role for admin settings.");
         return;
       }
@@ -377,5 +377,6 @@ export function Settings() {
 }
 
 function isLaunchPassportNotConfigured(error: unknown): boolean {
-  return error instanceof Error && /HTTP 409|not configured/i.test(error.message);
+  return error instanceof ApiRequestError
+    && (error.status === 409 || /not configured/i.test(`${error.message} ${error.technicalDetail}`));
 }

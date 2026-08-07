@@ -9,7 +9,9 @@ import wait_local_agent.lp_client as lp_client_module
 from wait_local_agent.lp_client import (
     LaunchPassportClient,
     LaunchPassportForbidden,
+    LaunchPassportInsufficientCredits,
     LaunchPassportPayloadTooLarge,
+    LaunchPassportRateLimited,
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
     validate_launch_passport_base_url,
@@ -50,6 +52,25 @@ def test_launch_scan_turns_forbidden_into_capability_state() -> None:
             "status": "not_authorized",
             "capability": "launch_scan",
         }
+
+
+def test_get_scan_uses_contract_endpoint_and_maps_credit_and_rate_errors() -> None:
+    def scan_handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/scans/scan-1"
+        return httpx.Response(200, json={"id": "scan-1", "status": "running"})
+
+    with _client(scan_handler) as client:
+        assert client.get_scan("scan-1") == {"id": "scan-1", "status": "running"}
+
+    with _client(lambda _request: httpx.Response(402)) as client:
+        with pytest.raises(LaunchPassportInsufficientCredits):
+            client.get_scan("scan-1")
+
+    with _client(lambda _request: httpx.Response(429, headers={"Retry-After": "17"})) as client:
+        with pytest.raises(LaunchPassportRateLimited) as raised:
+            client.get_scan("scan-1")
+    assert raised.value.retry_after == 17.0
 
 
 def test_get_retries_transient_failures_and_preserves_bearer_header(monkeypatch) -> None:
