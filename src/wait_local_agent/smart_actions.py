@@ -247,6 +247,81 @@ class KnowledgeSearchAction:
         )
 
 
+class M365IdentityContextAction:
+    manifest = SmartActionManifest(
+        action_id="m365-identity-context",
+        title="M365 identity context",
+        description="Read persisted Microsoft 365 identity inventory from a completed, tenant-scoped collector run.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["collector_run_id"],
+            "properties": {"collector_run_id": "integer", "limit": "integer"},
+        },
+        output_schema={"identities": "array", "collector_run_id": "integer", "count": "integer"},
+        requires_approval=False,
+        estimated_minutes_saved=6,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        run_id = payload.get("collector_run_id")
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+            return _failed("collector_run_id must be a positive integer")
+        run = context.store.get_collector_run(run_id)
+        if run is None:
+            return _failed("collector_run_id must identify an existing collector run")
+        if context.client_id is not None and run.client_id != context.client_id:
+            return _failed("collector run is outside the tenant scope")
+        if run.module_id != "cloud-m365":
+            return _failed("collector run is not a Microsoft 365 inventory run")
+        if run.status != "completed":
+            return _failed("Microsoft 365 inventory run is not completed")
+        try:
+            result = json.loads(run.result_json)
+        except json.JSONDecodeError:
+            return _failed("Microsoft 365 inventory run has malformed persisted results")
+        if not isinstance(result, dict):
+            return _failed("Microsoft 365 inventory run has invalid persisted results")
+        raw_assets = result.get("assets", [])
+        if not isinstance(raw_assets, list):
+            return _failed("Microsoft 365 inventory run has invalid identity results")
+        limit = payload.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            return _failed("limit must be an integer between 1 and 100")
+        matching_assets = [
+            asset
+            for asset in raw_assets
+            if isinstance(asset, dict) and str(asset.get("asset_type", "")).startswith("m365-")
+        ]
+        identities: list[dict[str, object]] = []
+        for asset in matching_assets:
+            attributes = asset.get("attributes", {})
+            identities.append(
+                {
+                    "asset_id": str(asset.get("canonical_id", "")),
+                    "asset_type": str(asset.get("asset_type", "")),
+                    "display_name": str(asset.get("display_name", "")),
+                    "attributes": dict(attributes) if isinstance(attributes, dict) else {},
+                }
+            )
+        identities = identities[:limit]
+        evidence = [{"type": "m365_collector_run", "collector_run_id": run_id, "client_id": run.client_id}]
+        return ActionResult(
+            status="success",
+            output={
+                "collector_run_id": run_id,
+                "identities": identities,
+                "count": len(identities),
+                "truncated": len(identities) < len(matching_assets),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=evidence,
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -405,6 +480,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketSummaryAction(),
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
+        M365IdentityContextAction(),
         TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

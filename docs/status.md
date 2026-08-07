@@ -29,6 +29,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   NinjaOne management mutations remain disabled.
 - Autotask PSA read-only ticket and company inventory; mutation endpoints remain
   disabled.
+- The `m365-identity-context` agent tool can read only completed, tenant-scoped
+  Microsoft 365 collector runs; Graph mutation paths remain disabled.
 - Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
   CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.

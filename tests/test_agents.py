@@ -58,6 +58,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "suggest-resolution",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-identity-context",
         "ticket-quality",
         "dispatch-suggestion",
     }

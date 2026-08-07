@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -15,6 +16,7 @@ from wait_local_agent.smart_actions import (
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
+    M365IdentityContextAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -168,6 +170,53 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert quality.output["passed"] is True
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
+
+
+def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settings) -> None:
+    store = Store(settings.data_path)
+    run = store.create_collector_run(
+        module_id="cloud-m365",
+        source_id=None,
+        status="running",
+        mode="confirmed",
+        scope={"read_only": True},
+        preview={},
+        client_id="acme",
+        actor_id="technician",
+    )
+    assert run.id is not None
+    store.complete_collector_run(
+        run.id,
+        "completed",
+        result={
+            "assets": [
+                {
+                    "canonical_id": "m365:user:u1",
+                    "asset_type": "m365-user",
+                    "display_name": "User One",
+                    "attributes": {"user_principal_name": "user@example.test"},
+                },
+                {"canonical_id": "host:1", "asset_type": "host", "display_name": "Host"},
+            ]
+        },
+    )
+    context = _action_context(store, settings, client_id="acme")
+    result = M365IdentityContextAction().run(context, {"collector_run_id": run.id})
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.output["truncated"] is False
+    assert result.output["identities"][0]["asset_id"] == "m365:user:u1"  # type: ignore[index]
+
+    for payload, message in (
+        ({"collector_run_id": run.id, "limit": 0}, "between 1 and 100"),
+        ({"collector_run_id": run.id + 1}, "existing collector run"),
+    ):
+        failed = M365IdentityContextAction().run(context, cast(dict[str, object], payload))
+        assert failed.status == "failed"
+        assert message in failed.error_detail
+    assert "tenant scope" in M365IdentityContextAction().run(
+        _action_context(store, settings, client_id="other"), {"collector_run_id": run.id}
+    ).error_detail
 
     actions = (
         TicketTriageAction(),
@@ -389,6 +438,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-identity-context",
         "suggest-resolution",
         "ticket-quality",
         "ticket-summary",
