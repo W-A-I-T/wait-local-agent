@@ -10,13 +10,16 @@ from typing import Any, cast
 
 import pytest
 
+import wait_local_agent.observability as observability
 from wait_local_agent.models import utc_now
 from wait_local_agent.observability import (
     EXECUTION_STEP_PAYLOAD_CAP_BYTES,
     ArtifactRecord,
     ExecutionRecorder,
     StepRecord,
+    _artifact_dir_fd_supported,
     _capped_payload_json,
+    _verify_existing_artifact_at_fd,
     build_analytics_summary,
 )
 from wait_local_agent.rbac import Role
@@ -526,6 +529,186 @@ def test_artifact_path_assertion_rejects_symlink_shard_inside_root(tmp_path: Pat
         ExecutionRecorder._assert_artifact_path(shard / "digest", root)
 
 
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(), reason="directory-FD-relative operations are unavailable"
+)
+def test_artifact_ancestor_swap_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    store = Store(tmp_path / "state.db")
+    artifacts_dir = tmp_path / "artifacts"
+    recorder = ExecutionRecorder(store, artifacts_dir=artifacts_dir)
+    content = b"ancestor swap"
+    digest = hashlib.sha256(content).hexdigest()
+    shard = artifacts_dir / digest[:2]
+    shard.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    replacement = artifacts_dir / "original-shard"
+    original_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if not swapped and dir_fd is not None and path == digest[:2]:
+            shard.rename(replacement)
+            shard.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: True)
+    monkeypatch.setattr(os, "open", swapping_open)
+    run_id = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    )
+
+    assert swapped
+    assert run_id is None
+    assert list(outside.iterdir()) == []
+    assert list(replacement.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(), reason="directory-FD-relative operations are unavailable"
+)
+def test_artifact_destination_race_is_not_silently_overwritten(
+    tmp_path: Path, monkeypatch
+) -> None:
+    content = b"intended content"
+    path = tmp_path / hashlib.sha256(content).hexdigest()
+    original_link = os.link
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+    def racing_link(*args, **kwargs):
+        path.write_bytes(b"racing destination")
+        return original_link(*args, **kwargs)
+
+    monkeypatch.setattr(os, "link", racing_link)
+    try:
+        with pytest.raises(RuntimeError, match="digest mismatch"):
+            ExecutionRecorder._write_artifact_atomically(
+                path, content, directory_fd=directory_fd
+            )
+    finally:
+        os.close(directory_fd)
+
+    assert path.read_bytes() == b"racing destination"
+
+
+def test_artifact_record_uses_documented_fallback_without_dir_fd(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"path fallback"
+
+    run_id = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    )
+
+    assert run_id is not None
+    artifact = store.list_execution_artifacts(run_id)[0]
+    assert Path(artifact.storage_path).read_bytes() == content
+
+
+def test_fallback_rejects_symlink_destination_and_invalid_existing_file(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    store = Store(settings.data_path)
+    artifacts_dir = tmp_path / "artifacts"
+    recorder = ExecutionRecorder(store, artifacts_dir=artifacts_dir)
+    content = b"fallback content"
+    digest = hashlib.sha256(content).hexdigest()
+    shard = artifacts_dir / digest[:2]
+    shard.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_bytes(content)
+    (shard / digest).symlink_to(outside)
+
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=1, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+    (shard / digest).unlink()
+    (shard / digest).write_bytes(b"wrong")
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=2, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+
+def test_fallback_reaches_destination_symlink_check(settings, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    monkeypatch.setattr(ExecutionRecorder, "_assert_artifact_path", staticmethod(lambda *_args: None))
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"symlink destination"
+    digest = hashlib.sha256(content).hexdigest()
+    shard = tmp_path / "artifacts" / digest[:2]
+    shard.mkdir(parents=True)
+    target = tmp_path / "target"
+    target.write_bytes(content)
+    (shard / digest).symlink_to(target)
+
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=1, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+
+def test_fallback_rejects_existing_directory_at_artifact_path(settings, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"directory destination"
+    digest = hashlib.sha256(content).hexdigest()
+    path = tmp_path / "artifacts" / digest[:2] / digest
+    path.parent.mkdir(parents=True)
+    path.mkdir()
+
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=1, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+
+def test_fallback_record_reconciles_existing_valid_artifact(settings, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"already present"
+    digest = hashlib.sha256(content).hexdigest()
+    path = tmp_path / "artifacts" / digest[:2] / digest
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+
+    run_id = recorder.record_execution(
+        run_kind="workflow", source_run_id=1, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    )
+    assert run_id is not None
+
+
+def test_artifact_path_assertion_rejects_escape(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    with pytest.raises(RuntimeError, match="escapes"):
+        ExecutionRecorder._assert_artifact_path(tmp_path / "outside" / "digest", root)
+
+
 def test_atomic_artifact_write_reconciles_existing_valid_file(tmp_path: Path, monkeypatch) -> None:
     content = b"same content"
     path = tmp_path / hashlib.sha256(content).hexdigest()
@@ -535,6 +718,84 @@ def test_atomic_artifact_write_reconciles_existing_valid_file(tmp_path: Path, mo
 
     ExecutionRecorder._write_artifact_atomically(path, content)
     assert path.read_bytes() == content
+
+
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(), reason="directory-FD-relative operations are unavailable"
+)
+def test_descriptor_artifact_write_reconciles_existing_valid_file(tmp_path: Path, monkeypatch) -> None:
+    content = b"same descriptor content"
+    path = tmp_path / hashlib.sha256(content).hexdigest()
+    original_link = os.link
+
+    def racing_link(*args, **kwargs):
+        path.write_bytes(content)
+        return original_link(*args, **kwargs)
+
+    monkeypatch.setattr(os, "link", racing_link)
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        ExecutionRecorder._write_artifact_atomically(path, content, directory_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    assert path.read_bytes() == content
+
+
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(), reason="directory-FD-relative operations are unavailable"
+)
+def test_descriptor_verification_rejects_symlink_and_non_regular_file(tmp_path: Path, monkeypatch) -> None:
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    path = tmp_path / ("a" * 64)
+    original_open = os.open
+    try:
+        def symlink_open(*_args, **_kwargs):
+            raise OSError(observability.errno.ELOOP, "symlink")
+
+        monkeypatch.setattr(os, "open", symlink_open)
+        with pytest.raises(RuntimeError, match="symlink artifact path"):
+            _verify_existing_artifact_at_fd(directory_fd, path.name, path)
+
+        def inaccessible_open(*_args, **_kwargs):
+            raise OSError("inaccessible")
+
+        monkeypatch.setattr(os, "open", inaccessible_open)
+        with pytest.raises(RuntimeError, match="digest mismatch"):
+            _verify_existing_artifact_at_fd(directory_fd, path.name, path)
+
+        monkeypatch.setattr(os, "open", original_open)
+        path.mkdir()
+        with pytest.raises(RuntimeError, match="digest mismatch"):
+            _verify_existing_artifact_at_fd(directory_fd, path.name, path)
+    finally:
+        os.close(directory_fd)
+
+
+def test_descriptor_artifact_temp_creation_failure_is_propagated(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "artifact"
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    monkeypatch.setattr(os, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("no temp")))
+    try:
+        with pytest.raises(OSError, match="no temp"):
+            observability._write_artifact_at_fd(directory_fd, path.name, path, b"content")
+    finally:
+        os.close(directory_fd)
+
+
+def test_recorder_failure_and_empty_result_are_swallowed(settings, monkeypatch) -> None:
+    recorder = ExecutionRecorder(Store(settings.data_path))
+    monkeypatch.setattr(recorder, "_record_execution", lambda **_kwargs: None)
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=None, actor="tech", status="completed", trigger_source="test"
+    ) is None
+
+    def fail(**_kwargs):
+        raise RuntimeError("recording failed")
+
+    monkeypatch.setattr(recorder, "_record_execution", fail)
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=None, actor="tech", status="completed", trigger_source="test"
+    ) is None
 
 
 def test_atomic_artifact_write_closes_descriptor_when_opening_handle_fails(
@@ -559,6 +820,37 @@ def test_atomic_artifact_write_rejects_racing_invalid_file(tmp_path: Path, monke
 
     with pytest.raises(RuntimeError, match="digest mismatch"):
         ExecutionRecorder._write_artifact_atomically(path, content)
+
+
+def test_fallback_atomic_write_reconciles_valid_and_rejects_invalid_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    content = b"fallback same content"
+    path = tmp_path / hashlib.sha256(content).hexdigest()
+    path.write_bytes(content)
+    monkeypatch.setattr(os, "rename", lambda *_args: (_ for _ in ()).throw(FileExistsError))
+    ExecutionRecorder._write_artifact_atomically(path, content)
+
+    path.write_bytes(b"fallback wrong content")
+    with pytest.raises(RuntimeError, match="digest mismatch"):
+        ExecutionRecorder._write_artifact_atomically(path, content)
+
+
+def test_fallback_atomic_write_closes_descriptor_when_handle_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+    closed: list[int] = []
+    monkeypatch.setattr(os, "fdopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("temporary")))
+    original_close = os.close
+
+    def close(descriptor: int) -> None:
+        closed.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "close", close)
+    with pytest.raises(OSError, match="temporary"):
+        ExecutionRecorder._write_artifact_atomically(tmp_path / "artifact", b"content")
+    assert closed
 
 
 def test_list_execution_runs_filters(settings) -> None:

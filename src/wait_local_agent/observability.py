@@ -9,10 +9,12 @@ smart-action manifests, never measurements.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
 import os
+import stat
 import threading
 import uuid
 from dataclasses import dataclass
@@ -198,16 +200,34 @@ class ExecutionRecorder:
         digest = hashlib.sha256(artifact.content).hexdigest()
         root = self._artifact_root()
         path = root / digest[:2] / digest
-        if not path.parent.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-        self._assert_artifact_path(path, root)
-        if path.is_symlink():
-            raise RuntimeError(f"refusing symlink artifact path: {path}")
-        if path.exists():
-            if not path.is_file() or _sha256_file(path) != digest:
-                raise RuntimeError(f"existing artifact digest mismatch: {path}")
+        if _artifact_dir_fd_supported():
+            # Keep the root and every shard component anchored by descriptors.
+            # No path-based validation is used between opening a directory and
+            # creating or publishing the artifact beneath it.
+            root_fd = os.open(root, _artifact_directory_flags())
+            try:
+                shard_fd = _open_artifact_shard(root_fd, digest[:2])
+                try:
+                    self._write_artifact_atomically(
+                        path, artifact.content, directory_fd=shard_fd
+                    )
+                finally:
+                    os.close(shard_fd)
+            finally:
+                os.close(root_fd)
         else:
-            self._write_artifact_atomically(path, artifact.content)
+            # Platforms without the required dir_fd APIs retain the previous
+            # path-based behavior. Their artifact directory must be trusted.
+            if not path.parent.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+            self._assert_artifact_path(path, root)
+            if path.is_symlink():
+                raise RuntimeError(f"refusing symlink artifact path: {path}")
+            if path.exists():
+                if not path.is_file() or _sha256_file(path) != digest:
+                    raise RuntimeError(f"existing artifact digest mismatch: {path}")
+            else:
+                self._write_artifact_atomically(path, artifact.content)
         self.store.add_execution_artifact(
             execution_run_id,
             artifact.step_ordinal,
@@ -222,7 +242,9 @@ class ExecutionRecorder:
         if self.artifacts_dir.is_symlink():
             raise RuntimeError("refusing symlink artifact directory")
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        return self.artifacts_dir.resolve()
+        # Keep symlinks visible until the descriptor-relative open can reject
+        # a root that was swapped after the initial check.
+        return self.artifacts_dir.absolute()
 
     @staticmethod
     def _assert_artifact_path(path: Path, root: Path) -> None:
@@ -232,26 +254,132 @@ class ExecutionRecorder:
             raise RuntimeError("refusing symlink artifact shard directory")
 
     @staticmethod
-    def _write_artifact_atomically(path: Path, content: bytes) -> None:
-        temp_path = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-        file_descriptor = os.open(temp_path, flags, 0o600)
-        try:
-            with os.fdopen(file_descriptor, "wb") as handle:
-                file_descriptor = -1
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
+    def _write_artifact_atomically(
+        path: Path, content: bytes, *, directory_fd: int | None = None
+    ) -> None:
+        """Write an artifact without replacing a destination file.
+
+        The descriptor-relative path is used on platforms that support all
+        required operations. The path-based implementation below is retained
+        only as the documented compatibility fallback for other platforms.
+        """
+        if directory_fd is not None:
+            _write_artifact_at_fd(directory_fd, path.name, path, content)
+            return
+        if _artifact_dir_fd_supported():
+            directory_fd = os.open(path.parent, _artifact_directory_flags())
             try:
-                os.rename(temp_path, path)
-            except FileExistsError:
-                if path.is_symlink() or not path.is_file() or _sha256_file(path) != path.name:
-                    raise RuntimeError(f"existing artifact digest mismatch: {path}") from None
-                temp_path.unlink(missing_ok=True)
-        finally:
-            if file_descriptor >= 0:
-                os.close(file_descriptor)
+                _write_artifact_at_fd(directory_fd, path.name, path, content)
+            finally:
+                os.close(directory_fd)
+            return
+        _write_artifact_path_based(path, content)
+
+
+def _artifact_dir_fd_supported() -> bool:
+    """Return whether artifact writes can be anchored to directory FDs."""
+    required_dir_fd_operations = (os.open, os.mkdir, os.link, os.unlink)
+    return bool(
+        getattr(os, "O_DIRECTORY", 0)
+        and getattr(os, "O_NOFOLLOW", 0)
+        and all(operation in os.supports_dir_fd for operation in required_dir_fd_operations)
+        and os.link in os.supports_follow_symlinks
+    )
+
+
+def _artifact_directory_flags() -> int:
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _open_artifact_shard(root_fd: int, shard_name: str) -> int:
+    try:
+        os.mkdir(shard_name, 0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    return os.open(shard_name, _artifact_directory_flags(), dir_fd=root_fd)
+
+
+def _write_artifact_at_fd(
+    directory_fd: int, artifact_name: str, path: Path, content: bytes
+) -> None:
+    temp_name = f".{artifact_name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    file_descriptor = os.open(temp_name, flags, 0o600, dir_fd=directory_fd)
+    try:
+        with os.fdopen(file_descriptor, "wb") as handle:
+            file_descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # link() fails if the destination exists; unlike rename(), it can
+            # never silently replace a destination that raced this write.
+            os.link(
+                temp_name,
+                artifact_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            _verify_existing_artifact_at_fd(directory_fd, artifact_name, path)
+        else:
+            os.unlink(temp_name, dir_fd=directory_fd)
+    finally:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        try:
+            os.unlink(temp_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+
+
+def _verify_existing_artifact_at_fd(directory_fd: int, artifact_name: str, path: Path) -> None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    try:
+        file_descriptor = os.open(artifact_name, flags, dir_fd=directory_fd)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == getattr(errno, "ELOOP", 40):
+            raise RuntimeError(f"refusing symlink artifact path: {path}") from exc
+        raise RuntimeError(f"existing artifact digest mismatch: {path}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+            raise RuntimeError(f"existing artifact digest mismatch: {path}")
+        if _sha256_fd(file_descriptor) != path.name:
+            raise RuntimeError(f"existing artifact digest mismatch: {path}")
+    finally:
+        os.close(file_descriptor)
+
+
+def _sha256_fd(file_descriptor: int) -> str:
+    digest = hashlib.sha256()
+    os.lseek(file_descriptor, 0, os.SEEK_SET)
+    for chunk in iter(lambda: os.read(file_descriptor, 1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_artifact_path_based(path: Path, content: bytes) -> None:
+    """Compatibility fallback for platforms without descriptor-relative APIs."""
+    temp_path = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    file_descriptor = os.open(temp_path, flags, 0o600)
+    try:
+        with os.fdopen(file_descriptor, "wb") as handle:
+            file_descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.rename(temp_path, path)
+        except FileExistsError:
+            if path.is_symlink() or not path.is_file() or _sha256_file(path) != path.name:
+                raise RuntimeError(f"existing artifact digest mismatch: {path}") from None
             temp_path.unlink(missing_ok=True)
+    finally:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        temp_path.unlink(missing_ok=True)
 
 
 def _capped_payload_json(value: object) -> tuple[str, str]:
