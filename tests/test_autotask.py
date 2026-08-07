@@ -144,7 +144,12 @@ def test_autotask_security_and_normalization_edges(settings) -> None:
         _configured(settings),
         transport=httpx.MockTransport(lambda request: httpx.Response(500)),
     ).health().status == "failed"
-    assert AutotaskClient(replace(_configured(settings), autotask_secret="")).list_tickets().result.status == "not_configured"
+    assert (
+        AutotaskClient(replace(_configured(settings), autotask_secret=""))
+        .list_tickets()
+        .result.status
+        == "not_configured"
+    )
     assert AutotaskClient(_configured(settings)).get_company("bad/id").result.status == "failed"
     with pytest.raises(AutotaskReadError):
         AutotaskClient(replace(_configured(settings), autotask_secret=""))._get("Tickets/query")
