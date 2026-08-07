@@ -13,10 +13,9 @@ import platform
 import platform as _process_inventory_platform
 import re
 import socket
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
-from pathlib import Path as _ProcessInventoryPath
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from wait_local_agent.models import (
     AssetObservationWrite,
@@ -33,16 +32,18 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.models import GeneratedReport, ReportType
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.runtime_scope import CollectionScope, collection_path, detect_collection_scope
 from wait_local_agent.store import Store
 
-_ListeningPortsPath = _ProcessInventoryPath
-_NetworkInterfacesPath = _ProcessInventoryPath
-_FirewallRulesPath = _ProcessInventoryPath
-_DatabaseInventoryPath = _ProcessInventoryPath
-_WifiInventoryPath = _ProcessInventoryPath
-_RoutingTablePath = _ProcessInventoryPath
-_EndpointAgentsPath = _ProcessInventoryPath
-_WebServicesPath = _ProcessInventoryPath
+_ProcessInventoryPath = collection_path
+_ListeningPortsPath = collection_path
+_NetworkInterfacesPath = collection_path
+_FirewallRulesPath = collection_path
+_DatabaseInventoryPath = collection_path
+_WifiInventoryPath = collection_path
+_RoutingTablePath = collection_path
+_EndpointAgentsPath = collection_path
+_WebServicesPath = collection_path
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ class CollectorResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     status: CollectionStatus = CollectionStatus.SUCCESS
     source_outcomes: tuple[SourceOutcome, ...] = ()
-    collection_scope: Literal["host", "container"] = "host"
+    collection_scope: CollectionScope = "unknown"
 
 
 class CollectorModule(Protocol):
@@ -220,8 +221,9 @@ class CollectorService:
         )
         if run.id is None:
             raise RuntimeError("collector run was not persisted")
+        collection_scope = detect_collection_scope()
         try:
-            result = module.collect(normalized_config)
+            result = replace(module.collect(normalized_config), collection_scope=collection_scope)
             self.store.persist_collector_result(
                 run.id,
                 source.id,
@@ -255,7 +257,7 @@ class CollectorService:
             self.store.complete_collector_run(
                 run.id,
                 "failed",
-                result={"error": str(exc)},
+                result={"error": str(exc), "collection_scope": collection_scope},
             )
             raise
 
@@ -307,6 +309,16 @@ def collector_run_result_status(run: CollectorRun) -> str | None:
         return None
     status = payload.get("status") if isinstance(payload, dict) else None
     return status if isinstance(status, str) else None
+
+
+def collector_run_collection_scope(run: CollectorRun) -> str | None:
+    """Return the collection scope persisted in a collector run."""
+    try:
+        payload = json.loads(run.result_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    scope = payload.get("collection_scope") if isinstance(payload, dict) else None
+    return scope if scope in {"host", "container", "unknown"} else None
 
 
 class HostRuntimeCollector:
