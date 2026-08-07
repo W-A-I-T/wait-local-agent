@@ -24,6 +24,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
+  CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete,
   reschedule, and audit trail. Cron, interval, and one-time triggers use the
@@ -108,7 +110,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ConnectWise PSA connector | Future paid pack or open-core interface |
 | Autotask connector | Future paid pack or open-core interface |
 | RMM connectors | Future paid pack or open-core interface |
-| M365 / Entra read-only | Future connector phase |
+| M365 / Entra read-only inventory | Built through governed collector modules |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
