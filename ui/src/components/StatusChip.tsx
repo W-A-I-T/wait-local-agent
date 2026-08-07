@@ -13,7 +13,12 @@ const STATUS_COPY: Record<string, { label: string; tone: string }> = {
   unavailable: { label: "Couldn't reach it", tone: "danger" },
   completed: { label: "Done", tone: "ok" },
   failed: { label: "Didn't finish", tone: "danger" },
-  running: { label: "Running", tone: "info" }
+  running: { label: "Running", tone: "info" },
+  connected: { label: "Connected", tone: "ok" },
+  configured: { label: "Configured", tone: "ok" },
+  available: { label: "Available", tone: "info" },
+  not_configured: { label: "Not connected", tone: "neutral" },
+  unreachable: { label: "Connection needs attention", tone: "warn" }
 };
 
 export function StatusChip({ status, hint }: StatusChipProps) {

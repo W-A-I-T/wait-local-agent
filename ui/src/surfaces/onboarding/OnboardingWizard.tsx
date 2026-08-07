@@ -21,6 +21,7 @@ const steps: WizardStep[] = [
   { id: "credentials", title: "Configure connection" },
   { id: "knowledge", title: "Set knowledge folder" },
   { id: "ingest", title: "Import docs from knowledge" },
+  { id: "launch-passport", title: "Connect Launch Passport" },
   { id: "demo", title: "Run a demo ticket summary" }
 ];
 
@@ -129,6 +130,10 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
         return;
       }
       setStep((current) => current + 1);
+      return;
+    }
+    if (step === 4) {
+      setStep((current) => current + 1);
     }
   }
 
@@ -219,6 +224,16 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
       ) : null}
 
       {step === 4 ? (
+        <div className="draft-form">
+          <h3>Connect Launch Passport (optional)</h3>
+          <p>Launch Passport helps you review what is ready to share before launch or handoff. This appliance works fully without it.</p>
+          <div className="row-actions">
+            <button type="button" className="icon-button" onClick={() => setStep(5)}>Skip for now</button>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 5 ? (
         <div className="draft-form">
           <label>
             Demo ticket id
