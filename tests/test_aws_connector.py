@@ -156,6 +156,36 @@ class EmptyIdSession:
         raise AssertionError(f"unexpected service: {service_name}")
 
 
+class PagedEc2Client:
+    meta = type("Meta", (), {"region_name": "ca-central-1"})()
+
+    def describe_instances(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("NextToken"):
+            return {"Reservations": [{"Instances": [{"InstanceId": "i-page-2"}]}]}
+        return {"Reservations": [{"Instances": [{"InstanceId": "i-page-1"}]}], "NextToken": "ec2-page-2"}
+
+    def describe_security_groups(self, **kwargs: Any) -> dict[str, Any]:
+        return {"SecurityGroups": []}
+
+
+class PagedIamClient:
+    def list_users(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("Marker"):
+            return {"Users": [{"UserName": "user-page-2"}]}
+        return {"Users": [{"UserName": "user-page-1"}], "IsTruncated": True, "Marker": "iam-page-2"}
+
+
+class PagedSession:
+    def client(self, service_name: str) -> Any:
+        if service_name == "ec2":
+            return PagedEc2Client()
+        if service_name == "s3":
+            return FakeS3Client()
+        if service_name == "iam":
+            return PagedIamClient()
+        raise AssertionError(f"unexpected service: {service_name}")
+
+
 def _connector() -> AwsInventoryConnector:
     return AwsInventoryConnector()
 
@@ -320,7 +350,9 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"session": FakeSession(), "limit": 2})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 2
     assert [item["canonical_asset"]["asset_id"] for item in result["items"]] == [
         "aws:ec2:i-001",
@@ -365,7 +397,9 @@ def test_aws_error_for_one_resource_type_is_swallowed() -> None:
     result = _connector().collect({"session": FakeSession(fail_instances=True)})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert "aws:ec2:i-001" not in asset_ids
     assert asset_ids == [
         "aws:iam:automation",
@@ -386,7 +420,9 @@ def test_aws_errors_are_isolated_per_resource_type(session: FakeSession, absent_
     result = _connector().collect({"session": session})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert absent_asset_id not in asset_ids
     assert len(asset_ids) == 4
 
@@ -411,7 +447,9 @@ def test_creates_boto3_session_from_region_config(monkeypatch: pytest.MonkeyPatc
 
     result = _connector().collect({"region": "us-east-2", "limit": 1})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert created_regions == ["us-east-2"]
     assert result["items"][0]["canonical_asset"]["attributes"]["region"] == "us-east-2"
 
@@ -427,10 +465,59 @@ def test_creates_ambient_boto3_session_without_region(monkeypatch: pytest.Monkey
 
     result = _connector().collect({"limit": 1})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert created_regions == [None]
     assert result["items"][0]["canonical_asset"]["attributes"]["region"] == "ca-central-1"
 
 
 def test_format_value_supports_plain_dates() -> None:
     assert _connector()._format_value(date(2026, 7, 19)) == "2026-07-19"
+
+
+def test_public_collect_follows_aws_pages_and_does_not_report_truncation() -> None:
+    result = _connector().collect({"session": PagedSession()})
+
+    assert result["ok"] is True
+    assert result["status"] == "success"
+    assert {asset["asset_id"] for asset in result["assets"]} >= {
+        "aws:ec2:i-page-1",
+        "aws:ec2:i-page-2",
+        "aws:iam:user-page-1",
+        "aws:iam:user-page-2",
+    }
+
+
+def test_public_collect_all_provider_authz_failures_are_not_empty_success() -> None:
+    result = _connector().collect(
+        {
+            "session": FakeSession(
+                fail_instances=True,
+                fail_security_groups=True,
+                fail_s3=True,
+                fail_iam=True,
+            )
+        }
+    )
+
+    assert result["assets"] == []
+    assert result["ok"] is False
+    assert result["status"] == "not_authorized"
+    assert result["status"] != "empty"
+
+    detailed = _connector().collect_detailed(
+        {
+            "session": FakeSession(
+                fail_instances=True,
+                fail_security_groups=True,
+                fail_s3=True,
+                fail_iam=True,
+            )
+        }
+    )
+    assert all("exception" not in outcome for outcome in detailed["outcomes"])
+    assert all(
+        not any(isinstance(value, BaseException) for value in outcome.values())
+        for outcome in detailed["outcomes"]
+    )

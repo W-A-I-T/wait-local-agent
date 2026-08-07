@@ -7,6 +7,13 @@ from collections.abc import Awaitable, Coroutine, Mapping
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
+from wait_local_agent.cloud_connectors._safe import (
+    provider_outcome,
+    result_errors,
+    result_status,
+    truncation_outcome,
+)
+
 
 class _FallbackM365Error(Exception):
     """Fallback for test environments where the Graph SDK is not installed yet."""
@@ -132,22 +139,7 @@ class M365InventoryConnector:
         return self._collect_result(config, preview=False, default_limit=None)
 
     def _collect_result(self, config: M365Config, *, preview: bool, default_limit: int | None) -> dict[str, Any]:
-        limit = self._config_limit(config, default=default_limit)
-        if limit == 0:
-            return self._result([], preview=preview)
-
-        client = self._client(config)
-        records = [
-            *self._user_records(client),
-            *self._group_records(client),
-            *self._application_records(client),
-            *self._service_principal_records(client),
-            *self._conditional_access_policy_records(client),
-        ]
-        records.sort(key=lambda record: str(record["asset_id"]))
-        if limit is not None:
-            records = records[:limit]
-        return self._result(records, preview=preview)
+        return self.collect_detailed(config, preview=preview)["result"]
 
     @staticmethod
     def _config_limit(config: M365Config, default: int | None) -> int | None:
@@ -178,13 +170,11 @@ class M365InventoryConnector:
     def _collection(client: Any, collection_name: str) -> Any:
         return getattr(client, collection_name)
 
-    def _user_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
+    def _user_records(self, client: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "users"))
         except M365_ERROR_TYPES:
-            if strict:
-                raise
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for user in self._response_values(response):
@@ -210,13 +200,11 @@ class M365InventoryConnector:
             )
         return records
 
-    def _group_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
+    def _group_records(self, client: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "groups"))
         except M365_ERROR_TYPES:
-            if strict:
-                raise
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for group in self._response_values(response):
@@ -241,13 +229,11 @@ class M365InventoryConnector:
             )
         return records
 
-    def _application_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
+    def _application_records(self, client: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "applications"))
         except M365_ERROR_TYPES:
-            if strict:
-                raise
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for application in self._response_values(response):
@@ -270,13 +256,11 @@ class M365InventoryConnector:
             )
         return records
 
-    def _service_principal_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
+    def _service_principal_records(self, client: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             response = self._collection_response(self._collection(client, "service_principals"))
         except M365_ERROR_TYPES:
-            if strict:
-                raise
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for service_principal in self._response_values(response):
@@ -304,14 +288,12 @@ class M365InventoryConnector:
             )
         return records
 
-    def _conditional_access_policy_records(self, client: Any, *, strict: bool = False) -> list[dict[str, Any]]:
+    def _conditional_access_policy_records(self, client: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             conditional_access = self._collection(client, "identity").conditional_access
             response = self._collection_response(conditional_access.policies)
         except M365_ERROR_TYPES:
-            if strict:
-                raise
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for policy in self._response_values(response):
@@ -355,14 +337,40 @@ class M365InventoryConnector:
             try:
                 records.extend(read_source())
             except Exception as exc:
-                outcomes.append({"source_id": source_id, "exception": exc})
+                outcomes.append(
+                    provider_outcome(
+                        source_id,
+                        exc,
+                        permission_hint=(
+                            "Grant the Microsoft Graph read-only permissions listed in docs/cloud-permissions-m365.md."
+                        ),
+                    )
+                )
         records.sort(key=lambda record: str(record["asset_id"]))
+        truncated = limit is not None and len(records) > limit
         if limit is not None:
             records = records[:limit]
-        return {"result": self._result(records, preview=preview), "outcomes": outcomes}
+        if truncated and limit is not None:
+            outcomes.append(truncation_outcome(f"{self.module_id}:limit", limit=limit))
+        return {"result": self._result(records, preview=preview, outcomes=outcomes), "outcomes": outcomes}
 
     def _collection_response(self, collection: Any) -> Any:
-        return self._resolve(collection.get())
+        response = self._resolve(collection.get())
+        values = self._response_values(response)
+        next_link = self._next_link(response)
+        seen_links: set[str] = set()
+        while next_link:
+            link = str(next_link)
+            if link in seen_links:
+                raise RuntimeError("provider pagination did not advance")
+            seen_links.add(link)
+            with_url = getattr(collection, "with_url", None)
+            if not callable(with_url):
+                raise RuntimeError("provider returned a next page without a supported page request")
+            response = self._resolve(with_url(link).get())
+            values.extend(self._response_values(response))
+            next_link = self._next_link(response)
+        return {"value": values}
 
     @staticmethod
     def _resolve(value: object) -> Any:
@@ -412,6 +420,20 @@ class M365InventoryConnector:
         return list(value) if isinstance(value, list) else []
 
     @staticmethod
+    def _next_link(response: Any) -> str | None:
+        if isinstance(response, Mapping):
+            for key in ("@odata.nextLink", "odata_next_link", "odataNextLink"):
+                value = response.get(key)
+                if isinstance(value, str) and value:
+                    return value
+            return None
+        for key in ("odata_next_link", "odataNextLink"):
+            value = getattr(response, key, None)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    @staticmethod
     def _field(record: Any, field_name: str, default: Any) -> Any:
         if isinstance(record, Mapping):
             return record.get(field_name, default)
@@ -434,16 +456,24 @@ class M365InventoryConnector:
         policies = getattr(conditional_access, "policies", None)
         return callable(getattr(policies, "get", None))
 
-    def _result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
+    def _result(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        preview: bool,
+        outcomes: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> dict[str, Any]:
         assets = [self._asset(record) for record in records]
         observations = [
             observation
             for record in records
             for observation in self._observations(record)
         ]
-        return {
+        status = result_status(len(assets), outcomes)
+        result = {
             "module_id": self.module_id,
-            "ok": True,
+            "ok": status in {"success", "empty"},
+            "status": status,
             "preview": preview,
             "assets": assets,
             "observations": observations,
@@ -456,6 +486,10 @@ class M365InventoryConnector:
             ],
             "count": len(assets),
         }
+        errors = result_errors(outcomes)
+        if errors:
+            result["errors"] = errors
+        return result
 
     @staticmethod
     def _invalid_result(errors: list[str]) -> dict[str, Any]:

@@ -113,7 +113,7 @@ def _adapter(tmp_path, connector: _FakeConnector) -> AwsCloudAdapter:
     return AwsCloudAdapter(
         connector=connector,
         vault=_vault(tmp_path),
-        runtime_config_factory=lambda secret, _config: {"fake_runtime": secret},
+        runtime_config_factory=lambda _config: {"session": "fake-runtime"},
     )
 
 
@@ -138,7 +138,7 @@ def test_authorization_preflight_is_not_reported_as_empty_and_secret_stays_runti
     assert result.source_outcomes[0].remediation_hint
     assert all("SUPER-SECRET-MATERIAL" not in str(outcome) for outcome in result.source_outcomes)
     assert len(connector.seen_runtime) == 3
-    assert all(runtime == {"fake_runtime": "SUPER-SECRET-MATERIAL"} for runtime in connector.seen_runtime)
+    assert all(runtime == {"session": "fake-runtime"} for runtime in connector.seen_runtime)
 
 
 def test_successful_empty_cloud_read_is_empty(tmp_path) -> None:
@@ -180,7 +180,7 @@ def test_adapter_validation_and_preview_cover_invalid_and_failed_preflight(tmp_p
     adapter = AzureCloudAdapter(
         connector=_ValidationConnector(["limit must be a non-negative integer"]),
         vault=_vault(tmp_path),
-        runtime_config_factory=lambda secret, config: {"secret": secret, **config},
+        runtime_config_factory=lambda _config: {"session": "fake-runtime"},
     )
 
     invalid = adapter.validate_config(
@@ -201,7 +201,7 @@ def test_adapter_validation_and_preview_cover_invalid_and_failed_preflight(tmp_p
     failing = AzureCloudAdapter(
         connector=_FakeConnector(preflight_error=RuntimeError("down")),
         vault=_vault(tmp_path),
-        runtime_config_factory=lambda secret, config: {"secret": secret, **config},
+        runtime_config_factory=lambda _config: {"session": "fake-runtime"},
     )
     config = {"credential_ref": "aws-readonly", "subscription_id": "sub-1"}
     preview = failing.preview(config)
@@ -237,6 +237,66 @@ def test_adapter_legacy_collect_and_outcome_normalization(tmp_path) -> None:
     assert outcomes[1].remediation_hint == "hint"
     assert outcomes[2].status is CollectionStatus.UNAVAILABLE
     assert adapter._outcomes(None) == ()
+
+
+def test_runtime_factory_receives_no_secret_and_rejects_secret_material(tmp_path) -> None:
+    seen: list[Mapping[str, Any]] = []
+    adapter = _adapter(tmp_path, _FakeConnector())
+
+    def safe_factory(config: Mapping[str, Any]) -> Mapping[str, Any]:
+        seen.append(config)
+        return {"session": "safe-runtime"}
+
+    adapter.runtime_config_factory = safe_factory
+
+    runtime = adapter._runtime_config({"credential_ref": "aws-readonly"})
+
+    assert runtime == {"session": "safe-runtime"}
+    assert seen == [{}]
+    assert "SUPER-SECRET-MATERIAL" not in repr(seen)
+
+    adapter.runtime_config_factory = lambda _config: {"session": "SUPER-SECRET-MATERIAL"}
+    with pytest.raises(CloudCredentialError, match="credential material"):
+        adapter._runtime_config({"credential_ref": "aws-readonly"})
+
+
+def test_runtime_factory_failure_is_safe_through_collector_service(tmp_path) -> None:
+    secret = "SUPER-SECRET-MATERIAL"
+
+    def failing_factory(_config: Mapping[str, Any]) -> Mapping[str, Any]:
+        raise RuntimeError(secret)
+
+    adapter = AwsCloudAdapter(
+        connector=_FakeConnector(),
+        vault=_vault(tmp_path),
+        runtime_config_factory=failing_factory,
+    )
+    registry = CollectorRegistry()
+    registry.register(adapter)
+    store = Store(tmp_path / "state.db")
+
+    run = CollectorService(store, registry).run(
+        "cloud-aws",
+        {"credential_ref": "aws-readonly"},
+        confirm=True,
+        client_id="factory-failure",
+    )
+
+    assert secret not in run.result_json
+
+
+def test_cloud_manifest_schemas_are_ui_safe_and_include_vault_path() -> None:
+    adapters = [AwsCloudAdapter(), AzureCloudAdapter(), GcpCloudAdapter(), adapters_module.M365CloudAdapter()]
+    for adapter in adapters:
+        fields = {field["name"]: field for field in adapter.manifest.config_schema}
+        assert fields["vault_path"]["type"] == "string"
+        assert all(
+            field["type"] in {"string", "number", "boolean", "enum", "array", "secret_ref"}
+            for field in fields.values()
+        )
+    scopes = {field["name"]: field for field in adapters[-1].manifest.config_schema}["scopes"]
+    assert scopes["type"] == "array"
+    assert scopes["items"] == {"type": "string"}
 
 
 def test_adapter_handles_missing_preflight_and_provider_runtime_branches(monkeypatch, tmp_path) -> None:

@@ -192,11 +192,6 @@ def test_azure_sdk_session_routes_clients_and_handles_values(monkeypatch: pytest
         return Client
 
     monkeypatch.setitem(
-        sys.modules,
-        "azure.mgmt.resource.subscriptions",
-        SimpleNamespace(SubscriptionClient=factory("subscriptions")),
-    )
-    monkeypatch.setitem(
         sys.modules, "azure.mgmt.compute", SimpleNamespace(ComputeManagementClient=factory("compute"))
     )
     monkeypatch.setitem(
@@ -211,7 +206,7 @@ def test_azure_sdk_session_routes_clients_and_handles_values(monkeypatch: pytest
         SimpleNamespace(AuthorizationManagementClient=factory("authorization")),
     )
     session = azure_module._AzureSdkSession(credential=object(), subscription_id="sub")
-    for service in ("subscriptions", "compute", "storage", "network", "authorization"):
+    for service in ("compute", "storage", "network", "authorization"):
         session.client(service)
     with pytest.raises(ValueError):
         session.client("unsupported")
@@ -279,7 +274,7 @@ def test_gcp_preflight_variants_and_detailed_outcomes() -> None:
     detailed = connector.collect_detailed(
         {"session": GcpEdgeSession({"resource-manager", "compute", "storage", "iam"}), "project_id": "p"}
     )
-    assert detailed["outcomes"][0]["source_id"] == "resourcemanager:projects"
+    assert detailed["outcomes"][0]["source_id"] == "compute:instances:p"
     assert connector.collect_detailed({"limit": "bad"})["result"]["ok"] is False
     assert connector.collect_detailed({"session": GcpEdgeSession(), "limit": 0})["result"]["count"] == 0
     assert connector.collect_detailed({"session": GcpEdgeSession(), "limit": 1})["result"]["count"] == 0

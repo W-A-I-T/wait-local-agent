@@ -372,7 +372,9 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"session": FakeSession(), "limit": 2})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 2
     assert [item["canonical_asset"]["asset_id"] for item in result["items"]] == [
         "gcp:compute:wait-prod:us-central1-b:101",
@@ -426,7 +428,9 @@ def test_gcp_errors_are_isolated_per_resource_type(session: FakeSession, absent_
     result = _connector().collect({"session": session})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert absent_asset_id not in asset_ids
 
 
@@ -477,7 +481,9 @@ def test_creates_google_cloud_clients_from_imported_sdk_modules(monkeypatch: pyt
 
     result = _connector().collect({"limit": 1})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 1
     assert requested_clients == ["resource-manager", "compute", "storage", "iam"]
 

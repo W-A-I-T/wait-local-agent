@@ -337,7 +337,9 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"session": FakeSession(), "limit": 2})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 2
     assert [item["canonical_asset"]["asset_id"] for item in result["items"]] == [
         f"azure:compute:{VM_ID_1}",
@@ -382,7 +384,9 @@ def test_azure_error_for_one_resource_type_is_swallowed() -> None:
     result = _connector().collect({"session": FakeSession(fail_compute=True)})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert f"azure:compute:{VM_ID_1}" not in asset_ids
     assert asset_ids == [
         f"azure:nsg:{NSG_ID}",
@@ -403,7 +407,9 @@ def test_azure_errors_are_isolated_per_resource_type(session: FakeSession, absen
     result = _connector().collect({"session": session})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert absent_asset_id not in asset_ids
     assert len(asset_ids) == 4
 
@@ -461,7 +467,9 @@ def test_creates_azure_sdk_session_from_config(monkeypatch: pytest.MonkeyPatch) 
 
     result = _connector().collect({"subscription_id": "sub-1", "limit": 1})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 1
     assert created_clients == [
         ("compute", "FakeCredential", "sub-1"),

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from importlib import import_module
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from wait_local_agent.cloud_connectors.aws import AwsInventoryConnector
@@ -70,6 +71,9 @@ class CloudCredentialError(RuntimeError):
     """Raised internally when a vault reference cannot produce a provider client."""
 
 
+RuntimeConfigFactory = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
 @dataclass(frozen=True)
 class CloudAdapterSpec:
     module_id: str
@@ -92,7 +96,7 @@ class CloudConnectorAdapter:
         connector: Any | None = None,
         *,
         vault: SecretVault | None = None,
-        runtime_config_factory: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        runtime_config_factory: RuntimeConfigFactory | None = None,
     ) -> None:
         _load_collector_contracts()
         self.connector = connector or self.connector_type()
@@ -174,6 +178,7 @@ class CloudConnectorAdapter:
         detailed = self._collect_detailed(normalized, preview=True)
         records = detailed.get("result", {}).get("assets", [])
         outcomes = self._outcomes(detailed.get("outcomes", []))
+        outcomes = self._include_result_outcome(detailed.get("result", {}), outcomes)
         warnings.extend(
             outcome.remediation_hint or outcome.error_detail or "Cloud source unavailable." for outcome in outcomes
         )
@@ -199,6 +204,7 @@ class CloudConnectorAdapter:
         detailed = self._collect_detailed(normalized, preview=False)
         raw_result = detailed.get("result", {})
         outcomes = self._outcomes(detailed.get("outcomes", []))
+        outcomes = self._include_result_outcome(raw_result, outcomes)
         records = raw_result.get("assets", [])
         assets = [
             CollectorAssetWrite(
@@ -233,14 +239,24 @@ class CloudConnectorAdapter:
         )
 
     def _collect_detailed(self, config: dict[str, Any], *, preview: bool) -> dict[str, Any]:
-        runtime = self._runtime_config(config)
-        detailed = getattr(self.connector, "collect_detailed", None)
-        if callable(detailed):
-            return detailed(runtime, preview=preview)
-        return {
-            "result": self.connector.preview(runtime) if preview else self.connector.collect(runtime),
-            "outcomes": [],
-        }
+        try:
+            runtime = self._runtime_config(config)
+            detailed = getattr(self.connector, "collect_detailed", None)
+            if callable(detailed):
+                return detailed(runtime, preview=preview)
+            result = self.connector.preview(runtime) if preview else self.connector.collect(runtime)
+            return {"result": result, "outcomes": self._legacy_result_outcomes(result)}
+        except Exception as exc:
+            outcome = self._outcome_from_exception("collection", exc)
+            safe_result = {
+                "module_id": self.manifest.id,
+                "ok": False,
+                "status": outcome.status.value,
+                "assets": [],
+                "observations": [],
+                "errors": [f"{outcome.error_code}: {outcome.error_detail}"],
+            }
+            return {"result": safe_result, "outcomes": [asdict(outcome)]}
 
     def _preflight(self, config: dict[str, Any]) -> SourceOutcome:
         try:
@@ -258,7 +274,19 @@ class CloudConnectorAdapter:
         secret = self._read_secret(config, credential_ref)
         provider_config = {key: config[key] for key in self.spec.provider_keys if key in config}
         if self.runtime_config_factory is not None:
-            provider_config.update(self.runtime_config_factory(secret, provider_config))
+            try:
+                factory_result = self.runtime_config_factory(MappingProxyType(dict(provider_config)))
+            except Exception as exc:
+                raise CloudCredentialError("runtime configuration factory failed") from exc
+            if not isinstance(factory_result, Mapping):
+                raise CloudCredentialError("runtime configuration factory must return a mapping")
+            allowed_runtime_keys = {"client", "credential", "session"}
+            if set(factory_result) - allowed_runtime_keys:
+                raise CloudCredentialError("runtime configuration factory returned unsupported fields")
+            if self._contains_secret(factory_result, secret):
+                raise CloudCredentialError("runtime configuration factory returned credential material")
+            provider_config.update(dict(factory_result))
+            self._validate_runtime_config(provider_config)
             return provider_config
         if self.manifest.id == "cloud-aws":
             provider_config["session"] = self._aws_session(secret, provider_config)
@@ -269,6 +297,25 @@ class CloudConnectorAdapter:
         elif self.manifest.id == "cloud-m365":
             provider_config["credential"] = self._azure_credential(secret)
         return provider_config
+
+    def _validate_runtime_config(self, runtime: dict[str, Any]) -> None:
+        validation = self.connector.validate_config(runtime)
+        if not validation.get("ok"):
+            raise CloudCredentialError("runtime configuration factory returned invalid configuration")
+
+    @staticmethod
+    def _contains_secret(value: Any, secret: str) -> bool:
+        if isinstance(value, str):
+            return bool(secret) and secret in value
+        if isinstance(value, Mapping):
+            return any(
+                CloudConnectorAdapter._contains_secret(key, secret)
+                or CloudConnectorAdapter._contains_secret(item, secret)
+                for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(CloudConnectorAdapter._contains_secret(item, secret) for item in value)
+        return False
 
     def _read_secret(self, config: dict[str, Any], credential_ref: str) -> str:
         vault = self.vault or SecretVault(
@@ -353,6 +400,36 @@ class CloudConnectorAdapter:
                 )
             )
         return tuple(outcomes)
+
+    def _legacy_result_outcomes(self, result: Any) -> list[dict[str, Any]]:
+        if not isinstance(result, Mapping):
+            return [
+                {
+                    "source_id": self.manifest.id,
+                    "status": "unavailable",
+                    "error_code": "invalid_result",
+                    "error_detail": "provider returned an invalid collection result",
+                }
+            ]
+        status = str(result.get("status", ""))
+        if result.get("ok") is False or status not in {"", "success", "empty"}:
+            return [
+                {
+                    "source_id": self.manifest.id,
+                    "status": status if status in {"not_authorized", "unavailable", "partial"} else "unavailable",
+                    "error_code": "collection_failed",
+                    "error_detail": "provider collection did not complete successfully",
+                }
+            ]
+        return []
+
+    def _include_result_outcome(
+        self, result: Any, outcomes: tuple[SourceOutcome, ...]
+    ) -> tuple[SourceOutcome, ...]:
+        if outcomes or not isinstance(result, Mapping):
+            return outcomes
+        raw = self._legacy_result_outcomes(result)
+        return self._outcomes(raw)
 
     def _outcome_from_exception(self, source_id: str, exc: BaseException) -> SourceOutcome:
         status = self._classify_exception(exc)
@@ -456,6 +533,14 @@ class AwsCloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
             {
+                "name": "vault_path",
+                "label": "Vault path",
+                "help": "Optional path to the local credential vault.",
+                "type": "string",
+                "required": False,
+                "default": None,
+            },
+            {
                 "name": "limit",
                 "label": "Maximum resources",
                 "help": "Optional maximum number of resources returned after the full read-only scan.",
@@ -494,6 +579,14 @@ class AzureCloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
             {
+                "name": "vault_path",
+                "label": "Vault path",
+                "help": "Optional path to the local credential vault.",
+                "type": "string",
+                "required": False,
+                "default": None,
+            },
+            {
                 "name": "limit",
                 "label": "Maximum resources",
                 "help": "Optional maximum number of resources returned after the full read-only scan.",
@@ -527,6 +620,14 @@ class GcpCloudAdapter(CloudConnectorAdapter):
                 "name": "project_id",
                 "label": "Project",
                 "help": "Optional project to inventory; omit to discover accessible projects.",
+                "type": "string",
+                "required": False,
+                "default": None,
+            },
+            {
+                "name": "vault_path",
+                "label": "Vault path",
+                "help": "Optional path to the local credential vault.",
                 "type": "string",
                 "required": False,
                 "default": None,
@@ -579,7 +680,16 @@ class M365CloudAdapter(CloudConnectorAdapter):
                 "name": "scopes",
                 "label": "Microsoft Graph scopes",
                 "help": "Optional delegated/application scope list; defaults to Microsoft Graph .default.",
-                "type": "string[]",
+                "type": "array",
+                "items": {"type": "string"},
+                "required": False,
+                "default": None,
+            },
+            {
+                "name": "vault_path",
+                "label": "Vault path",
+                "help": "Optional path to the local credential vault.",
+                "type": "string",
                 "required": False,
                 "default": None,
             },
