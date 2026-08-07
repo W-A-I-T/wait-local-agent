@@ -90,6 +90,7 @@ from wait_local_agent.reports.renderers import redact_text, redact_value, report
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
+from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
@@ -271,6 +272,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     hudu_client = HuduClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
     syncro_client = SyncroClient(active_settings)
+    servicenow_client = ServiceNowClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -358,6 +360,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "syncro_configured": bool(
                 active_settings.syncro_base_url and active_settings.syncro_api_token
+            ),
+            "servicenow_configured": bool(
+                active_settings.servicenow_base_url
+                and active_settings.servicenow_username
+                and active_settings.servicenow_password
             ),
         }
 
@@ -1742,6 +1749,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = syncro_client.get_customer(customer_id)
         return _syncro_response("customers.get", response)
 
+    @app.get("/connectors/servicenow/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = servicenow_client.health()
+        _audit_servicenow_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/servicenow/incidents")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_incidents(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+        query: str | None = None,
+    ) -> dict[str, object]:
+        response = servicenow_client.list_incidents(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.servicenow_page_size
+            ),
+            query=query,
+        )
+        return _servicenow_response("incidents.list", response)
+
+    @app.get("/connectors/servicenow/incidents/{sys_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_incident(
+        sys_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = servicenow_client.get_incident(sys_id)
+        return _servicenow_response("incidents.get", response)
+
+    @app.get("/connectors/servicenow/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+        query: str | None = None,
+    ) -> dict[str, object]:
+        response = servicenow_client.list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.servicenow_page_size
+            ),
+            query=query,
+        )
+        return _servicenow_response("companies.list", response)
+
+    @app.get("/connectors/servicenow/companies/{sys_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_company(
+        sys_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = servicenow_client.get_company(sys_id)
+        return _servicenow_response("companies.get", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2174,6 +2248,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": response.items,
         }
 
+    def _servicenow_response(
+        read_type: str,
+        response: ServiceNowReadResponse,
+    ) -> dict[str, object]:
+        _audit_servicenow_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
+        }
+
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
@@ -2185,6 +2269,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_syncro_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("syncro.read", read_type, f"{status} count={count}")
+
+    def _audit_servicenow_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("servicenow.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

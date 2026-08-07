@@ -76,6 +76,7 @@ from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
+from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -152,6 +153,10 @@ def _syncro_client() -> SyncroClient:
     return SyncroClient(load_settings())
 
 
+def _servicenow_client() -> ServiceNowClient:
+    return ServiceNowClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -196,6 +201,12 @@ def doctor() -> None:
     typer.echo(f"hudu_configured={hudu_configured}")
     syncro_configured = bool(settings.syncro_base_url and settings.syncro_api_token)
     typer.echo(f"syncro_configured={syncro_configured}")
+    servicenow_configured = bool(
+        settings.servicenow_base_url
+        and settings.servicenow_username
+        and settings.servicenow_password
+    )
+    typer.echo(f"servicenow_configured={servicenow_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -620,7 +631,9 @@ def list_secrets() -> None:
 def validate_connector(
     connector: Annotated[
         str,
-        typer.Argument(help="Connector id: halopsa, hudu, connectwise, or syncro."),
+        typer.Argument(
+            help="Connector id: halopsa, hudu, connectwise, syncro, or servicenow."
+        ),
     ]
 ) -> None:
     settings = load_settings()
@@ -632,6 +645,7 @@ def validate_connector(
             hudu_client=_hudu_client(),
             connectwise_client=_connectwise_client(),
             syncro_client=_syncro_client(),
+            servicenow_client=_servicenow_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -875,6 +889,69 @@ def syncro_customers(
 @connectors_app.command("syncro-customer")
 def syncro_customer(customer_id: str) -> None:
     _print_syncro_response("customers.get", _syncro_client().get_customer(customer_id))
+
+
+@connectors_app.command("servicenow-health")
+def servicenow_health() -> None:
+    result = _servicenow_client().health()
+    _audit_servicenow_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("servicenow-incidents")
+def servicenow_incidents(
+    page: int = 1,
+    page_size: int | None = None,
+    query: str | None = None,
+) -> None:
+    _print_servicenow_response(
+        "incidents.list",
+        _servicenow_client().list_incidents(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().servicenow_page_size
+            ),
+            query=query,
+        ),
+    )
+
+
+@connectors_app.command("servicenow-incident")
+def servicenow_incident(sys_id: str) -> None:
+    _print_servicenow_response(
+        "incidents.get",
+        _servicenow_client().get_incident(sys_id),
+    )
+
+
+@connectors_app.command("servicenow-companies")
+def servicenow_companies(
+    page: int = 1,
+    page_size: int | None = None,
+    query: str | None = None,
+) -> None:
+    _print_servicenow_response(
+        "companies.list",
+        _servicenow_client().list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().servicenow_page_size
+            ),
+            query=query,
+        ),
+    )
+
+
+@connectors_app.command("servicenow-company")
+def servicenow_company(sys_id: str) -> None:
+    _print_servicenow_response(
+        "companies.get",
+        _servicenow_client().get_company(sys_id),
+    )
 
 
 @workflows_app.command("templates")
@@ -1520,6 +1597,21 @@ def _audit_connectwise_cli_read(read_type: str, status: str, count: int) -> None
 
 def _audit_syncro_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("syncro.read", read_type, f"{status} count={count}")
+
+
+def _print_servicenow_response(read_type: str, response: ServiceNowReadResponse) -> None:
+    _audit_servicenow_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {"result": asdict(response.result), "items": response.items},
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_servicenow_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("servicenow.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:
