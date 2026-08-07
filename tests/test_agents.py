@@ -60,6 +60,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "m365-identity-context",
+        "m365-user-lookup",
         "ticket-quality",
         "ticket-sentiment",
         "dispatch-suggestion",

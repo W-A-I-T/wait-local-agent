@@ -20,6 +20,7 @@ from wait_local_agent.smart_actions import (
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
     M365IdentityContextAction,
+    M365UserLookupAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -236,6 +237,10 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
     assert result.output["count"] == 1
     assert result.output["truncated"] is False
     assert result.output["identities"][0]["asset_id"] == "m365:user:u1"  # type: ignore[index]
+    lookup = M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": "user@example"})
+    assert lookup.status == "success"
+    assert lookup.output["count"] == 1
+    assert M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": ""}).status == "failed"
 
     for payload, message in (
         ({"collector_run_id": run.id, "limit": 0}, "between 1 and 100"),
@@ -257,6 +262,7 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
         BuildMessageAction(),
+        M365UserLookupAction(),
         TicketSentimentAction(),
     )
     for action in actions:
@@ -492,6 +498,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "m365-identity-context",
+        "m365-user-lookup",
         "suggest-resolution",
         "ticket-quality",
         "ticket-sentiment",

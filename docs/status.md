@@ -37,6 +37,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   signal without requiring a model provider.
 - The `m365-identity-context` agent tool can read only completed, tenant-scoped
   Microsoft 365 collector runs; Graph mutation paths remain disabled.
+- The `m365-user-lookup` tool searches that same scoped evidence without a
+  second remote client or mutation path.
 - Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
   CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.

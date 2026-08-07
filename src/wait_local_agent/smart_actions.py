@@ -370,6 +370,66 @@ class BuildMessageAction:
         )
 
 
+class M365UserLookupAction:
+    manifest = SmartActionManifest(
+        action_id="m365-user-lookup",
+        title="M365 user lookup",
+        description="Find a Microsoft 365 user in a completed, tenant-scoped identity inventory run.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["collector_run_id", "query"],
+            "properties": {"collector_run_id": "integer", "query": "string"},
+        },
+        output_schema={"matches": "array", "collector_run_id": "integer", "count": "integer"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return _failed("query must be a non-empty string")
+        run_payload = dict(payload)
+        run_payload["limit"] = 100
+        inventory = M365IdentityContextAction().run(context, run_payload)
+        if inventory.status != "success":
+            return inventory
+        identities = inventory.output.get("identities", [])
+        if not isinstance(identities, list):
+            return _failed("Microsoft 365 identity results are malformed")
+        needle = query.strip().casefold()
+        matches: list[dict[str, object]] = []
+        for identity in identities:
+            if not isinstance(identity, dict) or identity.get("asset_type") != "m365-user":
+                continue
+            attributes = identity.get("attributes", {})
+            searchable = " ".join(
+                str(value)
+                for value in (
+                    identity.get("asset_id", ""),
+                    identity.get("display_name", ""),
+                    attributes.get("user_principal_name", "") if isinstance(attributes, dict) else "",
+                    attributes.get("mail", "") if isinstance(attributes, dict) else "",
+                )
+            ).casefold()
+            if needle in searchable:
+                matches.append(identity)
+        return ActionResult(
+            status="success",
+            output={
+                "collector_run_id": inventory.output.get("collector_run_id"),
+                "matches": matches,
+                "count": len(matches),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=inventory.evidence,
+        )
+
+
 class TicketSentimentAction:
     manifest = SmartActionManifest(
         action_id="ticket-sentiment",
@@ -556,6 +616,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
         M365IdentityContextAction(),
+        M365UserLookupAction(),
         BuildMessageAction(),
         TicketSentimentAction(),
         TicketQualityAction(),
