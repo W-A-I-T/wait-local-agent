@@ -1036,6 +1036,64 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 
 
+def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/agents",
+        json={
+            "name": "Scheduled triage",
+            "trigger": "scheduled",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    agent_id = created.json()["id"]
+
+    scheduled = client.post(
+        "/scheduled-jobs",
+        json={
+            "agent_id": agent_id,
+            "entity_id": "TCK-1001",
+            "cron": "0 9 * * *",
+            "params": {"client_id": "acme", "input": {"instruction": "triage"}},
+        },
+    )
+    assert scheduled.status_code == 200
+    assert scheduled.json()["job_kind"] == "agent"
+    assert scheduled.json()["agent_id"] == agent_id
+    assert scheduled.json()["entity_id"] == "TCK-1001"
+
+    manual = client.post(
+        "/agents",
+        json={
+            "name": "Manual triage",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert manual.status_code == 200
+    rejected = client.post(
+        "/scheduled-jobs",
+        json={
+            "agent_id": manual.json()["id"],
+            "entity_id": "TCK-1001",
+            "cron": "0 9 * * *",
+            "params": {"client_id": "acme"},
+        },
+    )
+    assert rejected.status_code == 422
+
+
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     client = TestClient(create_app(settings))
 

@@ -154,7 +154,7 @@ class AgentDefinitionRequest(BaseModel):
     name: str
     description: str = ""
     enabled: bool = True
-    trigger: Literal["manual"] = "manual"
+    trigger: Literal["manual", "scheduled"] = "manual"
     entity_type: Literal["ticket"] = "ticket"
     filters: dict[str, object] = Field(default_factory=dict)
     enabled_tools: list[str]
@@ -171,9 +171,11 @@ class AgentRunStartRequest(BaseModel):
 
 
 class ScheduledJobCreateRequest(BaseModel):
-    template_id: str
+    template_id: str | None = None
+    agent_id: str | None = None
+    entity_id: str | None = None
     cron: str
-    params: dict[str, object]
+    params: dict[str, object] = Field(default_factory=dict)
 
 
 class CollectorConfigRequest(BaseModel):
@@ -222,7 +224,6 @@ class SecretSetRequest(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     store = Store(active_settings.data_path)
-    scheduler = SchedulerManager(store, enabled=active_settings.scheduler_enabled)
     service = TicketIntelligenceService(
         store=store,
         settings=active_settings,
@@ -235,6 +236,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     collector_service = CollectorService(store, default_registry)
     smart_action_service = SmartActionService(store, active_settings)
     agent_service = AgentService(store, active_settings, smart_action_service)
+    scheduler = SchedulerManager(
+        store,
+        enabled=active_settings.scheduler_enabled,
+        agent_service=agent_service,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1200,8 +1206,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/scheduled-jobs")
     def create_scheduled_job(
         request: ScheduledJobCreateRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.agent_id is not None:
+            return _create_scheduled_agent_job(request, context)
+        if request.template_id is None:
+            raise HTTPException(status_code=422, detail="template_id or agent_id is required")
         if get_workflow_template(request.template_id) is None:
             raise HTTPException(status_code=404, detail="workflow template not found")
         ticket_id = _scheduled_ticket_id(request.params)
@@ -1220,6 +1230,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.template_id,
                 request.cron,
                 params,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_agent_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if request.template_id is not None:
+            raise HTTPException(status_code=422, detail="choose either template_id or agent_id")
+        if request.entity_id is None or not request.entity_id.strip():
+            raise HTTPException(status_code=422, detail="agent schedules require entity_id")
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definition = agent_service.get(request.agent_id or "")
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        if definition.trigger != "scheduled":
+            raise HTTPException(status_code=422, detail="agent is not configured for scheduled execution")
+        if definition.client_id is not None and definition.client_id != scoped_client_id:
+            raise HTTPException(status_code=404, detail="agent not found")
+        effective_client_id = definition.client_id or scoped_client_id
+        ticket = store.get_ticket(request.entity_id, client_id=effective_client_id)
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
+        params = dict(request.params)
+        raw_client_id = params.get("client_id")
+        if (
+            raw_client_id is None
+            or (isinstance(raw_client_id, str) and not raw_client_id.strip())
+        ) and ticket.client_id:
+            params["client_id"] = ticket.client_id
+        input_payload = params.get("input", {})
+        if not isinstance(input_payload, dict):
+            raise HTTPException(status_code=422, detail="params.input must be an object")
+        try:
+            scheduled_job = scheduler.register(
+                "",
+                request.cron,
+                params,
+                job_kind="agent",
+                agent_id=definition.id,
+                entity_id=request.entity_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1490,7 +1548,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _scheduled_job_view(job) -> dict[str, object]:
         return {
             "id": job.id,
+            "job_kind": job.job_kind,
             "template_id": job.template_id,
+            "agent_id": job.agent_id,
+            "entity_id": job.entity_id,
             "cron": job.cron,
             "paused": job.paused,
             "created_at": job.created_at,

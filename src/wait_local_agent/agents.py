@@ -25,7 +25,7 @@ from wait_local_agent.store import Store, _normalize_client_id
 
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
-SUPPORTED_AGENT_TRIGGER = "manual"
+SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled"})
 SUPPORTED_ENTITY_TYPE = "ticket"
 
 
@@ -436,8 +436,8 @@ class AgentService:
             raise AgentDefinitionError("name must contain 1-120 characters")
         if len(description) > 4000:
             raise AgentDefinitionError("description is too long")
-        if trigger != SUPPORTED_AGENT_TRIGGER:
-            raise AgentDefinitionError("only manual agents are supported in this slice")
+        if trigger not in SUPPORTED_AGENT_TRIGGERS:
+            raise AgentDefinitionError("only manual or scheduled agents are supported in this slice")
         if entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("only ticket agents are supported in this slice")
         if not isinstance(filters, dict):

@@ -290,7 +290,10 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  template_id: string;
+  job_kind: "workflow" | "agent";
+  template_id: string | null;
+  agent_id: string | null;
+  entity_id: string | null;
   cron: string;
   paused: boolean;
   created_at: string;
@@ -301,9 +304,19 @@ export type ScheduledJob = {
 };
 
 export type ScheduledJobRequestBody = {
-  template_id: string;
+  template_id?: string;
+  agent_id?: string;
+  entity_id?: string;
   cron: string;
-  params: Record<string, string | number | boolean | null>;
+  params: Record<string, unknown>;
+};
+
+export type AgentDefinition = {
+  id: string;
+  name: string;
+  trigger: "manual" | "scheduled";
+  enabled: boolean;
+  client_id: string | null;
 };
 
 export type ProviderSettings = {

@@ -8,15 +8,23 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from wait_local_agent.agents import AgentService
 from wait_local_agent.models import ScheduledJob
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
 
 
 class SchedulerManager:
-    def __init__(self, store: Store, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        store: Store,
+        *,
+        enabled: bool = True,
+        agent_service: AgentService | None = None,
+    ) -> None:
         self._store = store
         self._enabled = enabled
+        self._agent_service = agent_service
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
 
@@ -46,14 +54,22 @@ class SchedulerManager:
         template_id: str,
         cron: str,
         params: dict[str, object],
+        *,
+        job_kind: str = "workflow",
+        agent_id: str | None = None,
+        entity_id: str | None = None,
     ) -> ScheduledJob:
         validate_cron_expression(cron)
+        _validate_schedule_target(job_kind, template_id, agent_id, entity_id)
         client_id = _string_or_none(params.get("client_id"))
         scheduled_job = self._store.create_scheduled_job(
             template_id,
             cron,
             params,
             client_id=client_id,
+            job_kind=job_kind,
+            agent_id=agent_id,
+            entity_id=entity_id,
         )
         if self._scheduler is not None:
             self._register_live_job(scheduled_job)
@@ -88,8 +104,11 @@ class SchedulerManager:
 
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
         params = _safe_json_object(scheduled_job.params_json)
-        ticket_id = _required_ticket_id(params)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
+        if scheduled_job.job_kind == "agent":
+            await self._run_agent_job(scheduled_job, params, client_id)
+            return
+        ticket_id = _required_ticket_id(params)
         try:
             run = run_workflow_template(
                 self._store,
@@ -111,6 +130,59 @@ class SchedulerManager:
             "scheduled_job.triggered",
             str(scheduled_job.id),
             f"{scheduled_job.template_id} created workflow run {run.id}",
+            client_id=client_id,
+        )
+
+    async def _run_agent_job(
+        self,
+        scheduled_job: ScheduledJob,
+        params: dict[str, object],
+        client_id: str | None,
+    ) -> None:
+        try:
+            if self._agent_service is None:
+                raise RuntimeError("scheduled agent execution is not configured")
+            if scheduled_job.agent_id is None or scheduled_job.entity_id is None:
+                raise ValueError("scheduled agent is missing agent_id or entity_id")
+            definition = self._agent_service.get(scheduled_job.agent_id)
+            if definition is None:
+                raise LookupError("scheduled agent definition not found")
+            if definition.trigger != "scheduled":
+                raise ValueError("scheduled agent definition has the wrong trigger")
+            if definition.client_id is not None and definition.client_id != client_id:
+                raise PermissionError("scheduled agent is outside the schedule tenant scope")
+            if definition.client_id is None and client_id is not None:
+                definition = replace(definition, client_id=client_id)
+            input_payload = params.get("input", {})
+            if not isinstance(input_payload, dict):
+                raise ValueError("scheduled agent input must be an object")
+        except Exception as exc:
+            self._store.add_audit_event(
+                "scheduled_job.trigger_failed",
+                str(scheduled_job.id),
+                f"agent {scheduled_job.agent_id} failed: {exc}",
+                client_id=client_id,
+            )
+            raise
+        try:
+            result = self._agent_service.run(
+                definition,
+                entity_id=scheduled_job.entity_id,
+                actor="scheduler",
+                input_payload=input_payload,
+            )
+        except Exception as exc:
+            self._store.add_audit_event(
+                "scheduled_job.trigger_failed",
+                str(scheduled_job.id),
+                f"agent {scheduled_job.agent_id} failed: {exc}",
+                client_id=client_id,
+            )
+            raise
+        self._store.add_audit_event(
+            "scheduled_job.triggered",
+            str(scheduled_job.id),
+            f"agent {scheduled_job.agent_id} created agent run {result.run_id} ({result.status})",
             client_id=client_id,
         )
 
@@ -153,6 +225,23 @@ def validate_cron_expression(cron: str) -> None:
         CronTrigger.from_crontab(cron, timezone=UTC)
     except ValueError as exc:
         raise ValueError("invalid cron expression; expected standard 5-field crontab syntax") from exc
+
+
+def _validate_schedule_target(
+    job_kind: str,
+    template_id: str,
+    agent_id: str | None,
+    entity_id: str | None,
+) -> None:
+    if job_kind == "workflow":
+        if not template_id or agent_id is not None or entity_id is not None:
+            raise ValueError("workflow schedules require template_id only")
+        return
+    if job_kind == "agent":
+        if template_id or not _string_or_none(agent_id) or not _string_or_none(entity_id):
+            raise ValueError("agent schedules require agent_id and entity_id")
+        return
+    raise ValueError("unsupported scheduled job kind")
 
 
 def _safe_json_object(payload_json: str) -> dict[str, object]:
