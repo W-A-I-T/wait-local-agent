@@ -1,17 +1,24 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiRequestError, apiFetch } from "../api/client";
+import { projectLaunchPassportStatus } from "../api/founder";
 import { useDashboard } from "../app/DashboardContext";
-import { type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
+import { RoleGate } from "../components/RoleGate";
+import { StatusChip } from "../components/StatusChip";
+import { type LaunchPassportStatus, type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
 export function Settings() {
-  const { isAdmin } = useDashboard();
+  const { isAdmin, loading, role } = useDashboard();
+  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
+  const [launchPassportState, setLaunchPassportState] = useState<"loading" | "not_configured" | "available" | "unavailable">("loading");
 
   const [packPath, setPackPath] = useState("");
   const [packLicense, setPackLicense] = useState("");
@@ -24,18 +31,34 @@ export function Settings() {
 
   const refresh = useCallback(async () => {
     try {
-      const [providerRows, securityRows, packRows, secretRows, updateRows] = await Promise.all([
+      const [providerRows, securityRows, packRows, secretRows, updateRows, launchPassportResult] = await Promise.all([
         apiFetch<ProviderSettings>("/settings/providers"),
         apiFetch<SecuritySettings>("/settings/security"),
         apiFetch<PackInfo[]>("/packs"),
         apiFetch<SecretRecord[]>("/secrets"),
-        apiFetch<UpdateStatus>("/update-status")
+        apiFetch<UpdateStatus>("/update-status"),
+        canViewLaunchPassport
+          ? apiFetch<LaunchPassportStatus>("/founder/lp-status").then(
+            (value) => ({ kind: "available" as const, value }),
+            (error: unknown) => ({ kind: "unavailable" as const, error })
+          )
+          : Promise.resolve({ kind: "not_requested" as const })
       ]);
       setProviders(providerRows);
       setSecurity(securityRows);
       setPacks(packRows);
       setSecrets(secretRows);
       setStatus(updateRows);
+      if (launchPassportResult.kind === "available") {
+        setLaunchPassport(projectLaunchPassportStatus(launchPassportResult.value));
+        setLaunchPassportState("available");
+      } else if (launchPassportResult.kind === "unavailable" && isLaunchPassportNotConfigured(launchPassportResult.error)) {
+        setLaunchPassport(null);
+        setLaunchPassportState("not_configured");
+      } else {
+        setLaunchPassport(null);
+        setLaunchPassportState("unavailable");
+      }
       setStatusMessage("Settings loaded.");
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 403) {
@@ -44,7 +67,7 @@ export function Settings() {
       }
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     }
-  }, []);
+  }, [canViewLaunchPassport]);
 
   useEffect(() => {
     void refresh();
@@ -181,6 +204,51 @@ export function Settings() {
 
       <section className="panel">
         <div className="panel-heading">
+          <h2>Launch Passport</h2>
+          <span>Optional project connection</span>
+        </div>
+        <RoleGate
+          role={accessRole}
+          allowed={["admin"]}
+          fallback={<p className="screen-note">Only administrators can view this project connection.</p>}
+        >
+          {launchPassportState === "loading" ? <p className="screen-note">Checking connection state…</p> : null}
+          {launchPassportState === "not_configured" ? (
+            <div className="connection-state">
+              <StatusChip status="not_configured" hint="The appliance continues to work without this optional connection." />
+              <p>This appliance is ready to use on its own. Connect a Launch Passport project later when the connection service is available.</p>
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <p>The current service exposes connection status but not an in-app configuration action. It needs a configuration route before this screen can safely submit project details.</p>
+              </details>
+            </div>
+          ) : null}
+          {launchPassportState === "available" ? (
+            <div className="connection-state">
+              <StatusChip status={launchPassport?.status ?? "connected"} />
+              <p>Connected to project {launchPassport?.lp_project_id ?? "this project"}.</p>
+              <div className="status-chip-wrap">
+                <StatusChip
+                  status={launchPassport?.token_configured ? "configured" : "not_configured"}
+                  hint={launchPassport?.token_configured ? "Project access is saved on this appliance." : "Project access needs to be added."}
+                />
+                <StatusChip
+                  status={launchPassport?.capabilities?.launch_scan ? "available" : "upload_only"}
+                  hint={launchPassport?.capabilities?.launch_scan ? "Remote scan launch is available." : "Remote scan launch is optional and is not enabled for this project."}
+                />
+              </div>
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <p>The connection setting is stored on this appliance. Access values are never displayed here.</p>
+              </details>
+            </div>
+          ) : null}
+          {launchPassportState === "unavailable" ? <p className="screen-note">Connection state is temporarily unavailable. Your local appliance can still be used normally.</p> : null}
+        </RoleGate>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
           <h2>Providers</h2>
           <span>runtime stack</span>
         </div>
@@ -306,4 +374,9 @@ export function Settings() {
       </section>
     </section>
   );
+}
+
+function isLaunchPassportNotConfigured(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && (error.status === 409 || /not configured/i.test(`${error.message} ${error.technicalDetail}`));
 }

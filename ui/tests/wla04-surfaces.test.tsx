@@ -52,6 +52,8 @@ describe("wla-04 onboarding and parity surfaces", () => {
     expect(await screen.findByText("Ready to ingest from /workspace/knowledge")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Connect Launch Passport (optional)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
     expect(await screen.findByLabelText("Demo ticket id")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Complete" }));
@@ -71,7 +73,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
       </MemoryRouter>
     );
 
-    fireEvent.change(screen.getByPlaceholderText("/path/to/launcher-project"), { target: { value: "/workspace/launcher" } });
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your-project"), { target: { value: "/workspace/launcher" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     expect(await screen.findByText(/Founder Pack is not installed/)).toBeInTheDocument();

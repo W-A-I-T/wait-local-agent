@@ -360,3 +360,41 @@ export type AuthRoleResponse = {
   api_auth_required: boolean;
   demo_mode: boolean;
 };
+
+export type FounderUploadPreview = {
+  artifact_id: string;
+  project_id?: string;
+  schemaVersion?: string;
+  sourceCode?: boolean;
+  file_count?: number;
+  dependency_count?: number;
+  env_key_names?: string[];
+  finding_count?: number;
+};
+
+export type LaunchPassportStatus = {
+  status: "connected" | "unreachable" | "not_authorized" | "unknown";
+  lp_project_id?: string;
+  token_configured: boolean;
+  capabilities?: {
+    launch_scan?: boolean;
+  };
+};
+
+export type FounderScanState = "queued" | "pending" | "pending_upload" | "running" | "completed" | "uploaded" | "failed" | "cancelled" | "unknown";
+
+export type FounderScanView = {
+  artifact_id: string;
+  status: FounderScanState;
+};
+
+export type FounderResults = {
+  project_id?: string;
+  scans: {
+    count: number;
+    states: FounderScanState[];
+  };
+  latest_report: {
+    available: boolean;
+  };
+};
