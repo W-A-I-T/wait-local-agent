@@ -76,6 +76,14 @@ catalog. Gallery entries retain the source template identity and tenant scope;
 execution resolves back to the reviewed core implementation, so the gallery
 does not create an unrestricted code or prompt execution surface.
 
+## Backfills
+
+Backfills are persisted, sequential batches of existing bounded agent runs. The
+controller caps a request at 100 ticket IDs, records each run and failure, and
+supports queued/paused/completed/cancelled state plus failed-item reruns. It
+does not introduce parallel execution or bypass the normal agent, approval,
+redaction, or tenant checks.
+
 ## Event-triggered agents
 
 - `POST /automation/events` accepts supported ticket events with an

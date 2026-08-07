@@ -35,7 +35,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   restore-as-new-version are available under `/agents/{id}/revisions`; event
   agents also support same-tenant dependency chains with cycle prevention. A
   provenance-bearing tenant-scoped template gallery can run reviewed core
-  workflows through the existing approval path.
+  workflows through the existing approval path. Persisted sequential agent
+  backfills now expose progress counts, pause/cancel state, and failed-item
+  reruns under `/agent-backfills`.
 - A `/tools` API catalog that exposes existing smart-action schemas, risk,
   required role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.

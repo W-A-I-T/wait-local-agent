@@ -1256,6 +1256,152 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
     ).status_code == 403
 
 
+def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Backfill triage",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+    agent_id = agent.json()["id"]
+
+    created = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "backfill-secret"},
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["status"] == "queued"
+    assert "backfill-secret" not in created.text
+    backfill_id = created.json()["id"]
+    assert client.get("/agent-backfills").json()[0]["id"] == backfill_id
+    assert client.get(f"/agent-backfills/{backfill_id}").status_code == 200
+
+    paused = client.post(f"/agent-backfills/{backfill_id}/pause")
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+    resumed = client.post(f"/agent-backfills/{backfill_id}/run")
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["succeeded_count"] == 2
+    assert client.post(f"/agent-backfills/{backfill_id}/run").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/rerun-failed").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/cancel").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/pause").status_code == 409
+
+    queued_for_cancel = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    cancelled = client.post(f"/agent-backfills/{queued_for_cancel.json()['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+    disabled = client.post(
+        "/agents",
+        json={
+            "name": "Disabled backfill target",
+            "enabled": False,
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    failed_backfill = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": disabled.json()["id"],
+            "entity_ids": ["TCK-1001"],
+            "client_id": "acme",
+        },
+    )
+    failed_run = client.post(f"/agent-backfills/{failed_backfill.json()['id']}/run")
+    assert failed_run.status_code == 200
+    assert failed_run.json()["status"] == "completed_with_errors"
+    assert failed_run.json()["failed_entity_ids"] == ["TCK-1001"]
+    rerun = client.post(f"/agent-backfills/{failed_backfill.json()['id']}/rerun-failed")
+    assert rerun.status_code == 200
+    assert rerun.json()["failed_count"] == 1
+    assert client.post(f"/agent-backfills/{failed_backfill.json()['id']}/rerun-failed").status_code == 200
+
+    duplicate = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001", "TCK-1001"], "client_id": "acme"},
+    )
+    missing_ticket = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["NOPE"], "client_id": "acme"},
+    )
+    unknown_agent = client.post(
+        "/agent-backfills",
+        json={"agent_id": "no-such-agent", "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    assert duplicate.status_code == 422
+    assert missing_ticket.status_code == 404
+    assert unknown_agent.status_code == 404
+    assert client.get("/agent-backfills/99999").status_code == 404
+    assert client.post("/agent-backfills/99999/run").status_code == 404
+    assert client.post("/agent-backfills/99999/pause").status_code == 404
+    assert client.post("/agent-backfills/99999/cancel").status_code == 404
+    assert client.post("/agent-backfills/99999/rerun-failed").status_code == 404
+
+    from wait_local_agent.agents import AgentExecutionResult
+
+    def synthetic_failure(self, definition, *, entity_id, actor, input_payload):
+        return AgentExecutionResult(
+            run_id=0,
+            agent_id=definition.id,
+            status="failed",
+            current_step=0,
+            steps=[],
+        )
+
+    monkeypatch.setattr(app_module.AgentService, "run", synthetic_failure)
+    synthetic_backfill = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    synthetic_run = client.post(f"/agent-backfills/{synthetic_backfill.json()['id']}/run")
+    assert synthetic_run.status_code == 200
+    assert synthetic_run.json()["failed_count"] == 1
+    assert synthetic_run.json()["run_ids"] == []
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get("/agent-backfills", headers=_auth("viewer-token")).status_code == 403
+    assert secure_client.get(
+        "/agent-backfills/1", headers=_auth("viewer-token")
+    ).status_code == 403
+    assert secure_client.post(
+        "/agent-backfills",
+        headers=_auth("tech-token"),
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"]},
+    ).status_code == 403
+
+
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     client = TestClient(create_app(settings))
 

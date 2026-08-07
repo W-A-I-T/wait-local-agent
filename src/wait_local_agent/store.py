@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
+    AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
     AgentRun,
@@ -299,6 +300,28 @@ class Store:
                     state_json text not null,
                     started_at text not null,
                     finished_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists agent_backfills (
+                    id integer primary key autoincrement,
+                    agent_id text not null,
+                    entity_ids_json text not null,
+                    input_json text not null,
+                    status text not null,
+                    next_index integer not null default 0,
+                    processed_count integer not null default 0,
+                    succeeded_count integer not null default 0,
+                    failed_count integer not null default 0,
+                    run_ids_json text not null default '[]',
+                    failed_entity_ids_json text not null default '[]',
+                    actor text not null,
+                    error_detail text not null default '',
+                    created_at text not null,
+                    updated_at text not null,
                     client_id text
                 )
                 """
@@ -1683,6 +1706,156 @@ class Store:
                     (agent_id, normalized_client_id),
                 ).fetchall()
         return [_agent_definition_revision_from_row(row) for row in rows]
+
+    def create_agent_backfill(
+        self,
+        agent_id: str,
+        entity_ids: list[str],
+        input_payload: dict[str, object],
+        *,
+        actor: str,
+        client_id: str | None = None,
+    ) -> AgentBackfill:
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into agent_backfills
+                  (agent_id, entity_ids_json, input_json, status, next_index,
+                   processed_count, succeeded_count, failed_count, run_ids_json,
+                   failed_entity_ids_json, actor, error_detail, created_at,
+                   updated_at, client_id)
+                values (?, ?, ?, 'queued', 0, 0, 0, 0, '[]', '[]', ?, '', ?, ?, ?)
+                """,
+                (
+                    agent_id,
+                    _json_dumps_value(entity_ids),
+                    _json_dumps(input_payload),
+                    _redact_text(actor),
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("agent backfill insert did not return an id")
+            backfill_id = int(cursor.lastrowid)
+            self._add_audit_event(
+                connection,
+                "agent_backfill.created",
+                str(backfill_id),
+                f"agent {agent_id} backfill queued for {len(entity_ids)} entity(s)",
+                client_id=normalized_client_id,
+            )
+        backfill = self.get_agent_backfill(backfill_id, normalized_client_id)
+        if backfill is None:
+            raise RuntimeError("agent backfill was not persisted")
+        return backfill
+
+    def get_agent_backfill(
+        self,
+        backfill_id: int,
+        client_id: str | None = None,
+    ) -> AgentBackfill | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from agent_backfills where id = ?",
+                    (backfill_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from agent_backfills
+                    where id = ? and client_id = ?
+                    """,
+                    (backfill_id, normalized_client_id),
+                ).fetchone()
+        return _agent_backfill_from_row(row) if row else None
+
+    def list_agent_backfills(self, client_id: str | None = None) -> list[AgentBackfill]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute("select * from agent_backfills order by id desc").fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from agent_backfills where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_agent_backfill_from_row(row) for row in rows]
+
+    def update_agent_backfill(
+        self,
+        backfill_id: int,
+        *,
+        status: str,
+        next_index: int,
+        processed_count: int,
+        succeeded_count: int,
+        failed_count: int,
+        run_ids: list[int],
+        failed_entity_ids: list[str],
+        error_detail: str,
+    ) -> AgentBackfill:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update agent_backfills
+                set status = ?, next_index = ?, processed_count = ?,
+                    succeeded_count = ?, failed_count = ?, run_ids_json = ?,
+                    failed_entity_ids_json = ?, error_detail = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    status,
+                    next_index,
+                    processed_count,
+                    succeeded_count,
+                    failed_count,
+                    _json_dumps_value(run_ids),
+                    _json_dumps_value(failed_entity_ids),
+                    _redact_text(error_detail),
+                    utc_now(),
+                    backfill_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(backfill_id)
+        backfill = self.get_agent_backfill(backfill_id)
+        if backfill is None:
+            raise RuntimeError("agent backfill was not persisted")
+        return backfill
+
+    def reset_agent_backfill_failed(
+        self,
+        backfill_id: int,
+        failed_entity_ids: list[str],
+    ) -> AgentBackfill:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update agent_backfills
+                set entity_ids_json = ?, status = 'queued', next_index = 0,
+                    processed_count = 0, succeeded_count = 0, failed_count = 0,
+                    failed_entity_ids_json = '[]', error_detail = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    _json_dumps_value(failed_entity_ids),
+                    "",
+                    utc_now(),
+                    backfill_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(backfill_id)
+        backfill = self.get_agent_backfill(backfill_id)
+        if backfill is None:
+            raise RuntimeError("agent backfill was not persisted")
+        return backfill
 
     def create_agent_run(
         self,
@@ -3891,6 +4064,17 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return AgentDefinition(**payload)
+
+
+def _agent_backfill_from_row(row: sqlite3.Row) -> AgentBackfill:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    payload["entity_ids_json"] = _redact_json_text(str(payload["entity_ids_json"]))
+    payload["input_json"] = _redact_json_text(str(payload["input_json"]))
+    payload["run_ids_json"] = _redact_json_text(str(payload["run_ids_json"]))
+    payload["failed_entity_ids_json"] = _redact_json_text(str(payload["failed_entity_ids_json"]))
+    payload["error_detail"] = _redact_text(str(payload["error_detail"]))
+    return AgentBackfill(**payload)
 
 
 def _agent_definition_revision_from_row(row: sqlite3.Row) -> AgentDefinitionRevision:
