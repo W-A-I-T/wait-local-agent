@@ -213,6 +213,92 @@ def test_event_dispatch_skips_disabled_nonmatching_and_wrong_scope_agents(settin
     assert len(unscoped.run_ids) == 1
 
 
+def test_event_dispatch_runs_dependency_chain_in_bounded_order_and_blocks_unmet(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    upstream = service.create(
+        name="Upstream triage",
+        description="Classify before the dependent agent runs.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={"event_type": "ticket.created", "priority": "P1"},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    dependent = service.create(
+        name="A dependent response",
+        description="Runs after triage.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={"event_type": "ticket.created", "priority": "P1"},
+        enabled_tools=["ticket-summary"],
+        steps=[{"tool_id": "ticket-summary", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        depends_on_agent_ids=[upstream.id],
+    )
+
+    result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="dependency-chain-event",
+        client_id="acme",
+    )
+    assert result.delivery.status == "completed"
+    assert set(result.matched_agent_ids) == {upstream.id, dependent.id}
+    assert len(result.run_ids) == 2
+    assert [store.get_agent_run(run_id).agent_id for run_id in result.run_ids] == [upstream.id, dependent.id]  # type: ignore[union-attr]
+
+    blocked_upstream = service.create(
+        name="Never matched upstream",
+        description="Only listens to a different event.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={"event_type": "ticket.created"},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    blocked = service.create(
+        name="Blocked dependent",
+        description="Must wait for the unmatched upstream.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={"event_type": "ticket.updated"},
+        enabled_tools=["ticket-summary"],
+        steps=[{"tool_id": "ticket-summary", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        depends_on_agent_ids=[blocked_upstream.id],
+    )
+    blocked_result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.updated",
+        entity_type="ticket",
+        entity_id="TCK-1002",
+        payload={"priority": "P1"},
+        idempotency_key="blocked-dependency-event",
+        client_id="acme",
+    )
+    assert blocked_result.delivery.status == "failed"
+    assert blocked.id in blocked_result.matched_agent_ids
+    assert blocked_result.run_ids == []
+    assert "dependency not completed" in blocked_result.errors[0]
+
+
 def test_event_dispatch_failure_is_recorded_without_blocking_other_agents(settings) -> None:
     store = Store(settings.data_path)
     _seed(store)

@@ -47,6 +47,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
+    assert "depends_on_agent_ids_json" in _columns(connection, "agent_definitions")
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None

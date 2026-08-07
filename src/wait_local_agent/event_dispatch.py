@@ -87,6 +87,7 @@ class EventDispatcher:
         matched_agent_ids: list[str] = []
         run_ids: list[int] = []
         errors: list[str] = []
+        candidates = []
         for definition in self.store.list_agent_definitions():
             if not definition.enabled or definition.trigger != "event":
                 continue
@@ -97,26 +98,69 @@ class EventDispatcher:
             if not _matches_filters(definition.filters, event_context):
                 continue
             matched_agent_ids.append(definition.id)
-            if definition.run_once_per_entity and self.store.has_event_agent_run(
-                agent_id=definition.id,
-                event_type=event_type,
-                entity_id=entity_id,
-                client_id=effective_client_id,
-            ):
-                continue
-            scoped_definition = definition
-            if scoped_definition.client_id is None and effective_client_id is not None:
-                scoped_definition = replace(scoped_definition, client_id=effective_client_id)
-            try:
-                result = self.agent_service.run(
-                    scoped_definition,
+            candidates.append(definition)
+
+        pending = candidates
+        completed_agents: set[str] = set()
+        while pending:
+            progressed = False
+            next_pending = []
+            for definition in pending:
+                if definition.run_once_per_entity and self.store.has_event_agent_run(
+                    agent_id=definition.id,
+                    event_type=event_type,
                     entity_id=entity_id,
-                    actor=actor,
-                    input_payload=event_context,
-                )
-                run_ids.append(result.run_id)
-            except Exception as exc:  # noqa: BLE001 - one bad agent must not block others
-                errors.append(redact_text(f"{definition.id}: {exc}"))
+                    client_id=effective_client_id,
+                ):
+                    if self.store.has_completed_event_agent_run(
+                        agent_id=definition.id,
+                        event_type=event_type,
+                        entity_id=entity_id,
+                        client_id=effective_client_id,
+                    ):
+                        completed_agents.add(definition.id)
+                    progressed = True
+                    continue
+                unmet = [
+                    dependency_id
+                    for dependency_id in definition.depends_on_agent_ids
+                    if dependency_id not in completed_agents
+                    and not self.store.has_completed_event_agent_run(
+                        agent_id=dependency_id,
+                        event_type=event_type,
+                        entity_id=entity_id,
+                        client_id=effective_client_id,
+                    )
+                ]
+                if unmet:
+                    next_pending.append((definition, unmet))
+                    continue
+                scoped_definition = definition
+                if scoped_definition.client_id is None and effective_client_id is not None:
+                    scoped_definition = replace(scoped_definition, client_id=effective_client_id)
+                try:
+                    result = self.agent_service.run(
+                        scoped_definition,
+                        entity_id=entity_id,
+                        actor=actor,
+                        input_payload=event_context,
+                    )
+                    run_ids.append(result.run_id)
+                    if result.status == "completed":
+                        completed_agents.add(definition.id)
+                    progressed = True
+                except Exception as exc:  # noqa: BLE001 - one bad agent must not block others
+                    errors.append(redact_text(f"{definition.id}: {exc}"))
+                    progressed = True
+            if not progressed:
+                for definition, unmet in next_pending:
+                    errors.append(
+                        redact_text(
+                            f"{definition.id}: dependency not completed: {', '.join(unmet)}"
+                        )
+                    )
+                break
+            pending = [definition for definition, _unmet in next_pending]
 
         status = "failed" if errors else "completed"
         delivery = self.store.update_event_delivery(

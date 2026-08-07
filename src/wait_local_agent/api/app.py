@@ -164,6 +164,7 @@ class AgentDefinitionRequest(BaseModel):
     execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     client_id: str | None = None
     run_once_per_entity: bool = True
+    depends_on_agent_ids: list[str] = Field(default_factory=list)
 
 
 class AgentRunStartRequest(BaseModel):
@@ -453,6 +454,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_timeout_seconds=payload.execution_timeout_seconds,
                 client_id=scoped_client_id,
                 run_once_per_entity=payload.run_once_per_entity,
+                depends_on_agent_ids=payload.depends_on_agent_ids,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -515,6 +517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
                 run_once_per_entity=payload.run_once_per_entity,
+                depends_on_agent_ids=payload.depends_on_agent_ids,
             )
         except (AgentDefinitionError, ValidationError) as exc:
             raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
@@ -548,6 +551,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
                 run_once_per_entity=payload.run_once_per_entity,
+                depends_on_agent_ids=payload.depends_on_agent_ids,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1717,6 +1721,7 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "client_id": definition.client_id,
                 "version": definition.version,
                 "run_once_per_entity": definition.run_once_per_entity,
+                "depends_on_agent_ids": definition.depends_on_agent_ids,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }
