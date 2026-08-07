@@ -14,12 +14,23 @@ import uvicorn
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
     FOUNDER_INSTALL_HINT,
+    FounderNotConfiguredError,
     FounderPackContractError,
     FounderPackUnavailableError,
+    FounderUploadConflictError,
     build_upload_preview,
+    configure_founder,
     invoke_founder,
     json_object,
+    open_founder_preview,
+    open_founder_results,
+    open_founder_scan,
+    open_founder_status,
+    open_founder_upload,
     require_founder_pack,
+    require_fresh_preview,
+    resolve_open_config,
+    sanitized_pack_bundle,
 )
 from wait_local_agent.api.founder import (
     render_json as render_founder_json,
@@ -211,7 +222,49 @@ def install_pack(
 
 @founder_app.command("scan")
 def founder_scan(path: Path) -> None:
-    response = json_object(_invoke_founder_cli("scan", path), operation="scan")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        response = open_founder_scan(store, settings, config, path)
+    else:
+        response = json_object(invoke_founder(pack, "scan", path), operation="scan")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("configure")
+def founder_configure(
+    base_url: Annotated[str, typer.Option("--base-url")],
+    project_id: Annotated[str, typer.Option("--project-id")],
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help="Token for scripting only; visible in shell history/process arguments. Prefer the hidden prompt.",
+        ),
+    ] = None,
+) -> None:
+    token_value = token if token is not None else typer.prompt("Launch Passport token", hide_input=True)
+    try:
+        response = configure_founder(load_settings(), _store(), base_url, project_id, token_value)
+    except (ValueError, SecretVaultError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("preview")
+def founder_preview(artifact_id: Annotated[str, typer.Argument()]) -> None:
+    pack = _founder_pack_or_none()
+    if pack is None:
+        _, store, _ = _open_cli_config()
+        try:
+            response = open_founder_preview(store, artifact_id)
+        except KeyError as exc:
+            raise typer.BadParameter("artifact not found") from exc
+        store.mark_founder_artifact_previewed(artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        response = build_upload_preview(artifact_id, bundle)
+        _store().mark_founder_artifact_previewed(artifact_id)
     typer.echo(render_founder_json(response))
 
 
@@ -248,12 +301,50 @@ def founder_upload(
     artifact_id: Annotated[str, typer.Option("--artifact-id")],
     yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
 ) -> None:
-    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
-    typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
-    if not yes:
-        typer.echo("re-run with --yes to confirm upload")
-        raise typer.Exit(code=1)
-    response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        if not yes:
+            typer.echo("upload requires a prior preview; run `founder preview ARTIFACT_ID`, then re-run with --yes")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(store, artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = open_founder_upload(settings, store, config, artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
+        if not yes:
+            typer.echo("re-run with --yes after this preview to confirm upload")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(_store(), artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("status")
+def founder_status() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_status(settings, config)
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("results")
+def founder_results() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "results"), operation="results")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_results(settings, config)
     typer.echo(render_founder_json(response))
 
 
@@ -909,16 +1000,41 @@ def update_check() -> None:
 
 
 def _doctor_founder_lp_status() -> str:
-    try:
-        payload = json_object(invoke_founder(require_founder_pack(), "lp_status"), operation="lp_status")
-    except FounderPackUnavailableError:
-        return "not_installed"
-    except FounderPackContractError:
-        return "contract_error"
+    pack = _founder_pack_or_none()
+    if pack is None:
+        try:
+            settings = load_settings()
+            store = _store()
+            payload = open_founder_status(settings, resolve_open_config(settings, store))
+        except FounderNotConfiguredError:
+            return "not_configured"
+    else:
+        try:
+            payload = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+        except FounderPackContractError:
+            return "contract_error"
     status = payload.get("status")
     if isinstance(status, str):
         return status
     return json.dumps(payload, sort_keys=True)
+
+
+def _founder_pack_or_none():
+    try:
+        return require_founder_pack()
+    except FounderPackUnavailableError:
+        return None
+
+
+def _open_cli_config():
+    settings = load_settings()
+    store = _store()
+    try:
+        config = resolve_open_config(settings, store)
+    except FounderNotConfiguredError as exc:
+        typer.echo("launch passport not configured")
+        raise typer.Exit(code=1) from exc
+    return settings, store, config
 
 
 def _invoke_founder_cli(operation: str, *args: object) -> object:
