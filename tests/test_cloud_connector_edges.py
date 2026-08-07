@@ -105,7 +105,9 @@ def test_aws_preflight_and_detailed_outcomes_cover_authz_paths(monkeypatch: pyte
 def test_aws_detailed_empty_limit_does_not_call_clients() -> None:
     result = aws_module.AwsInventoryConnector().collect_detailed({"session": AwsEdgeSession(), "limit": 0})
     assert result["result"]["items"] == []
-    assert result["outcomes"] == []
+    assert result["result"]["status"] == "partial"
+    assert result["outcomes"][0]["error_code"] == "truncated"
+    assert "capped at 0 assets" in result["outcomes"][0]["error_detail"]
     invalid = aws_module.AwsInventoryConnector().collect_detailed({"limit": "bad"})
     assert invalid["result"]["ok"] is False
     limited = aws_module.AwsInventoryConnector().collect_detailed({"session": AwsEdgeSession(), "limit": 1})

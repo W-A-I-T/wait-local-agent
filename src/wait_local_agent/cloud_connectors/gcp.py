@@ -126,9 +126,15 @@ class GCPInventoryConnector:
             elif callable(getattr(resource_manager, "get", None)):
                 resource_manager.get(name=f"projects/{project_id}")
             else:
-                resource_manager.search_projects()
+                response = resource_manager.search_projects()
+                if response is not None:
+                    next(iter(response), None)
         else:
-            resource_manager.search_projects()
+            response = resource_manager.search_projects()
+            if response is not None:
+                # Resource Manager returns a lazy pager; force its first request so
+                # invalid credentials do not pass preflight unnoticed.
+                next(iter(response), None)
 
     def validate_config(self, config: GcpConfig = None) -> dict[str, Any]:
         errors: list[str] = []
@@ -330,7 +336,11 @@ class GCPInventoryConnector:
             return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
         limit = self._config_limit(config, default=10 if preview else None)
         if limit == 0:
-            return {"result": self._result([], preview=preview), "outcomes": []}
+            limit_outcomes = [truncation_outcome(f"{self.module_id}:limit", limit=limit)]
+            return {
+                "result": self._result([], preview=preview, outcomes=limit_outcomes),
+                "outcomes": limit_outcomes,
+            }
         session = self._session(config)
         outcomes: list[dict[str, Any]] = []
         project_records: list[dict[str, Any]] = []

@@ -27,6 +27,20 @@ class FakeResourceManagerClient:
         ]
 
 
+class LazyGcpCredentialError(Exception):
+    pass
+
+
+class LazyProjectsPager:
+    def __iter__(self) -> Any:
+        raise LazyGcpCredentialError("invalid GCP credential")
+
+
+class LazyResourceManagerClient:
+    def search_projects(self) -> LazyProjectsPager:
+        return LazyProjectsPager()
+
+
 class FakeComputeClient:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -369,6 +383,11 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
     assert any("limit" in error for error in result["errors"])
 
 
+def test_gcp_preflight_materializes_lazy_project_pager() -> None:
+    with pytest.raises(LazyGcpCredentialError):
+        _connector().preflight({"session": SimpleNamespace(client=lambda _: LazyResourceManagerClient())})
+
+
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"session": FakeSession(), "limit": 2})
 
@@ -386,7 +405,9 @@ def test_collect_with_limit_zero_returns_empty_without_clients() -> None:
     session = FakeSession()
     result = _connector().collect({"session": session, "limit": 0})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("capped at 0 assets" in error for error in result["errors"])
     assert result["preview"] is False
     assert result["items"] == []
     assert result["assets"] == []

@@ -3,11 +3,13 @@ from __future__ import annotations
 import sys
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from wait_local_agent.cloud_connectors.adapters import AzureCloudAdapter
 from wait_local_agent.cloud_connectors.azure import AzureError, AzureInventoryConnector
+from wait_local_agent.collectors import CollectionStatus
 
 VM_ID_1 = "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-001"
 VM_ID_2 = "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-002"
@@ -112,6 +114,33 @@ class FakeRoleAssignments:
 class FakeAuthorizationClient:
     def __init__(self, *, fail: bool = False) -> None:
         self.role_assignments = FakeRoleAssignments(fail=fail)
+
+
+class LazyAzureCredentialError(Exception):
+    pass
+
+
+class LazyRoleDefinitions:
+    def list(self, **_: Any) -> Any:
+        return self
+
+    def __iter__(self) -> Any:
+        raise LazyAzureCredentialError("invalid Azure credential")
+
+
+class LazyAuthorizationClient:
+    role_definitions = LazyRoleDefinitions()
+
+
+class LazyPreflightSession:
+    def client(self, service_name: str) -> Any:
+        assert service_name == "authorization"
+        return LazyAuthorizationClient()
+
+
+class StaticVault:
+    def get(self, _: str) -> str:
+        return "runtime-only-secret"
 
 
 class FakeSession:
@@ -351,13 +380,33 @@ def test_collect_with_limit_zero_returns_empty_without_clients() -> None:
     session = FakeSession()
     result = _connector().collect({"session": session, "limit": 0})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("capped at 0 assets" in error for error in result["errors"])
     assert result["preview"] is False
     assert result["items"] == []
     assert result["assets"] == []
     assert result["observations"] == []
     assert result["count"] == 0
     assert session.requested_services == []
+
+
+def test_azure_preflight_materializes_lazy_pager_and_classifies_auth_failure() -> None:
+    connector = _connector()
+    session = LazyPreflightSession()
+
+    with pytest.raises(LazyAzureCredentialError):
+        connector.preflight({"session": session, "subscription_id": "sub-1"})
+
+    adapter = AzureCloudAdapter(
+        connector=connector,
+        vault=cast(Any, StaticVault()),
+        runtime_config_factory=lambda _: {"session": session},
+    )
+    outcome = adapter._preflight({"credential_ref": "azure-readonly", "subscription_id": "sub-1"})
+
+    assert outcome.status is CollectionStatus.NOT_AUTHORIZED
+    assert outcome.error_code == "permission_denied"
 
 
 @pytest.mark.parametrize(

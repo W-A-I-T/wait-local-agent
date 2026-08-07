@@ -93,11 +93,17 @@ class AzureInventoryConnector:
         role_definitions = getattr(authorization, "role_definitions", None)
         role_definition_list = getattr(role_definitions, "list", None)
         if callable(role_definition_list):
-            role_definition_list(scope=f"/subscriptions/{subscription_id}")
+            response = role_definition_list(scope=f"/subscriptions/{subscription_id}")
+            # Azure management SDK list calls return lazy ItemPaged objects.  Pull
+            # the first item so credential and authorization failures surface here.
+            if response is not None:
+                next(iter(response), None)
         else:
             # The authorization client is already a shipped dependency; this fallback
             # keeps lightweight test and compatibility sessions usable.
-            authorization.role_assignments.list_for_subscription()
+            response = authorization.role_assignments.list_for_subscription()
+            if response is not None:
+                next(iter(response), None)
 
     def validate_config(self, config: AzureConfig = None) -> dict[str, Any]:
         errors: list[str] = []
@@ -301,7 +307,11 @@ class AzureInventoryConnector:
             return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
         limit = self._config_limit(config, default=10 if preview else None)
         if limit == 0:
-            return {"result": self._result([], preview=preview), "outcomes": []}
+            limit_outcomes = [truncation_outcome(f"{self.module_id}:limit", limit=limit)]
+            return {
+                "result": self._result([], preview=preview, outcomes=limit_outcomes),
+                "outcomes": limit_outcomes,
+            }
         session = self._session(config)
         records: list[dict[str, Any]] = []
         outcomes: list[dict[str, Any]] = []

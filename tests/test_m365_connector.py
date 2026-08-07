@@ -425,7 +425,9 @@ def test_collect_with_limit_zero_returns_empty_without_clients() -> None:
     client = FakeClient()
     result = _connector().collect({"client": client, "limit": 0})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("capped at 0 assets" in error for error in result["errors"])
     assert result["preview"] is False
     assert result["items"] == []
     assert result["assets"] == []

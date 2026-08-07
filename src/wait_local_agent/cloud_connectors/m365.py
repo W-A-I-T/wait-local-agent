@@ -322,7 +322,11 @@ class M365InventoryConnector:
             return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
         limit = self._config_limit(config, default=10 if preview else None)
         if limit == 0:
-            return {"result": self._result([], preview=preview), "outcomes": []}
+            limit_outcomes = [truncation_outcome(f"{self.module_id}:limit", limit=limit)]
+            return {
+                "result": self._result([], preview=preview, outcomes=limit_outcomes),
+                "outcomes": limit_outcomes,
+            }
         client = self._client(config)
         records: list[dict[str, Any]] = []
         outcomes: list[dict[str, Any]] = []
