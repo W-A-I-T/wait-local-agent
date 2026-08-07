@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-ApprovalStatus = Literal["pending", "approved", "rejected"]
+ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
 ActionKind = Literal[
     "ticket.triage",
@@ -80,6 +80,7 @@ class ApprovalRequest:
     execution_result_json: str = "{}"
     client_id: str | None = None
     approver_id: str | None = None
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True)

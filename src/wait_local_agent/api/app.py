@@ -2067,6 +2067,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _approval_execution_state(request) -> tuple[bool, str]:
         if not request.action_type.startswith("halopsa."):
             return False, "Only HaloPSA approvals have live execution in this release."
+        if request.status == "expired":
+            return False, "Approval expired before execution."
         if request.status != "approved":
             return False, "Approval must be approved before execution."
         if request.execution_status == "succeeded":

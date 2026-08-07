@@ -1170,6 +1170,32 @@ class SmartActionService:
         if approver == run.actor:
             raise PermissionError("requesting actor cannot approve its own smart action")
         action_id = approval.action_type.removeprefix("smart_action:")
+        if approval.status == "expired":
+            expired_result = ActionResult(
+                status="rejected",
+                output=_json_object(run.output_json),
+                evidence=_json_list(run.evidence_json),
+                error_detail="approval expired",
+                run_id=run.id,
+                approval_id=approval_id,
+            )
+            self.store.complete_smart_action_run(
+                run.id,
+                "rejected",
+                expired_result.output,
+                expired_result.evidence,
+                approval_id=approval_id,
+                approver_id=approver,
+                _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+            )
+            self.store.add_audit_event(
+                "smart_action.completed",
+                str(run.id),
+                f"{action_id} rejected after approval expiry",
+                client_id=approval.client_id,
+                approver_id=approver,
+            )
+            return expired_result
         if approval.status == "rejected":
             self.store.complete_smart_action_run(
                 run.id,

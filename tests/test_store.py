@@ -39,6 +39,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in tickets_columns
     assert "client_id" in approval_columns
     assert "approver_id" in approval_columns
+    assert "expires_at" in approval_columns
     assert "client_id" in audit_columns
     assert "approver_id" in audit_columns
     assert "client_id" in event_history_columns
@@ -59,10 +60,33 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
-    assert approval is not None and approval["client_id"] is None and approval["approver_id"] is None
+    assert (
+        approval is not None
+        and approval["client_id"] is None
+        and approval["approver_id"] is None
+        and approval["expires_at"]
+    )
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
     assert workflow is not None and workflow["client_id"] is None
     assert document is not None and document["client_id"] is None
+
+
+def test_store_migration_expires_legacy_approval_with_bad_timestamp(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    _seed_prechange_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "update approval_requests set created_at = ? where id = 1",
+            ("not-a-timestamp",),
+        )
+
+    Store(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        expires_at = connection.execute(
+            "select expires_at from approval_requests where id = 1"
+        ).fetchone()[0]
+    assert expires_at
 
 
 def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Path) -> None:
@@ -216,6 +240,49 @@ def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
         store.update_approval_request(approval.id or 0, "unknown")
     with pytest.raises(PermissionError, match="already completed"):
         store.update_approval_request(approval.id or 0, "rejected")
+
+
+def test_store_expires_pending_approval_and_records_audit(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "TCK-1",
+        "halopsa.add_note",
+        {"ticket_id": "TCK-1", "fields": {"note": "hello"}},
+        client_id="acme",
+        expires_in_seconds=60,
+    )
+    assert approval.expires_at
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+
+    expired = store.get_approval_request(approval.id or 0)
+    assert expired is not None and expired.status == "expired"
+    assert any(event.event_type == "approval.expired" for event in store.list_audit_events())
+    assert any(event.event_type == "approval.expired" for event in store.list_event_history())
+    with pytest.raises(PermissionError, match="expired"):
+        store.update_approval_request(approval.id or 0, "approved")
+
+
+def test_store_list_expires_overdue_pending_requests(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds=60)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+
+    requests = store.list_approval_requests()
+    assert requests[0].status == "expired"
+
+
+def test_store_rejects_unbounded_approval_expiry(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    with pytest.raises(ValueError, match="between 60 seconds and 7 days"):
+        store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds=1)
 
 
 def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:

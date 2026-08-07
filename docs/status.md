@@ -26,6 +26,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
+- Approval requests have a bounded default lifetime; expired requests remain
+  visible for audit, transition linked workflow runs to rejected, and cannot be
+  edited or executed.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete, and
   audit trail. Cron, interval, and one-time triggers use the existing UTC
   APScheduler path and persist their agent/entity target. Scheduled jobs can

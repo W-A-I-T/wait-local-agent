@@ -127,6 +127,33 @@ def test_approval_missing_ticket_returns_404(settings) -> None:
     assert response.status_code == 404
 
 
+def test_expired_approval_is_visible_but_not_executable(settings) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-1001",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "TCK-1001", "fields": {"note": "hello"}},
+        expires_in_seconds=60,
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+    client = TestClient(create_app(settings))
+
+    detail = client.get(f"/approval-requests/{approval.id}")
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "expired"
+    assert detail.json()["can_execute"] is False
+    assert detail.json()["block_reason"] == "Approval expired before execution."
+    update = client.post(
+        f"/approval-requests/{approval.id}",
+        json={"status": "approved"},
+    )
+    assert update.status_code == 403
+
+
 def test_audit_event_export_json_and_csv(settings) -> None:
     store = Store(settings.data_path)
     store.add_audit_event("unit.test.earlier", "TCK-1", "first")

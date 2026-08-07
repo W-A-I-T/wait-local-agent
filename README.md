@@ -20,6 +20,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
+- Pending approval requests receive a bounded default expiry, are marked
+  expired with audit history when the deadline passes, and cannot be edited or
+  executed afterward.
 - Hudu read-only documentation context.
 - A preview-only communication draft tool for email, Microsoft Teams, Slack,
   and SMS. Drafts are tenant-scoped, require technician approval, and never
