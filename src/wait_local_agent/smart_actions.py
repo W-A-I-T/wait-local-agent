@@ -19,7 +19,7 @@ from wait_local_agent.providers import (
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.retrieval import retrieve_sources
-from wait_local_agent.services import classify_ticket
+from wait_local_agent.services import assess_ticket_sentiment, classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
 ActionStatus = Literal[
@@ -370,6 +370,33 @@ class BuildMessageAction:
         )
 
 
+class TicketSentimentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sentiment",
+        title="Ticket sentiment",
+        description="Assess customer sentiment with explainable deterministic terms and an escalation signal.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"sentiment": "object", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        sentiment = assess_ticket_sentiment(ticket.subject, ticket.body)
+        return ActionResult(
+            status="success",
+            output={"ticket_id": ticket.id, "sentiment": sentiment, "estimate": self.manifest.estimated_minutes_saved},
+            evidence=[_ticket_evidence(ticket, ["subject", "body"])],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -530,6 +557,7 @@ def _build_default_registry() -> SmartActionRegistry:
         KnowledgeSearchAction(),
         M365IdentityContextAction(),
         BuildMessageAction(),
+        TicketSentimentAction(),
         TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

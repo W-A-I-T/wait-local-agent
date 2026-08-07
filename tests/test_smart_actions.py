@@ -11,6 +11,7 @@ from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.services import assess_ticket_sentiment
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
@@ -24,6 +25,7 @@ from wait_local_agent.smart_actions import (
     SmartActionService,
     SuggestResolutionAction,
     TicketQualityAction,
+    TicketSentimentAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -180,6 +182,26 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert message.output["send_enabled"] is False
 
 
+def test_ticket_sentiment_is_explainable_and_tenant_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-SENTIMENT", "Acme", "Outage", "I am frustrated and angry; this is urgent", "High", "Open", "acme"),
+        )
+    result = TicketSentimentAction().run(
+        _action_context(store, settings, client_id="acme"), {"ticket_id": "TCK-SENTIMENT"}
+    )
+    assert result.status == "success"
+    assert result.output["sentiment"]["label"] == "negative"  # type: ignore[index]
+    assert result.output["sentiment"]["escalation_signal"] is True  # type: ignore[index]
+    assert assess_ticket_sentiment("Thanks", "Great, happy and resolved") ["label"] == "positive"
+    assert assess_ticket_sentiment("Question", "Please advise") ["label"] == "neutral"
+    assert TicketSentimentAction().run(
+        _action_context(store, settings, client_id="other"), {"ticket_id": "TCK-SENTIMENT"}
+    ).status == "failed"
+
+
 def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settings) -> None:
     store = Store(settings.data_path)
     run = store.create_collector_run(
@@ -235,6 +257,7 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
         BuildMessageAction(),
+        TicketSentimentAction(),
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
@@ -471,6 +494,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-identity-context",
         "suggest-resolution",
         "ticket-quality",
+        "ticket-sentiment",
         "ticket-summary",
         "ticket-triage",
     ]

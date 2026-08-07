@@ -31,6 +31,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   disabled.
 - Preview-only communication drafts support ticket notes, email, Teams, Slack,
   and SMS-shaped messages; outbound delivery adapters are not enabled.
+- Deterministic ticket sentiment reports explainable terms and an escalation
+  signal without requiring a model provider.
 - The `m365-identity-context` agent tool can read only completed, tenant-scoped
   Microsoft 365 collector runs; Graph mutation paths remain disabled.
 - Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
