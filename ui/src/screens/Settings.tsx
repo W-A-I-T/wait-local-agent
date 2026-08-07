@@ -7,7 +7,9 @@ import { StatusChip } from "../components/StatusChip";
 import { type LaunchPassportStatus, type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
 export function Settings() {
-  const { isAdmin, role } = useDashboard();
+  const { isAdmin, loading, role } = useDashboard();
+  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
@@ -34,10 +36,12 @@ export function Settings() {
         apiFetch<PackInfo[]>("/packs"),
         apiFetch<SecretRecord[]>("/secrets"),
         apiFetch<UpdateStatus>("/update-status"),
-        apiFetch<LaunchPassportStatus>("/founder/lp-status").then(
-          (value) => ({ kind: "available" as const, value }),
-          (error: unknown) => ({ kind: "unavailable" as const, error })
-        )
+        canViewLaunchPassport
+          ? apiFetch<LaunchPassportStatus>("/founder/lp-status").then(
+            (value) => ({ kind: "available" as const, value }),
+            (error: unknown) => ({ kind: "unavailable" as const, error })
+          )
+          : Promise.resolve({ kind: "not_requested" as const })
       ]);
       setProviders(providerRows);
       setSecurity(securityRows);
@@ -47,7 +51,7 @@ export function Settings() {
       if (launchPassportResult.kind === "available") {
         setLaunchPassport(launchPassportResult.value);
         setLaunchPassportState("available");
-      } else if (isLaunchPassportNotConfigured(launchPassportResult.error)) {
+      } else if (launchPassportResult.kind === "unavailable" && isLaunchPassportNotConfigured(launchPassportResult.error)) {
         setLaunchPassport(null);
         setLaunchPassportState("not_configured");
       } else {
@@ -62,9 +66,7 @@ export function Settings() {
       }
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     }
-  }, []);
-
-  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  }, [canViewLaunchPassport]);
 
   useEffect(() => {
     void refresh();
@@ -230,7 +232,7 @@ export function Settings() {
                   hint={launchPassport?.token_configured ? "Project access is saved on this appliance." : "Project access needs to be added."}
                 />
                 <StatusChip
-                  status={launchPassport?.capabilities?.launch_scan ? "available" : "not_configured"}
+                  status={launchPassport?.capabilities?.launch_scan ? "available" : "upload_only"}
                   hint={launchPassport?.capabilities?.launch_scan ? "Remote scan launch is available." : "Remote scan launch is optional and is not enabled for this project."}
                 />
               </div>

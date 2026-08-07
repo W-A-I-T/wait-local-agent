@@ -68,6 +68,7 @@ export function FounderJourney() {
       return;
     }
     if (/preview|required|stale/.test(message)) {
+      setPreviewedArtifactId("");
       setStatusMessage("Review this upload package again, then confirm the upload. This keeps each upload tied to a fresh review.");
       setStep(1);
       return;
@@ -243,8 +244,9 @@ export function FounderJourney() {
                 <h3>What will be shared</h3>
                 <ul>
                   <li>Evidence about your project structure and dependencies.</li>
-                  <li>Configuration key names only, never their values.</li>
-                  <li>No source code, secret values, or connector credentials.</li>
+                  <li>Source files are not uploaded.</li>
+                  <li>Environment values are excluded; configuration key names may be included.</li>
+                  <li>Review the evidence summary before sending this package.</li>
                 </ul>
               </div>
               {preview ? (
@@ -278,7 +280,8 @@ export function FounderJourney() {
               <h3>Results</h3>
               <StatusChip status={launchPassport?.status ?? "completed"} />
               {results?.latest_report ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
-              {results?.scans ? <p className="screen-note">{results.scans.length} scan record{results.scans.length === 1 ? "" : "s"} available.</p> : null}
+              {Array.isArray(results?.scans) ? <p className="screen-note">{results.scans.length} scan record{results.scans.length === 1 ? "" : "s"} available.</p> : null}
+              {results?.scans && !Array.isArray(results.scans) ? <p className="screen-note">Scan records are available.</p> : null}
               <details className="technical-details">
                 <summary>Technical details</summary>
                 <p>Project: {results?.project_id ?? launchPassport?.lp_project_id ?? "not returned"}</p>

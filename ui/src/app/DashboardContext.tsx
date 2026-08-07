@@ -70,7 +70,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
-  const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
+  const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);

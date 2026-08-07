@@ -342,6 +342,6 @@ export type LaunchPassportStatus = {
 
 export type FounderResults = {
   project_id?: string;
-  scans?: unknown[];
+  scans?: unknown[] | Record<string, unknown>;
   latest_report?: unknown;
 };

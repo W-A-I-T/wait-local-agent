@@ -17,6 +17,7 @@ const STATUS_COPY: Record<string, { label: string; tone: string }> = {
   connected: { label: "Connected", tone: "ok" },
   configured: { label: "Configured", tone: "ok" },
   available: { label: "Available", tone: "info" },
+  upload_only: { label: "Upload only", tone: "neutral" },
   not_configured: { label: "Not connected", tone: "neutral" },
   unreachable: { label: "Connection needs attention", tone: "warn" }
 };
