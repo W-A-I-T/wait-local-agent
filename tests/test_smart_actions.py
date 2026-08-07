@@ -14,6 +14,7 @@ from wait_local_agent.smart_actions import (
     ActionResult,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
+    KnowledgeSearchAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -142,15 +143,25 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
+    knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
     similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
     dispatch = DispatchSuggestionAction().run(
         context,
         {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": 1}]},
     )
 
-    assert triage.status == summary.status == resolution.status == similar.status == dispatch.status == "success"
+    assert (
+        triage.status
+        == summary.status
+        == resolution.status
+        == knowledge.status
+        == similar.status
+        == dispatch.status
+        == "success"
+    )
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
     assert resolution.output["citations"]
+    assert knowledge.output["ticket_id"] == "TCK-1001"
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
 
@@ -158,6 +169,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        KnowledgeSearchAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     )
@@ -352,6 +364,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     assert [manifest.action_id for manifest in service.list()] == [
         "dispatch-suggestion",
         "find-similar-tickets",
+        "knowledge-search",
         "suggest-resolution",
         "ticket-summary",
         "ticket-triage",

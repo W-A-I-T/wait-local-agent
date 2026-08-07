@@ -216,6 +216,37 @@ class SuggestResolutionAction:
         )
 
 
+class KnowledgeSearchAction:
+    manifest = SmartActionManifest(
+        action_id="knowledge-search",
+        title="Search knowledge",
+        description="Search permitted local documentation for evidence related to a ticket.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"sources": "array", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        citations = [_source_citation(source) for source in _sources_for_ticket(context, ticket)]
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "sources": citations,
+                "count": len(citations),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=citations,
+        )
+
+
 class FindSimilarTicketsAction:
     manifest = SmartActionManifest(
         action_id="find-similar-tickets",
@@ -328,6 +359,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        KnowledgeSearchAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     ):

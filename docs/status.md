@@ -43,8 +43,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics.
-- A `/tools` API catalog that exposes existing smart-action schemas, risk,
-  required role, approval requirement, and read/write classification.
+- A `/tools` API catalog that exposes existing smart-action schemas, including
+  read-only local knowledge search, risk, required role, approval requirement,
+  and read/write classification.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
 - Founder API and CLI public contract with stable "pack not installed" behavior when proprietary founder code is absent.
