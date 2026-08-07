@@ -62,6 +62,23 @@ def test_halopsa_approval_payload_validation_edges(settings) -> None:
         },
     )
     store.update_approval_request(wrong_action.id or 0, "approved")
+    malformed_execution = store.create_approval_request(
+        "HALO-6",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-6", "action_type": "add_note", "fields": {}},
+    )
+    store.update_approval_request(malformed_execution.id or 0, "approved")
+    malformed_edit = store.create_approval_request(
+        "HALO-7",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-7", "action_type": "add_note", "fields": {}},
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id in (?, ?)",
+            ("[]", malformed_execution.id, malformed_edit.id),
+        )
+    store.update_approval_request(malformed_edit.id or 0, "approved")
 
     with pytest.raises(ValueError, match="connector"):
         execute_halopsa_approval_request(
@@ -87,6 +104,12 @@ def test_halopsa_approval_payload_validation_edges(settings) -> None:
             cast(Any, FakeHaloClient()),
             wrong_action.id or 0,
         )
+    with pytest.raises(ValueError, match="payload is malformed"):
+        execute_halopsa_approval_request(
+            store,
+            cast(Any, FakeHaloClient()),
+            malformed_execution.id or 0,
+        )
 
 
 def test_halopsa_field_edit_validation_edges(settings) -> None:
@@ -100,6 +123,18 @@ def test_halopsa_field_edit_validation_edges(settings) -> None:
 
     with pytest.raises(ValueError, match="not a HaloPSA"):
         update_halopsa_approval_fields(store, non_halo.id or 0, {"note": "x"})
+    malformed = store.create_approval_request(
+        "HALO-2",
+        "halopsa.add_note",
+        {"connector": "halopsa", "ticket_id": "HALO-2", "action_type": "add_note", "fields": {}},
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id = ?",
+            ("[]", malformed.id),
+        )
+    with pytest.raises(ValueError, match="payload is malformed"):
+        update_halopsa_approval_fields(store, malformed.id or 0, {"note": "x"})
     with pytest.raises(ValueError, match="unsupported"):
         update_halopsa_approval_fields(store, unsupported.id or 0, {"note": "x"})
     with pytest.raises(ValueError, match="note or response"):

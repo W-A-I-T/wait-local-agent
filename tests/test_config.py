@@ -100,6 +100,14 @@ def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:
     assert settings.local_model_timeout_seconds == 20.0
 
 
+def test_invalid_page_size_env_falls_back_to_default(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_HUDU_PAGE_SIZE", "not-an-integer")
+
+    settings = load_settings()
+
+    assert settings.hudu_page_size == 25
+
+
 def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_DOCUMENT_PARSER", "docling")
     monkeypatch.setenv("WAIT_ALLOW_OCR", "true")
