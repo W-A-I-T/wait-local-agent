@@ -12,6 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -26,6 +29,8 @@ LOGGER = logging.getLogger(__name__)
 # of serialized JSON. Larger payloads are replaced by a truncation marker
 # object carrying the digest of the full redacted payload plus a preview.
 EXECUTION_STEP_PAYLOAD_CAP_BYTES = 8192
+EXECUTION_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
+EXECUTION_RECORD_TIMEOUT_SECONDS = 0.5
 
 EXECUTION_SUCCESS_STATUSES = frozenset({"success", "completed"})
 
@@ -85,22 +90,41 @@ class ExecutionRecorder:
         """Record an execution; return the execution run id or None on failure.
 
         Recording never changes run outcomes: any failure is logged and
-        swallowed, returning None.
+        swallowed, returning None. The bounded worker keeps a slow database or
+        filesystem off the workflow/action critical path.
         """
-        try:
-            return self._record_execution(
-                run_kind=run_kind,
-                source_run_id=source_run_id,
-                actor=actor,
-                status=status,
-                trigger_source=trigger_source,
-                client_id=client_id,
-                steps=steps,
-                artifacts=artifacts,
+        result: list[int] = []
+        failure: list[BaseException] = []
+
+        def record() -> None:
+            try:
+                execution_run_id = self._record_execution(
+                    run_kind=run_kind,
+                    source_run_id=source_run_id,
+                    actor=actor,
+                    status=status,
+                    trigger_source=trigger_source,
+                    client_id=client_id,
+                    steps=steps,
+                    artifacts=artifacts,
+                )
+                result.append(execution_run_id)
+            except Exception as exc:  # noqa: BLE001 - recording must never fail a run
+                failure.append(exc)
+
+        worker = threading.Thread(target=record, name="execution-recorder", daemon=True)
+        worker.start()
+        worker.join(EXECUTION_RECORD_TIMEOUT_SECONDS)
+        if worker.is_alive():
+            LOGGER.warning(
+                "execution recording exceeded %.2fs; run outcome unchanged",
+                EXECUTION_RECORD_TIMEOUT_SECONDS,
             )
-        except Exception:  # noqa: BLE001 - recording must never fail a run
-            LOGGER.exception("execution recording failed; run outcome unchanged")
             return None
+        if failure:
+            LOGGER.error("execution recording failed; run outcome unchanged: %s", failure[0])
+            return None
+        return result[0] if result else None
 
     def _record_execution(
         self,
@@ -165,11 +189,25 @@ class ExecutionRecorder:
         )
 
     def _record_artifact(self, execution_run_id: int, artifact: ArtifactRecord) -> None:
+        if len(artifact.content) > EXECUTION_ARTIFACT_MAX_BYTES:
+            LOGGER.warning(
+                "skipping execution artifact larger than %d bytes",
+                EXECUTION_ARTIFACT_MAX_BYTES,
+            )
+            return
         digest = hashlib.sha256(artifact.content).hexdigest()
-        path = self.artifacts_dir / digest[:2] / digest
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_bytes(artifact.content)
+        root = self._artifact_root()
+        path = root / digest[:2] / digest
+        if not path.parent.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self._assert_artifact_path(path, root)
+        if path.is_symlink():
+            raise RuntimeError(f"refusing symlink artifact path: {path}")
+        if path.exists():
+            if not path.is_file() or _sha256_file(path) != digest:
+                raise RuntimeError(f"existing artifact digest mismatch: {path}")
+        else:
+            self._write_artifact_atomically(path, artifact.content)
         self.store.add_execution_artifact(
             execution_run_id,
             artifact.step_ordinal,
@@ -179,6 +217,41 @@ class ExecutionRecorder:
             digest,
             str(path),
         )
+
+    def _artifact_root(self) -> Path:
+        if self.artifacts_dir.is_symlink():
+            raise RuntimeError("refusing symlink artifact directory")
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        return self.artifacts_dir.resolve()
+
+    @staticmethod
+    def _assert_artifact_path(path: Path, root: Path) -> None:
+        if not path.resolve().is_relative_to(root):
+            raise RuntimeError("artifact path escapes the artifact data directory")
+        if path.parent.is_symlink():
+            raise RuntimeError("refusing symlink artifact shard directory")
+
+    @staticmethod
+    def _write_artifact_atomically(path: Path, content: bytes) -> None:
+        temp_path = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        file_descriptor = os.open(temp_path, flags, 0o600)
+        try:
+            with os.fdopen(file_descriptor, "wb") as handle:
+                file_descriptor = -1
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.rename(temp_path, path)
+            except FileExistsError:
+                if path.is_symlink() or not path.is_file() or _sha256_file(path) != path.name:
+                    raise RuntimeError(f"existing artifact digest mismatch: {path}") from None
+                temp_path.unlink(missing_ok=True)
+        finally:
+            if file_descriptor >= 0:
+                os.close(file_descriptor)
+            temp_path.unlink(missing_ok=True)
 
 
 def _capped_payload_json(value: object) -> tuple[str, str]:
@@ -257,3 +330,11 @@ def build_analytics_summary(
             "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
         },
     }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -21,6 +21,7 @@ from wait_local_agent.reports.models import (
 )
 from wait_local_agent.reports.renderers import (
     REDACTED,
+    redact_value,
     render_json,
     render_markdown,
     render_report,
@@ -197,6 +198,24 @@ def test_renders_never_include_secret_values() -> None:
         assert secret_value not in rendered
         assert REDACTED in rendered
     assert "keep-me" in as_json
+
+
+def test_redact_value_covers_sensitive_and_deliberately_safe_values() -> None:
+    payload = {
+        "apiKey": "secret-value",
+        "nested": [{"password": "nested-secret", "monkey": "keep-monkey"}],
+        "keyboard": "keep-keyboard",
+        "count": 3,
+    }
+
+    redacted = redact_value(payload)
+
+    assert redacted == {
+        "apiKey": REDACTED,
+        "nested": [{"password": REDACTED, "monkey": "keep-monkey"}],
+        "keyboard": "keep-keyboard",
+        "count": 3,
+    }
 
 
 def test_sections_from_json_rejects_non_list_payload() -> None:

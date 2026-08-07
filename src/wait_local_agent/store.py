@@ -451,6 +451,17 @@ class Store:
                 )
                 """
             )
+            for column_name, definition in (
+                ("run_kind", "text not null default 'workflow'"),
+                ("source_run_id", "integer"),
+                ("actor", "text not null default 'system'"),
+                ("client_id", "text"),
+                ("status", "text not null default 'unknown'"),
+                ("started_at", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("trigger_source", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_runs", column_name, definition)
             connection.execute(
                 """
                 create table if not exists execution_steps (
@@ -471,6 +482,21 @@ class Store:
                 )
                 """
             )
+            for column_name, definition in (
+                ("execution_run_id", "integer"),
+                ("ordinal", "integer not null default 0"),
+                ("kind", "text not null default 'unknown'"),
+                ("name", "text not null default ''"),
+                ("status", "text not null default 'unknown'"),
+                ("started_at", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("input_digest", "text not null default ''"),
+                ("output_digest", "text not null default ''"),
+                ("input_json", "text not null default '{}'"),
+                ("output_json", "text not null default '{}'"),
+                ("error_detail", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_steps", column_name, definition)
             connection.execute(
                 """
                 create table if not exists execution_artifacts (
@@ -486,6 +512,16 @@ class Store:
                 )
                 """
             )
+            for column_name, definition in (
+                ("execution_run_id", "integer"),
+                ("step_ordinal", "integer"),
+                ("name", "text not null default ''"),
+                ("media_type", "text not null default 'application/octet-stream'"),
+                ("byte_size", "integer not null default 0"),
+                ("sha256", "text not null default ''"),
+                ("storage_path", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_artifacts", column_name, definition)
 
     @staticmethod
     def _ensure_column(
@@ -2776,8 +2812,24 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id) as (
+                    select 'workflow', id, status, created_at, client_id from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
                 select date(er.started_at) as day, er.status as status, count(*) as count
-                from execution_runs er{clauses}
+                from all_runs er{clauses}
                 group by day, status
                 order by day
                 """,  # nosec B608: static clause strings only; values are parameterized
@@ -2796,8 +2848,22 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id) as (
+                    select 'smart_action', id, status, created_at, client_id from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
                 select sar.action_id as action_id, count(*) as count
-                from execution_runs er
+                from all_runs er
                 join smart_action_runs sar on sar.id = er.source_run_id
                 {prefix} er.run_kind = 'smart_action' and er.status = 'success'
                 group by sar.action_id

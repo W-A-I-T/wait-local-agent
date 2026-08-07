@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
+import time
 from pathlib import Path
+from typing import Any, cast
+
+import pytest
 
 from wait_local_agent.models import utc_now
 from wait_local_agent.observability import (
@@ -12,6 +17,7 @@ from wait_local_agent.observability import (
     ExecutionRecorder,
     StepRecord,
     _capped_payload_json,
+    build_analytics_summary,
 )
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
@@ -58,6 +64,61 @@ def test_preexisting_database_migrates_execution_tables(settings, tmp_path) -> N
     )
     assert run.id is not None
     assert store.get_execution_run(run.id) is not None
+
+
+def test_older_execution_runs_shape_gets_missing_columns(settings, tmp_path) -> None:
+    legacy_path = tmp_path / "older-execution-runs.db"
+    connection = sqlite3.connect(legacy_path)
+    connection.execute(
+        "create table execution_runs (id integer primary key autoincrement, run_kind text)"
+    )
+    connection.commit()
+    connection.close()
+
+    store = Store(legacy_path)
+    run = store.create_execution_run(
+        "smart_action",
+        7,
+        "tester",
+        "failed",
+        utc_now(),
+        utc_now(),
+        "test",
+        client_id="acme",
+    )
+
+    assert run.client_id == "acme"
+    assert run.trigger_source == "test"
+
+    with store._connect() as connection:  # noqa: SLF001
+        columns = {str(row["name"]) for row in connection.execute("pragma table_info(execution_runs)")}
+    assert {"source_run_id", "actor", "status", "started_at", "finished_at", "client_id", "trigger_source"} <= columns
+
+
+def test_older_execution_step_and_artifact_shapes_get_upgraded(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "older-execution-tables.db"
+    with sqlite3.connect(legacy_path) as connection:
+        connection.executescript(
+            """
+            create table execution_steps (id integer primary key autoincrement);
+            create table execution_artifacts (id integer primary key autoincrement);
+            """
+        )
+
+    store = Store(legacy_path)
+    run = store.create_execution_run(
+        "workflow", 1, "tester", "completed", utc_now(), utc_now(), "migration"
+    )
+    assert run.id is not None
+    step = store.add_execution_step(
+        run.id, 0, "workflow.template", "test", "completed", utc_now(), utc_now(),
+        "input", "output", "{}", "{}"
+    )
+    artifact = store.add_execution_artifact(
+        run.id, step.ordinal, "evidence.json", "application/json", 2, "ab", "/tmp/evidence"
+    )
+    assert store.list_execution_steps(run.id)[0].name == "test"
+    assert store.list_execution_artifacts(run.id)[0].id == artifact.id
 
 
 def test_workflow_run_produces_execution_run_with_ordered_steps(settings) -> None:
@@ -169,6 +230,52 @@ def test_recorder_failure_does_not_fail_smart_action_run(settings, monkeypatch) 
     assert result.run_id is not None
 
 
+def test_analytics_includes_source_run_when_recorder_fails(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    def exploding_create(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("recorder storage exploded")
+
+    monkeypatch.setattr(Store, "create_execution_run", exploding_create)
+    result = service.invoke("ticket-triage", {"ticket_id": "NOPE"}, "tech")
+
+    assert result.status == "failed"
+    summary = cast(dict[str, Any], build_analytics_summary(store, {}))
+    assert summary["success_rate"] == {"total": 1, "succeeded": 0, "rate": 0.0}
+    assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
+
+
+def test_analytics_counts_successful_execution_bucket(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_execution_run(
+        "smart_action", 1, "tech", "success", "2026-08-01T10:00:00+00:00",
+        "2026-08-01T10:00:01+00:00", "test"
+    )
+
+    summary = build_analytics_summary(store, {})
+
+    assert summary["executions_over_time"] == [
+        {"date": "2026-08-01", "count": 1, "succeeded": 1, "not_succeeded": 0}
+    ]
+
+
+def test_recorder_rejects_missing_persisted_run_id(settings, monkeypatch) -> None:
+    recorder = ExecutionRecorder(Store(settings.data_path))
+
+    class RunWithoutId:
+        id = None
+
+    monkeypatch.setattr(
+        recorder.store, "create_execution_run", lambda *args, **kwargs: RunWithoutId()
+    )
+
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=None, actor="tech", status="completed", trigger_source="test"
+    ) is None
+
+
 def test_step_payloads_are_redacted_before_persistence(settings) -> None:
     store = Store(settings.data_path)
     recorder = ExecutionRecorder(store)
@@ -244,6 +351,14 @@ def test_oversized_step_payload_is_capped_with_digest_marker() -> None:
     assert len(stored.encode("utf-8")) <= EXECUTION_STEP_PAYLOAD_CAP_BYTES + 512
 
 
+def test_plain_key_is_redacted_from_truncation_preview() -> None:
+    stored, _ = _capped_payload_json(
+        {"key": "truncation-secret", "data": "x" * (EXECUTION_STEP_PAYLOAD_CAP_BYTES * 2)}
+    )
+
+    assert "truncation-secret" not in stored
+
+
 def test_small_step_payload_is_stored_verbatim() -> None:
     payload = {"ticket_id": "TCK-1"}
 
@@ -283,6 +398,167 @@ def test_artifacts_are_content_addressed_and_deduplicated(settings, tmp_path) ->
     assert first_artifact.step_ordinal == 0
     files = list((tmp_path / "artifacts").rglob("*"))
     assert len([path for path in files if path.is_file()]) == 1
+
+
+def test_oversized_artifact_is_skipped_without_failing_recording(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"x" * (4 * 1024 * 1024 + 1)
+
+    run_id = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+        artifacts=(ArtifactRecord("large.bin", "application/octet-stream", content),),
+    )
+
+    assert run_id is not None
+    assert store.list_execution_artifacts(run_id) == []
+
+
+def test_slow_recorder_returns_within_bound(settings, monkeypatch) -> None:
+    recorder = ExecutionRecorder(Store(settings.data_path))
+
+    def slow_record(**_kwargs: Any) -> int:
+        time.sleep(1.0)
+        return 1
+
+    monkeypatch.setattr(recorder, "_record_execution", slow_record)
+    started = time.monotonic()
+    result = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+    )
+
+    assert result is None
+    assert time.monotonic() - started < 0.9
+
+
+def test_existing_artifact_digest_mismatch_is_rejected(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    recorder = ExecutionRecorder(store, artifacts_dir=tmp_path / "artifacts")
+    content = b"correct"
+    digest = hashlib.sha256(content).hexdigest()
+    artifact_path = tmp_path / "artifacts" / digest[:2] / digest
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_bytes(b"wrong")
+
+    run_id = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    )
+
+    assert run_id is None
+    assert artifact_path.read_bytes() == b"wrong"
+    assert store.list_execution_artifacts(1) == []
+
+
+def test_artifact_shard_symlink_is_rejected(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    artifacts_dir = tmp_path / "artifacts"
+    outside = tmp_path / "outside"
+    artifacts_dir.mkdir()
+    outside.mkdir()
+    content = b"secret evidence"
+    digest = hashlib.sha256(content).hexdigest()
+    (artifacts_dir / digest[:2]).symlink_to(outside, target_is_directory=True)
+    recorder = ExecutionRecorder(store, artifacts_dir=artifacts_dir)
+
+    run_id = recorder.record_execution(
+        run_kind="workflow",
+        source_run_id=1,
+        actor="tech",
+        status="completed",
+        trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    )
+
+    assert run_id is None
+    assert list(outside.iterdir()) == []
+
+
+def test_artifact_path_symlink_and_artifact_root_symlink_are_rejected(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    content = b"evidence"
+    digest = hashlib.sha256(content).hexdigest()
+
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+    recorder = ExecutionRecorder(store, artifacts_dir=artifacts_dir)
+    shard = artifacts_dir / digest[:2]
+    shard.mkdir()
+    existing = artifacts_dir / "existing-file"
+    existing.write_bytes(content)
+    (shard / digest).symlink_to(existing)
+    assert recorder.record_execution(
+        run_kind="workflow", source_run_id=1, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+    target = tmp_path / "real-artifacts"
+    target.mkdir()
+    linked_dir = tmp_path / "linked-artifacts"
+    linked_dir.symlink_to(target, target_is_directory=True)
+    assert ExecutionRecorder(store, artifacts_dir=linked_dir).record_execution(
+        run_kind="workflow", source_run_id=2, actor="tech", status="completed", trigger_source="test",
+        artifacts=(ArtifactRecord("evidence.bin", "application/octet-stream", content),),
+    ) is None
+
+
+def test_artifact_path_assertion_rejects_symlink_shard_inside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "target"
+    target.mkdir()
+    shard = root / "aa"
+    shard.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="symlink artifact shard"):
+        ExecutionRecorder._assert_artifact_path(shard / "digest", root)
+
+
+def test_atomic_artifact_write_reconciles_existing_valid_file(tmp_path: Path, monkeypatch) -> None:
+    content = b"same content"
+    path = tmp_path / hashlib.sha256(content).hexdigest()
+    path.write_bytes(content)
+
+    monkeypatch.setattr(os, "rename", lambda *_args: (_ for _ in ()).throw(FileExistsError))
+
+    ExecutionRecorder._write_artifact_atomically(path, content)
+    assert path.read_bytes() == content
+
+
+def test_atomic_artifact_write_closes_descriptor_when_opening_handle_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "artifact"
+    closed: list[int] = []
+    monkeypatch.setattr(os, "fdopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("temporary artifact")))
+    monkeypatch.setattr(os, "close", lambda descriptor: closed.append(descriptor))
+
+    with pytest.raises(OSError, match="temporary artifact"):
+        ExecutionRecorder._write_artifact_atomically(path, b"content")
+
+    assert closed
+
+
+def test_atomic_artifact_write_rejects_racing_invalid_file(tmp_path: Path, monkeypatch) -> None:
+    content = b"same content"
+    path = tmp_path / hashlib.sha256(content).hexdigest()
+    path.write_bytes(b"wrong content")
+    monkeypatch.setattr(os, "rename", lambda *_args: (_ for _ in ()).throw(FileExistsError))
+
+    with pytest.raises(RuntimeError, match="digest mismatch"):
+        ExecutionRecorder._write_artifact_atomically(path, content)
 
 
 def test_list_execution_runs_filters(settings) -> None:
