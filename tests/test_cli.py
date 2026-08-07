@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
@@ -579,6 +581,76 @@ def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp
     assert denied_approval.exit_code != 0
     assert approved.exit_code == 0
     assert store.get_smart_action_run(pending.run_id or 0).status == "success"  # type: ignore[union-attr]
+
+
+def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    store = Store(data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-CMD", "Acme", "MFA reset", "Sign-in blocked", "High", "Open"),
+        )
+    runner = CliRunner()
+
+    listed = runner.invoke(app, ["smart-actions", "list"])
+    described = runner.invoke(app, ["smart-actions", "describe", "ticket-triage"])
+    invoked = runner.invoke(
+        app,
+        ["smart-actions", "invoke", "ticket-triage", "--payload", '{"ticket_id":"TCK-CMD"}'],
+    )
+    runs = runner.invoke(app, ["smart-actions", "runs"])
+    missing = runner.invoke(app, ["smart-actions", "describe", "missing"])
+    bad_payload = runner.invoke(app, ["smart-actions", "invoke", "ticket-triage", "--payload", "not-json"])
+
+    assert listed.exit_code == 0 and "ticket-triage" in listed.output
+    assert described.exit_code == 0 and '"action_id": "ticket-triage"' in described.output
+    assert invoked.exit_code == 0 and json.loads(invoked.output)["status"] == "success"
+    assert runs.exit_code == 0 and "ticket-triage success" in runs.output
+    assert missing.exit_code != 0 and "smart action not found" in missing.output
+    assert bad_payload.exit_code != 0 and "payload must be a JSON object" in bad_payload.output
+
+
+def test_smart_action_cli_tenant_scope_and_approval_view_guards(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    store = Store(data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
+        )
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-BETA", "Beta", "MFA reset", "Sign-in blocked", "High", "Open", "beta"),
+        )
+    runner = CliRunner()
+    ok = runner.invoke(
+        app,
+        ["smart-actions", "invoke", "ticket-triage", "--token", "tech-token", "--payload", '{"ticket_id":"TCK-ACME"}'],
+    )
+    forbidden_data = runner.invoke(
+        app,
+        ["smart-actions", "invoke", "ticket-triage", "--token", "tech-token", "--payload", '{"ticket_id":"TCK-BETA"}'],
+    )
+    no_token = runner.invoke(app, ["smart-actions", "invoke", "ticket-triage", "--payload", '{"ticket_id":"TCK-ACME"}'])
+
+    assert ok.exit_code == 0 and json.loads(ok.output)["status"] == "success"
+    assert forbidden_data.exit_code == 0 and json.loads(forbidden_data.output)["status"] == "failed"
+    assert no_token.exit_code != 0 and "missing bearer token" in no_token.output
+
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {"secret": "password=raw"})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ?, execution_result_json = ? where id = ?",
+            ("not-json", "not-json", approval.id),
+        )
+    view = cli_module._approval_cli_view(store.get_approval_request(approval.id or 0))  # noqa: SLF001
+    assert view["payload"] == {} and view["output"] == {}
 
 
 def _read_response(items):

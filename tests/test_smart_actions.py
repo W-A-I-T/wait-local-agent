@@ -6,13 +6,23 @@ from pathlib import Path
 import pytest
 
 from wait_local_agent.models import SourceReference, Ticket
+from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.smart_actions import (
+    ActionContext,
     ActionResult,
+    DispatchSuggestionAction,
+    FindSimilarTicketsAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
+    SuggestResolutionAction,
+    TicketSummaryAction,
+    TicketTriageAction,
+    _json_list,
+    _json_object,
+    _stored_action_status,
 )
 from wait_local_agent.store import Store
 
@@ -63,6 +73,245 @@ class FakeProvider:
 
     def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
         return f"Resolution for {ticket.id}"
+
+
+class FailingProvider(FakeProvider):
+    def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+        raise RuntimeError("provider exploded")
+
+    def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+        raise RuntimeError("provider exploded")
+
+
+class UnavailableProvider(FakeProvider):
+    def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+        raise ProviderUnavailableError("offline")
+
+    def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+        raise ProviderUnavailableError("offline")
+
+
+def _action_context(store: Store, settings, provider=None, *, client_id=None, available=False):
+    return ActionContext(
+        store=store,
+        settings=settings,
+        provider=provider,
+        actor="technician",
+        client_id=client_id,
+        provider_available=available,
+    )
+
+
+def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    context = _action_context(store, settings, FakeProvider(), available=True)
+
+    triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
+    summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
+    resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
+    similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
+    dispatch = DispatchSuggestionAction().run(
+        context,
+        {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": 1}]},
+    )
+
+    assert triage.status == summary.status == resolution.status == similar.status == dispatch.status == "success"
+    assert summary.output["suggested_response"] == "Resolution for TCK-1001"
+    assert resolution.output["citations"]
+    assert similar.output["matches"]
+    assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
+
+    actions = (
+        TicketTriageAction(),
+        TicketSummaryAction(),
+        SuggestResolutionAction(),
+        FindSimilarTicketsAction(),
+        DispatchSuggestionAction(),
+    )
+    for action in actions:
+        assert action.run(context, {}) .status == "failed"
+
+
+def test_action_run_validation_and_provider_errors(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    unavailable = _action_context(store, settings)
+    assert TicketSummaryAction().run(unavailable, {"ticket_id": "TCK-1001"}).status == "provider_not_configured"
+    assert SuggestResolutionAction().run(unavailable, {"ticket_id": "TCK-1001"}).status == "provider_not_configured"
+
+    failing = _action_context(store, settings, FailingProvider(), available=True)
+    result = TicketSummaryAction().run(failing, {"ticket_id": "TCK-1001"})
+    assert result.status == "failed" and "provider request failed" in result.error_detail
+    resolution_failure = SuggestResolutionAction().run(failing, {"ticket_id": "TCK-1001"})
+    assert resolution_failure.status == "failed" and "provider request failed" in resolution_failure.error_detail
+    unavailable_provider = _action_context(store, settings, UnavailableProvider(), available=True)
+    assert TicketSummaryAction().run(unavailable_provider, {"ticket_id": "TCK-1001"}).error_detail == "offline"
+    assert SuggestResolutionAction().run(unavailable_provider, {"ticket_id": "TCK-1001"}).error_detail == "offline"
+
+    assert (
+        DispatchSuggestionAction()
+        .run(unavailable, {"ticket_id": "TCK-1001", "technicians": "bad"})
+        .error_detail
+        == "technicians must be an array when provided"
+    )
+    assert DispatchSuggestionAction().run(
+        unavailable, {"ticket_id": "TCK-1001", "technicians": ["bad"]}
+    ).status == "failed"
+    assert DispatchSuggestionAction().run(
+        unavailable, {"ticket_id": "TCK-1001", "technicians": [{"id": "", "workload": 1}]}
+    ).status == "failed"
+    assert DispatchSuggestionAction().run(
+        unavailable, {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": True}]}
+    ).status == "failed"
+
+def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme' where id = 'TCK-1001'")
+        connection.execute("update tickets set client_id = 'beta' where id = 'TCK-1002'")
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-OTHER", "Acme", "Printer", "Paper jam", "Low", "Open", "acme"),
+        )
+    context = _action_context(store, settings, client_id="acme")
+    assert TicketTriageAction().run(context, {"ticket_id": "TCK-1002"}).status == "failed"
+    assert FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"}).output["matches"] == []
+
+    source = SourceReference("Title", "path", "excerpt", document_id=3, chunk_id=4)
+    from wait_local_agent.smart_actions import _source_citation
+
+    assert _source_citation(source)["document_id"] == 3
+    assert _source_citation(SourceReference("Title", "path", "excerpt")) == {
+        "type": "knowledge", "title": "Title", "path": "path", "excerpt": "excerpt"
+    }
+
+
+def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "requester")
+    assert pending.approval_id is not None and pending.run_id is not None
+    waiting = service.complete_approval(pending.approval_id, approver="approver", approver_role=Role.TECHNICIAN)
+    assert waiting is not None and waiting.status == "pending_approval"
+
+    service.update_approval(pending.approval_id, "rejected", approver="approver", approver_role=Role.TECHNICIAN)
+    rejected = store.get_smart_action_run(pending.run_id)
+    assert rejected is not None and rejected.status == "rejected"
+    assert service.complete_approval(9999, approver="approver", approver_role=Role.TECHNICIAN) is None
+
+    second = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "requester")
+    assert second.approval_id is not None and second.run_id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id = ?",
+            ('{"payload": "bad"}', second.approval_id),
+        )
+    service.update_approval(second.approval_id, "approved", approver="approver", approver_role=Role.TECHNICIAN)
+    malformed = store.get_smart_action_run(second.run_id)
+    assert malformed is not None and malformed.status == "failed"
+    assert _json_object("[]") == {}
+    assert _json_list("{}") == []
+    assert _json_list('[1, {"ok": true}]') == [{"ok": True}]
+
+
+def test_service_guards_registry_and_unauthorized_paths(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    unauthorized = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, None)
+    assert unauthorized.status == "not_authorized" and unauthorized.run_id is not None
+    assert service.complete_approval(9999) is None
+    legacy = store.create_approval_request("TCK-1", "ticket.assign", {})
+    assert service.complete_approval(legacy.id or 0, approver="tech", approver_role=Role.TECHNICIAN) is None
+    with pytest.raises(KeyError):
+        service.update_approval(9999, "approved")
+    updated = service.update_approval(legacy.id or 0, "approved")
+    assert updated.status == "approved"
+
+    duplicate = SmartActionRegistry()
+    duplicate.register(TicketTriageAction())
+    with pytest.raises(ValueError, match="already registered"):
+        duplicate.register(TicketTriageAction())
+    bad = SmartActionManifest("Upper", "", "", "deterministic", {}, {}, False, 0)
+
+    class BadAction:
+        manifest = bad
+
+        def run(self, context, payload):
+            return ActionResult(status="success")
+
+    with pytest.raises(ValueError, match="lowercase"):
+        duplicate.register(BadAction())
+    duplicate.clear()
+    assert duplicate.list() == []
+
+    class BrokenAction:
+        manifest = SmartActionManifest("broken", "", "", "deterministic", {}, {}, False, 0)
+
+        def run(self, context, payload):
+            raise RuntimeError("broken")
+
+    broken = SmartActionRegistry()
+    broken.register(BrokenAction())
+    failed = SmartActionService(store, settings, registry=broken).invoke("broken", {}, "actor")
+    assert failed.status == "failed" and "action failed" in failed.error_detail
+
+
+def test_service_edge_guards_and_status_helpers(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    assert service.invoke(
+        "dispatch-suggestion", {"ticket_id": "TCK-1001", "technicians": "bad"}, "actor"
+    ).status == "failed"
+    pending = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "actor")
+    assert pending.approval_id is not None
+    with pytest.raises(PermissionError, match="approver is required"):
+        service.update_approval(pending.approval_id, "approved")
+    with pytest.raises(PermissionError, match="technician"):
+        service.update_approval(pending.approval_id, "approved", approver="viewer", approver_role=Role.VIEWER)
+
+    orphan_approval = store.create_approval_request("1", "smart_action:dispatch-suggestion", {})
+    with pytest.raises(KeyError, match="smart action run"):
+        service.complete_approval(orphan_approval.id or 0, approver="tech", approver_role=Role.TECHNICIAN)
+
+    assert [
+        _stored_action_status(status)
+        for status in ("success", "failed", "provider_not_configured", "rejected", "pending")
+    ] == [
+        "success", "failed", "provider_not_configured", "rejected", "failed"
+    ]
+    assert _json_object("not-json") == {}
+    assert _json_list("not-json") == []
+
+    class NullIdStore(Store):
+        def create_smart_action_run(self, *args, **kwargs):
+            return replace(super().create_smart_action_run(*args, **kwargs), id=None)
+
+    null_store = NullIdStore(settings.data_path.with_name("null.db"))
+    with pytest.raises(RuntimeError, match="not persisted"):
+        SmartActionService(null_store, settings).invoke("ticket-triage", {}, "actor")
+
+    null_auth_store = NullIdStore(settings.data_path.with_name("null-auth.db"))
+    with pytest.raises(RuntimeError, match="not persisted"):
+        SmartActionService(null_auth_store, settings).invoke("ticket-triage", {}, None)
+
+    class NullApprovalStore(Store):
+        def create_pending_smart_action(self, *args, **kwargs):
+            run, approval = super().create_pending_smart_action(*args, **kwargs)
+            return run, replace(approval, id=None)
+
+    null_approval_store = NullApprovalStore(settings.data_path.with_name("null-approval.db"))
+    _seed_tickets(null_approval_store)
+    with pytest.raises(RuntimeError, match="approval was not persisted"):
+        SmartActionService(null_approval_store, settings).invoke(
+            "dispatch-suggestion", {"ticket_id": "TCK-1001"}, "actor"
+        )
 
 
 def test_registry_lists_all_seed_actions(settings) -> None:
