@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -537,6 +537,7 @@ class AgentDefinition:
     created_at: str
     updated_at: str
     run_once_per_entity: bool = True
+    depends_on_agent_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

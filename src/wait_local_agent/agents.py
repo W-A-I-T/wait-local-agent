@@ -117,7 +117,9 @@ class AgentService:
         execution_timeout_seconds: float,
         client_id: str | None,
         run_once_per_entity: bool = True,
+        depends_on_agent_ids: list[str] | None = None,
     ) -> AgentDefinition:
+        agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
             name=name,
             description=description,
@@ -128,10 +130,13 @@ class AgentService:
             steps=steps,
             max_steps=max_steps,
             execution_timeout_seconds=execution_timeout_seconds,
+            depends_on_agent_ids=depends_on_agent_ids or [],
+            agent_id=agent_id,
+            client_id=client_id,
         )
         now = utc_now()
         definition = AgentDefinition(
-            id=f"agent-{uuid.uuid4().hex}",
+            id=agent_id,
             name=name.strip(),
             description=description.strip(),
             enabled=enabled,
@@ -147,6 +152,7 @@ class AgentService:
             created_at=now,
             updated_at=now,
             run_once_per_entity=run_once_per_entity,
+            depends_on_agent_ids=list(depends_on_agent_ids or []),
         )
         return self.store.create_agent_definition(definition)
 
@@ -165,6 +171,7 @@ class AgentService:
         max_steps: int,
         execution_timeout_seconds: float,
         run_once_per_entity: bool = True,
+        depends_on_agent_ids: list[str] | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -176,6 +183,9 @@ class AgentService:
             steps=steps,
             max_steps=max_steps,
             execution_timeout_seconds=execution_timeout_seconds,
+            depends_on_agent_ids=depends_on_agent_ids or [],
+            agent_id=existing.id,
+            client_id=existing.client_id,
         )
         updated = AgentDefinition(
             id=existing.id,
@@ -194,6 +204,7 @@ class AgentService:
             created_at=existing.created_at,
             updated_at=utc_now(),
             run_once_per_entity=run_once_per_entity,
+            depends_on_agent_ids=list(depends_on_agent_ids or []),
         )
         return self.store.update_agent_definition(updated)
 
@@ -447,6 +458,9 @@ class AgentService:
         steps: list[dict[str, object]],
         max_steps: int,
         execution_timeout_seconds: float,
+        depends_on_agent_ids: list[str],
+        agent_id: str | None,
+        client_id: str | None,
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -462,6 +476,7 @@ class AgentService:
             _validate_event_filters(filters)
         elif filters:
             raise AgentDefinitionError("filters are reserved for event-triggered agents")
+        self._validate_dependencies(agent_id, depends_on_agent_ids, client_id)
         if not enabled_tools or len(enabled_tools) > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"enabled_tools must contain 1-{MAX_AGENT_STEPS} tools")
         if len(set(enabled_tools)) != len(enabled_tools):
@@ -486,6 +501,51 @@ class AgentService:
                 raise AgentDefinitionError("every step tool_id must be an enabled tool")
             if not isinstance(step.get("payload", {}), dict):
                 raise AgentDefinitionError("agent step payload must be an object")
+
+    def _validate_dependencies(
+        self,
+        agent_id: str | None,
+        dependency_ids: list[str],
+        client_id: str | None,
+    ) -> None:
+        if len(dependency_ids) > MAX_AGENT_STEPS:
+            raise AgentDefinitionError(f"depends_on_agent_ids must contain 0-{MAX_AGENT_STEPS} agents")
+        if any(not isinstance(dependency_id, str) or not dependency_id.strip() for dependency_id in dependency_ids):
+            raise AgentDefinitionError("depends_on_agent_ids must contain non-empty strings")
+        if len(set(dependency_ids)) != len(dependency_ids):
+            raise AgentDefinitionError("depends_on_agent_ids must not contain duplicates")
+        normalized_client_id = _normalize_client_id(client_id)
+        graph = {
+            definition.id: definition.depends_on_agent_ids
+            for definition in self.store.list_agent_definitions()
+        }
+        if agent_id is not None:
+            graph[agent_id] = list(dependency_ids)
+        for dependency_id in dependency_ids:
+            if dependency_id == agent_id:
+                raise AgentDefinitionError("an agent cannot depend on itself")
+            dependency = self.get(dependency_id)
+            if dependency is None:
+                raise AgentDefinitionError(f"dependency agent not found: {dependency_id}")
+            if dependency.client_id is not None and dependency.client_id != normalized_client_id:
+                raise AgentDefinitionError("dependency agent is outside the tenant scope")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> None:
+            if node in visiting:
+                raise AgentDefinitionError("agent dependency cycle detected")
+            if node in visited:
+                return
+            visiting.add(node)
+            for dependency_id in graph.get(node, []):
+                visit(dependency_id)
+            visiting.remove(node)
+            visited.add(node)
+
+        if agent_id is not None:
+            visit(agent_id)
 
 
 def _state_object(value: object) -> dict[str, object]:

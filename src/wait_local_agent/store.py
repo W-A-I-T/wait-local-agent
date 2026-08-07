@@ -246,7 +246,8 @@ class Store:
                     version integer not null default 1,
                     created_at text not null,
                     updated_at text not null,
-                    run_once_per_entity integer not null default 1
+                    run_once_per_entity integer not null default 1,
+                    depends_on_agent_ids_json text not null default '[]'
                 )
                 """
             )
@@ -309,6 +310,12 @@ class Store:
                 "agent_definitions",
                 "run_once_per_entity",
                 "integer not null default 1",
+            )
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "depends_on_agent_ids_json",
+                "text not null default '[]'",
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
@@ -1261,6 +1268,26 @@ class Store:
             ).fetchall()
         return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
 
+    def has_completed_event_agent_run(
+        self,
+        *,
+        agent_id: str,
+        event_type: str,
+        entity_id: str,
+        client_id: str | None = None,
+    ) -> bool:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select agent_ids_json from event_deliveries
+                where event_type = ? and entity_id = ? and status = 'completed'
+                  and (? is null or client_id = ?)
+                """,
+                (event_type, entity_id, normalized_client_id, normalized_client_id),
+            ).fetchall()
+        return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
+
     def create_workflow_run(
         self,
         template_id: str,
@@ -1361,8 +1388,8 @@ class Store:
                   (id, name, description, enabled, trigger, entity_type,
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
-                   run_once_per_entity)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   run_once_per_entity, depends_on_agent_ids_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1381,6 +1408,7 @@ class Store:
                     definition.created_at,
                     definition.updated_at,
                     int(definition.run_once_per_entity),
+                    _json_dumps_value(definition.depends_on_agent_ids),
                 ),
             )
             self._add_audit_event(
@@ -1433,7 +1461,7 @@ class Store:
                 set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
                     filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
-                    run_once_per_entity = ?
+                    run_once_per_entity = ?, depends_on_agent_ids_json = ?
                 where id = ?
                 """,
                 (
@@ -1451,6 +1479,7 @@ class Store:
                     definition.version,
                     definition.updated_at,
                     int(definition.run_once_per_entity),
+                    _json_dumps_value(definition.depends_on_agent_ids),
                     definition.id,
                 ),
             )
@@ -3739,6 +3768,9 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload = dict(row)
     payload["enabled"] = bool(payload["enabled"])
     payload["run_once_per_entity"] = bool(payload["run_once_per_entity"])
+    payload["depends_on_agent_ids"] = cast(
+        list[str], _json_list_or_empty(payload.pop("depends_on_agent_ids_json"))
+    )
     payload["filters"] = _json_object_or_empty(payload.pop("filters_json"))
     payload["enabled_tools"] = cast(list[str], _json_list_or_empty(payload.pop("enabled_tools_json")))
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
@@ -3768,6 +3800,7 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "execution_timeout_seconds": definition.execution_timeout_seconds,
             "client_id": definition.client_id,
             "run_once_per_entity": definition.run_once_per_entity,
+            "depends_on_agent_ids": definition.depends_on_agent_ids,
         }
     )
 

@@ -151,6 +151,79 @@ def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
     assert len(service.store.list_agent_definition_revisions(definition.id)) == 2
     Store(settings.data_path)
 
+    dependent = service.create(
+        name="Dependent triage agent",
+        description="Depends on the original definition.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        depends_on_agent_ids=[definition.id],
+    )
+    with pytest.raises(AgentDefinitionError, match="cycle"):
+        service.update(
+            definition,
+            name=definition.name,
+            description=definition.description,
+            enabled=True,
+            trigger=definition.trigger,
+            entity_type=definition.entity_type,
+            filters={},
+            enabled_tools=definition.enabled_tools,
+            steps=definition.steps,
+            max_steps=definition.max_steps,
+            execution_timeout_seconds=definition.execution_timeout_seconds,
+            depends_on_agent_ids=[dependent.id],
+        )
+
+    def create_with_dependencies(dependencies: list[str]) -> None:
+        service.create(
+            name="Invalid dependency agent",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            depends_on_agent_ids=dependencies,
+        )
+
+    with pytest.raises(AgentDefinitionError, match="not found"):
+        create_with_dependencies(["missing-agent"])
+    with pytest.raises(AgentDefinitionError, match="duplicates"):
+        create_with_dependencies([dependent.id, dependent.id])
+    with pytest.raises(AgentDefinitionError, match="0-8"):
+        create_with_dependencies([dependent.id] * 9)
+    with pytest.raises(AgentDefinitionError, match="non-empty"):
+        create_with_dependencies([" "])
+    with pytest.raises(AgentDefinitionError, match="itself"):
+        service.update(
+            definition,
+            name=definition.name,
+            description=definition.description,
+            enabled=True,
+            trigger=definition.trigger,
+            entity_type=definition.entity_type,
+            filters={},
+            enabled_tools=definition.enabled_tools,
+            steps=definition.steps,
+            max_steps=definition.max_steps,
+            execution_timeout_seconds=definition.execution_timeout_seconds,
+            depends_on_agent_ids=[definition.id],
+        )
+    beta = _create(service, client_id="beta")
+    with pytest.raises(AgentDefinitionError, match="outside the tenant"):
+        create_with_dependencies([beta.id])
+
     disabled = service.update(
         updated,
         name=updated.name,
