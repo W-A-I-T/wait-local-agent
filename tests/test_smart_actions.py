@@ -19,6 +19,7 @@ from wait_local_agent.smart_actions import (
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
+    M365GroupLookupAction,
     M365IdentityContextAction,
     M365UserLookupAction,
     SmartActionManifest,
@@ -248,6 +249,12 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
                     "display_name": "User One",
                     "attributes": {"user_principal_name": "user@example.test"},
                 },
+                {
+                    "canonical_id": "m365:group:g1",
+                    "asset_type": "m365-group",
+                    "display_name": "Helpdesk",
+                    "attributes": {"mail": "helpdesk@example.test"},
+                },
                 {"canonical_id": "host:1", "asset_type": "host", "display_name": "Host"},
             ]
         },
@@ -255,12 +262,15 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
     context = _action_context(store, settings, client_id="acme")
     result = M365IdentityContextAction().run(context, {"collector_run_id": run.id})
     assert result.status == "success"
-    assert result.output["count"] == 1
+    assert result.output["count"] == 2
     assert result.output["truncated"] is False
     assert result.output["identities"][0]["asset_id"] == "m365:user:u1"  # type: ignore[index]
     lookup = M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": "user@example"})
     assert lookup.status == "success"
     assert lookup.output["count"] == 1
+    group_lookup = M365GroupLookupAction().run(context, {"collector_run_id": run.id, "query": "helpdesk"})
+    assert group_lookup.status == "success"
+    assert group_lookup.output["count"] == 1
     assert M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": ""}).status == "failed"
 
     for payload, message in (
@@ -283,6 +293,7 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
         BuildMessageAction(),
+        M365GroupLookupAction(),
         M365UserLookupAction(),
         TicketSentimentAction(),
         TicketSlaAssessmentAction(),
@@ -519,6 +530,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-group-lookup",
         "m365-identity-context",
         "m365-user-lookup",
         "suggest-resolution",

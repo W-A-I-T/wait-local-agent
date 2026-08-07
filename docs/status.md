@@ -41,6 +41,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Microsoft 365 collector runs; Graph mutation paths remain disabled.
 - The `m365-user-lookup` tool searches that same scoped evidence without a
   second remote client or mutation path.
+- The `m365-group-lookup` tool searches the same scoped evidence for groups;
+  licenses, mailbox, and Intune operations remain unexposed.
 - Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
   CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
