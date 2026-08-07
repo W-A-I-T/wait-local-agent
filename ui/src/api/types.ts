@@ -129,6 +129,7 @@ export type CollectorConfigField = {
   required?: boolean;
   default?: unknown;
   options?: CollectorConfigFieldOption[];
+  items?: { type?: string };
 };
 
 export type CollectorModule = {

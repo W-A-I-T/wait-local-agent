@@ -51,7 +51,7 @@ const runDetail = {
         status: "not_authorized",
         record_count: 0,
         error_code: "permission",
-        error_detail: null,
+        error_detail: "backend PermissionError with private detail",
         remediation_hint: "Check the saved credential for this source."
       }
     ]
@@ -65,9 +65,11 @@ const runDetail = {
 
 describe("Collectors screen", () => {
   let runsAvailable: boolean;
+  let validationResponse: { passed: boolean; message: string; errors: string[] };
 
   beforeEach(() => {
     runsAvailable = false;
+    validationResponse = { passed: true, message: "ok", errors: [] };
     window.localStorage.clear();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -78,13 +80,13 @@ describe("Collectors screen", () => {
         return json(runsAvailable ? [runRow] : []);
       }
       if (path === "/collectors/modules/host-runtime/validate") {
-        return json({ module_id: "host-runtime", passed: true, message: "ok", errors: [] });
+        return json({ module_id: "host-runtime", ...validationResponse });
       }
       if (path === "/collectors/modules/host-runtime/preview") {
         return json({
           module_id: "host-runtime",
           source_name: "demo",
-          scopes: ["local_host"],
+          scopes: ["local_host", "network_sockets"],
           estimated_assets: 1,
           estimated_observations: 3,
           expected_reports: ["collector_bundle"],
@@ -128,6 +130,7 @@ describe("Collectors screen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(await screen.findByText(/Preview ready/)).toBeInTheDocument();
+    expect(screen.getByText(/Covers: This computer, Network connections/)).toBeInTheDocument();
     expect(screen.getByText(/Expects about 1 items and 3 observations/)).toBeInTheDocument();
 
     // Running stays a deliberate two-step action.
@@ -153,8 +156,29 @@ describe("Collectors screen", () => {
     expect((await screen.findAllByText("Done")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("Partly collected")).length).toBeGreaterThan(0);
     expect(screen.getByText("Collected from inside the app's container")).toBeInTheDocument();
+    expect(screen.getByText("Network socket (TCP)")).toBeInTheDocument();
+    expect(screen.getByText("Source ID: socket:tcp")).toBeInTheDocument();
     expect(screen.getByText("No permission — check the credentials")).toBeInTheDocument();
     expect(screen.getByText("Check the saved credential for this source.")).toBeInTheDocument();
+    expect(screen.queryByText("backend PermissionError with private detail")).not.toBeInTheDocument();
+  });
+
+  it("humanizes validation text and keeps the backend wording in technical details", async () => {
+    validationResponse = {
+      passed: false,
+      message: "collector configuration is invalid",
+      errors: ["missing network_sockets"]
+    };
+    render(<Collectors />);
+
+    await screen.findByLabelText("Source name");
+    fireEvent.change(screen.getByLabelText("Source name"), { target: { value: "demo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check settings" }));
+
+    expect(await screen.findByText("The collector settings are not valid.")).toBeInTheDocument();
+    expect(screen.getByText("Missing network sockets")).toBeInTheDocument();
+    const details = screen.getByText("collector configuration is invalid");
+    expect(details.closest("details")).toBeInTheDocument();
   });
 });
 

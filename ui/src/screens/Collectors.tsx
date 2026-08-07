@@ -192,7 +192,7 @@ export function Collectors() {
           Collectors gather read-only information about this appliance. Pick one, check its settings,
           preview what it will find, then run it.
         </p>
-        <form className="draft-form" onSubmit={validateModule}>
+        <form className="draft-form" noValidate onSubmit={validateModule}>
           <label>
             Collector
             <select value={selectedModule} onChange={(event) => selectModule(event.target.value)}>
@@ -247,14 +247,22 @@ export function Collectors() {
         {validation ? (
           <div className={`notice${validation.passed ? "" : " danger"}`}>
             {validation.passed ? "Settings look good: " : "The settings need attention: "}
-            {validation.message}
-            {validation.errors.length ? <p>{validation.errors.join("; ")}</p> : null}
+            <span>{humanizeValidationText(validation.message)}</span>
+            {validation.errors.length ? (
+              <ul>
+                {validation.errors.map((error) => <li key={error}>{humanizeValidationText(error)}</li>)}
+              </ul>
+            ) : null}
+            <TechnicalDetails values={[validation.message, ...validation.errors]} />
           </div>
         ) : null}
 
         {preview ? (
           <div className="audit-list">
-            <p>Preview for {activeModule?.name ?? preview.module_id}: {preview.scopes.join(", ")}</p>
+            <p>
+              Preview for {activeModule?.name ?? preview.module_id}. Covers: {preview.scopes.map(humanizeScope).join(", ")}
+            </p>
+            <TechnicalDetails values={preview.scopes} label="Technical scope details" />
             <p>
               Expects about {preview.estimated_assets} items and {preview.estimated_observations} observations.
             </p>
@@ -313,10 +321,11 @@ export function Collectors() {
                 {runResult.source_outcomes.map((outcome) => (
                   <article className="table-row" key={outcome.source_id}>
                     <div>
-                      <strong>{outcome.source_id}</strong>
+                      <strong>{humanizeSourceId(outcome.source_id)}</strong>
+                      <span className="technical-detail">Source ID: {outcome.source_id}</span>
                       <StatusChip
                         status={outcome.status}
-                        hint={outcome.remediation_hint ?? outcome.error_detail ?? undefined}
+                        hint={outcome.remediation_hint ?? undefined}
                       />
                     </div>
                     <span>{outcome.record_count ?? 0} records</span>
@@ -324,7 +333,7 @@ export function Collectors() {
                 ))}
               </div>
             ) : null}
-            <pre className="code-panel">{JSON.stringify(runDetail, null, 2)}</pre>
+            <pre className="code-panel">{JSON.stringify(safeRunDetailForDisplay(runDetail), null, 2)}</pre>
           </>
         ) : (
           <p className="screen-note">Open a collector run to see what each source returned.</p>
@@ -333,6 +342,105 @@ export function Collectors() {
       </section>
     </div>
   );
+}
+
+const SCOPE_LABELS: Record<string, string> = {
+  local_host: "This computer",
+  processes: "Running programs",
+  network_sockets: "Network connections",
+  network_interfaces: "Network interfaces",
+  firewall_rules: "Firewall rules",
+  databases: "Local databases",
+  wifi_interfaces: "Wireless interfaces",
+  routing_table: "Network routes",
+  endpoint_agents: "Endpoint management tools",
+  web_services: "Web services"
+};
+
+const SOURCE_PREFIX_LABELS: Record<string, string> = {
+  process: "Running program",
+  socket: "Network socket",
+  interface: "Network interface",
+  firewall: "Firewall configuration",
+  database: "Database configuration",
+  wifi: "Wireless network source",
+  route: "Network route",
+  agent: "Endpoint management tool",
+  web: "Web service"
+};
+
+const SOURCE_ID_LABELS: Record<string, string> = {
+  "wifi:proc-net-wireless": "Wireless device list",
+  "wifi:sys-class-net": "Wireless interface details"
+};
+
+const VALIDATION_MESSAGE_LABELS: Record<string, string> = {
+  "collector config must be a mapping": "The collector settings need attention.",
+  "collector configuration is invalid": "The collector settings are not valid."
+};
+
+function humanizeScope(scope: string): string {
+  return SCOPE_LABELS[scope] ?? humanizeTechnicalValue(scope);
+}
+
+function humanizeSourceId(sourceId: string): string {
+  const exactLabel = SOURCE_ID_LABELS[sourceId];
+  if (exactLabel) {
+    return exactLabel;
+  }
+  const [prefix, ...parts] = sourceId.split(":");
+  const prefixLabel = SOURCE_PREFIX_LABELS[prefix];
+  if (!prefixLabel) {
+    return humanizeTechnicalValue(sourceId);
+  }
+  if (parts.length === 0) {
+    return prefixLabel;
+  }
+  return `${prefixLabel} (${parts.map(humanizeSourcePart).join(": ")})`;
+}
+
+function humanizeSourcePart(part: string): string {
+  const knownProtocol = ["tcp", "udp", "ipv4", "ipv6"].includes(part.toLowerCase());
+  return knownProtocol ? part.toUpperCase() : humanizeTechnicalValue(part);
+}
+
+function humanizeValidationText(text: string): string {
+  const trimmed = text.trim();
+  return VALIDATION_MESSAGE_LABELS[trimmed.toLowerCase()] ?? humanizeTechnicalValue(trimmed);
+}
+
+function humanizeTechnicalValue(value: string): string {
+  const words = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/:+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Not provided";
+}
+
+function TechnicalDetails({ values, label = "Technical details" }: { values: string[]; label?: string }) {
+  const visibleValues = values.filter(Boolean);
+  if (visibleValues.length === 0) {
+    return null;
+  }
+  return (
+    <details className="technical-details">
+      <summary>{label}</summary>
+      <ul>
+        {visibleValues.map((value, index) => <li key={`${value}-${index}`}>{value}</li>)}
+      </ul>
+    </details>
+  );
+}
+
+function safeRunDetailForDisplay(run: CollectorRunDetail): Record<string, unknown> {
+  return {
+    ...run,
+    result_json: run.result_json ? "[hidden; source outcomes are shown above]" : undefined,
+    config_snapshots: run.config_snapshots.length ? "[hidden from screen]" : [],
+    config_diffs: run.config_diffs.length ? "[hidden from screen]" : []
+  };
 }
 
 function parseRunResult(run: CollectorRunDetail | null): CollectorRunResult | null {

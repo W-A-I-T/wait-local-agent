@@ -20,7 +20,7 @@ const fields: CollectorConfigField[] = [
     type: "enum",
     options: ["quick", { value: "full", label: "Full scan" }]
   },
-  { name: "paths", label: "Paths", type: "array" },
+  { name: "paths", label: "Paths", type: "array", items: { type: "string" } },
   { name: "api_credential", label: "API credential", type: "secret_ref", help: "Pick a saved credential." },
   { name: "custom_blob", label: "Custom blob", type: "matrix" }
 ];
@@ -37,7 +37,7 @@ describe("SchemaForm", () => {
     expect(screen.getByRole("button", { name: "Add another" })).toBeInTheDocument();
 
     const secret = screen.getByLabelText("API credential");
-    expect(secret).toHaveAttribute("type", "text");
+    expect(secret).toHaveAttribute("type", "password");
     expect(secret).toHaveAttribute("autocomplete", "off");
     expect(screen.getByText(/The secret itself is never shown/)).toBeInTheDocument();
   });
@@ -114,14 +114,54 @@ describe("SchemaForm", () => {
     fireEvent.change(fallback, { target: { value: '{"depth": 2}' } });
     expect(screen.getByTestId("value")).toHaveTextContent('"custom_blob":{"depth":2}');
   });
+
+  it("never exposes a secret_ref value in the DOM or Advanced JSON", () => {
+    const secret = "pasted-secret-that-must-not-echo";
+    const { container } = render(
+      <SchemaForm
+        fields={fields}
+        value={{ api_credential: secret }}
+        onChange={() => undefined}
+      />
+    );
+
+    expect(container.textContent).not.toContain(secret);
+    expect(container.innerHTML).not.toContain(secret);
+    fireEvent.change(screen.getByLabelText("API credential"), { target: { value: secret } });
+    expect(container.textContent).not.toContain(secret);
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced (JSON)" }));
+    expect((screen.getByLabelText("Settings JSON") as HTMLTextAreaElement).value).not.toContain(secret);
+  });
+
+  it("keeps unsupported array shapes lossless through per-field JSON", () => {
+    const unsupportedArrayFields: CollectorConfigField[] = [
+      { name: "numbers", label: "Numbers", type: "array", items: { type: "number" } },
+      { name: "records", label: "Records", type: "array", items: { type: "object" } }
+    ];
+    renderHarness({
+      fields: unsupportedArrayFields,
+      initial: { numbers: [1, 2], records: [{ name: "first", enabled: true }] }
+    });
+
+    const numbers = screen.getByLabelText("Numbers");
+    const records = screen.getByLabelText("Records");
+    expect(numbers.tagName).toBe("TEXTAREA");
+    expect(records.tagName).toBe("TEXTAREA");
+
+    fireEvent.change(numbers, { target: { value: "[1, 2, 3]" } });
+    fireEvent.change(records, { target: { value: '[{"name":"second","enabled":false}]' } });
+    expect(screen.getByTestId("value")).toHaveTextContent('"numbers":[1,2,3]');
+    expect(screen.getByTestId("value")).toHaveTextContent('"records":[{"name":"second","enabled":false}]');
+  });
 });
 
-function renderHarness({ initial = {} }: { initial?: SchemaFormValue } = {}) {
+function renderHarness({ initial = {}, fields: fieldsForHarness = fields }: { initial?: SchemaFormValue; fields?: CollectorConfigField[] } = {}) {
   function Harness() {
     const [value, setValue] = useState<SchemaFormValue>(initial);
     return (
       <div>
-        <SchemaForm fields={fields} value={value} onChange={setValue} />
+        <SchemaForm fields={fieldsForHarness} value={value} onChange={setValue} />
         <output data-testid="value">{JSON.stringify(value)}</output>
       </div>
     );

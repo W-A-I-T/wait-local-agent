@@ -26,6 +26,23 @@ export function defaultsForFields(fields: CollectorConfigField[]): SchemaFormVal
   return defaults;
 }
 
+function withoutSecretValues(value: SchemaFormValue, fields: CollectorConfigField[]): SchemaFormValue {
+  const secretFields = new Set(fields.filter((field) => field.type === "secret_ref").map((field) => field.name));
+  return Object.fromEntries(Object.entries(value).filter(([name]) => !secretFields.has(name)));
+}
+
+function preserveSecretValues(
+  value: SchemaFormValue,
+  next: SchemaFormValue,
+  fields: CollectorConfigField[]
+): SchemaFormValue {
+  const secretFields = new Set(fields.filter((field) => field.type === "secret_ref").map((field) => field.name));
+  return {
+    ...withoutSecretValues(next, fields),
+    ...Object.fromEntries(Object.entries(value).filter(([name]) => secretFields.has(name)))
+  };
+}
+
 export function validateRequiredFields(
   fields: CollectorConfigField[],
   value: SchemaFormValue
@@ -64,7 +81,7 @@ export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "s
   }
 
   function openAdvanced() {
-    setJsonText(JSON.stringify(value, null, 2));
+    setJsonText(JSON.stringify(withoutSecretValues(value, fields), null, 2));
     setJsonError("");
     setAdvanced(true);
   }
@@ -77,8 +94,10 @@ export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "s
         setJsonError("Settings must be a JSON object.");
         return;
       }
+      const safeValue = preserveSecretValues(value, parsed as SchemaFormValue, fields);
       setJsonError("");
-      onChange(parsed as SchemaFormValue);
+      setJsonText(JSON.stringify(safeValue, null, 2));
+      onChange(safeValue);
     } catch {
       setJsonError("That JSON is not complete yet — keep editing or switch back to the form.");
     }
@@ -152,6 +171,8 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
           id={id}
           type="checkbox"
           checked={Boolean(value)}
+          required={field.required}
+          aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.checked)}
         />
         {heading}
@@ -169,6 +190,8 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
           id={id}
           type="number"
           value={typeof value === "number" ? value : ""}
+          required={field.required}
+          aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))}
         />
         {help}
@@ -185,6 +208,8 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
         <select
           id={id}
           value={typeof value === "string" ? value : ""}
+          required={field.required}
+          aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
         >
           <option value="">Not set</option>
@@ -201,7 +226,20 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
   }
 
   if (type === "array") {
-    const items = Array.isArray(value) ? value.map((item) => String(item ?? "")) : [];
+    if (!canEditAsStringArray(field, value)) {
+      return (
+        <JsonFallbackField
+          heading={heading}
+          help={help}
+          errorMessage={errorMessage}
+          value={value}
+          id={id}
+          required={field.required}
+          onChange={onChange}
+        />
+      );
+    }
+    const items = Array.isArray(value) ? value : [];
     return (
       <div className="schema-field">
         <span className="schema-field-heading">
@@ -210,8 +248,13 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
         </span>
         {items.map((item, index) => (
           <div className="array-row" key={index}>
+            <label className="array-item-label" htmlFor={`${id}-${index}`}>
+              {label} {index + 1}
+            </label>
             <input
-              aria-label={`${label} ${index + 1}`}
+              id={`${id}-${index}`}
+              required={field.required && index === 0}
+              aria-required={field.required || undefined}
               value={item}
               onChange={(event) => {
                 const next = [...items];
@@ -244,14 +287,16 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
         {heading}
         <input
           id={id}
-          type="text"
+          type="password"
           autoComplete="off"
-          placeholder="Name of a saved credential"
-          value={typeof value === "string" ? value : ""}
+          placeholder="Saved credential reference"
+          value=""
+          required={field.required}
+          aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
         />
         <span className="field-help">
-          Enter the name of a credential saved on this appliance. The secret itself is never shown or stored here.
+          Enter the name of a credential saved on this appliance. The secret itself is never shown or stored here; the reference is masked and never included in Advanced JSON.
         </span>
         {help}
         {errorMessage}
@@ -267,6 +312,8 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
           id={id}
           type="text"
           value={typeof value === "string" ? value : ""}
+          required={field.required}
+          aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
         />
         {help}
@@ -283,6 +330,7 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
       value={value}
       onChange={onChange}
       id={id}
+      required={field.required}
     />
   );
 }
@@ -293,10 +341,11 @@ type JsonFallbackFieldProps = {
   errorMessage: ReactNode;
   value: unknown;
   id: string;
+  required?: boolean;
   onChange: (next: unknown) => void;
 };
 
-function JsonFallbackField({ heading, help, errorMessage, value, id, onChange }: JsonFallbackFieldProps) {
+function JsonFallbackField({ heading, help, errorMessage, value, id, required, onChange }: JsonFallbackFieldProps) {
   const [text, setText] = useState(() => (value === undefined ? "" : JSON.stringify(value, null, 2)));
   const [parseError, setParseError] = useState("");
 
@@ -318,7 +367,14 @@ function JsonFallbackField({ heading, help, errorMessage, value, id, onChange }:
   return (
     <div className="schema-field">
       {heading}
-      <textarea id={id} rows={4} value={text} onChange={(event) => edit(event.target.value)} />
+      <textarea
+        id={id}
+        rows={4}
+        required={required}
+        aria-required={required || undefined}
+        value={text}
+        onChange={(event) => edit(event.target.value)}
+      />
       <span className="field-help">
         This setting uses a format the form does not know, so it is edited as JSON.
       </span>
@@ -327,6 +383,17 @@ function JsonFallbackField({ heading, help, errorMessage, value, id, onChange }:
       {errorMessage}
     </div>
   );
+}
+
+function canEditAsStringArray(field: CollectorConfigField, value: unknown): value is string[] | undefined {
+  const itemType = field.items?.type;
+  if (itemType && itemType !== "string") {
+    return false;
+  }
+  if (value === undefined) {
+    return true;
+  }
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function normalizeOption(option: CollectorConfigFieldOption): { value: string; label: string } {

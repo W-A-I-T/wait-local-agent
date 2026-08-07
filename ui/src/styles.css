@@ -866,6 +866,36 @@ dd svg {
   flex: 1;
 }
 
+.array-item-label {
+  align-self: center;
+  color: #60706a;
+  font-size: 0.9rem;
+  min-width: 110px;
+}
+
+.technical-detail,
+.technical-details {
+  color: #60706a;
+  font-size: 0.85rem;
+}
+
+.technical-detail {
+  display: block;
+}
+
+.technical-details {
+  margin-top: 6px;
+}
+
+.technical-details summary {
+  cursor: pointer;
+}
+
+.technical-details ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .status-chip-wrap {
   align-items: center;
   display: inline-flex;
