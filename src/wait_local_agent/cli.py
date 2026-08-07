@@ -81,6 +81,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
@@ -172,6 +173,10 @@ def _confluence_client() -> ConfluenceClient:
     return ConfluenceClient(load_settings())
 
 
+def _sharepoint_client() -> SharePointClient:
+    return SharePointClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -237,6 +242,10 @@ def doctor() -> None:
         and settings.confluence_api_token
     )
     typer.echo(f"confluence_configured={confluence_configured}")
+    sharepoint_configured = bool(
+        settings.sharepoint_base_url and settings.sharepoint_access_token
+    )
+    typer.echo(f"sharepoint_configured={sharepoint_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -665,6 +674,7 @@ def validate_connector(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
                 "autotask, itglue, or confluence."
+                " SharePoint is also supported for read-only documentation."
             )
         ),
     ]
@@ -682,6 +692,7 @@ def validate_connector(
             autotask_client=_autotask_client(),
             itglue_client=_itglue_client(),
             confluence_client=_confluence_client(),
+            sharepoint_client=_sharepoint_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1147,6 +1158,63 @@ def confluence_pages(
 @connectors_app.command("confluence-page")
 def confluence_page(page_id: str) -> None:
     _print_confluence_response("pages.get", _confluence_client().get_page(page_id))
+
+
+@connectors_app.command("sharepoint-health")
+def sharepoint_health() -> None:
+    result = _sharepoint_client().health()
+    _audit_sharepoint_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("sharepoint-sites")
+def sharepoint_sites(cursor: str | None = None, page_size: int | None = None) -> None:
+    _print_sharepoint_response(
+        "sites.list",
+        _sharepoint_client().list_sites(
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().sharepoint_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("sharepoint-site")
+def sharepoint_site(site_id: str) -> None:
+    _print_sharepoint_response("sites.get", _sharepoint_client().get_site(site_id))
+
+
+@connectors_app.command("sharepoint-documents")
+def sharepoint_documents(
+    site_id: str,
+    parent_item_id: str | None = None,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_sharepoint_response(
+        "documents.list",
+        _sharepoint_client().list_documents(
+            site_id,
+            parent_item_id=parent_item_id,
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().sharepoint_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("sharepoint-document")
+def sharepoint_document(site_id: str, item_id: str) -> None:
+    _print_sharepoint_response(
+        "documents.get",
+        _sharepoint_client().get_document(site_id, item_id),
+    )
 
 
 @workflows_app.command("templates")
@@ -1859,6 +1927,25 @@ def _print_confluence_response(read_type: str, response: ConfluenceReadResponse)
 
 def _audit_confluence_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("confluence.read", read_type, f"{status} count={count}")
+
+
+def _print_sharepoint_response(read_type: str, response: SharePointReadResponse) -> None:
+    _audit_sharepoint_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_sharepoint_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

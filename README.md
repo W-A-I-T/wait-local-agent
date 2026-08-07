@@ -375,6 +375,33 @@ access uses Confluence Cloud basic authentication from settings/vault, only
 GET requests are issued, and live network access remains gated by
 `WAIT_ALLOW_HTTP_PROBING` ([Confluence REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/)).
 
+### SharePoint
+
+Required settings:
+
+```text
+WAIT_SHAREPOINT_BASE_URL=https://graph.microsoft.com/v1.0
+WAIT_SHAREPOINT_ACCESS_TOKEN=
+WAIT_SHAREPOINT_PAGE_SIZE=25
+```
+
+Read commands cover bounded site metadata and SharePoint document-library
+metadata, including folder-scoped listing:
+
+```bash
+wait-local-agent connectors validate sharepoint
+wait-local-agent connectors sharepoint-health
+wait-local-agent connectors sharepoint-sites
+wait-local-agent connectors sharepoint-site <site-id>
+wait-local-agent connectors sharepoint-documents <site-id>
+wait-local-agent connectors sharepoint-document <site-id> <item-id>
+```
+
+The API mirrors these commands under `/connectors/sharepoint/*`. The supplied
+delegated or application bearer token stays in settings/vault; only bounded
+Graph GET requests are issued, file content is not downloaded, and live network
+access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
+
 ### ConnectWise PSA
 
 Required settings:

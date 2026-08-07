@@ -83,6 +83,16 @@ class _FakeConfluenceClient:
         return ConnectorReadResult("ready", "Confluence read prerequisites are ready.")
 
 
+class _FakeSharePointClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "SharePoint live reads are blocked.")
+        return ConnectorReadResult("ready", "SharePoint read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -291,3 +301,21 @@ def test_validate_confluence_cli_success_and_missing_config(monkeypatch, tmp_pat
     assert "layer=config" in missing.output
     assert success.exit_code == 0
     assert "PASS connector=confluence layer=connector" in success.output
+
+
+def test_validate_sharepoint_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "sharepoint"])
+
+    monkeypatch.setenv("WAIT_SHAREPOINT_BASE_URL", "https://graph.microsoft.com/v1.0")
+    monkeypatch.setenv("WAIT_SHAREPOINT_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "SharePointClient", _FakeSharePointClient)
+    success = runner.invoke(app, ["connectors", "validate", "sharepoint"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=sharepoint layer=connector" in success.output

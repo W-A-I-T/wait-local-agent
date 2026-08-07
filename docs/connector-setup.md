@@ -219,6 +219,40 @@ wait-local-agent connectors confluence-page <page-id>
 The API mirrors these commands under `/connectors/confluence/health`,
 `/connectors/confluence/pages`, and `/connectors/confluence/pages/{page-id}`.
 
+## SharePoint
+
+### Required settings
+
+```text
+WAIT_SHAREPOINT_BASE_URL=https://graph.microsoft.com/v1.0
+WAIT_SHAREPOINT_ACCESS_TOKEN=
+WAIT_SHAREPOINT_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The adapter uses Microsoft Graph site and drive-item metadata endpoints. It
+accepts a delegated or application bearer token obtained by the operator's
+chosen Microsoft identity flow; token acquisition is intentionally outside the
+local agent and the token is never placed in URLs or request payloads. The
+adapter returns bounded metadata only: it does not download file contents or
+expose mutation endpoints. Microsoft documents `Sites.Read.All` as the least
+privileged application permission for site reads and `Files.Read.All` for drive
+children reads ([Get a SharePoint site](https://learn.microsoft.com/en-us/graph/api/site-get?view=graph-rest-1.0), [list drive children](https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?tabs=http&view=graph-rest-1.0)).
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate sharepoint
+wait-local-agent connectors sharepoint-health
+wait-local-agent connectors sharepoint-sites
+wait-local-agent connectors sharepoint-site <site-id>
+wait-local-agent connectors sharepoint-documents <site-id>
+wait-local-agent connectors sharepoint-document <site-id> <item-id>
+```
+
+The API mirrors these commands under `/connectors/sharepoint/health`,
+`/connectors/sharepoint/sites`, and the site-scoped document routes.
+
 ## ConnectWise PSA
 
 ### Required settings

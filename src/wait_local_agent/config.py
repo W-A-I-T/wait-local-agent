@@ -103,6 +103,9 @@ class Settings:
     confluence_email: str = ""
     confluence_api_token: str = ""
     confluence_page_size: int = 25
+    sharepoint_base_url: str = ""
+    sharepoint_access_token: str = ""
+    sharepoint_page_size: int = 25
     connectwise_base_url: str = ""
     connectwise_company: str = ""
     connectwise_public_key: str = ""
@@ -245,6 +248,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         confluence_page_size=_int_env("WAIT_CONFLUENCE_PAGE_SIZE", 25),
+        sharepoint_base_url=_secret_value(
+            "WAIT_SHAREPOINT_BASE_URL",
+            os.getenv("WAIT_SHAREPOINT_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        sharepoint_access_token=_secret_value(
+            "WAIT_SHAREPOINT_ACCESS_TOKEN",
+            os.getenv("WAIT_SHAREPOINT_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        sharepoint_page_size=_int_env("WAIT_SHAREPOINT_PAGE_SIZE", 25),
         connectwise_base_url=_secret_value(
             "WAIT_CONNECTWISE_BASE_URL",
             os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),

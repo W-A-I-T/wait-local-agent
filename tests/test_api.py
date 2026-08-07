@@ -31,6 +31,7 @@ from wait_local_agent.models import (
     HuduFolder,
 )
 from wait_local_agent.servicenow import ServiceNowReadResponse
+from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroReadResponse
 
@@ -2262,6 +2263,65 @@ def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> No
 def test_confluence_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/confluence/health")
+    assert response.status_code == 401
+
+
+def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeSharePointClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "SharePoint ready", 0)
+
+        def list_sites(self, **kwargs):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [SharePointSite("site-1", "ops", "Operations", "https://sharepoint.test/ops")],
+            )
+
+        def get_site(self, site_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "site ready", 1),
+                [SharePointSite(site_id, "ops", "Operations", "https://sharepoint.test/ops")],
+            )
+
+        def list_documents(self, site_id, **kwargs):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [SharePointDocument("file-1", "MFA.md", site_id, "root", 42, "today", "/mfa", False)],
+            )
+
+        def get_document(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "document ready", 1),
+                [SharePointDocument(item_id, "MFA.md", site_id, "root", 42, "today", "/mfa", False)],
+            )
+
+    monkeypatch.setattr(app_module, "SharePointClient", FakeSharePointClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/sharepoint/health")
+    sites = client.get("/connectors/sharepoint/sites")
+    site = client.get("/connectors/sharepoint/sites/site-1")
+    documents = client.get("/connectors/sharepoint/sites/site-1/documents")
+    document = client.get("/connectors/sharepoint/sites/site-1/documents/file-1")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert sites.json()["items"][0]["display_name"] == "Operations"
+    assert site.json()["items"][0]["id"] == "site-1"
+    assert documents.json()["items"][0]["name"] == "MFA.md"
+    assert document.json()["items"][0]["id"] == "file-1"
+    assert any(connector["id"] == "sharepoint" for connector in connectors.json())
+    assert any(event["event_type"] == "sharepoint.read" for event in audit.json())
+
+
+def test_sharepoint_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/sharepoint/health")
     assert response.status_code == 401
 
 

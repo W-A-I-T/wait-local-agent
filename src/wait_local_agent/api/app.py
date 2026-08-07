@@ -95,6 +95,7 @@ from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
@@ -279,6 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     autotask_client = AutotaskClient(active_settings)
     itglue_client = ItGlueClient(active_settings)
     confluence_client = ConfluenceClient(active_settings)
+    sharepoint_client = SharePointClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -385,6 +387,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 active_settings.confluence_base_url
                 and active_settings.confluence_email
                 and active_settings.confluence_api_token
+            ),
+            "sharepoint_configured": bool(
+                active_settings.sharepoint_base_url
+                and active_settings.sharepoint_access_token
             ),
         }
 
@@ -2011,6 +2017,70 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = confluence_client.get_page(page_id)
         return _confluence_response("pages.get", response)
 
+    @app.get("/connectors/sharepoint/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = sharepoint_client.health()
+        _audit_sharepoint_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/sharepoint/sites")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_sites(
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = sharepoint_client.list_sites(
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.sharepoint_page_size
+            ),
+        )
+        return _sharepoint_response("sites.list", response)
+
+    @app.get("/connectors/sharepoint/sites/{site_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_site(site_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = sharepoint_client.get_site(site_id)
+        return _sharepoint_response("sites.get", response)
+
+    @app.get("/connectors/sharepoint/sites/{site_id}/documents")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_documents(
+        site_id: str,
+        request: Request,
+        _: ViewerAccess,
+        parent_item_id: str | None = None,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = sharepoint_client.list_documents(
+            site_id,
+            parent_item_id=parent_item_id,
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.sharepoint_page_size
+            ),
+        )
+        return _sharepoint_response("documents.list", response)
+
+    @app.get("/connectors/sharepoint/sites/{site_id}/documents/{item_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_document(
+        site_id: str,
+        item_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = sharepoint_client.get_document(site_id, item_id)
+        return _sharepoint_response("documents.get", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2507,6 +2577,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_confluence_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("confluence.read", read_type, f"{status} count={count}")
+
+    def _sharepoint_response(
+        read_type: str,
+        response: SharePointReadResponse,
+    ) -> dict[str, object]:
+        _audit_sharepoint_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _audit_sharepoint_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
