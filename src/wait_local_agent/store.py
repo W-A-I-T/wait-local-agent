@@ -279,7 +279,10 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     run_once_per_entity integer not null default 1,
-                    depends_on_agent_ids_json text not null default '[]'
+                    depends_on_agent_ids_json text not null default '[]',
+                    execution_window_start text,
+                    execution_window_end text,
+                    execution_timezone text not null default 'UTC'
                 )
                 """
             )
@@ -376,6 +379,14 @@ class Store:
                 "agent_definitions",
                 "depends_on_agent_ids_json",
                 "text not null default '[]'",
+            )
+            self._ensure_column(connection, "agent_definitions", "execution_window_start", "text")
+            self._ensure_column(connection, "agent_definitions", "execution_window_end", "text")
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "execution_timezone",
+                "text not null default 'UTC'",
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
@@ -1632,8 +1643,9 @@ class Store:
                   (id, name, description, enabled, trigger, entity_type,
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
-                   run_once_per_entity, depends_on_agent_ids_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   run_once_per_entity, depends_on_agent_ids_json,
+                   execution_window_start, execution_window_end, execution_timezone)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1653,6 +1665,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_timezone,
                 ),
             )
             self._add_audit_event(
@@ -1705,7 +1720,8 @@ class Store:
                 set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
                     filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
-                    run_once_per_entity = ?, depends_on_agent_ids_json = ?
+                    run_once_per_entity = ?, depends_on_agent_ids_json = ?,
+                    execution_window_start = ?, execution_window_end = ?, execution_timezone = ?
                 where id = ?
                 """,
                 (
@@ -1724,6 +1740,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_timezone,
                     definition.id,
                 ),
             )

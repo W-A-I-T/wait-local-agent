@@ -13,7 +13,9 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import AgentDefinition, AgentRun, utc_now
@@ -119,6 +121,9 @@ class AgentService:
         client_id: str | None,
         run_once_per_entity: bool = True,
         depends_on_agent_ids: list[str] | None = None,
+        execution_window_start: str | None = None,
+        execution_window_end: str | None = None,
+        execution_timezone: str = "UTC",
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -134,6 +139,9 @@ class AgentService:
             depends_on_agent_ids=depends_on_agent_ids or [],
             agent_id=agent_id,
             client_id=client_id,
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_timezone=execution_timezone,
         )
         now = utc_now()
         definition = AgentDefinition(
@@ -154,6 +162,9 @@ class AgentService:
             updated_at=now,
             run_once_per_entity=run_once_per_entity,
             depends_on_agent_ids=list(depends_on_agent_ids or []),
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_timezone=execution_timezone,
         )
         return self.store.create_agent_definition(definition)
 
@@ -173,6 +184,9 @@ class AgentService:
         execution_timeout_seconds: float,
         run_once_per_entity: bool = True,
         depends_on_agent_ids: list[str] | None = None,
+        execution_window_start: str | None = None,
+        execution_window_end: str | None = None,
+        execution_timezone: str = "UTC",
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -187,6 +201,9 @@ class AgentService:
             depends_on_agent_ids=depends_on_agent_ids or [],
             agent_id=existing.id,
             client_id=existing.client_id,
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_timezone=execution_timezone,
         )
         updated = AgentDefinition(
             id=existing.id,
@@ -206,6 +223,9 @@ class AgentService:
             updated_at=utc_now(),
             run_once_per_entity=run_once_per_entity,
             depends_on_agent_ids=list(depends_on_agent_ids or []),
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_timezone=execution_timezone,
         )
         return self.store.update_agent_definition(updated)
 
@@ -221,6 +241,8 @@ class AgentService:
             raise AgentDefinitionError("agent is disabled")
         if definition.entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("agent entity_type is not supported")
+        if definition.trigger != "manual" and not _within_execution_window(definition):
+            raise AgentDefinitionError("agent execution is outside its configured execution window")
         client_id = _normalize_client_id(definition.client_id)
         if self.store.get_ticket(entity_id, client_id=client_id) is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
@@ -410,6 +432,9 @@ class AgentService:
             updated_at=revision.created_at,
             run_once_per_entity=bool(payload.get("run_once_per_entity", definition.run_once_per_entity)),
             depends_on_agent_ids=cast(list[str], dependencies),
+            execution_window_start=_optional_string(payload.get("execution_window_start")),
+            execution_window_end=_optional_string(payload.get("execution_window_end")),
+            execution_timezone=str(payload.get("execution_timezone", definition.execution_timezone)),
         )
 
     def _continue(
@@ -577,6 +602,9 @@ class AgentService:
         depends_on_agent_ids: list[str],
         agent_id: str | None,
         client_id: str | None,
+        execution_window_start: str | None,
+        execution_window_end: str | None,
+        execution_timezone: str,
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -609,6 +637,7 @@ class AgentService:
             raise AgentDefinitionError(
                 f"execution_timeout_seconds must be between 0 and {MAX_AGENT_TIMEOUT_SECONDS:g}"
             )
+        _validate_execution_window(execution_window_start, execution_window_end, execution_timezone)
         for step in steps:
             if set(step) - {"tool_id", "payload"}:
                 raise AgentDefinitionError("agent steps may only contain tool_id and payload")
@@ -688,6 +717,40 @@ def _validate_event_filters(filters: dict[str, object]) -> None:
             continue
         if not isinstance(value, str) or not value.strip():
             raise AgentDefinitionError(f"event filter {field} must be a non-empty string")
+
+
+def _validate_execution_window(start: str | None, end: str | None, timezone: str) -> None:
+    if (start is None) != (end is None):
+        raise AgentDefinitionError("execution window requires both start and end")
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, TypeError) as exc:
+        raise AgentDefinitionError("execution_timezone must be a valid IANA timezone") from exc
+    if start is None or end is None:
+        return
+    for value, label in ((start, "start"), (end, "end")):
+        try:
+            datetime.strptime(value, "%H:%M")
+        except ValueError as exc:
+            raise AgentDefinitionError(f"execution_window_{label} must use HH:MM") from exc
+    if start >= end:
+        raise AgentDefinitionError("execution window must end after it starts")
+
+
+def _within_execution_window(definition: AgentDefinition) -> bool:
+    _validate_execution_window(
+        definition.execution_window_start,
+        definition.execution_window_end,
+        definition.execution_timezone,
+    )
+    if definition.execution_window_start is None or definition.execution_window_end is None:
+        return True
+    now = datetime.now(ZoneInfo(definition.execution_timezone)).strftime("%H:%M")
+    return definition.execution_window_start <= now < definition.execution_window_end
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:

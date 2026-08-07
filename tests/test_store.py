@@ -56,6 +56,9 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
     assert "revision_version" in agent_run_columns
+    assert "execution_window_start" in _columns(connection, "agent_definitions")
+    assert "execution_window_end" in _columns(connection, "agent_definitions")
+    assert "execution_timezone" in _columns(connection, "agent_definitions")
     assert "depends_on_agent_ids_json" in _columns(connection, "agent_definitions")
     assert "failed_entity_ids_json" in backfill_columns
     assert "client_id" in knowledge_columns

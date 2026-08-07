@@ -170,6 +170,9 @@ class AgentDefinitionRequest(BaseModel):
     steps: list[AgentStepRequest]
     max_steps: int = Field(default=8, ge=1, le=8)
     execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    execution_window_start: str | None = None
+    execution_window_end: str | None = None
+    execution_timezone: str = "UTC"
     client_id: str | None = None
     run_once_per_entity: bool = True
     depends_on_agent_ids: list[str] = Field(default_factory=list)
@@ -479,6 +482,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 client_id=scoped_client_id,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
@@ -563,6 +569,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
             )
@@ -597,6 +606,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
             )
@@ -2148,6 +2160,9 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "steps": definition.steps,
                 "max_steps": definition.max_steps,
                 "execution_timeout_seconds": definition.execution_timeout_seconds,
+                "execution_window_start": definition.execution_window_start,
+                "execution_window_end": definition.execution_window_end,
+                "execution_timezone": definition.execution_timezone,
                 "client_id": definition.client_id,
                 "version": definition.version,
                 "run_once_per_entity": definition.run_once_per_entity,

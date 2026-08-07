@@ -58,7 +58,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The first public agent mode is ticket-scoped. Definitions allow only
   registered tools, cap runs at eight steps and 120 seconds, and retain the
   configured client scope. Manual runs and persisted five-field cron schedules
-  are supported.
+  are supported, with optional execution windows for scheduled and event
+  triggers using a validated IANA timezone.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Approval-paused work persists a 24-hour default deadline; expired approvals

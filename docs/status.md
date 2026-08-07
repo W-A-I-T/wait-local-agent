@@ -31,6 +31,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   persist their agent/entity target.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, and grouped execution traces.
+  Scheduled and event agents may enforce a persisted `HH:MM` execution window
+  in a validated IANA timezone; manual runs remain available for recovery.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, and delivery history APIs. Conversational and

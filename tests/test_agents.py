@@ -58,6 +58,46 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     assert tools["dispatch-suggestion"].approval_required is True
 
 
+def test_agent_execution_window_is_validated_and_persisted(settings) -> None:
+    service = _service(settings)
+    scheduled = service.create(
+        name="Business-hours triage",
+        description="",
+        enabled=True,
+        trigger="scheduled",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        execution_window_start="09:00",
+        execution_window_end="17:00",
+        execution_timezone="America/Vancouver",
+    )
+
+    loaded = service.get(scheduled.id, client_id="acme")
+    assert loaded is not None
+    assert loaded.execution_window_start == "09:00"
+    assert loaded.execution_window_end == "17:00"
+    assert loaded.execution_timezone == "America/Vancouver"
+
+    with pytest.raises(AgentDefinitionError, match="requires both start and end"):
+        service.create(
+            name="Incomplete window",
+            description="",
+            enabled=True,
+            trigger="scheduled",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            execution_window_start="09:00",
+        )
 def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> None:
     service = _service(settings)
     definition = service.create(
