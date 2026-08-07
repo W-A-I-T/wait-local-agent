@@ -25,8 +25,20 @@ from wait_local_agent.store import Store, _normalize_client_id
 
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
-SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled"})
+SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled", "event"})
 SUPPORTED_ENTITY_TYPE = "ticket"
+SUPPORTED_EVENT_TYPES = frozenset(
+    {
+        "ticket.created",
+        "ticket.updated",
+        "ticket.priority_changed",
+        "ticket.status_changed",
+        "ticket.closed",
+        "time_entry.added",
+        "workflow.completed",
+    }
+)
+EVENT_FILTER_FIELDS = frozenset({"event_type", "client_id", "priority", "status", "ticket_id"})
 
 
 @dataclass(frozen=True)
@@ -104,6 +116,7 @@ class AgentService:
         max_steps: int,
         execution_timeout_seconds: float,
         client_id: str | None,
+        run_once_per_entity: bool = True,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -133,6 +146,7 @@ class AgentService:
             version=1,
             created_at=now,
             updated_at=now,
+            run_once_per_entity=run_once_per_entity,
         )
         return self.store.create_agent_definition(definition)
 
@@ -150,6 +164,7 @@ class AgentService:
         steps: list[dict[str, object]],
         max_steps: int,
         execution_timeout_seconds: float,
+        run_once_per_entity: bool = True,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -178,6 +193,7 @@ class AgentService:
             version=existing.version + 1,
             created_at=existing.created_at,
             updated_at=utc_now(),
+            run_once_per_entity=run_once_per_entity,
         )
         return self.store.update_agent_definition(updated)
 
@@ -437,13 +453,15 @@ class AgentService:
         if len(description) > 4000:
             raise AgentDefinitionError("description is too long")
         if trigger not in SUPPORTED_AGENT_TRIGGERS:
-            raise AgentDefinitionError("only manual or scheduled agents are supported in this slice")
+            raise AgentDefinitionError("only manual, scheduled, or event agents are supported")
         if entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("only ticket agents are supported in this slice")
         if not isinstance(filters, dict):
             raise AgentDefinitionError("filters must be an object")
-        if filters:
-            raise AgentDefinitionError("filters are reserved until event triggers are supported")
+        if trigger == "event":
+            _validate_event_filters(filters)
+        elif filters:
+            raise AgentDefinitionError("filters are reserved for event-triggered agents")
         if not enabled_tools or len(enabled_tools) > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"enabled_tools must contain 1-{MAX_AGENT_STEPS} tools")
         if len(set(enabled_tools)) != len(enabled_tools):
@@ -480,6 +498,20 @@ def _state_object(value: object) -> dict[str, object]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _validate_event_filters(filters: dict[str, object]) -> None:
+    unknown = sorted(set(filters) - EVENT_FILTER_FIELDS)
+    if unknown:
+        raise AgentDefinitionError(f"unsupported event filter fields: {', '.join(unknown)}")
+    event_type = filters.get("event_type")
+    if not isinstance(event_type, str) or event_type not in SUPPORTED_EVENT_TYPES:
+        raise AgentDefinitionError("event filters require a supported event_type")
+    for field, value in filters.items():
+        if field == "event_type":
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise AgentDefinitionError(f"event filter {field} must be a non-empty string")
 
 
 def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:

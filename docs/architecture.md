@@ -60,8 +60,19 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Agent runs are grouped in the existing execution observability tables with
-  one redacted step record per tool. Event triggers, dependencies, backfills,
-  and conversational agents remain future extensions.
+  one redacted step record per tool. Authenticated event deliveries use the
+  same runtime, deterministic filters, tenant scope, idempotency keys, and
+  run-once-per-entity protection. Dependencies, backfills, and conversational
+  agents remain future extensions.
+
+## Event-triggered agents
+
+- `POST /automation/events` accepts supported ticket events with an
+  `Idempotency-Key` header or request-body key.
+- Event definitions use `trigger: "event"` and deterministic filters such as
+  `{"event_type": "ticket.created", "priority": "P1"}`.
+- Deliveries persist redacted payloads, matched definitions, run IDs, status,
+  errors, and tenant scope in SQLite. Duplicate keys do not execute again.
 
 ## Secrets, Backup, and Audit
 

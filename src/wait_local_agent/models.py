@@ -93,6 +93,24 @@ class EventHistoryEntry:
 
 
 @dataclass(frozen=True)
+class EventDelivery:
+    id: int | None
+    idempotency_key: str
+    event_type: str
+    entity_type: str
+    entity_id: str
+    payload_json: str
+    status: str
+    matched_agent_count: int
+    agent_ids_json: str
+    run_ids_json: str
+    error_detail: str
+    received_at: str
+    processed_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ConnectorStatus:
     id: str
     kind: ConnectorKind
@@ -518,6 +536,7 @@ class AgentDefinition:
     version: int
     created_at: str
     updated_at: str
+    run_once_per_entity: bool = True
 
 
 @dataclass(frozen=True)

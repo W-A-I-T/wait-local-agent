@@ -194,6 +194,51 @@ def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
             client_id="acme",
         )
 
+    with pytest.raises(AgentDefinitionError, match="unsupported event filter"):
+        service.create(
+            name="unknown event filter",
+            description="",
+            enabled=True,
+            trigger="event",
+            entity_type="ticket",
+            filters={"event_type": "ticket.created", "unknown": "value"},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+        )
+
+    with pytest.raises(AgentDefinitionError, match="supported event_type"):
+        service.create(
+            name="unknown event type",
+            description="",
+            enabled=True,
+            trigger="event",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+        )
+
+    with pytest.raises(AgentDefinitionError, match="must be a non-empty string"):
+        service.create(
+            name="bad event filter value",
+            description="",
+            enabled=True,
+            trigger="event",
+            entity_type="ticket",
+            filters={"event_type": "ticket.created", "priority": 1},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+        )
+
     with pytest.raises(AgentDefinitionError, match="unknown tools"):
         service.create(
             name="unknown tool",

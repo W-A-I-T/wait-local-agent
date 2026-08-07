@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -61,6 +61,7 @@ from wait_local_agent.connectors import (
     list_secret_records,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -154,7 +155,7 @@ class AgentDefinitionRequest(BaseModel):
     name: str
     description: str = ""
     enabled: bool = True
-    trigger: Literal["manual", "scheduled"] = "manual"
+    trigger: Literal["manual", "scheduled", "event"] = "manual"
     entity_type: Literal["ticket"] = "ticket"
     filters: dict[str, object] = Field(default_factory=dict)
     enabled_tools: list[str]
@@ -162,11 +163,21 @@ class AgentDefinitionRequest(BaseModel):
     max_steps: int = Field(default=8, ge=1, le=8)
     execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     client_id: str | None = None
+    run_once_per_entity: bool = True
 
 
 class AgentRunStartRequest(BaseModel):
     entity_id: str
     input: dict[str, object] = Field(default_factory=dict)
+    client_id: str | None = None
+
+
+class EventIngestRequest(BaseModel):
+    event_type: str
+    entity_type: Literal["ticket"] = "ticket"
+    entity_id: str
+    payload: dict[str, object] = Field(default_factory=dict)
+    idempotency_key: str | None = None
     client_id: str | None = None
 
 
@@ -236,6 +247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     collector_service = CollectorService(store, default_registry)
     smart_action_service = SmartActionService(store, active_settings)
     agent_service = AgentService(store, active_settings, smart_action_service)
+    event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
         store,
         enabled=active_settings.scheduler_enabled,
@@ -440,6 +452,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
                 client_id=scoped_client_id,
+                run_once_per_entity=payload.run_once_per_entity,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -482,6 +495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                run_once_per_entity=payload.run_once_per_entity,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -550,6 +564,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
+
+    @app.post("/automation/events")
+    @limiter.limit(active_settings.rate_limit_general)
+    def ingest_automation_event(
+        request: Request,
+        payload: EventIngestRequest,
+        context: TechnicianAccess,
+        idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        idempotency_key = idempotency_key_header or payload.idempotency_key
+        if idempotency_key is None:
+            raise HTTPException(status_code=422, detail="Idempotency-Key header or idempotency_key is required")
+        try:
+            result = event_dispatcher.dispatch(
+                event_type=payload.event_type,
+                entity_type=payload.entity_type,
+                entity_id=payload.entity_id,
+                payload=payload.payload,
+                idempotency_key=idempotency_key,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "webhook",
+            )
+        except EventDispatchError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="event entity not found") from exc
+        return _event_dispatch_view(result)
+
+    @app.get("/automation/event-deliveries")
+    def event_deliveries(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [_event_delivery_view(delivery) for delivery in store.list_event_deliveries(scoped_client_id)]
+
+    @app.get("/automation/event-deliveries/{delivery_id}")
+    def event_delivery_detail(delivery_id: int, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="event delivery not found")
+        delivery = store.get_event_delivery(delivery_id, scoped_client_id)
+        if delivery is None:
+            raise HTTPException(status_code=404, detail="event delivery not found")
+        return _event_delivery_view(delivery)
 
     @app.get("/smart-actions/runs")
     def smart_action_runs(
@@ -1600,11 +1664,41 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "execution_timeout_seconds": definition.execution_timeout_seconds,
                 "client_id": definition.client_id,
                 "version": definition.version,
+                "run_once_per_entity": definition.run_once_per_entity,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }
         ),
     )
+
+
+def _event_dispatch_view(result) -> dict[str, object]:
+    return {
+        "delivery": _event_delivery_view(result.delivery),
+        "duplicate": result.duplicate,
+        "matched_agent_ids": result.matched_agent_ids,
+        "run_ids": result.run_ids,
+        "errors": result.errors,
+    }
+
+
+def _event_delivery_view(delivery) -> dict[str, object]:
+    return {
+        "id": delivery.id,
+        "idempotency_key": delivery.idempotency_key,
+        "event_type": delivery.event_type,
+        "entity_type": delivery.entity_type,
+        "entity_id": delivery.entity_id,
+        "payload": _safe_redacted_json_object(delivery.payload_json),
+        "status": delivery.status,
+        "matched_agent_count": delivery.matched_agent_count,
+        "agent_ids": _safe_json_values(delivery.agent_ids_json),
+        "run_ids": _safe_json_values(delivery.run_ids_json),
+        "error_detail": redact_text(delivery.error_detail),
+        "received_at": delivery.received_at,
+        "processed_at": delivery.processed_at,
+        "client_id": delivery.client_id,
+    }
 
 
 def _agent_run_view(run) -> dict[str, object]:
@@ -1748,6 +1842,14 @@ def _safe_json_list(payload_json: str) -> list[dict[str, object]]:
     except json.JSONDecodeError:
         return []
     return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+
+
+def _safe_json_values(payload_json: str) -> list[object]:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
 
 
 def _redact_json_text(payload_json: str) -> str:
