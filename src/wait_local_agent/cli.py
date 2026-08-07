@@ -59,6 +59,7 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
+from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
@@ -140,6 +141,10 @@ def _halopsa_client() -> HaloPSAClient:
 
 def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
+
+
+def _connectwise_client() -> ConnectWiseClient:
+    return ConnectWiseClient(load_settings())
 
 
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
@@ -605,7 +610,9 @@ def list_secrets() -> None:
 
 
 @connectors_app.command("validate")
-def validate_connector(connector: Annotated[str, typer.Argument(help="Connector id: halopsa or hudu.")]) -> None:
+def validate_connector(
+    connector: Annotated[str, typer.Argument(help="Connector id: halopsa, hudu, or connectwise.")]
+) -> None:
     settings = load_settings()
     try:
         result = validate_connector_credentials(
@@ -613,6 +620,7 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             settings,
             halopsa_client=_halopsa_client(),
             hudu_client=_hudu_client(),
+            connectwise_client=_connectwise_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -750,6 +758,58 @@ def hudu_folders(
     _print_hudu_response(
         "folders.list",
         _hudu_client().list_folders(company_id=company_id, page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("connectwise-health")
+def connectwise_health() -> None:
+    result = _connectwise_client().health()
+    _audit_connectwise_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("connectwise-tickets")
+def connectwise_tickets(
+    page: int = 1,
+    page_size: int | None = None,
+    conditions: str | None = None,
+) -> None:
+    _print_connectwise_response(
+        "tickets.list",
+        _connectwise_client().list_tickets(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().connectwise_page_size
+            ),
+            conditions=conditions,
+        ),
+    )
+
+
+@connectors_app.command("connectwise-ticket")
+def connectwise_ticket(ticket_id: str) -> None:
+    _print_connectwise_response("tickets.get", _connectwise_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("connectwise-companies")
+def connectwise_companies(
+    page: int = 1,
+    page_size: int | None = None,
+    conditions: str | None = None,
+) -> None:
+    _print_connectwise_response(
+        "companies.list",
+        _connectwise_client().list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().connectwise_page_size
+            ),
+            conditions=conditions,
+        ),
     )
 
 
@@ -1368,12 +1428,23 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
         typer.echo(asdict(item))
 
 
+def _print_connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> None:
+    _audit_connectwise_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
 
 def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+
+def _audit_connectwise_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("connectwise.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

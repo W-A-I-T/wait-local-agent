@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA and Hudu HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, and ConnectWise HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -48,6 +48,7 @@ WAIT_VAULT_PATH=.wait-local-agent/vault
 wait-local-agent secrets init
 wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
 wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>'
+wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY '<secret>'
 wait-local-agent secrets list
 ```
 
@@ -153,3 +154,36 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo. There is no Hudu write surface to enable.
+
+## ConnectWise PSA
+
+### Required settings
+
+```text
+WAIT_CONNECTWISE_BASE_URL=
+WAIT_CONNECTWISE_COMPANY=
+WAIT_CONNECTWISE_PUBLIC_KEY=
+WAIT_CONNECTWISE_PRIVATE_KEY=
+WAIT_CONNECTWISE_CLIENT_ID=
+WAIT_CONNECTWISE_API_VERSION=2022.1
+WAIT_CONNECTWISE_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The adapter uses the documented ConnectWise PSA REST read endpoints for tickets
+and companies. It normalizes only the fields needed by the local agent and has
+no mutation or credential-in-request-payload path.
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate connectwise
+wait-local-agent connectors connectwise-health
+wait-local-agent connectors connectwise-tickets
+wait-local-agent connectors connectwise-ticket <ticket-id>
+wait-local-agent connectors connectwise-companies
+```
+
+The API mirrors these commands under `/connectors/connectwise/health`,
+`/connectors/connectwise/tickets`, and `/connectors/connectwise/companies`.
+All routes remain viewer-authenticated and rate-limited.

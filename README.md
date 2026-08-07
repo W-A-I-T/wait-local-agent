@@ -20,11 +20,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
+- ConnectWise PSA read-only ticket and company lookup with explicit HTTP
+  probing opt-in; no ConnectWise mutation path is enabled.
 - Hudu read-only documentation context.
 - A preview-only communication draft tool for email, Microsoft Teams, Slack,
   and SMS. Drafts are tenant-scoped, require technician approval, and never
   send network traffic in the public core.
-- Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, or `connectwise`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`.
 - Scheduled jobs support cron, interval, and future one-time schedules with
@@ -144,6 +146,9 @@ wait-local-agent approvals list
 wait-local-agent events list
 wait-local-agent connectors validate halopsa
 wait-local-agent connectors validate hudu
+wait-local-agent connectors connectwise-health
+wait-local-agent connectors connectwise-tickets
+wait-local-agent connectors connectwise-companies
 wait-local-agent update check
 wait-local-agent packs status
 ```
@@ -313,6 +318,24 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo.
+
+### ConnectWise PSA
+
+Required settings:
+
+```text
+WAIT_CONNECTWISE_BASE_URL=
+WAIT_CONNECTWISE_COMPANY=
+WAIT_CONNECTWISE_PUBLIC_KEY=
+WAIT_CONNECTWISE_PRIVATE_KEY=
+WAIT_CONNECTWISE_CLIENT_ID=
+WAIT_CONNECTWISE_API_VERSION=2022.1
+```
+
+Read commands are available through the CLI and the `/connectors/connectwise/*`
+API routes. Set `WAIT_ALLOW_HTTP_PROBING=true` before any network request;
+credentials are read from settings/vault and are never accepted in request
+payloads. Writes are not implemented in the public core.
 
 ## Scheduled Workflows and Tenancy Filters
 

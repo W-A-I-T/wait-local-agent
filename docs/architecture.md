@@ -37,6 +37,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - HaloPSA read paths for tickets, notes, clients, assets, and categories
 - HaloPSA write path modeled as local draft, approval review, and explicit execution
 - Hudu read-only documentation context
+- ConnectWise PSA read-only ticket and company lookup through a guarded,
+  credential-isolated adapter; mutation endpoints are intentionally absent.
 - Connector credential validation through `wait-local-agent connectors validate ...`
 - Outbound calls gated by `WAIT_ALLOW_HTTP_PROBING`
 - Live writes gated by `WAIT_ALLOW_WRITE_ACTIONS`

@@ -11,7 +11,9 @@ from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import (
     default_registry,
 )
+from wait_local_agent.connectwise import ConnectWiseReadResponse
 from wait_local_agent.models import (
+    ConnectorReadResult,
     HaloReadResult,
     HaloTicket,
     HaloWriteResult,
@@ -1901,6 +1903,67 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
     assert article.json()["items"][0]["id"] == "A-1"
     assert folders.json()["items"][0]["name"] == "Ops"
     assert any(event["event_type"] == "hudu.read" for event in audit.json())
+
+
+def test_connectwise_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ConnectWise ready", 0)
+
+        def list_tickets(self, *, page=1, page_size=25, conditions=None):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult(
+                    "ready", f"tickets page={page} size={page_size} {conditions or ''}", 1
+                ),
+                [{"id": "42", "summary": "Printer offline"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "summary": "Printer offline"}],
+            )
+
+        def list_companies(self, *, page=1, page_size=25, conditions=None):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"id": "C-1", "name": "Contoso", "status": "Active"}],
+            )
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/connectwise/health")
+    tickets = client.get(
+        "/connectors/connectwise/tickets",
+        params={"page": 2, "page_size": 10, "conditions": "status/name = 'Open'"},
+    )
+    ticket = client.get("/connectors/connectwise/tickets/42")
+    companies = client.get("/connectors/connectwise/companies")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["id"] == "42"
+    assert ticket.json()["items"][0]["id"] == "42"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert any(connector["id"] == "connectwise" for connector in connectors.json())
+    assert any(event["event_type"] == "connectwise.read" for event in audit.json())
+
+
+def test_connectwise_routes_keep_viewer_auth_boundary(settings) -> None:
+    secure_settings = settings.__class__(
+        **{**settings.__dict__, "demo_mode": False, "api_token": "api-secret"}
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.get("/connectors/connectwise/health")
+
+    assert response.status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

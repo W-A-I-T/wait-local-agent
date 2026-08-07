@@ -61,6 +61,7 @@ from wait_local_agent.connectors import (
     list_secret_records,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
@@ -267,6 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    connectwise_client = ConnectWiseClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1619,6 +1621,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _hudu_response("folders.list", response)
 
+    @app.get("/connectors/connectwise/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = connectwise_client.health()
+        _audit_connectwise_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/connectwise/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+        conditions: str | None = None,
+    ) -> dict[str, object]:
+        response = connectwise_client.list_tickets(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.connectwise_page_size
+            ),
+            conditions=conditions,
+        )
+        return _connectwise_response("tickets.list", response)
+
+    @app.get("/connectors/connectwise/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_ticket(
+        ticket_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = connectwise_client.get_ticket(ticket_id)
+        return _connectwise_response("tickets.get", response)
+
+    @app.get("/connectors/connectwise/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+        conditions: str | None = None,
+    ) -> dict[str, object]:
+        response = connectwise_client.list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.connectwise_page_size
+            ),
+            conditions=conditions,
+        )
+        return _connectwise_response("companies.list", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2037,11 +2096,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": [asdict(item) for item in response.items],
         }
 
+    def _connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> dict[str, object]:
+        _audit_connectwise_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
+        }
+
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
     def _audit_hudu_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+    def _audit_connectwise_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("connectwise.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
