@@ -67,8 +67,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   new version. Revision diffs are field-level and redacted, and each run records
   the definition version used. Event agents can depend on same-tenant agents; the dispatcher
   applies cycle prevention at definition time and waits for upstream completion
-  with a bounded sequential pass. Backfills and conversational agents remain
-  future extensions.
+  with a bounded sequential pass. Each run also persists and returns a
+  redacted operational final result containing the last tool status, output,
+  evidence, and error detail; it contains no hidden reasoning. Backfills and
+  conversational agents remain future extensions.
 
 ## Template gallery
 

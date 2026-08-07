@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.rbac import Role
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
 
 
@@ -86,12 +86,36 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
 
     assert result.status == "completed"
+    assert result.final_result["status"] == "success"
+    assert result.final_result["tool_id"] == "find-similar-tickets"
+    assert isinstance(result.final_result["output"], dict)
     assert service.store.get_agent_run(result.run_id, client_id="acme").revision_version == definition.version  # type: ignore[union-attr]
     assert [step["status"] for step in result.steps] == ["success", "success"]
     executions = service.store.list_execution_runs(client_id="acme", run_kind="agent")
     assert len(executions) == 1
     assert executions[0].source_run_id == result.run_id
     assert len(service.store.list_execution_steps(executions[0].id or 0)) == 2
+
+
+def test_agent_final_result_redacts_action_output(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+
+    monkeypatch.setattr(
+        service.smart_actions,
+        "invoke",
+        lambda *args, **kwargs: ActionResult(
+            status="success",
+            output={"api_key": "supersecret", "classification": "network"},
+        ),
+    )
+
+    result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.final_result["output"] == {"api_key": "[redacted]", "classification": "network"}
+    persisted = service.store.get_agent_run(result.run_id, client_id="acme")
+    assert persisted is not None
+    assert "supersecret" not in persisted.state_json
 
 
 def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approver(settings) -> None:
@@ -114,6 +138,8 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
 
     assert pending.status == "pending_approval"
     assert pending.approval_id is not None
+    assert pending.final_result["status"] == "pending_approval"
+    assert pending.final_result["tool_id"] == "dispatch-suggestion"
     with pytest.raises(PermissionError, match="cannot approve"):
         service.resume(
             definition,
@@ -130,6 +156,7 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     )
     assert resumed.status == "completed"
     assert resumed.steps[0]["status"] == "success"
+    assert resumed.final_result["status"] == "success"
 
 
 def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
@@ -157,6 +184,8 @@ def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
 
     assert cancelled.status == "cancelled"
     assert cancelled.error_detail == "agent run cancelled"
+    assert cancelled.final_result["status"] == "cancelled"
+    assert cancelled.final_result["error_detail"] == "agent run cancelled"
     assert cancelled.approval_id is None
     approval = service.store.get_approval_request(pending.approval_id or 0)
     assert approval is not None
@@ -229,6 +258,8 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
         input_payload={"safe_context": "keep"},
     )
     assert first.status == "failed"
+    assert first.final_result["status"] == "failed"
+    assert first.final_result["error_detail"] == "no local model provider is configured for this action"
     previous = service.store.get_agent_run(first.run_id, client_id="acme")
     assert previous is not None
     updated = service.update(
@@ -689,6 +720,8 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     detail = client.get(f"/agent-runs/{run.json()['run_id']}")
     assert detail.status_code == 200
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
+    assert detail.json()["state"]["final_result"]["status"] == "success"
+    assert detail.json()["state"]["final_result"]["tool_id"] == "ticket-triage"
 
     updated = client.put(
         f"/agents/{agent_id}",

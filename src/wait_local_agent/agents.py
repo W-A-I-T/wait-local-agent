@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from wait_local_agent.config import Settings
@@ -64,6 +64,7 @@ class AgentExecutionResult:
     steps: list[dict[str, object]]
     approval_id: int | None = None
     error_detail: str = ""
+    final_result: dict[str, object] = field(default_factory=dict)
 
 
 class AgentDefinitionError(ValueError):
@@ -314,6 +315,7 @@ class AgentService:
         if action_result is None:
             raise AgentDefinitionError("agent approval could not be completed")
         self._apply_result(pending_step, action_result)
+        state["final_result"] = _final_result_from_action(pending_step["tool_id"], action_result)
         state["pending_approval_step"] = None
         if action_result.status != "success":
             return self._finish(
@@ -432,6 +434,7 @@ class AgentService:
                 "input": redact_value(payload),
             }
             self._apply_result(step, action_result)
+            state["final_result"] = _final_result_from_action(tool_id, action_result)
             steps.append(step)
             state["steps"] = steps
             if action_result.status == "pending_approval":
@@ -467,8 +470,10 @@ class AgentService:
         *,
         actor: str,
     ) -> AgentExecutionResult:
-        final = self.store.update_agent_run(run.id or 0, status, current_step, state)
-        steps = _state_steps(state)
+        final_state = cast(dict[str, object], redact_value(state))
+        final_state["final_result"] = _normalized_final_result(final_state, status)
+        final = self.store.update_agent_run(run.id or 0, status, current_step, final_state)
+        steps = _state_steps(final_state)
         recorder_steps = tuple(
             StepRecord(
                 kind="agent.tool",
@@ -504,6 +509,9 @@ class AgentService:
     def _result(run: AgentRun) -> AgentExecutionResult:
         state = _state_object(run.state_json)
         steps = _state_steps(state)
+        final_result = state.get("final_result")
+        if not isinstance(final_result, dict):
+            final_result = _final_result_from_step(steps[-1]) if steps else {}
         approval_id = None
         pending_value = state.get("pending_approval_step")
         if isinstance(pending_value, int):
@@ -518,6 +526,7 @@ class AgentService:
             steps=steps,
             approval_id=approval_id,
             error_detail=str(state.get("error_detail", "")),
+            final_result=cast(dict[str, object], redact_value(final_result)),
         )
 
     def _validate_definition(
@@ -641,11 +650,11 @@ def _validate_event_filters(filters: dict[str, object]) -> None:
     event_type = filters.get("event_type")
     if not isinstance(event_type, str) or event_type not in SUPPORTED_EVENT_TYPES:
         raise AgentDefinitionError("event filters require a supported event_type")
-    for field, value in filters.items():
-        if field == "event_type":
+    for filter_name, value in filters.items():
+        if filter_name == "event_type":
             continue
         if not isinstance(value, str) or not value.strip():
-            raise AgentDefinitionError(f"event filter {field} must be a non-empty string")
+            raise AgentDefinitionError(f"event filter {filter_name} must be a non-empty string")
 
 
 def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:
@@ -653,3 +662,46 @@ def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:
     if not isinstance(steps, list):
         return []
     return [cast(dict[str, object], item) for item in steps if isinstance(item, dict)]
+
+
+def _final_result_from_action(tool_id: object, result: ActionResult) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "status": result.status,
+                "tool_id": tool_id,
+                "output": result.output,
+                "evidence": result.evidence,
+                "error_detail": result.error_detail,
+            }
+        ),
+    )
+
+
+def _final_result_from_step(step: dict[str, object]) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "status": step.get("status", "failed"),
+                "tool_id": step.get("tool_id", "unknown"),
+                "output": step.get("output", {}),
+                "evidence": step.get("evidence", []),
+                "error_detail": step.get("error_detail", ""),
+            }
+        ),
+    )
+
+
+def _normalized_final_result(state: dict[str, object], status: str) -> dict[str, object]:
+    current = state.get("final_result")
+    final_result = _final_result_from_step(current) if isinstance(current, dict) else {}
+    if not final_result:
+        final_result = {"status": status, "output": {}, "evidence": [], "error_detail": ""}
+    if status in {"failed", "rejected", "cancelled"}:
+        final_result["status"] = status
+        error_detail = state.get("error_detail", "")
+        if error_detail:
+            final_result["error_detail"] = redact_value(str(error_detail))
+    return cast(dict[str, object], redact_value(final_result))
