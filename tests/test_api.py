@@ -1314,6 +1314,24 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     assert agent.status_code == 200
     agent_id = agent.json()["id"]
 
+    dry_run = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "dry-run-secret"},
+            "client_id": "acme",
+            "dry_run": True,
+        },
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json()["dry_run"] is True
+    assert dry_run.json()["estimated_runs"] == 2
+    assert dry_run.json()["estimated_steps"] == 2
+    assert dry_run.json()["requires_approval"] is False
+    assert "dry-run-secret" not in dry_run.text
+    assert client.get("/agent-backfills").json() == []
+
     created = client.post(
         "/agent-backfills",
         json={

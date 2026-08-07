@@ -189,6 +189,7 @@ class AgentBackfillCreateRequest(BaseModel):
     entity_ids: list[str] = Field(min_length=1, max_length=100)
     input: dict[str, object] = Field(default_factory=dict)
     client_id: str | None = None
+    dry_run: bool = False
 
 
 class EventIngestRequest(BaseModel):
@@ -743,6 +744,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for entity_id in payload.entity_ids:
             if store.get_ticket(entity_id, client_id=scoped_client_id) is None:
                 raise HTTPException(status_code=404, detail=f"ticket not found: {entity_id}")
+        if payload.dry_run:
+            tools_by_id = {tool.id: tool for tool in agent_service.list_tools()}
+            tool_plan: list[dict[str, object]] = []
+            for step in definition.steps:
+                if not isinstance(step, dict):
+                    continue
+                tool_id = step.get("tool_id")
+                if not isinstance(tool_id, str):
+                    continue
+                tool = tools_by_id.get(tool_id)
+                if tool is None:
+                    continue
+                tool_plan.append(
+                    {
+                        "id": tool.id,
+                        "name": tool.name,
+                        "access_mode": tool.access_mode,
+                        "risk_level": tool.risk_level,
+                        "approval_required": tool.approval_required,
+                    }
+                )
+            requires_approval = any(tool["approval_required"] for tool in tool_plan)
+            warnings = []
+            if not definition.enabled:
+                warnings.append("agent is disabled; every planned run will fail")
+            if requires_approval:
+                warnings.append("approval-gated tools will pause each run for technician review")
+            return {
+                "dry_run": True,
+                "agent_id": definition.id,
+                "client_id": scoped_client_id,
+                "entity_ids": list(payload.entity_ids),
+                "entity_count": len(payload.entity_ids),
+                "estimated_runs": len(payload.entity_ids),
+                "estimated_steps": len(payload.entity_ids) * len(definition.steps),
+                "max_entities": 100,
+                "tool_plan": tool_plan,
+                "requires_approval": requires_approval,
+                "warnings": warnings,
+            }
         backfill = store.create_agent_backfill(
             payload.agent_id,
             payload.entity_ids,
