@@ -298,6 +298,45 @@ class AgentService:
             state=state,
         )
 
+    def cancel(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+    ) -> AgentExecutionResult:
+        """Cancel an active run and revoke any pending smart-action approval."""
+        if run.status == "cancelled":
+            return self._result(run)
+        if run.status not in {"queued", "pending_approval"}:
+            raise AgentDefinitionError("only queued or pending-approval runs can be cancelled")
+        state = _state_object(run.state_json)
+        steps = _state_steps(state)
+        pending_index = state.get("pending_approval_step")
+        if isinstance(pending_index, int) and 0 <= pending_index < len(steps):
+            approval_id = steps[pending_index].get("approval_id")
+            if isinstance(approval_id, int):
+                approval = self.store.get_approval_request(approval_id)
+                if approval is not None and approval.status == "pending":
+                    cancellation_actor = actor if actor != run.actor else "system:cancellation"
+                    self.smart_actions.update_approval(
+                        approval_id,
+                        "rejected",
+                        comment="Agent run cancelled",
+                        approver=cancellation_actor,
+                        approver_role=Role.ADMIN,
+                    )
+        state["pending_approval_step"] = None
+        state["error_detail"] = "agent run cancelled"
+        return self._finish(
+            definition,
+            run,
+            "cancelled",
+            run.current_step,
+            state,
+            actor=actor,
+        )
+
     def _continue(
         self,
         definition: AgentDefinition,

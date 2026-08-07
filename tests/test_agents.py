@@ -128,6 +128,80 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.steps[0]["status"] == "success"
 
 
+def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Dispatch cancellation",
+        description="Prepare a dispatch proposal that can be cancelled.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    cancelled = service.cancel(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        actor="requester",
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.error_detail == "agent run cancelled"
+    assert cancelled.approval_id is None
+    approval = service.store.get_approval_request(pending.approval_id or 0)
+    assert approval is not None
+    assert approval.status == "rejected"
+    action_run = next(
+        action
+        for action in service.store.list_smart_action_runs(client_id="acme")
+        if action.approval_id == pending.approval_id
+    )
+    assert action_run is not None
+    assert action_run.status == "rejected"
+    assert service.resume(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    ).status == "cancelled"
+
+
+def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -> None:
+    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
+    store = Store(scoped.data_path)
+    _seed(store, client_id="acme")
+    client = TestClient(create_app(scoped))
+    created = client.post(
+        "/agents",
+        json={
+            "name": "Cancellable dispatch agent",
+            "enabled_tools": ["dispatch-suggestion"],
+            "steps": [{"tool_id": "dispatch-suggestion", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    agent_id = created.json()["id"]
+    pending = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
+    assert pending.status_code == 200
+    run_id = pending.json()["run_id"]
+
+    cancelled = client.post(f"/agent-runs/{run_id}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert client.get(f"/agent-runs/{run_id}").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/resume").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/cancel").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/cancel", params={"client_id": "other"}).status_code == 404
+
+
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
     service = _service(settings)
     definition = _create(service)

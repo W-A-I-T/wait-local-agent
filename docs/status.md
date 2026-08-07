@@ -27,7 +27,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   audit trail. Cron, interval, and one-time triggers use the existing UTC
   APScheduler path and persist their agent/entity target.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
-  scope, persisted runs, approval pause/resume, and grouped execution traces.
+  scope, persisted runs, approval pause/resume, grouped execution traces, and
+  technician cancellation for active runs. A pending smart-action approval is
+  revoked when its agent run is cancelled.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, and delivery history APIs. Conversational and

@@ -17,7 +17,9 @@ ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "c
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 RiskLevel = Literal["low", "medium", "high"]
-AgentRunStatus = Literal["queued", "pending_approval", "completed", "failed", "rejected"]
+AgentRunStatus = Literal[
+    "queued", "pending_approval", "completed", "failed", "rejected", "cancelled"
+]
 
 
 @dataclass(frozen=True)
