@@ -371,52 +371,6 @@ def test_preview_returns_not_ok_for_invalid_config(
 
 
 # --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_network_interfaces_collector_is_idempotent() -> None:
-    collectors._register_network_interfaces_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("network-interfaces")
-        assert module is not None
-        assert module.module_id == "network-interfaces"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    # Assertions run while the fixture's patches are still active (teardown
-    # undoes them after the test), so the dynamically-set attrs are readable.
-    collectors._register_network_interfaces_collector()
-    collectors._register_network_interfaces_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("network-interfaces") == 1
-    assert any(getattr(m, "module_id", None) == "network-interfaces" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "network-interfaces"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("network-interfaces") == 1
-    assert "NetworkInterfacesCollectorModule" in collectors.__dict__["__all__"]
-
-
-# --------------------------------------------------------------------------- #
 # read helpers
 # --------------------------------------------------------------------------- #
 

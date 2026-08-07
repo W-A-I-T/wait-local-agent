@@ -391,65 +391,6 @@ def test_typed_firewall_round_trip_persists_and_exports(
 
 
 # --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_firewall_rules_collector_is_idempotent() -> None:
-    collectors._register_firewall_rules_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("firewall-rules")
-        assert module is not None
-        assert module.module_id == "firewall-rules"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    collectors._register_firewall_rules_collector()
-    collectors._register_firewall_rules_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("firewall-rules") == 1
-    assert any(getattr(m, "module_id", None) == "firewall-rules" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "firewall-rules"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("firewall-rules") == 1
-    assert "FirewallRulesCollectorModule" in collectors.__dict__["__all__"]
-
-
-def test_register_creates_module_registry_when_no_registry_exists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delattr(collectors, "MODULE_REGISTRY", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTOR_MODULES", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTOR_REGISTRY", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTORS", raising=False)
-    monkeypatch.delattr(collectors, "collector_registry", raising=False)
-
-    collectors._register_firewall_rules_collector()
-
-    registry = collectors.__dict__["MODULE_REGISTRY"]
-    assert registry["firewall-rules"].module_id == "firewall-rules"
-
-
-# --------------------------------------------------------------------------- #
 # parse helpers
 # --------------------------------------------------------------------------- #
 

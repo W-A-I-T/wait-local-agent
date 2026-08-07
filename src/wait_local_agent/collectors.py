@@ -2885,24 +2885,41 @@ class RoutingTableCollectorModule:
         ]
 
     def _route_records(self, limit=None):
+        return self._route_records_with_outcomes(limit=limit, strict=False).records
+
+    def _route_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
-        records = []
-        records.extend(self._read_ipv4_route_file(_RoutingTablePath("/proc/net/route")))
-        records.extend(self._read_ipv6_route_file(_RoutingTablePath("/proc/net/ipv6_route")))
+        records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
+        sources = (
+            ("ipv4", self._read_ipv4_route_file, _RoutingTablePath("/proc/net/route")),
+            ("ipv6", self._read_ipv6_route_file, _RoutingTablePath("/proc/net/ipv6_route")),
+        )
+        for source_id, reader, path in sources:
+            try:
+                records.extend(reader(path, strict=strict))
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"route:{source_id}", exc))
         records.sort(key=lambda item: (item["family"], item["interface"], item["destination"]))
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _read_ipv4_route_file(self, path):
+    def _read_ipv4_route_file(self, path, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return []
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return []
 
         if not lines:
@@ -2915,10 +2932,14 @@ class RoutingTableCollectorModule:
                 records.append(record)
         return records
 
-    def _read_ipv6_route_file(self, path):
+    def _read_ipv6_route_file(self, path, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return []
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return []
 
         records = []
@@ -3217,15 +3238,25 @@ class EndpointAgentsCollectorModule:
         ]
 
     def _agent_records(self, limit=None):
+        return self._agent_records_with_outcomes(limit=limit, strict=False).records
+
+    def _agent_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
-        records = []
+        records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
         for agent_name, category, markers in self._AGENT_MARKERS:
-            detected_path = self._first_existing_marker(markers)
+            try:
+                detected_path = self._first_existing_marker(markers, strict=strict)
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"agent:{agent_name}", exc))
+                continue
             if detected_path is None:
                 continue
             records.append(
@@ -3238,17 +3269,21 @@ class EndpointAgentsCollectorModule:
 
         records.sort(key=lambda item: item["agent"])
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
     @staticmethod
-    def _first_existing_marker(markers):
+    def _first_existing_marker(markers, *, strict=False):
         for marker in markers:
             path = _EndpointAgentsPath(marker)
             try:
                 if path.exists():
                     return str(path)
-            except (FileNotFoundError, PermissionError, OSError):
+            except FileNotFoundError:
+                continue
+            except (PermissionError, OSError):
+                if strict:
+                    raise
                 continue
         return None
 
@@ -3427,66 +3462,112 @@ class WebServicesCollectorModule:
         ]
 
     def _web_service_records(self, limit=None):
+        return self._web_service_records_with_outcomes(limit=limit, strict=False).records
+
+    def _web_service_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
-        records = []
-        records.extend(self._nginx_records())
-        records.extend(self._apache_records())
-        records.extend(self._caddy_records())
+        records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
+        for server_type, reader in (
+            ("nginx", self._nginx_records_with_outcomes),
+            ("apache", self._apache_records_with_outcomes),
+            ("caddy", self._caddy_records_with_outcomes),
+        ):
+            try:
+                collection = reader(strict=strict)
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"web:{server_type}", exc))
+                continue
+            records.extend(collection.records)
+            source_outcomes.extend(collection.source_outcomes)
         records.sort(key=lambda item: (item["server_type"], item["config_file"], item["index"]))
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
     def _nginx_records(self):
+        return self._nginx_records_with_outcomes(strict=False).records
+
+    def _nginx_records_with_outcomes(self, *, strict=False):
         paths = [_WebServicesPath("/etc/nginx/nginx.conf")]
-        paths.extend(self._glob_paths("/etc/nginx/sites-enabled", "*"))
-        paths.extend(self._glob_paths("/etc/nginx/conf.d", "*.conf"))
-        return self._records_from_paths("nginx", paths, self._parse_nginx_config)
+        paths.extend(self._glob_paths("/etc/nginx/sites-enabled", "*", strict=strict))
+        paths.extend(self._glob_paths("/etc/nginx/conf.d", "*.conf", strict=strict))
+        return self._records_from_paths_with_outcomes("nginx", paths, self._parse_nginx_config, strict=strict)
 
     def _apache_records(self):
+        return self._apache_records_with_outcomes(strict=False).records
+
+    def _apache_records_with_outcomes(self, *, strict=False):
         paths = []
-        paths.extend(self._glob_paths("/etc/apache2/sites-enabled", "*"))
-        paths.extend(self._glob_paths("/etc/httpd/conf.d", "*.conf"))
+        paths.extend(self._glob_paths("/etc/apache2/sites-enabled", "*", strict=strict))
+        paths.extend(self._glob_paths("/etc/httpd/conf.d", "*.conf", strict=strict))
         paths.append(_WebServicesPath("/etc/apache2/apache2.conf"))
-        return self._records_from_paths("apache", paths, self._parse_apache_config)
+        return self._records_from_paths_with_outcomes("apache", paths, self._parse_apache_config, strict=strict)
 
     def _caddy_records(self):
+        return self._caddy_records_with_outcomes(strict=False).records
+
+    def _caddy_records_with_outcomes(self, *, strict=False):
         path = _WebServicesPath("/etc/caddy/Caddyfile")
-        return self._records_from_paths("caddy", [path], self._parse_caddy_config)
+        return self._records_from_paths_with_outcomes("caddy", [path], self._parse_caddy_config, strict=strict)
 
     def _records_from_paths(self, server_type, paths, parser):
-        records = []
+        return self._records_from_paths_with_outcomes(server_type, paths, parser, strict=False).records
+
+    def _records_from_paths_with_outcomes(self, server_type, paths, parser, *, strict=False):
+        records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
         for path in paths:
-            text = self._read_web_config(path)
+            try:
+                text = self._read_web_config(path, strict=strict)
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"web:{server_type}:{path}", exc))
+                continue
             if text is None:
                 continue
-            config_records = parser(text, str(path))
+            try:
+                config_records = parser(text, str(path))
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"web:{server_type}:{path}", exc))
+                continue
             records.extend(config_records)
 
         for index, record in enumerate(records, start=1):
             record["index"] = index
             record["server_type"] = server_type
-        return records
+        return _TypedCollection(records, tuple(source_outcomes))
 
     @staticmethod
-    def _glob_paths(root, pattern):
+    def _glob_paths(root, pattern, *, strict=False):
         try:
             return sorted(_WebServicesPath(root).glob(pattern), key=lambda path: str(path))
         except OSError:
+            if strict:
+                raise
             return []
 
     @staticmethod
-    def _read_web_config(path):
+    def _read_web_config(path, *, strict=False):
         try:
             if not path.exists() or not path.is_file():
                 return None
             return path.read_text(encoding="utf-8", errors="replace")
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return None
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return None
 
     @classmethod
@@ -3696,568 +3777,119 @@ def _read_process_inventory_cmdline(path, *, strict=False):
     return " ".join(parts)
 
 
-def _register_process_inventory_collector():
-    module = ProcessInventoryCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-        "MODULE_REGISTRY",
-        "COLLECTOR_MODULES",
-        "COLLECTOR_REGISTRY",
-        "COLLECTORS",
-        "collector_registry",
-        )
+class RoutingTableCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="routing-table",
+        name="Routing Table",
+        version="1.0",
+        description="Read-only inventory of local IPv4 and IPv6 routing table entries.",
+        capabilities=("local_routing_inventory", "safe_read_only"),
+        scopes=("local_host", "routing_table"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum routes",
+                "help": "Limit the number of route records returned; omit for all readable routes.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
     )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
+    _legacy_type = RoutingTableCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /proc/net routing tables."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._route_records(limit=limit)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._route_records_with_outcomes(limit=limit, strict=strict)
+
+
+class EndpointAgentsCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="endpoint-agents",
+        name="Endpoint Agents",
+        version="1.0",
+        description="Read-only inventory of local endpoint-management, MDM, and EDR agent markers.",
+        capabilities=("local_endpoint_agent_inventory", "safe_read_only"),
+        scopes=("local_host", "endpoint_agents"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum endpoint agents",
+                "help": "Limit the number of endpoint-agent records returned; omit for all detected agents.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
     )
+    _legacy_type = EndpointAgentsCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux endpoint-agent marker paths."
 
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._agent_records(limit=limit)
 
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "ProcessInventoryCollectorModule" not in exported:
-        exported.append("ProcessInventoryCollectorModule")
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._agent_records_with_outcomes(limit=limit, strict=strict)
 
 
-_register_process_inventory_collector()
-
-
-def _register_listening_ports_collector():
-    module = ListeningPortsCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-        "MODULE_REGISTRY",
-        "COLLECTOR_MODULES",
-        "COLLECTOR_REGISTRY",
-        "COLLECTORS",
-        "collector_registry",
-        )
+class WebServicesCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="web-services",
+        name="Web Services",
+        version="1.0",
+        description="Read-only inventory of local web server virtual host configuration files.",
+        capabilities=("local_web_service_inventory", "safe_read_only"),
+        scopes=("local_host", "web_services"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum web services",
+                "help": "Limit the number of web-service records returned; omit for all readable configurations.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
     )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
+    _legacy_type = WebServicesCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux web-service configuration files."
 
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._web_service_records(limit=limit)
 
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._web_service_records_with_outcomes(limit=limit, strict=strict)
 
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
 
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
+TypedRoutingTableCollector = RoutingTableCollector
+TypedEndpointAgentsCollector = EndpointAgentsCollector
+TypedWebServicesCollector = WebServicesCollector
 
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
 
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "ListeningPortsCollectorModule" not in exported:
-        exported.append("ListeningPortsCollectorModule")
-
-
-_register_listening_ports_collector()
-
-
-def _register_network_interfaces_collector():
-    module = NetworkInterfacesCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "NetworkInterfacesCollectorModule" not in exported:
-        exported.append("NetworkInterfacesCollectorModule")
-
-
-_register_network_interfaces_collector()
-
-
-def _register_firewall_rules_collector():
-    module = FirewallRulesCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "FirewallRulesCollectorModule" not in exported:
-        exported.append("FirewallRulesCollectorModule")
-
-
-_register_firewall_rules_collector()
-
-
-def _register_database_inventory_collector():
-    module = DatabaseInventoryCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "DatabaseInventoryCollectorModule" not in exported:
-        exported.append("DatabaseInventoryCollectorModule")
-
-
-_register_database_inventory_collector()
-
-
-def _register_wifi_inventory_collector():
-    module = WifiInventoryCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "WifiInventoryCollectorModule" not in exported:
-        exported.append("WifiInventoryCollectorModule")
-
-
-_register_wifi_inventory_collector()
-
-
-def _register_routing_table_collector():
-    module = RoutingTableCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "RoutingTableCollectorModule" not in exported:
-        exported.append("RoutingTableCollectorModule")
-
-
-_register_routing_table_collector()
-
-
-def _register_endpoint_agents_collector():
-    module = EndpointAgentsCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "EndpointAgentsCollectorModule" not in exported:
-        exported.append("EndpointAgentsCollectorModule")
-
-
-_register_endpoint_agents_collector()
-
-
-def _register_web_services_collector():
-    module = WebServicesCollectorModule()
-    registered = False
-
-    registry_names = set(
-        (
-            "MODULE_REGISTRY",
-            "COLLECTOR_MODULES",
-            "COLLECTOR_REGISTRY",
-            "COLLECTORS",
-            "collector_registry",
-        )
-    )
-    registry_names.update(
-        name
-        for name, value in globals().items()
-        if isinstance(value, (dict, list, set))
-        and any(token in name.upper() for token in ("COLLECT", "MODULE", "REGISTRY"))
-    )
-
-    for registry_name in registry_names:
-        registry = globals().get(registry_name)
-        if isinstance(registry, dict):
-            registry[module.module_id] = module
-            registered = True
-            continue
-
-        if isinstance(registry, list):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                registry.append(module)
-            registered = True
-            continue
-
-        if isinstance(registry, set):
-            registry.add(module)
-            registered = True
-            continue
-
-        if isinstance(registry, tuple):
-            if not any(getattr(item, "module_id", None) == module.module_id for item in registry):
-                globals()[registry_name] = registry + (module,)
-            registered = True
-            continue
-
-        register = getattr(registry, "register", None)
-        if callable(register):
-            try:
-                register(module.module_id, module)
-            except TypeError:
-                register(module)
-            registered = True
-
-    if not registered:
-        globals()["MODULE_REGISTRY"] = {module.module_id: module}
-
-    exported = globals().get("__all__")
-    if isinstance(exported, list) and "WebServicesCollectorModule" not in exported:
-        exported.append("WebServicesCollectorModule")
-
-
-_register_web_services_collector()
+default_registry.register(RoutingTableCollector())
+default_registry.register(EndpointAgentsCollector())
+default_registry.register(WebServicesCollector())
