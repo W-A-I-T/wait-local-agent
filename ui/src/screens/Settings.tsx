@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
+import { projectLaunchPassportStatus } from "../api/founder";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
@@ -49,7 +50,7 @@ export function Settings() {
       setSecrets(secretRows);
       setStatus(updateRows);
       if (launchPassportResult.kind === "available") {
-        setLaunchPassport(launchPassportResult.value);
+        setLaunchPassport(projectLaunchPassportStatus(launchPassportResult.value));
         setLaunchPassportState("available");
       } else if (launchPassportResult.kind === "unavailable" && isLaunchPassportNotConfigured(launchPassportResult.error)) {
         setLaunchPassport(null);

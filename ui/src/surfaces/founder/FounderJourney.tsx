@@ -1,7 +1,14 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../../api/client";
-import type { FounderResults, FounderUploadPreview, LaunchPassportStatus } from "../../api/types";
+import {
+  projectFounderResults,
+  projectFounderScan,
+  projectFounderUpload,
+  projectFounderUploadPreview,
+  projectLaunchPassportStatus
+} from "../../api/founder";
+import type { FounderResults, FounderScanView, FounderUploadPreview, LaunchPassportStatus } from "../../api/types";
 import { useDashboard } from "../../app/DashboardContext";
 import { FolderPicker } from "../../components/FolderPicker";
 import { RoleGate } from "../../components/RoleGate";
@@ -15,10 +22,6 @@ const steps: WizardStep[] = [
   { id: "results", title: "View results" }
 ];
 
-type FounderUploadResponse = {
-  status?: string;
-};
-
 export function FounderJourney() {
   const { isAdmin, role } = useDashboard();
   const [step, setStep] = useState(0);
@@ -27,7 +30,7 @@ export function FounderJourney() {
   const [previewedArtifactId, setPreviewedArtifactId] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Choose a project folder to begin.");
-  const [scan, setScan] = useState<Record<string, unknown> | null>(null);
+  const [scan, setScan] = useState<FounderScanView | null>(null);
   const [preview, setPreview] = useState<FounderUploadPreview | null>(null);
   const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
   const [results, setResults] = useState<FounderResults | null>(null);
@@ -92,7 +95,7 @@ export function FounderJourney() {
     }
     setIsBusy(true);
     try {
-      const body = await request<Record<string, unknown>>("/founder/scan", {
+      const body = await request<unknown>("/founder/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: scanPath })
@@ -100,12 +103,13 @@ export function FounderJourney() {
       if (!body) {
         return false;
       }
-      const nextArtifactId = typeof body.artifact_id === "string" ? body.artifact_id : "";
-      if (!nextArtifactId) {
+      const projected = projectFounderScan(body);
+      if (!projected) {
         setStatusMessage("The scan did not return a review package. Try again from the project folder.");
         return false;
       }
-      setScan(body);
+      const nextArtifactId = projected.artifact_id;
+      setScan(projected);
       setArtifactId(nextArtifactId);
       setPreview(null);
       setPreviewedArtifactId("");
@@ -125,11 +129,16 @@ export function FounderJourney() {
     }
     setIsBusy(true);
     try {
-      const body = await request<FounderUploadPreview>(`/founder/upload-preview/${encodeURIComponent(artifactId)}`);
+      const body = await request<unknown>(`/founder/upload-preview/${encodeURIComponent(artifactId)}`);
       if (!body) {
         return false;
       }
-      setPreview(body);
+      const projected = projectFounderUploadPreview(body, artifactId);
+      if (!projected) {
+        setStatusMessage("The review package was not returned in a usable form. Try scanning again.");
+        return false;
+      }
+      setPreview(projected);
       setPreviewedArtifactId(artifactId);
       setConnectionNotConfigured(false);
       setMissingPack(false);
@@ -148,22 +157,25 @@ export function FounderJourney() {
     }
     setIsBusy(true);
     try {
-      const uploaded = await request<FounderUploadResponse>(`/founder/upload/${encodeURIComponent(artifactId)}`, {
+      const uploadedBody = await request<unknown>(`/founder/upload/${encodeURIComponent(artifactId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirm: true })
       });
-      if (!uploaded) {
+      if (!uploadedBody) {
         return;
       }
-      const [status, latestResults] = await Promise.all([
-        request<LaunchPassportStatus>("/founder/lp-status"),
-        request<FounderResults>("/founder/results")
+      const uploaded = projectFounderUpload(uploadedBody);
+      const [statusBody, resultsBody] = await Promise.all([
+        request<unknown>("/founder/lp-status"),
+        request<unknown>("/founder/results")
       ]);
+      const status = projectLaunchPassportStatus(statusBody);
+      const latestResults = projectFounderResults(resultsBody);
       setLaunchPassport(status);
       setResults(latestResults);
       setConnectionNotConfigured(false);
-      setStatusMessage(`Upload ${uploaded.status ?? "complete"}. Your latest result is ready to review.`);
+      setStatusMessage(`Upload ${uploadProgressLabel(uploaded.status)}. Your latest result is ready to review.`);
       setStep(3);
     } finally {
       setIsBusy(false);
@@ -279,9 +291,8 @@ export function FounderJourney() {
             <div className="draft-form">
               <h3>Results</h3>
               <StatusChip status={launchPassport?.status ?? "completed"} />
-              {results?.latest_report ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
-              {Array.isArray(results?.scans) ? <p className="screen-note">{results.scans.length} scan record{results.scans.length === 1 ? "" : "s"} available.</p> : null}
-              {results?.scans && !Array.isArray(results.scans) ? <p className="screen-note">Scan records are available.</p> : null}
+              {results?.latest_report.available ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
+              {results ? <p className="screen-note">{results.scans.count} scan record{results.scans.count === 1 ? "" : "s"} available.</p> : null}
               <details className="technical-details">
                 <summary>Technical details</summary>
                 <p>Project: {results?.project_id ?? launchPassport?.lp_project_id ?? "not returned"}</p>
@@ -292,4 +303,17 @@ export function FounderJourney() {
       </RoleGate>
     </section>
   );
+}
+
+function uploadProgressLabel(status: string): string {
+  if (status === "uploaded" || status === "completed") {
+    return "complete";
+  }
+  if (status === "pending_upload") {
+    return "accepted";
+  }
+  if (status === "failed") {
+    return "not completed";
+  }
+  return "complete";
 }

@@ -330,18 +330,28 @@ export type FounderUploadPreview = {
 };
 
 export type LaunchPassportStatus = {
-  status?: string;
+  status: "connected" | "unreachable" | "not_authorized" | "unknown";
   lp_project_id?: string;
-  token_configured?: boolean;
+  token_configured: boolean;
   capabilities?: {
     launch_scan?: boolean;
-    [key: string]: unknown;
   };
-  connectivity?: Record<string, unknown>;
+};
+
+export type FounderScanState = "queued" | "pending" | "pending_upload" | "running" | "completed" | "uploaded" | "failed" | "cancelled" | "unknown";
+
+export type FounderScanView = {
+  artifact_id: string;
+  status: FounderScanState;
 };
 
 export type FounderResults = {
   project_id?: string;
-  scans?: unknown[] | Record<string, unknown>;
-  latest_report?: unknown;
+  scans: {
+    count: number;
+    states: FounderScanState[];
+  };
+  latest_report: {
+    available: boolean;
+  };
 };

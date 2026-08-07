@@ -186,8 +186,42 @@ describe("wla-wp17 Launch Passport UI", () => {
     await screen.findByRole("heading", { name: "Confirm this upload" });
     fireEvent.click(screen.getByRole("button", { name: "Upload reviewed package" }));
 
-    expect(await screen.findByText("Scan records are available.")).toBeInTheDocument();
+    expect(await screen.findByText("1 scan record available.")).toBeInTheDocument();
     expect(screen.queryByText(/undefined scan records available/i)).not.toBeInTheDocument();
+  });
+
+  it("does not store or render token echoes and maps unknown upstream states generically", async () => {
+    const token = "launch-passport-token";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/founder/scan") return jsonResponse({ artifact_id: "art-1", status: token });
+      if (path === "/founder/upload-preview/art-1") return jsonResponse({ artifact_id: "art-1" });
+      if (path === "/founder/upload/art-1") return jsonResponse({ status: token, message: token });
+      if (path === "/founder/lp-status") return jsonResponse({ status: "not-a-real-state", lp_project_id: token });
+      if (path === "/founder/results") {
+        return jsonResponse({
+          project_id: token,
+          scans: [{ status: token, message: token }],
+          latest_report: { message: token }
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    render(<MemoryRouter><FounderJourney /></MemoryRouter>);
+
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your-project"), { target: { value: "/workspace/project" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("What will be shared");
+    fireEvent.click(screen.getByRole("button", { name: "Preview upload package" }));
+    await screen.findByText("Review complete. You can now confirm this exact upload package.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to confirmation" }));
+    await screen.findByRole("heading", { name: "Confirm this upload" });
+    fireEvent.click(screen.getByRole("button", { name: "Upload reviewed package" }));
+
+    expect(await screen.findByRole("heading", { name: "Results" })).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(token);
   });
 
   it("does not render founder controls for a non-admin role", () => {

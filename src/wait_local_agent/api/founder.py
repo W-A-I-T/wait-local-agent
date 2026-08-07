@@ -15,11 +15,16 @@ from wait_local_agent.api.packs.loader import LoadedPack, get_pack
 from wait_local_agent.config import Settings
 from wait_local_agent.founder_bundle import PrivacyViolation, build_founder_bundle, bundle_hash, sanitize_bundle
 from wait_local_agent.lp_client import (
+    LAUNCH_PASSPORT_CONNECTION_STATES,
+    LAUNCH_PASSPORT_SCAN_STATES,
+    LAUNCH_PASSPORT_UPLOAD_STATES,
     LaunchPassportClient,
     LaunchPassportForbidden,
     LaunchPassportPayloadTooLarge,
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
+    normalize_upstream_state,
+    scrub_upstream_value,
     validate_launch_passport_base_url,
 )
 from wait_local_agent.rbac import AuthContext, Role, require_role
@@ -69,7 +74,9 @@ def create_router() -> APIRouter:
     def founder_scan(payload: FounderScanRequest, request: Request, _: AdminAccess) -> dict[str, object]:
         pack = get_pack("founder")
         if pack is not None:
-            return json_object(invoke_founder(pack, "scan", Path(payload.path)), operation="scan")
+            return project_founder_scan(
+                invoke_founder(pack, "scan", Path(payload.path)), token=_configured_founder_token(request)
+            )
         settings, store, config = require_open_config(request)
         return open_founder_scan(store, settings, config, Path(payload.path))
 
@@ -123,7 +130,9 @@ def create_router() -> APIRouter:
         if pack is not None:
             bundle = sanitized_pack_bundle(pack, artifact_id)
             require_fresh_preview(store, artifact_id)
-            return json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
+            return project_founder_upload(
+                invoke_founder(pack, "upload", artifact_id, bundle), token=_configured_founder_token(request)
+            )
         try:
             return open_founder_upload(settings, store, config, artifact_id)
         except KeyError as exc:
@@ -133,6 +142,9 @@ def create_router() -> APIRouter:
     def founder_lp_status(request: Request, _: AdminAccess) -> dict[str, object]:
         pack = get_pack("founder")
         if pack is not None:
+            # A locally installed founder pack is trusted code with its own
+            # response contract.  Only values returned by the HTTP client are
+            # treated as untrusted Launch Passport responses and projected.
             return json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
         settings, _store, config = require_open_config(request)
         return open_founder_status(settings, config)
@@ -141,7 +153,9 @@ def create_router() -> APIRouter:
     def founder_results(request: Request, _: AdminAccess) -> dict[str, object]:
         pack = get_pack("founder")
         if pack is not None:
-            return json_object(invoke_founder(pack, "results"), operation="results")
+            return project_founder_results(
+                invoke_founder(pack, "results"), token=_configured_founder_token(request)
+            )
         settings, _store, config = require_open_config(request)
         return open_founder_results(settings, config)
 
@@ -212,6 +226,19 @@ def require_open_config(request: Request) -> tuple[Settings, Store, dict[str, st
     settings = cast(Settings, request.app.state.settings)
     store = cast(Store, request.app.state.store)
     return settings, store, resolve_open_config(settings, store)
+
+
+def _configured_founder_token(request: Request) -> str | None:
+    settings = cast(Settings, getattr(request.app.state, "settings", None))
+    store = cast(Store, getattr(request.app.state, "store", None))
+    config = store.get_founder_config() if store is not None else None
+    token_ref = config.get("token_vault_ref") if config else None
+    if not isinstance(token_ref, str) or not token_ref:
+        return None
+    try:
+        return SecretVault(settings.vault_path).get(token_ref) if settings is not None else None
+    except SecretVaultError:
+        return None
 
 
 def resolve_open_config(settings: Settings, store: Store) -> dict[str, str]:
@@ -326,30 +353,27 @@ def open_founder_upload(
         except (LaunchPassportUnauthorized, LaunchPassportForbidden, LaunchPassportPayloadTooLarge):
             raise
     store.mark_founder_artifact_uploaded(artifact_id)
-    return result.as_dict()
+    return project_founder_upload(_sanitize_client_value(client, result.as_dict()))
 
 
 def open_founder_status(settings: Settings, config: dict[str, str]) -> dict[str, object]:
     with _open_client(settings, config) as client:
-        status_payload = client.status()
-    capabilities = status_payload.get("capabilities", {}) if isinstance(status_payload, dict) else {}
-    return {
-        "status": status_payload.get("status", "unknown") if isinstance(status_payload, dict) else "unknown",
-        "lp_base_url": config["lp_base_url"],
-        "lp_project_id": config["lp_project_id"],
-        "token_configured": OPERATION_CONFIRMED,
-        "capabilities": capabilities,
-        "connectivity": status_payload,
-    }
+        status_payload = _sanitize_client_value(client, client.status())
+        return project_founder_status(status_payload, project_id=config["lp_project_id"])
 
 
 def open_founder_results(settings: Settings, config: dict[str, str]) -> dict[str, object]:
     with _open_client(settings, config) as client:
-        return {
-            "project_id": config["lp_project_id"],
-            "scans": client.list_scans(config["lp_project_id"]),
-            "latest_report": client.latest_report(config["lp_project_id"]),
+        payload = {
+            "scans": _sanitize_client_value(client, client.list_scans(config["lp_project_id"])),
+            "latest_report": _sanitize_client_value(client, client.latest_report(config["lp_project_id"])),
         }
+    return project_founder_results(payload, project_id=config["lp_project_id"])
+
+
+def _sanitize_client_value(client: object, value: object) -> object:
+    sanitizer = getattr(client, "sanitize_upstream", None)
+    return sanitizer(value) if callable(sanitizer) else scrub_upstream_value(value)
 
 
 def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportClient:
@@ -399,6 +423,108 @@ def json_value(value: object, *, operation: str) -> object:
     raise FounderPackContractError(
         f"founder pack {operation} returned unsupported type {type(value).__name__}"
     )
+
+
+def project_founder_scan(value: object, *, token: str | None = None) -> dict[str, object]:
+    safe = scrub_upstream_value(json_object(value, operation="scan"), token=token)
+    if not isinstance(safe, dict):
+        raise FounderPackContractError("founder pack scan must return an object")
+    projected: dict[str, object] = {
+        "status": normalize_upstream_state(
+            safe.get("status", safe.get("state")), LAUNCH_PASSPORT_SCAN_STATES
+        )
+    }
+    artifact_id = safe.get("artifact_id") or safe.get("artifactId")
+    if isinstance(artifact_id, str) and artifact_id:
+        projected["artifact_id"] = artifact_id
+    project_id = safe.get("project_id") or safe.get("projectId")
+    if isinstance(project_id, str) and project_id:
+        projected["project_id"] = project_id
+    for key in ("file_count", "dependency_count", "env_key_count"):
+        count = safe.get(key)
+        if isinstance(count, int) and count >= 0:
+            projected[key] = count
+    return projected
+
+
+def project_founder_upload(value: object, *, token: str | None = None) -> dict[str, object]:
+    safe = scrub_upstream_value(json_object(value, operation="upload"), token=token)
+    if not isinstance(safe, dict):
+        raise FounderPackContractError("founder pack upload must return an object")
+    artifact_id = safe.get("artifact_id") or safe.get("artifactId")
+    projected: dict[str, object] = {
+        "status": normalize_upstream_state(
+            safe.get("status", safe.get("state")), LAUNCH_PASSPORT_UPLOAD_STATES, default="unknown"
+        )
+    }
+    if isinstance(artifact_id, str) and artifact_id:
+        projected["artifact_id"] = artifact_id
+    return projected
+
+
+def project_founder_status(
+    value: object,
+    *,
+    project_id: str | None = None,
+    token: str | None = None,
+) -> dict[str, object]:
+    safe = scrub_upstream_value(value, token=token)
+    source = safe if isinstance(safe, dict) else {}
+    capabilities = source.get("capabilities")
+    projected_capabilities = (
+        {"launch_scan": capabilities["launch_scan"]}
+        if isinstance(capabilities, dict) and isinstance(capabilities.get("launch_scan"), bool)
+        else {}
+    )
+    result: dict[str, object] = {
+        "status": normalize_upstream_state(
+            source.get("status", source.get("state")),
+            LAUNCH_PASSPORT_CONNECTION_STATES,
+            default="unknown",
+        ),
+        "token_configured": OPERATION_CONFIRMED,
+        "capabilities": projected_capabilities,
+    }
+    if project_id:
+        result["lp_project_id"] = project_id
+    return result
+
+
+def project_founder_results(
+    value: object,
+    *,
+    project_id: str | None = None,
+    token: str | None = None,
+) -> dict[str, object]:
+    safe = scrub_upstream_value(value, token=token)
+    source = safe if isinstance(safe, dict) else {}
+    raw_scans = source.get("scans")
+    scan_items: list[object]
+    if isinstance(raw_scans, list):
+        scan_items = raw_scans
+    elif isinstance(raw_scans, dict) and isinstance(raw_scans.get("items"), list):
+        scan_items = cast(list[object], raw_scans["items"])
+    else:
+        scan_items = []
+    states = [
+        normalize_upstream_state(
+            item.get("status", item.get("state")) if isinstance(item, dict) else None,
+            LAUNCH_PASSPORT_SCAN_STATES,
+        )
+        for item in scan_items
+    ]
+    count = len(scan_items)
+    if not scan_items and isinstance(raw_scans, dict) and isinstance(raw_scans.get("count"), int):
+        count = max(0, raw_scans["count"])
+    latest_report = source.get("latest_report")
+    report_available = latest_report is not None and latest_report not in ({}, [])
+    result: dict[str, object] = {
+        "scans": {"count": count, "states": states},
+        "latest_report": {"available": report_available},
+    }
+    if project_id:
+        result["project_id"] = project_id
+    return result
 
 
 def build_upload_preview(artifact_id: str, bundle: dict[str, object]) -> dict[str, object]:
