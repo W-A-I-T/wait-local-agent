@@ -35,6 +35,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   and SMS-shaped messages; outbound delivery adapters are not enabled.
 - Deterministic ticket sentiment reports explainable terms and an escalation
   signal without requiring a model provider.
+- Deterministic SLA assessment reports priority/status risk without pretending
+  to calculate elapsed-time SLA clocks.
 - The `m365-identity-context` agent tool can read only completed, tenant-scoped
   Microsoft 365 collector runs; Graph mutation paths remain disabled.
 - The `m365-user-lookup` tool searches that same scoped evidence without a

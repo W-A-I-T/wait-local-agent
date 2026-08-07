@@ -457,6 +457,59 @@ class TicketSentimentAction:
         )
 
 
+class TicketSlaAssessmentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sla-assessment",
+        title="SLA assessment",
+        description="Assess priority and active status for an explainable escalation signal; no SLA clock is invented.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"assessment": "object", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        priority = ticket.priority.strip().lower()
+        status = ticket.status.strip().lower()
+        risk_by_priority = {
+            "critical": "immediate",
+            "p1": "immediate",
+            "high": "high",
+            "p2": "high",
+            "medium": "medium",
+            "p3": "medium",
+            "low": "low",
+            "p4": "low",
+        }
+        risk = risk_by_priority.get(priority, "unknown")
+        active = status not in {"resolved", "closed"}
+        escalation_required = active and risk in {"immediate", "high"}
+        assessment = {
+            "priority": ticket.priority,
+            "status": ticket.status,
+            "risk": risk,
+            "active": active,
+            "escalation_required": escalation_required,
+            "basis": "priority/status heuristic; no elapsed-time SLA calculation",
+        }
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "assessment": assessment,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["priority", "status"])],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -619,6 +672,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365UserLookupAction(),
         BuildMessageAction(),
         TicketSentimentAction(),
+        TicketSlaAssessmentAction(),
         TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

@@ -27,6 +27,7 @@ from wait_local_agent.smart_actions import (
     SuggestResolutionAction,
     TicketQualityAction,
     TicketSentimentAction,
+    TicketSlaAssessmentAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -203,6 +204,26 @@ def test_ticket_sentiment_is_explainable_and_tenant_scoped(settings) -> None:
     ).status == "failed"
 
 
+def test_ticket_sla_assessment_is_a_priority_status_heuristic(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-P1", "Acme", "Outage", "Service unavailable", "P1", "Open"),
+        )
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-CLOSED", "Acme", "Done", "Resolved", "High", "Closed"),
+        )
+    action = TicketSlaAssessmentAction()
+    urgent = action.run(_action_context(store, settings), {"ticket_id": "TCK-P1"})
+    closed = action.run(_action_context(store, settings), {"ticket_id": "TCK-CLOSED"})
+    assert urgent.output["assessment"]["risk"] == "immediate"  # type: ignore[index]
+    assert urgent.output["assessment"]["escalation_required"] is True  # type: ignore[index]
+    assert closed.output["assessment"]["active"] is False  # type: ignore[index]
+    assert closed.output["assessment"]["escalation_required"] is False  # type: ignore[index]
+
+
 def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settings) -> None:
     store = Store(settings.data_path)
     run = store.create_collector_run(
@@ -264,6 +285,7 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
         BuildMessageAction(),
         M365UserLookupAction(),
         TicketSentimentAction(),
+        TicketSlaAssessmentAction(),
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
@@ -502,6 +524,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "suggest-resolution",
         "ticket-quality",
         "ticket-sentiment",
+        "ticket-sla-assessment",
         "ticket-summary",
         "ticket-triage",
     ]

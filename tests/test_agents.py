@@ -63,6 +63,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "m365-user-lookup",
         "ticket-quality",
         "ticket-sentiment",
+        "ticket-sla-assessment",
         "dispatch-suggestion",
     }
     assert tools["ticket-triage"].access_mode == "read"
