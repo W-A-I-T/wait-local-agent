@@ -432,17 +432,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/approval-requests")
     def approval_requests(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
+        scoped_client_id = _approval_client_scope(context, client_id)
         return [
-            _approval_view(request) for request in store.list_approval_requests(client_id=client_id)
+            _approval_view(request)
+            for request in store.list_approval_requests(client_id=scoped_client_id)
         ]
 
     @app.get("/approval-requests/{request_id}")
-    def approval_request_detail(request_id: int, _: ViewerAccess) -> dict[str, object]:
+    def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
         request = store.get_approval_request(request_id)
-        if request is None:
+        if request is None or not _approval_in_scope(context, request):
             raise HTTPException(status_code=404, detail="approval request not found")
         return _approval_view(request)
 
@@ -450,9 +452,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def update_approval_payload(
         request_id: int,
         request: ApprovalPayloadPatchRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
             approval = update_halopsa_approval_fields(
                 store,
                 request_id,
@@ -477,7 +482,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             existing_approval = store.get_approval_request(request_id)
-            if existing_approval is None:
+            if existing_approval is None or not _approval_in_scope(context, existing_approval):
                 raise KeyError(request_id)
             if existing_approval.action_type.startswith("smart_action:"):
                 smart_action_service.update_approval(
@@ -871,9 +876,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def execute_halopsa_approval(
         request_id: int,
         request: Request,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
             return _approval_view(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
@@ -1072,7 +1080,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [asdict(run) for run in store.list_workflow_runs(client_id=client_id)]
 
     @app.get("/workflow-runs/{run_id}")
-    def workflow_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
+    def workflow_run_detail(run_id: int, context: ViewerAccess) -> dict[str, object]:
         run = store.get_workflow_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
@@ -1088,7 +1096,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             **asdict(run),
             "template": asdict(template) if template is not None else None,
-            "approval_request": _approval_view(approval) if approval is not None else None,
+            "approval_request": (
+                _approval_view(approval)
+                if approval is not None and _approval_in_scope(context, approval)
+                else None
+            ),
             "events": [
                 asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
             ],
@@ -1223,6 +1235,27 @@ def _smart_action_run_view(run) -> dict[str, object]:
         "updated_at": run.updated_at,
         "client_id": run.client_id,
     }
+
+
+def _approval_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+    """Approval scope preserves unbound filters intentionally, unlike smart-action scope."""
+
+    if context.role >= Role.ADMIN:
+        return _normalize_client_id(requested_client_id)
+    bound_client_id = _normalize_client_id(context.client_id)
+    if bound_client_id is None:
+        return _normalize_client_id(requested_client_id)
+    return bound_client_id
+
+
+def _approval_in_scope(context: AuthContext, approval) -> bool:
+    scoped_client_id = _approval_client_scope(context, None)
+    approval_client_id = _normalize_client_id(approval.client_id)
+    return (
+        scoped_client_id is None
+        or approval_client_id is None
+        or approval_client_id == scoped_client_id
+    )
 
 
 def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:

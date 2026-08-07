@@ -23,3 +23,7 @@ vault.key
 secrets.json.enc
 ui/node_modules.stale*/
 desktop/src-tauri/Cargo.lock
+
+# Internal workflow state — task plans and status are not part of the public surface
+ai/tasks/*/plan.md
+ai/tasks/*/status.json
