@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import wait_local_agent.agents as agents_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import AgentRun
+from wait_local_agent.models import AgentDefinitionRevision, AgentRun
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -357,6 +357,79 @@ def test_agent_runtime_timeout_and_rejected_approval_are_terminal(settings, monk
         approver_role=Role.TECHNICIAN,
     )
     assert rejected.status == "rejected"
+
+
+def test_agent_revision_and_runtime_guards_fail_closed(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    base_run = AgentRun(
+        id=1,
+        agent_id=definition.id,
+        entity_id="TCK-1001",
+        actor="requester",
+        status="pending_approval",
+        current_step=0,
+        state_json=json.dumps({"steps": [{"approval_id": 1}], "pending_approval_step": 3}),
+        started_at="",
+        finished_at="",
+        revision_version=definition.version,
+        client_id="acme",
+    )
+    with pytest.raises(AgentDefinitionError, match="approval state is malformed"):
+        service.resume(definition, base_run, approver="approver", approver_role=Role.TECHNICIAN)
+
+    with pytest.raises(AgentDefinitionError, match="revision is no longer available"):
+        service._definition_for_run(definition, replace(base_run, revision_version=99))  # noqa: SLF001
+
+    def revision_with(payload: str) -> AgentDefinitionRevision:
+        return AgentDefinitionRevision(
+            id=1,
+            agent_id=definition.id,
+            version=0,
+            definition_json=payload,
+            created_at="",
+            client_id="acme",
+        )
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with("not-json"),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with("[]"),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with(json.dumps({"filters": []})),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with(json.dumps({"filters": {}, "enabled_tools": [], "steps": {}})),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    with pytest.raises(AgentDefinitionError, match="only queued or approval-paused"):
+        service.cancel(
+            definition,
+            replace(base_run, status="completed"),
+            actor="approver",
+            approver_role=Role.TECHNICIAN,
+        )
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
