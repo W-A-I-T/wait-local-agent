@@ -52,6 +52,40 @@ def test_analytics_summary_returns_all_metric_groups(settings) -> None:
         {"run_kind": "workflow", "trigger_source": "api", "status": "failed", "count": 1},
         {"run_kind": "workflow", "trigger_source": "scheduler", "status": "pending_approval", "count": 1},
     ]
+    assert summary["approval_metrics"] == {
+        "requested": 0,
+        "pending": 0,
+        "approved": 0,
+        "rejected": 0,
+        "expired": 0,
+        "decided": 0,
+        "approval_rate": 0.0,
+    }
+
+
+def test_analytics_summary_reports_approval_rate(settings) -> None:
+    store = Store(settings.data_path)
+    approved = store.create_approval_request("TCK-1", "ticket.assign", {})
+    store.update_approval_request(approved.id or 0, "approved")
+    rejected = store.create_approval_request("TCK-2", "ticket.assign", {})
+    store.update_approval_request(rejected.id or 0, "rejected")
+    store.create_approval_request(
+        "TCK-3", "ticket.assign", {}, expires_at="2020-01-01T00:00:00+00:00"
+    )
+    pending = store.create_approval_request("TCK-4", "ticket.assign", {})
+
+    summary = cast(dict[str, Any], build_analytics_summary(store, {}))
+
+    assert summary["approval_metrics"] == {
+        "requested": 4,
+        "pending": 1,
+        "approved": 1,
+        "rejected": 1,
+        "expired": 1,
+        "decided": 3,
+        "approval_rate": 1 / 3,
+    }
+    assert store.get_approval_request(pending.id or 0) is not None
 
 
 def test_analytics_summary_labels_time_saved_as_estimate(settings) -> None:

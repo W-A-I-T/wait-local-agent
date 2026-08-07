@@ -4001,6 +4001,45 @@ class Store:
             for row in rows
         ]
 
+    def approval_metrics(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        clauses: list[str] = []
+        params: list[object] = []
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        if started_from:
+            clauses.append("date(created_at) >= date(?)")
+            params.append(started_from)
+        if started_to:
+            clauses.append("date(created_at) <= date(?)")
+            params.append(started_to)
+        where = f" where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select status, count(*) as count from approval_requests{where} group by status",
+                params,
+            ).fetchall()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        approved = counts.get("approved", 0)
+        rejected = counts.get("rejected", 0)
+        expired = counts.get("expired", 0)
+        decided = approved + rejected + expired
+        return {
+            "requested": sum(counts.values()),
+            "pending": counts.get("pending", 0),
+            "approved": approved,
+            "rejected": rejected,
+            "expired": expired,
+            "decided": decided,
+            "approval_rate": (approved / decided) if decided else 0.0,
+        }
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None

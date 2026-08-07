@@ -50,6 +50,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   into tenant-scoped records and run them through the existing approval path.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
   failures, pause/cancel state, and failed-item reruns.
+- Local analytics under `/analytics/summary` include explainable approval
+  requested/decided/approval-rate metrics alongside execution outcomes.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
