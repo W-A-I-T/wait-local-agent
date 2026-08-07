@@ -1525,6 +1525,219 @@ def test_knowledge_api_missing_path_returns_400(settings) -> None:
     assert response.status_code == 400
 
 
+def _seed_execution_tickets(store: Store) -> None:
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+
+def test_executions_api_lists_and_details_runs(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_execution_tickets(store)
+    client = TestClient(create_app(settings))
+
+    run = client.post(
+        "/workflows/templates/ticket-triage/runs", json={"ticket_id": "TCK-1001"}
+    )
+    assert run.status_code == 200
+
+    listed = client.get("/executions")
+    assert listed.status_code == 200
+    executions = listed.json()
+    assert len(executions) == 1
+    assert executions[0]["run_kind"] == "workflow"
+    assert executions[0]["status"] == "completed"
+    execution_id = executions[0]["id"]
+
+    filtered = client.get("/executions", params={"kind": "smart_action"})
+    assert filtered.status_code == 200
+    assert filtered.json() == []
+    by_status = client.get("/executions", params={"status": "completed"})
+    assert len(by_status.json()) == 1
+    ranged = client.get("/executions", params={"from": "2000-01-01", "to": "2000-01-02"})
+    assert ranged.json() == []
+
+    detail = client.get(f"/executions/{execution_id}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["id"] == execution_id
+    assert [step["ordinal"] for step in payload["steps"]] == [0]
+    assert payload["steps"][0]["kind"] == "workflow.template"
+    assert payload["steps"][0]["input"]["ticket_id"] == "TCK-1001"
+    assert payload["artifacts"] == []
+
+    missing = client.get("/executions/9999")
+    assert missing.status_code == 404
+
+
+def test_executions_api_serves_smart_action_artifact(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_execution_tickets(store)
+    client = TestClient(create_app(settings))
+
+    invoke = client.post(
+        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}}
+    )
+    assert invoke.status_code == 200
+
+    detail = client.get("/executions", params={"kind": "smart_action"}).json()[0]
+    execution = client.get(f"/executions/{detail['id']}").json()
+    assert execution["artifacts"]
+    artifact = execution["artifacts"][0]
+    assert "storage_path" not in artifact
+
+    download = client.get(f"/executions/{detail['id']}/artifacts/{artifact['id']}")
+    assert download.status_code == 200
+    assert hashlib.sha256(download.content).hexdigest() == artifact["sha256"]
+
+    wrong_run = client.get(f"/executions/{detail['id'] + 1}/artifacts/{artifact['id']}")
+    assert wrong_run.status_code == 404
+    missing_artifact = client.get(f"/executions/{detail['id']}/artifacts/9999")
+    assert missing_artifact.status_code == 404
+
+
+def test_executions_api_enforces_tenant_scope(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    _seed_execution_tickets(store)
+    acme_run = store.create_execution_run(
+        "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "test", client_id="acme",
+    )
+    beta_run = store.create_execution_run(
+        "workflow", 2, "b", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "test", client_id="beta",
+    )
+    assert acme_run.id is not None and beta_run.id is not None
+    store.add_execution_step(
+        acme_run.id, 0, "workflow.template", "t", "completed",
+        "2026-08-01T09:00:00+00:00", "2026-08-01T09:01:00+00:00",
+        "d", "d", "{}", "{}", "",
+    )
+    store.add_execution_artifact(
+        acme_run.id, 0, "a.bin", "application/octet-stream", 1, "f" * 64, "/tmp/nope"
+    )
+    client = TestClient(create_app(secure_settings))
+
+    viewer_list = client.get("/executions", headers=_auth("viewer-token"))
+    assert viewer_list.status_code == 200
+    assert [run["id"] for run in viewer_list.json()] == [acme_run.id]
+
+    foreign_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("viewer-token"))
+    assert foreign_detail.status_code == 404
+    foreign_artifact = client.get(
+        f"/executions/{beta_run.id}/artifacts/1", headers=_auth("tech-token")
+    )
+    assert foreign_artifact.status_code == 404
+
+    admin_list = client.get("/executions", headers=_auth("admin-token"))
+    assert {run["id"] for run in admin_list.json()} == {acme_run.id, beta_run.id}
+    admin_filtered = client.get(
+        "/executions", params={"client_id": "beta"}, headers=_auth("admin-token")
+    )
+    assert [run["id"] for run in admin_filtered.json()] == [beta_run.id]
+    admin_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("admin-token"))
+    assert admin_detail.status_code == 200
+
+    # The artifact file name must equal its content digest; a tampered path 404s.
+    artifacts = store.list_execution_artifacts(acme_run.id)
+    tampered = client.get(
+        f"/executions/{acme_run.id}/artifacts/{artifacts[0].id}", headers=_auth("tech-token")
+    )
+    assert tampered.status_code == 404
+
+
+def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.create_execution_run(
+        "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "test", client_id="acme",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    listed = client.get("/executions", headers=_auth("viewer-token"))
+    detail = client.get("/executions/1", headers=_auth("viewer-token"))
+    analytics = client.get("/analytics/summary", headers=_auth("viewer-token"))
+
+    assert listed.json() == []
+    assert detail.status_code == 404
+    assert analytics.json()["success_rate"]["total"] == 0
+    assert analytics.json()["estimated_minutes_saved"]["estimate"] is True
+
+
+def test_analytics_summary_api_returns_metric_groups(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_execution_tickets(store)
+    client = TestClient(create_app(settings))
+
+    invoke = client.post(
+        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}}
+    )
+    assert invoke.status_code == 200
+    failed = client.post(
+        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "NOPE"}}
+    )
+    assert failed.status_code == 200
+
+    response = client.get("/analytics/summary")
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["success_rate"]["total"] == 2
+    assert summary["success_rate"]["succeeded"] == 1
+    assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
+    assert len(summary["executions_over_time"]) == 1
+    time_saved = summary["estimated_minutes_saved"]
+    assert time_saved["estimate"] is True
+    assert time_saved["minutes"] == 4
+    assert "estimate" in time_saved["derivation"]
+
+
+def test_execution_steps_are_redacted_at_serialization(settings) -> None:
+    store = Store(settings.data_path)
+    run = store.create_execution_run(
+        "smart_action", 1, "tech", "success", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "test",
+    )
+    assert run.id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into execution_steps
+              (execution_run_id, ordinal, kind, name, status, started_at, finished_at,
+               input_digest, output_digest, input_json, output_json, error_detail)
+            values (?, 0, 'smart_action.invoke', 'legacy', 'success', ?, ?, 'd', 'd', ?, '{}', '')
+            """,
+            (
+                run.id,
+                "2026-08-01T09:00:00+00:00",
+                "2026-08-01T09:01:00+00:00",
+                '{"note":"password=legacy-secret"}',
+            ),
+        )
+    client = TestClient(create_app(settings))
+
+    detail = client.get(f"/executions/{run.id}")
+
+    assert detail.status_code == 200
+    assert "legacy-secret" not in detail.text
+
+
 def _read_response(items):
     return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 

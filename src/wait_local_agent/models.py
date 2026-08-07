@@ -455,5 +455,47 @@ class RestoreExerciseWrite:
     completed_at: str = ""
 
 
+@dataclass(frozen=True)
+class ExecutionRun:
+    id: int | None
+    run_kind: str
+    source_run_id: int | None
+    actor: str
+    status: str
+    started_at: str
+    finished_at: str
+    trigger_source: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionStep:
+    id: int | None
+    execution_run_id: int
+    ordinal: int
+    kind: str
+    name: str
+    status: str
+    started_at: str
+    finished_at: str
+    input_digest: str
+    output_digest: str
+    input_json: str
+    output_json: str
+    error_detail: str = ""
+
+
+@dataclass(frozen=True)
+class ExecutionArtifact:
+    id: int | None
+    execution_run_id: int
+    step_ordinal: int | None
+    name: str
+    media_type: str
+    byte_size: int
+    sha256: str
+    storage_path: str
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()

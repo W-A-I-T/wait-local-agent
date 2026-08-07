@@ -549,3 +549,37 @@ def test_smart_action_json_storage_redacts_secrets(settings) -> None:
     assert run is not None
     assert "raw-key" not in run.output_json
     assert "raw-token" not in run.evidence_json
+
+
+def test_invoke_records_execution_row_with_ordered_steps(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    result = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
+
+    assert result.status == "success"
+    runs = store.list_execution_runs(run_kind="smart_action")
+    assert len(runs) == 1
+    assert runs[0].source_run_id == result.run_id
+    assert runs[0].status == "success"
+    steps = store.list_execution_steps(runs[0].id or 0)
+    assert [step.ordinal for step in steps] == [0]
+    assert steps[0].kind == "smart_action.invoke"
+    assert "TCK-1001" in steps[0].input_json
+
+
+def test_recorder_failure_does_not_change_action_outcome(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    def exploding_create(*args, **kwargs):
+        raise RuntimeError("recorder storage exploded")
+
+    monkeypatch.setattr(Store, "create_execution_run", exploding_create)
+
+    result = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
+
+    assert result.status == "success"
+    assert store.get_smart_action_run(result.run_id or 0) is not None

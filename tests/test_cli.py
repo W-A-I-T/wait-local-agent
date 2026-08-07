@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -664,6 +665,74 @@ def test_smart_action_cli_tenant_scope_and_approval_view_guards(monkeypatch, tmp
 
 def _read_response(items):
     return cli_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def test_executions_cli_lists_and_shows_runs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    store = Store(tmp_path / "state.db")
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    from wait_local_agent.workflows import run_workflow_template
+
+    run_workflow_template(store, "ticket-triage", "TCK-1001", actor="cli", trigger_source="cli")
+    runner = CliRunner()
+
+    listed = runner.invoke(app, ["executions", "list"])
+    by_kind = runner.invoke(app, ["executions", "list", "--kind", "smart_action"])
+    shown = runner.invoke(app, ["executions", "show", "1"])
+    missing = runner.invoke(app, ["executions", "show", "999"])
+
+    assert listed.exit_code == 0
+    assert "workflow completed actor=cli" in listed.output
+    assert by_kind.exit_code == 0
+    assert "workflow" not in by_kind.output
+    assert shown.exit_code == 0
+    payload = json.loads(shown.output)
+    assert payload["run_kind"] == "workflow"
+    assert [step["ordinal"] for step in payload["steps"]] == [0]
+    assert payload["steps"][0]["input"]["ticket_id"] == "TCK-1001"
+    assert "storage_path" not in json.dumps(payload["artifacts"])
+    assert missing.exit_code != 0
+
+
+def test_analytics_cli_summary_mirrors_api(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    service = SmartActionService(store, settings)
+    service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
+    service.invoke("ticket-triage", {"ticket_id": "NOPE"}, "tech")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["analytics", "summary"])
+
+    assert result.exit_code == 0
+    summary = json.loads(result.output)
+    assert summary["success_rate"] == {"total": 2, "succeeded": 1, "rate": 0.5}
+    assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
+    assert summary["estimated_minutes_saved"]["estimate"] is True
+    assert summary["estimated_minutes_saved"]["minutes"] == 4
+
+
+def test_executions_cli_requires_tenant_for_non_admin(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    store = Store(tmp_path / "state.db")
+    store.create_execution_run(
+        "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "test", client_id="acme",
+    )
+    runner = CliRunner()
+
+    no_tenant = runner.invoke(app, ["executions", "list", "--token", "tech-token"])
+    admin = runner.invoke(app, ["executions", "list", "--token", "admin-token"])
+
+    assert no_tenant.exit_code != 0
+    assert "no tenant" in no_tenant.output
+    assert admin.exit_code == 0
+    assert "workflow" in admin.output
 
 
 def _hudu_response(items):
