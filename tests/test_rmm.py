@@ -5,7 +5,16 @@ from dataclasses import replace
 import httpx
 
 from wait_local_agent.connectors import list_connector_statuses, validate_connector_credentials
-from wait_local_agent.rmm import NinjaOneClient
+from wait_local_agent.rmm import (
+    NinjaOneClient,
+    RmmReadError,
+    _api_base_url,
+    _bounded_page_size,
+    _payload_rows,
+    _safe_endpoint,
+    _safe_segment,
+    _token_url,
+)
 
 
 def _configured(settings, *, allow_http_probing: bool = True):
@@ -138,6 +147,79 @@ def test_ninjaone_sanitizes_http_and_json_failures(settings) -> None:
     ).list_devices()
     assert malformed_result.result.status == "failed"
     assert "malformed JSON" in malformed_result.result.message
+
+
+def test_ninjaone_helper_edges_and_single_reads(settings) -> None:
+    assert _api_base_url("https://ninja.test/api/v2/") == "https://ninja.test/api/v2"
+    assert _api_base_url("https://ninja.test/v2") == "https://ninja.test/v2"
+    assert _api_base_url("https://ninja.test/api") == "https://ninja.test/api/v2"
+    assert _token_url("https://ninja.test/api/v2") == "https://ninja.test/ws/oauth/token"
+    assert _token_url("https://ninja.test/v2") == "https://ninja.test/ws/oauth/token"
+    assert _bounded_page_size(0) == 1
+    assert _bounded_page_size(1000) == 100
+    assert _payload_rows({"data": []}) == []
+    assert _payload_rows({"unexpected": "object"}) == [{"unexpected": "object"}]
+    assert _payload_rows("not-an-object") == []
+    for value in ("", "device/17", "device?bad", "//remote"):
+        helper = _safe_segment if value != "//remote" else _safe_endpoint
+        try:
+            helper(value)
+        except RmmReadError:
+            pass
+        else:
+            raise AssertionError(f"unsafe value accepted: {value}")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token", "expires_in": "invalid"})
+        if request.url.path == "/api/v2/device/17":
+            return httpx.Response(200, json={"id": 17, "offline": "yes"})
+        if request.url.path == "/api/v2/alerts":
+            assert request.url.params["after"] == "cursor"
+            return httpx.Response(200, json=[{"id": "alert-2", "priority": 2}])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(handler))
+    device = client.get_device("17")
+    alerts = client.list_alerts(after="cursor")
+    assert device.items[0]["offline"] is True
+    assert alerts.items[0]["severity"] == "2"
+
+
+def test_ninjaone_maps_transport_and_token_failures(settings) -> None:
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    timeout_client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(timeout))
+    assert "before receiving a response" in timeout_client.health().message
+
+    def token_read_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("read failed")
+
+    read_client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(token_read_error))
+    assert read_client.health().message == "NinjaOne token request failed."
+
+    def token_bad_json(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not-json")
+
+    bad_json = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(token_bad_json))
+    assert bad_json.health().message == "NinjaOne token response was malformed JSON."
+
+    def token_missing_access(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"expires_in": 10})
+
+    missing_access = NinjaOneClient(
+        _configured(settings), transport=httpx.MockTransport(token_missing_access)
+    )
+    assert missing_access.health().message == "NinjaOne token response did not contain an access token."
+
+    def token_connect_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connect failed")
+
+    connect_client = NinjaOneClient(
+        _configured(settings), transport=httpx.MockTransport(token_connect_error)
+    )
+    assert "before receiving a response" in connect_client.health().message
 
 
 def test_ninjaone_connector_status_and_validation(settings) -> None:

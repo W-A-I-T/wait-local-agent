@@ -318,12 +318,14 @@ def _payload_rows(payload: object) -> list[Mapping[str, object]]:
         candidates = payload
     elif isinstance(payload, dict):
         candidates = []
+        found_list = False
         for key in ("data", "results", "devices", "alerts", "scripts", "automationScripts"):
             value = payload.get(key)
             if isinstance(value, list):
                 candidates = value
+                found_list = True
                 break
-        if candidates == []:
+        if not found_list:
             candidates = [payload]
     else:
         return []
