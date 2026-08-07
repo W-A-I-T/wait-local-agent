@@ -1174,6 +1174,88 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
     assert missing_delivery.status_code == 404
 
 
+def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "display_name": "Acme triage starter",
+            "provenance": "Reviewed by the local operator",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["source_template_id"] == "ticket-triage"
+    assert created.json()["provenance"] == "Reviewed by the local operator"
+    entry_id = created.json()["id"]
+
+    listed = client.get("/workflow-templates/gallery")
+    detail = client.get(f"/workflow-templates/gallery/{entry_id}")
+    assert listed.status_code == 200
+    assert detail.status_code == 200
+    assert detail.json()["id"] == entry_id
+
+    run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert run.status_code == 200
+    assert run.json()["template_id"] == "ticket-triage"
+    assert run.json()["status"] == "completed"
+
+    unknown_source = client.post(
+        "/workflow-templates/gallery",
+        json={"source_template_id": "not-a-template", "provenance": "review"},
+    )
+    foreign_run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "beta"},
+    )
+    missing_entry = client.get("/workflow-templates/gallery/not-a-gallery-entry")
+    missing_ticket = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "NO-SUCH-TICKET", "client_id": "acme"},
+    )
+    assert unknown_source.status_code == 404
+    assert foreign_run.status_code == 404
+    assert missing_entry.status_code == 404
+    assert missing_ticket.status_code == 404
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get(
+        "/workflow-templates/gallery",
+        headers=_auth("viewer-token"),
+    ).json() == []
+    assert secure_client.get(
+        "/workflow-templates/gallery/anything",
+        headers=_auth("viewer-token"),
+    ).status_code == 404
+    assert secure_client.post(
+        "/workflow-templates/gallery",
+        headers=_auth("tech-token"),
+        json={"source_template_id": "ticket-triage", "provenance": "review"},
+    ).status_code == 403
+    assert secure_client.post(
+        "/workflow-templates/gallery/anything/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    ).status_code == 403
+
+
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
     client = TestClient(create_app(settings))
 

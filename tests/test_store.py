@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+from wait_local_agent.workflows import get_workflow_template
 
 
 def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) -> None:
@@ -111,6 +112,24 @@ def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Pat
             agent_ids=[],
             run_ids=[],
         )
+
+
+def test_store_template_gallery_persists_provenance_and_scope(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    template = get_workflow_template("ticket-triage")
+    assert template is not None
+
+    entry = store.create_template_gallery_entry(
+        template,
+        provenance="Reviewed local core template",
+        client_id="acme",
+        name="Acme triage starter",
+    )
+    assert entry.source_template_id == "ticket-triage"
+    assert entry.name == "Acme triage starter"
+    assert store.get_template_gallery_entry(entry.id, client_id="beta") is None
+    assert store.get_template_gallery_entry(entry.id, client_id="acme") is not None
+    assert [item.id for item in store.list_template_gallery_entries(client_id="acme")] == [entry.id]
 
 
 def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> None:
