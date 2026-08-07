@@ -27,6 +27,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
+- Preview-only `build-message` drafts cover ticket notes, email, Teams, Slack, and
+  SMS-shaped messages; no outbound transport is enabled.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
   cron, interval, and future one-time schedules with validated IANA timezones
