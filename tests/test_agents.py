@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
+from wait_local_agent.models import AgentRun
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -264,6 +267,53 @@ def test_agent_retry_rejects_completed_runs(settings) -> None:
             service.store.get_agent_run(completed.run_id, client_id="acme"),  # type: ignore[arg-type]
             actor="requester",
         )
+
+
+def test_agent_run_guards_reject_unsupported_and_malformed_states(settings) -> None:
+    service = _service(settings)
+    definition = _create(service)
+
+    completed = AgentRun(
+        id=1,
+        agent_id=definition.id,
+        entity_id="TCK-1001",
+        actor="requester",
+        status="completed",
+        current_step=1,
+        state_json="{}",
+        started_at="",
+        finished_at="",
+        revision_version=definition.version,
+        client_id="acme",
+    )
+    assert (
+        service.resume(definition, completed, approver="approver", approver_role=Role.TECHNICIAN).status
+        == "completed"
+    )
+
+    with pytest.raises(AgentDefinitionError, match="entity_type is not supported"):
+        service.run(
+            replace(definition, entity_type="user"),
+            entity_id="TCK-1001",
+            actor="requester",
+            input_payload={},
+        )
+
+    malformed = replace(
+        completed,
+        status="pending_approval",
+        state_json=json.dumps({"steps": [{"approval_id": "not-an-id"}], "pending_approval_step": 0}),
+    )
+    with pytest.raises(AgentDefinitionError, match="approval id is missing"):
+        service.resume(definition, malformed, approver="approver", approver_role=Role.TECHNICIAN)
+
+    missing = replace(
+        completed,
+        status="pending_approval",
+        state_json=json.dumps({"steps": [{"approval_id": 999999}], "pending_approval_step": 0}),
+    )
+    with pytest.raises(AgentDefinitionError, match="approval could not be found"):
+        service.resume(definition, missing, approver="approver", approver_role=Role.TECHNICIAN)
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:
