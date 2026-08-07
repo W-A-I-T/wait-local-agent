@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
@@ -467,6 +467,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if definition is None:
             raise HTTPException(status_code=404, detail="agent not found")
         return _agent_definition_view(definition)
+
+    @app.get("/agents/{agent_id}/revisions")
+    def agent_revisions(
+        agent_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        definition = agent_service.get(agent_id, scoped_client_id)
+        if definition is None:
+            return []
+        return [
+            _agent_revision_view(revision)
+            for revision in store.list_agent_definition_revisions(agent_id, definition.client_id)
+        ]
+
+    @app.post("/agents/{agent_id}/revisions/{version}/restore")
+    def restore_agent_revision(
+        agent_id: str,
+        version: int,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        existing = agent_service.get(agent_id, scoped_client_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        revision = store.get_agent_definition_revision(agent_id, version, existing.client_id)
+        if revision is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        try:
+            payload = AgentDefinitionRequest.model_validate(_safe_json_object(revision.definition_json))
+            restored = agent_service.update(
+                existing,
+                name=payload.name,
+                description=payload.description,
+                enabled=payload.enabled,
+                trigger=payload.trigger,
+                entity_type=payload.entity_type,
+                filters=payload.filters,
+                enabled_tools=payload.enabled_tools,
+                steps=[step.model_dump() for step in payload.steps],
+                max_steps=payload.max_steps,
+                execution_timeout_seconds=payload.execution_timeout_seconds,
+                run_once_per_entity=payload.run_once_per_entity,
+            )
+        except (AgentDefinitionError, ValidationError) as exc:
+            raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
+        return _agent_definition_view(restored)
 
     @app.put("/agents/{agent_id}")
     def update_agent(
@@ -1698,6 +1750,17 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,
         "client_id": delivery.client_id,
+    }
+
+
+def _agent_revision_view(revision) -> dict[str, object]:
+    return {
+        "id": revision.id,
+        "agent_id": revision.agent_id,
+        "version": revision.version,
+        "definition": _safe_redacted_json_object(revision.definition_json),
+        "created_at": revision.created_at,
+        "client_id": revision.client_id,
     }
 
 

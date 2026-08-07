@@ -540,6 +540,16 @@ class AgentDefinition:
 
 
 @dataclass(frozen=True)
+class AgentDefinitionRevision:
+    id: int | None
+    agent_id: str
+    version: int
+    definition_json: str
+    created_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
 class AgentRun:
     id: int | None
     agent_id: str

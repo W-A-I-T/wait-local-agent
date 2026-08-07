@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
     AgentDefinition,
+    AgentDefinitionRevision,
     AgentRun,
     ApprovalRequest,
     AssetObservation,
@@ -246,6 +247,19 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     run_once_per_entity integer not null default 1
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists agent_definition_revisions (
+                    id integer primary key autoincrement,
+                    agent_id text not null,
+                    version integer not null,
+                    definition_json text not null,
+                    created_at text not null,
+                    client_id text,
+                    unique(agent_id, version)
                 )
                 """
             )
@@ -612,6 +626,7 @@ class Store:
                 ("storage_path", "text not null default ''"),
             ):
                 self._ensure_column(connection, "execution_artifacts", column_name, definition)
+            self._backfill_agent_revisions(connection)
 
     @staticmethod
     def _ensure_column(
@@ -620,6 +635,25 @@ class Store:
         rows = connection.execute(f"pragma table_info({table_name})").fetchall()
         if column_name not in {str(row["name"]) for row in rows}:
             connection.execute(f"alter table {table_name} add column {column_name} {definition}")
+
+    @staticmethod
+    def _backfill_agent_revisions(connection: sqlite3.Connection) -> None:
+        for row in connection.execute("select * from agent_definitions").fetchall():
+            definition = _agent_definition_from_row(row)
+            connection.execute(
+                """
+                insert or ignore into agent_definition_revisions
+                  (agent_id, version, definition_json, created_at, client_id)
+                values (?, ?, ?, ?, ?)
+                """,
+                (
+                    definition.id,
+                    definition.version,
+                    _agent_definition_snapshot(definition),
+                    definition.updated_at,
+                    _normalize_client_id(definition.client_id),
+                ),
+            )
 
     def ingest_ticket_file(self, path: Path) -> int:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1356,6 +1390,7 @@ class Store:
                 f"agent {definition.name} created",
                 client_id=definition.client_id,
             )
+            self._insert_agent_revision(connection, definition)
         created = self.get_agent_definition(definition.id)
         if created is None:
             raise RuntimeError("agent definition was not persisted")
@@ -1428,10 +1463,82 @@ class Store:
                 f"agent {definition.name} updated to version {definition.version}",
                 client_id=definition.client_id,
             )
+            self._insert_agent_revision(connection, definition)
         updated = self.get_agent_definition(definition.id)
         if updated is None:
             raise RuntimeError("agent definition was not persisted")
         return updated
+
+    @staticmethod
+    def _insert_agent_revision(
+        connection: sqlite3.Connection,
+        definition: AgentDefinition,
+    ) -> None:
+        connection.execute(
+            """
+            insert into agent_definition_revisions
+              (agent_id, version, definition_json, created_at, client_id)
+            values (?, ?, ?, ?, ?)
+            """,
+            (
+                definition.id,
+                definition.version,
+                _agent_definition_snapshot(definition),
+                definition.updated_at,
+                _normalize_client_id(definition.client_id),
+            ),
+        )
+
+    def get_agent_definition_revision(
+        self,
+        agent_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> AgentDefinitionRevision | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    """
+                    select * from agent_definition_revisions
+                    where agent_id = ? and version = ?
+                    """,
+                    (agent_id, version),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from agent_definition_revisions
+                    where agent_id = ? and version = ? and client_id = ?
+                    """,
+                    (agent_id, version, normalized_client_id),
+                ).fetchone()
+        return _agent_definition_revision_from_row(row) if row else None
+
+    def list_agent_definition_revisions(
+        self,
+        agent_id: str,
+        client_id: str | None = None,
+    ) -> list[AgentDefinitionRevision]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    """
+                    select * from agent_definition_revisions
+                    where agent_id = ? order by version desc
+                    """,
+                    (agent_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from agent_definition_revisions
+                    where agent_id = ? and client_id = ? order by version desc
+                    """,
+                    (agent_id, normalized_client_id),
+                ).fetchall()
+        return [_agent_definition_revision_from_row(row) for row in rows]
 
     def create_agent_run(
         self,
@@ -3637,6 +3744,32 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return AgentDefinition(**payload)
+
+
+def _agent_definition_revision_from_row(row: sqlite3.Row) -> AgentDefinitionRevision:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
+    return AgentDefinitionRevision(**payload)
+
+
+def _agent_definition_snapshot(definition: AgentDefinition) -> str:
+    return _json_dumps_value(
+        {
+            "name": definition.name,
+            "description": definition.description,
+            "enabled": definition.enabled,
+            "trigger": definition.trigger,
+            "entity_type": definition.entity_type,
+            "filters": definition.filters,
+            "enabled_tools": definition.enabled_tools,
+            "steps": definition.steps,
+            "max_steps": definition.max_steps,
+            "execution_timeout_seconds": definition.execution_timeout_seconds,
+            "client_id": definition.client_id,
+            "run_once_per_entity": definition.run_once_per_entity,
+        }
+    )
 
 
 def _agent_run_from_row(row: sqlite3.Row) -> AgentRun:

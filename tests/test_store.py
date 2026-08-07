@@ -26,6 +26,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         knowledge_columns = _columns(connection, "knowledge_documents")
         smart_action_columns = _columns(connection, "smart_action_runs")
         event_history_columns = _columns(connection, "event_history")
+        revision_columns = _columns(connection, "agent_definition_revisions")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
         audit = connection.execute("select * from audit_events where id = 1").fetchone()
@@ -45,6 +46,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "entity_id" in scheduled_columns
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
+    assert "definition_json" in revision_columns
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
