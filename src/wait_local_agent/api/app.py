@@ -74,11 +74,12 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.renderers import report_as_dict
+from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -125,6 +126,12 @@ class HaloDraftRequest(BaseModel):
 
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
+    client_id: str | None = None
+
+
+class SmartActionInvokeRequest(BaseModel):
+    payload: dict[str, object] = Field(default_factory=dict)
+    confirm: bool = False
     client_id: str | None = None
 
 
@@ -191,6 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
+    smart_action_service = SmartActionService(store, active_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -348,6 +356,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[dict[str, object]]:
         return [asdict(ticket) for ticket in store.list_tickets(client_id=client_id)]
 
+    @app.get("/smart-actions")
+    def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(manifest) for manifest in smart_action_service.list()]
+
+    @app.get("/smart-actions/runs")
+    def smart_action_runs(
+        context: ViewerAccess, client_id: str | None = None
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [
+            _smart_action_run_view(run)
+            for run in smart_action_service.store.list_smart_action_runs(client_id=scoped_client_id)
+        ]
+
+    @app.get("/smart-actions/runs/{run_id}")
+    def smart_action_run_detail(
+        run_id: int, context: ViewerAccess, client_id: str | None = None
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="smart action run not found")
+        run = smart_action_service.store.get_smart_action_run(run_id, client_id=scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="smart action run not found")
+        return _smart_action_run_view(run)
+
+    @app.get("/smart-actions/{action_id}")
+    def smart_action_detail(action_id: str, _: ViewerAccess) -> dict[str, object]:
+        try:
+            return asdict(smart_action_service.describe(action_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="smart action not found") from exc
+
+    @app.post("/smart-actions/{action_id}/invoke")
+    def invoke_smart_action(
+        action_id: str,
+        payload: SmartActionInvokeRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+            if context.role < Role.ADMIN and scoped_client_id is None:
+                raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+            result = smart_action_service.invoke(
+                action_id,
+                payload.payload,
+                context.approver_id or "api",
+                confirm=payload.confirm,
+                client_id=scoped_client_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="smart action not found") from exc
+        return asdict(result)
+
     @app.get("/tickets/{ticket_id}/summary")
     def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
         try:
@@ -412,12 +476,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
-            approval = store.update_approval_request(
-                request_id,
-                payload.status,
-                payload.comment,
-                approver_id=context.approver_id,
-            )
+            existing_approval = store.get_approval_request(request_id)
+            if existing_approval is None:
+                raise KeyError(request_id)
+            if existing_approval.action_type.startswith("smart_action:"):
+                smart_action_service.update_approval(
+                    request_id,
+                    payload.status,
+                    payload.comment,
+                    approver=context.approver_id or "api",
+                    approver_role=context.role,
+                )
+                approval = store.get_approval_request(request_id) or existing_approval
+            else:
+                approval = store.update_approval_request(
+                    request_id,
+                    payload.status,
+                    payload.comment,
+                    approver_id=context.approver_id,
+                    allow_completed=store.get_workflow_run_for_approval(request_id) is not None,
+                )
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
@@ -426,6 +504,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/collectors/modules")
     def collector_modules(_: ViewerAccess) -> list[dict[str, object]]:
@@ -768,7 +850,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return asdict(draft)
+        return _halopsa_draft_view(draft)
 
     @app.get("/connectors/halopsa/health")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -792,7 +874,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _: TechnicianAccess,
     ) -> dict[str, object]:
         try:
-            return asdict(execute_halopsa_approval_request(store, halopsa_client, request_id))
+            return _approval_view(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
@@ -1082,9 +1164,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else None
         )
         can_execute, block_reason = _approval_execution_state(request)
+        view = asdict(request)
+        view["payload_json"] = _redact_json_text(request.payload_json)
+        view["execution_result_json"] = _redact_json_text(request.execution_result_json)
+        view["comment"] = redact_text(request.comment)
+        view["payload"] = _redact_payload(payload)
+        view["output"] = _safe_redacted_json_object(request.execution_result_json)
         return {
-            **asdict(request),
-            "payload": _redact_payload(payload),
+            **view,
             "can_execute": can_execute,
             "block_reason": block_reason,
             "workflow_run_id": workflow_run.id if workflow_run is not None else None,
@@ -1120,12 +1207,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+def _smart_action_run_view(run) -> dict[str, object]:
+    output = redact_value(_safe_json_object(run.output_json))
+    evidence = redact_value(_safe_json_list(run.evidence_json))
+    return {
+        "id": run.id,
+        "action_id": run.action_id,
+        "actor": run.actor,
+        "status": run.status,
+        "payload_digest": run.payload_digest,
+        "output": output,
+        "evidence": evidence,
+        "approval_id": run.approval_id,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "client_id": run.client_id,
+    }
+
+
+def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+    """Return the authenticated tenant scope; only admins may choose a filter."""
+
+    if context.role >= Role.ADMIN:
+        return _normalize_client_id(requested_client_id)
+    return _normalize_client_id(context.client_id)
+
+
+def _halopsa_draft_view(draft) -> dict[str, object]:
+    payload = _safe_json_object(draft.payload_json)
+    return {
+        **asdict(draft),
+        "payload_json": _redact_json_text(draft.payload_json),
+        "payload": _redact_payload(payload),
+    }
+
+
 def _safe_json_object(payload_json: str) -> dict[str, object]:
     try:
         payload = json.loads(payload_json)
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _safe_json_list(payload_json: str) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return []
+    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+
+
+def _redact_json_text(payload_json: str) -> str:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return "[redacted]"
+    return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
+
+
+def _safe_redacted_json_object(payload_json: str) -> dict[str, object]:
+    return cast(dict[str, object], redact_value(_safe_json_object(payload_json)))
 
 
 def _scheduled_ticket_id(params: dict[str, object]) -> str:

@@ -1002,6 +1002,114 @@ def test_event_history_filters_by_client_id(settings) -> None:
     assert len(blank.json()) == len(all_events.json())
 
 
+def test_smart_action_runs_and_ticket_lookup_are_client_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.executemany(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
+                ("TCK-BETA", "Beta", "MFA reset", "Sign-in blocked", "High", "Open", "beta"),
+            ],
+        )
+    client = TestClient(create_app(settings))
+
+    acme = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-ACME"}, "client_id": "acme"},
+    )
+    beta = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "beta"},
+    )
+    listed = client.get("/smart-actions/runs", params={"client_id": "acme"})
+    hidden = client.get(
+        f"/smart-actions/runs/{beta.json()['run_id']}", params={"client_id": "acme"}
+    )
+    cross_tenant = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "acme"},
+    )
+
+    assert acme.status_code == 200
+    assert beta.status_code == 200
+    assert listed.status_code == 200
+    assert [run["client_id"] for run in listed.json()] == ["acme"]
+    assert hidden.status_code == 404
+    assert cross_tenant.json()["status"] == "failed"
+
+
+def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+            "client_id": "acme",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    acme = store.create_smart_action_run(
+        "ticket-triage", "acme-actor", "success", "digest-a", {"tenant": "acme"}, [], client_id="acme"
+    )
+    store.create_smart_action_run(
+        "ticket-triage", "beta-actor", "success", "digest-b", {"tenant": "beta"}, [], client_id="beta"
+    )
+    client = TestClient(create_app(secure_settings))
+
+    omitted = client.get("/smart-actions/runs", headers=_auth("viewer-token"))
+    arbitrary = client.get(
+        "/smart-actions/runs",
+        params={"client_id": "beta"},
+        headers=_auth("viewer-token"),
+    )
+    hidden = client.get(
+        f"/smart-actions/runs/{acme.id}",
+        params={"client_id": "beta"},
+        headers=_auth("viewer-token"),
+    )
+
+    assert omitted.status_code == 200
+    assert [run["client_id"] for run in omitted.json()] == ["acme"]
+    assert [run["client_id"] for run in arbitrary.json()] == ["acme"]
+    assert hidden.status_code == 200
+
+
+def test_legacy_approval_rows_are_redacted_in_api_views(settings) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request("TCK-LEGACY", "halopsa.add_note", {})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            update approval_requests
+            set payload_json = ?, comment = ?, execution_result_json = ?
+            where id = ?
+            """,
+            (
+                '{"fields":{"api_key":"legacy-secret"}}',
+                "token=legacy-comment-secret",
+                '{"output":{"password":"legacy-output-secret"}}',
+                approval.id,
+            ),
+        )
+    client = TestClient(create_app(settings))
+
+    response = client.get(f"/approval-requests/{approval.id}")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert "legacy-secret" not in response.text
+    assert "legacy-comment-secret" not in response.text
+    assert "legacy-output-secret" not in response.text
+    assert payload["payload"]["fields"]["api_key"] == "[redacted]"
+    assert payload["output"]["output"]["password"] == "[redacted]"
+
+
 def test_halopsa_manual_execute_rejects_non_approved_and_non_halopsa(settings) -> None:
     store = Store(settings.data_path)
     halo = store.create_approval_request(

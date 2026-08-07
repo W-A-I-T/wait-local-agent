@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import SourceReference, Ticket
@@ -11,6 +12,7 @@ from wait_local_agent.providers import (
     DeterministicLocalProvider,
     LocalModelProfile,
     OpenAICompatibleLocalProvider,
+    ProviderUnavailableError,
     provider_from_settings,
 )
 
@@ -211,7 +213,7 @@ def test_openai_provider_accepts_json_code_fence(tmp_path: Path) -> None:
     assert provider.summarize_ticket(_ticket(), _sources()) == "Fenced summary"
 
 
-def test_openai_provider_falls_back_on_malformed_json(tmp_path: Path) -> None:
+def test_openai_provider_surfaces_malformed_json(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]})
 
@@ -220,14 +222,11 @@ def test_openai_provider_falls_back_on_malformed_json(tmp_path: Path) -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    summary = provider.summarize_ticket(_ticket(), _sources())
-    draft = provider.draft_response(_ticket(), _sources())
-
-    assert "Acme Dental needs help" in summary
-    assert "A technician will confirm" in draft
+    with pytest.raises(ProviderUnavailableError, match="no valid model completion"):
+        provider.summarize_ticket(_ticket(), _sources())
 
 
-def test_openai_provider_falls_back_on_invalid_response_shapes(tmp_path: Path) -> None:
+def test_openai_provider_surfaces_invalid_response_shapes(tmp_path: Path) -> None:
     invalid_responses = [
         httpx.Response(200, text="not response json"),
         httpx.Response(200, json=[]),
@@ -259,10 +258,11 @@ def test_openai_provider_falls_back_on_invalid_response_shapes(tmp_path: Path) -
             transport=httpx.MockTransport(handler),
         )
 
-        assert "Acme Dental needs help" in provider.summarize_ticket(_ticket(), _sources())
+        with pytest.raises(ProviderUnavailableError):
+            provider.summarize_ticket(_ticket(), _sources())
 
 
-def test_openai_provider_falls_back_on_empty_and_non_2xx_responses(tmp_path: Path) -> None:
+def test_openai_provider_surfaces_empty_and_non_2xx_responses(tmp_path: Path) -> None:
     for response in [
         httpx.Response(200, json={"choices": []}),
         httpx.Response(503, json={"error": "unavailable"}),
@@ -276,10 +276,11 @@ def test_openai_provider_falls_back_on_empty_and_non_2xx_responses(tmp_path: Pat
             transport=httpx.MockTransport(handler),
         )
 
-        assert "Acme Dental needs help" in provider.summarize_ticket(_ticket(), _sources())
+        with pytest.raises(ProviderUnavailableError):
+            provider.summarize_ticket(_ticket(), _sources())
 
 
-def test_openai_provider_does_not_cache_fallback_after_transient_failure(
+def test_openai_provider_does_not_cache_failure_after_transient_failure(
     tmp_path: Path,
 ) -> None:
     requests: list[httpx.Request] = []
@@ -311,12 +312,13 @@ def test_openai_provider_does_not_cache_fallback_after_transient_failure(
         transport=httpx.MockTransport(handler),
     )
 
-    assert "Acme Dental needs help" in provider.summarize_ticket(_ticket(), _sources())
+    with pytest.raises(ProviderUnavailableError):
+        provider.summarize_ticket(_ticket(), _sources())
     assert provider.summarize_ticket(_ticket(), _sources()) == "Recovered model summary"
     assert len(requests) == 2
 
 
-def test_openai_provider_falls_back_on_connection_error(tmp_path: Path) -> None:
+def test_openai_provider_surfaces_connection_error(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
@@ -325,4 +327,5 @@ def test_openai_provider_falls_back_on_connection_error(tmp_path: Path) -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    assert "local documentation" in provider.summarize_ticket(_ticket(), [])
+    with pytest.raises(ProviderUnavailableError):
+        provider.summarize_ticket(_ticket(), [])

@@ -21,10 +21,15 @@ from wait_local_agent.models import (
     KnowledgeDocumentWrite,
     RestoreExercise,
     ScheduledJob,
+    SmartActionRun,
     Ticket,
     WorkflowRun,
     utc_now,
 )
+
+# Opaque capability used only by SmartActionService.  A boolean flag would make
+# it too easy for an unrelated caller to reach the smart-action state machine.
+SMART_ACTION_APPROVAL_CAPABILITY = object()
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
@@ -164,6 +169,23 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists smart_action_runs (
+                    id integer primary key autoincrement,
+                    action_id text not null,
+                    actor text not null,
+                    status text not null,
+                    payload_digest text not null,
+                    output_json text not null,
+                    evidence_json text not null,
+                    approval_id integer,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists scheduled_jobs (
                     id integer primary key autoincrement,
                     template_id text not null,
@@ -199,6 +221,7 @@ class Store:
             self._ensure_column(connection, "workflow_runs", "client_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
+            self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             connection.execute(
                 """
                 create table if not exists knowledge_chunks (
@@ -467,12 +490,27 @@ class Store:
                 ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
 
-    def get_ticket(self, ticket_id: str) -> Ticket | None:
+    def get_ticket(self, ticket_id: str, client_id: str | None = None) -> Ticket | None:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            row = connection.execute("select * from tickets where id = ?", (ticket_id,)).fetchone()
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from tickets where id = ?", (ticket_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from tickets where id = ? and client_id = ?",
+                    (ticket_id, normalized_client_id),
+                ).fetchone()
         return Ticket(**dict(row)) if row else None
 
+    def get_ticket_for_client(
+        self, ticket_id: str, client_id: str | None = None
+    ) -> Ticket | None:
+        return self.get_ticket(ticket_id, client_id)
+
     def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
+        safe_comment = _redact_text(comment)
         ticket = self.get_ticket(ticket_id)
         with self._connect() as connection:
             connection.execute(
@@ -484,9 +522,9 @@ class Store:
                   comment=excluded.comment,
                   updated_at=excluded.updated_at
                 """,
-                (ticket_id, status, comment, utc_now()),
+                (ticket_id, status, safe_comment, utc_now()),
             )
-        detail = status if not comment else f"{status}: {comment}"
+        detail = status if not safe_comment else f"{status}: {safe_comment}"
         self.add_audit_event(
             "approval.updated",
             ticket_id,
@@ -506,7 +544,7 @@ class Store:
             row = connection.execute(
                 "select comment from approvals where ticket_id = ?", (ticket_id,)
             ).fetchone()
-        return str(row["comment"]) if row else ""
+        return _redact_text(str(row["comment"])) if row else ""
 
     def create_approval_request(
         self,
@@ -517,7 +555,7 @@ class Store:
         client_id: str | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
-        payload_json = json.dumps(payload, sort_keys=True)
+        payload_json = _json_dumps(payload)
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
@@ -553,7 +591,7 @@ class Store:
                 subject_id,
                 "pending",
                 f"{action_type} waiting for technician approval",
-                payload_json,
+                _redact_json_text(payload_json),
                 normalized_client_id,
             )
         request = self.get_approval_request(request_id)
@@ -568,6 +606,8 @@ class Store:
         comment: str = "",
         *,
         approver_id: str | None = None,
+        allow_completed: bool = False,
+        _smart_action_capability: object | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         with self._connect() as connection:
@@ -576,13 +616,21 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            current_status = str(row["status"])
+            is_smart_action = str(row["action_type"]).startswith("smart_action:")
+            if is_smart_action and _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
+                raise PermissionError("smart-action approvals must be updated through SmartActionService")
+            if status not in {"pending", "approved", "rejected"}:
+                raise ValueError("approval status must be pending, approved, or rejected")
+            if current_status != "pending" and not allow_completed:
+                raise PermissionError("approval request has already completed")
             connection.execute(
                 """
                 update approval_requests
                 set status = ?, comment = ?, updated_at = ?, approver_id = coalesce(?, approver_id)
                 where id = ?
                 """,
-                (status, comment, now, approver_id, request_id),
+                (status, _redact_text(comment), now, approver_id, request_id),
             )
             workflow_status = _workflow_status_for_approval(status)
             connection.execute(
@@ -606,8 +654,8 @@ class Store:
                 "approval_request.updated",
                 str(row["subject_id"]),
                 status,
-                comment or f"{row['action_type']} {status}",
-                str(row["payload_json"]),
+                _redact_text(comment or f"{row['action_type']} {status}"),
+                _redact_json_text(str(row["payload_json"])),
                 str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
@@ -619,7 +667,7 @@ class Store:
         self, request_id: int, payload: dict[str, object], comment: str = ""
     ) -> ApprovalRequest:
         now = utc_now()
-        payload_json = json.dumps(payload, sort_keys=True)
+        payload_json = _json_dumps(payload)
         with self._connect() as connection:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
@@ -634,11 +682,11 @@ class Store:
                 set payload_json = ?, comment = ?, updated_at = ?
                 where id = ?
                 """,
-                (payload_json, comment, now, request_id),
+                (payload_json, _redact_text(comment), now, request_id),
             )
             subject_id = str(row["subject_id"])
             action_type = str(row["action_type"])
-            message = comment or f"{action_type} payload edited"
+            message = _redact_text(comment or f"{action_type} payload edited")
             self._add_audit_event(
                 connection,
                 "approval_request.edited",
@@ -652,7 +700,7 @@ class Store:
                 subject_id,
                 "pending",
                 message,
-                payload_json,
+                _redact_json_text(payload_json),
                 str(row["client_id"]) if row["client_id"] is not None else None,
             )
         request = self.get_approval_request(request_id)
@@ -669,7 +717,7 @@ class Store:
         result: dict[str, object],
     ) -> ApprovalRequest:
         now = utc_now()
-        result_json = json.dumps(result, sort_keys=True)
+        result_json = _json_dumps(result)
         with self._connect() as connection:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
@@ -715,7 +763,13 @@ class Store:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
             ).fetchone()
-        return ApprovalRequest(**dict(row)) if row else None
+        if row is None:
+            return None
+        payload = dict(row)
+        payload["comment"] = _redact_text(str(payload["comment"]))
+        payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+        payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
+        return ApprovalRequest(**payload)
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
         normalized_client_id = _normalize_client_id(client_id)
@@ -729,7 +783,14 @@ class Store:
                     "select * from approval_requests where client_id = ? order by id desc",
                     (normalized_client_id,),
                 ).fetchall()
-        return [ApprovalRequest(**dict(row)) for row in rows]
+        requests: list[ApprovalRequest] = []
+        for row in rows:
+            payload = dict(row)
+            payload["comment"] = _redact_text(str(payload["comment"]))
+            payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+            payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
+            requests.append(ApprovalRequest(**payload))
+        return requests
 
     def add_audit_event(
         self,
@@ -795,6 +856,7 @@ class Store:
         payload_json: str,
         client_id: str | None = None,
     ) -> None:
+        payload_json = _redact_json_text(payload_json)
         connection.execute(
             """
             insert into event_history
@@ -834,7 +896,7 @@ class Store:
                     "select * from event_history where client_id = ? order by id desc",
                     (normalized_client_id,),
                 ).fetchall()
-        return [EventHistoryEntry(**dict(row)) for row in rows]
+        return [_event_history_from_row(row) for row in rows]
 
     def create_workflow_run(
         self,
@@ -924,6 +986,251 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def create_smart_action_run(
+        self,
+        action_id: str,
+        actor: str,
+        status: str,
+        payload_digest: str,
+        output: dict[str, object],
+        evidence: list[dict[str, object]],
+        *,
+        approval_id: int | None = None,
+        client_id: str | None = None,
+    ) -> SmartActionRun:
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into smart_action_runs
+                  (action_id, actor, status, payload_digest, output_json,
+                   evidence_json, approval_id, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    actor,
+                    status,
+                    payload_digest,
+                    _json_dumps(output),
+                    _json_dumps_value(evidence),
+                    approval_id,
+                    now,
+                    now,
+                    _normalize_client_id(client_id),
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("smart action run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def create_pending_smart_action(
+        self,
+        action_id: str,
+        actor: str,
+        payload_digest: str,
+        output: dict[str, object],
+        evidence: list[dict[str, object]],
+        approval_payload: dict[str, object],
+        *,
+        client_id: str | None = None,
+    ) -> tuple[SmartActionRun, ApprovalRequest]:
+        """Create a pending run, approval, and audit trail in one transaction."""
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        output_json = _json_dumps(output)
+        evidence_json = _json_dumps_value(evidence)
+        approval_payload_json = _json_dumps(approval_payload)
+        with self._connect() as connection:
+            run_cursor = connection.execute(
+                """
+                insert into smart_action_runs
+                  (action_id, actor, status, payload_digest, output_json,
+                   evidence_json, approval_id, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    actor,
+                    "pending_approval",
+                    payload_digest,
+                    output_json,
+                    evidence_json,
+                    None,
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if run_cursor.lastrowid is None:
+                raise RuntimeError("smart action run insert did not return an id")
+            run_id = int(run_cursor.lastrowid)
+            approval_payload = dict(approval_payload)
+            approval_payload.setdefault("run_id", run_id)
+            approval_payload_json = _json_dumps(approval_payload)
+            approval_cursor = connection.execute(
+                """
+                insert into approval_requests
+                  (subject_id, action_type, payload_json, status, comment,
+                   created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(run_id),
+                    f"smart_action:{action_id}",
+                    approval_payload_json,
+                    "pending",
+                    "",
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            if approval_cursor.lastrowid is None:
+                raise RuntimeError("approval request insert did not return an id")
+            approval_id = int(approval_cursor.lastrowid)
+            connection.execute(
+                "update smart_action_runs set approval_id = ?, updated_at = ? where id = ?",
+                (approval_id, now, run_id),
+            )
+            self._add_audit_event(
+                connection,
+                "approval.requested",
+                str(run_id),
+                f"smart_action:{action_id} approval requested",
+                client_id=normalized_client_id,
+            )
+            self._add_event_history(
+                connection,
+                "approval.requested",
+                str(run_id),
+                "pending",
+                f"smart_action:{action_id} waiting for technician approval",
+                approval_payload_json,
+                normalized_client_id,
+            )
+            self._add_audit_event(
+                connection,
+                "smart_action.invoked",
+                str(run_id),
+                f"{action_id} pending approval",
+                client_id=normalized_client_id,
+            )
+        run = self.get_smart_action_run(run_id)
+        approval = self.get_approval_request(approval_id)
+        if run is None or approval is None:
+            raise RuntimeError("pending smart action was not persisted")
+        return run, approval
+
+    def set_smart_action_run_approval(self, run_id: int, approval_id: int) -> SmartActionRun:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update smart_action_runs set approval_id = ?, updated_at = ? where id = ?",
+                (approval_id, utc_now(), run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def complete_smart_action_run(
+        self,
+        run_id: int,
+        status: str,
+        output: dict[str, object],
+        evidence: list[dict[str, object]],
+        *,
+        approval_id: int | None = None,
+        approver_id: str | None = None,
+        _smart_action_capability: object | None = None,
+    ) -> SmartActionRun:
+        with self._connect() as connection:
+            current = connection.execute(
+                "select * from smart_action_runs where id = ?", (run_id,)
+            ).fetchone()
+            if current is None:
+                raise KeyError(run_id)
+            if _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
+                raise PermissionError("smart-action runs must be completed through SmartActionService")
+            if str(current["status"]) != "pending_approval":
+                raise PermissionError("smart action run has already completed")
+            if status not in {"success", "provider_not_configured", "failed", "rejected"}:
+                raise ValueError("invalid smart action run completion status")
+            linked_approval_id = current["approval_id"]
+            if (
+                approval_id is None
+                or linked_approval_id is None
+                or int(linked_approval_id) != approval_id
+                or not approver_id
+            ):
+                raise PermissionError("smart action completion requires its linked approval and approver")
+            approval = connection.execute(
+                "select action_type, status, approver_id from approval_requests where id = ?",
+                (approval_id,),
+            ).fetchone()
+            if approval is None or not str(approval["action_type"]).startswith("smart_action:"):
+                raise PermissionError("smart action completion requires a linked smart-action approval")
+            if str(approval["status"]) not in {"approved", "rejected"}:
+                raise PermissionError("smart action completion requires a completed approval")
+            if str(approval["approver_id"] or "") != approver_id:
+                raise PermissionError("smart action completion requires the approval approver")
+            cursor = connection.execute(
+                """
+                update smart_action_runs
+                set status = ?, output_json = ?, evidence_json = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    status,
+                    _json_dumps(output),
+                    _json_dumps_value(evidence),
+                    utc_now(),
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_smart_action_run(run_id)
+        if run is None:
+            raise RuntimeError("smart action run was not persisted")
+        return run
+
+    def get_smart_action_run(
+        self, run_id: int, client_id: str | None = None
+    ) -> SmartActionRun | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from smart_action_runs where id = ?", (run_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from smart_action_runs where id = ? and client_id = ?",
+                    (run_id, normalized_client_id),
+                ).fetchone()
+        return SmartActionRun(**dict(row)) if row else None
+
+    def list_smart_action_runs(self, client_id: str | None = None) -> list[SmartActionRun]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from smart_action_runs order by id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "select * from smart_action_runs where client_id = ? order by id desc",
+                    (normalized_client_id,),
+                ).fetchall()
+        return [SmartActionRun(**dict(row)) for row in rows]
 
     def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
         with self._connect() as connection:
@@ -1089,7 +1396,7 @@ class Store:
                 "select * from event_history where subject_id = ? order by id desc",
                 (subject_id,),
             ).fetchall()
-        return [EventHistoryEntry(**dict(row)) for row in rows]
+        return [_event_history_from_row(row) for row in rows]
 
     def upsert_knowledge_document(
         self,
@@ -2378,7 +2685,34 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
 
 
 def _json_dumps(payload: dict[str, object]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return _json_dumps_value(payload)
+
+
+def _json_dumps_value(payload: object) -> str:
+    from wait_local_agent.reports.renderers import redact_value
+
+    return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
+
+
+def _redact_json_text(payload_json: str) -> str:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return payload_json
+    return _json_dumps_value(payload)
+
+
+def _redact_text(value: str) -> str:
+    from wait_local_agent.reports.renderers import redact_text
+
+    return redact_text(value)
+
+
+def _event_history_from_row(row: sqlite3.Row) -> EventHistoryEntry:
+    payload = dict(row)
+    payload["message"] = _redact_text(str(payload["message"]))
+    payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+    return EventHistoryEntry(**payload)
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

@@ -68,6 +68,7 @@ class Settings:
     admin_token: str = ""
     tech_token: str = ""
     viewer_token: str = ""
+    client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
@@ -119,6 +120,7 @@ def load_settings() -> Settings:
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
         viewer_token=os.getenv("WAIT_VIEWER_TOKEN", ""),
+        client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
         vault_path=vault_path,

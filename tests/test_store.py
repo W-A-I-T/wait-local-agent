@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from wait_local_agent.store import Store
+import pytest
+
+from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
 
 def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) -> None:
@@ -21,6 +23,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         workflow_columns = _columns(connection, "workflow_runs")
         scheduled_columns = _columns(connection, "scheduled_jobs")
         knowledge_columns = _columns(connection, "knowledge_documents")
+        smart_action_columns = _columns(connection, "smart_action_runs")
         event_history_columns = _columns(connection, "event_history")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
@@ -37,6 +40,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in workflow_columns
     assert "client_id" in scheduled_columns
     assert "client_id" in knowledge_columns
+    assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
     assert approval is not None and approval["client_id"] is None and approval["approver_id"] is None
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
@@ -111,6 +115,18 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     assert len(store.list_knowledge_documents()) == 2
 
 
+def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {})
+
+    store.update_approval_request(approval.id or 0, "approved")
+
+    with pytest.raises(ValueError, match="approval status"):
+        store.update_approval_request(approval.id or 0, "unknown")
+    with pytest.raises(PermissionError, match="already completed"):
+        store.update_approval_request(approval.id or 0, "rejected")
+
+
 def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
 
@@ -137,6 +153,106 @@ def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     assert [job.id for job in store.list_scheduled_jobs(client_id="acme")] == [acme.id]
     assert [job.id for job in store.list_scheduled_jobs(client_id="")] == [acme.id]
     assert store.get_scheduled_job(beta.id or 0) is None
+
+
+def test_store_smart_action_crud_filters_and_completion_guards(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    acme_run, acme_approval = store.create_pending_smart_action(
+        "dispatch-suggestion",
+        "requester",
+        "digest",
+        {"recommendation": {}},
+        [{"type": "ticket", "ticket_id": "TCK-1"}],
+        {"action_id": "dispatch-suggestion", "payload": {"ticket_id": "TCK-1"}},
+        client_id=" acme ",
+    )
+    beta_run = store.create_smart_action_run(
+        "ticket-triage", "other", "success", "digest", {}, [], client_id="beta"
+    )
+
+    assert acme_run.id is not None and acme_approval.id is not None
+    assert store.get_smart_action_run(acme_run.id, "acme") is not None
+    assert store.get_smart_action_run(acme_run.id, "beta") is None
+    assert [run.client_id for run in store.list_smart_action_runs(client_id="acme")] == ["acme"]
+    assert [run.client_id for run in store.list_smart_action_runs(client_id="")] == ["beta", "acme"]
+    assert store.set_smart_action_run_approval(acme_run.id, acme_approval.id).approval_id == acme_approval.id
+
+    with pytest.raises(PermissionError, match="completed through SmartActionService"):
+        store.complete_smart_action_run(
+            acme_run.id,
+            "success",
+            {},
+            [],
+            approval_id=acme_approval.id,
+            approver_id="tech",
+        )
+    with pytest.raises(PermissionError, match="linked approval"):
+        store.complete_smart_action_run(
+            acme_run.id,
+            "success",
+            {},
+            [],
+            approval_id=acme_approval.id + 1,
+            approver_id="tech",
+            _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+        )
+    with pytest.raises(ValueError, match="invalid smart action"):
+        store.complete_smart_action_run(
+            acme_run.id,
+            "pending",
+            {},
+            [],
+            approval_id=acme_approval.id,
+            approver_id="tech",
+            _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+        )
+    assert beta_run.id is not None
+    with pytest.raises(KeyError):
+        store.set_smart_action_run_approval(99999, acme_approval.id)
+
+
+def test_store_smart_action_completion_requires_approval_and_approver(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    run, approval = store.create_pending_smart_action(
+        "dispatch-suggestion", "requester", "digest", {}, [], {"payload": {}}, client_id="acme"
+    )
+    assert run.id is not None and approval.id is not None
+    with pytest.raises(PermissionError, match="completed approval"):
+        store.complete_smart_action_run(
+            run.id,
+            "success",
+            {},
+            [],
+            approval_id=approval.id,
+            approver_id="tech",
+            _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+        )
+    store.update_approval_request(
+        approval.id,
+        "approved",
+        approver_id="tech",
+        _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+    )
+    completed = store.complete_smart_action_run(
+        run.id,
+        "success",
+        {"approved": True},
+        [],
+        approval_id=approval.id,
+        approver_id="tech",
+        _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+    )
+    assert completed.status == "success"
+    with pytest.raises(PermissionError, match="already completed"):
+        store.complete_smart_action_run(
+            run.id,
+            "success",
+            {},
+            [],
+            approval_id=approval.id,
+            approver_id="tech",
+            _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+        )
 
 
 def _seed_prechange_schema(path: Path) -> None:

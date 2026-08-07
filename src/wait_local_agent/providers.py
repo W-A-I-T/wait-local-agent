@@ -22,6 +22,10 @@ class ModelProvider(Protocol):
         """Return a technician-facing draft response."""
 
 
+class ProviderUnavailableError(RuntimeError):
+    """Raised when a configured model provider cannot produce a completion."""
+
+
 @dataclass(frozen=True)
 class LocalModelProfile:
     provider: str
@@ -63,22 +67,20 @@ class OpenAICompatibleLocalProvider:
         self,
         profile: LocalModelProfile,
         *,
-        fallback: DeterministicLocalProvider | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.profile = profile
-        self._fallback = fallback or DeterministicLocalProvider(profile)
         self._transport = transport
         self._cached_request_key: tuple[str, ...] = ()
         self._cached_completion: ModelCompletion | None = None
 
     def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
-        return self._completion_or_fallback(ticket, sources).summary
+        return self._request_completion_or_raise(ticket, sources).summary
 
     def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
-        return self._completion_or_fallback(ticket, sources).suggested_response
+        return self._request_completion_or_raise(ticket, sources).suggested_response
 
-    def _completion_or_fallback(
+    def _request_completion_or_raise(
         self, ticket: Ticket, sources: list[SourceReference]
     ) -> ModelCompletion:
         request_key = _request_key(ticket, sources)
@@ -87,9 +89,8 @@ class OpenAICompatibleLocalProvider:
 
         completion = self._request_completion(ticket, sources)
         if completion is None:
-            return ModelCompletion(
-                summary=self._fallback.summarize_ticket(ticket, sources),
-                suggested_response=self._fallback.draft_response(ticket, sources),
+            raise ProviderUnavailableError(
+                "openai-compatible provider returned no valid model completion"
             )
         self._cached_request_key = request_key
         self._cached_completion = completion
@@ -127,7 +128,7 @@ class OpenAICompatibleLocalProvider:
                 response = client.post(url, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
-            LOGGER.warning("local model request failed; using deterministic provider: %s", exc)
+            LOGGER.warning("local model provider request failed: %s", exc)
             return None
         return _completion_from_response(response)
 
@@ -174,15 +175,15 @@ def _completion_from_response(response: httpx.Response) -> ModelCompletion | Non
     try:
         payload = response.json()
     except json.JSONDecodeError:
-        LOGGER.warning("local model response was not valid JSON; using deterministic provider")
+        LOGGER.warning("local model response was not valid JSON")
         return None
     content = _message_content(payload)
     if not content:
-        LOGGER.warning("local model response was empty; using deterministic provider")
+        LOGGER.warning("local model response was empty")
         return None
     completion = _completion_from_content(content)
     if completion is None:
-        LOGGER.warning("local model content was malformed; using deterministic provider")
+        LOGGER.warning("local model content was malformed")
     return completion
 
 
