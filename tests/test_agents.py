@@ -55,6 +55,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "ticket-quality",
+        "collector-preview",
         "dispatch-suggestion",
     }
     assert tools["ticket-triage"].access_mode == "read"
@@ -303,6 +304,52 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
     )
     assert completed_run.json()["status"] == "completed"
     assert client.post(f"/agent-runs/{completed_run.json()['run_id']}/retry").status_code == 409
+
+
+def test_collector_preview_tool_reuses_api_rbac_and_redacts_config(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure))
+    viewer = client.post(
+        "/smart-actions/collector-preview/invoke",
+        headers={"Authorization": "Bearer viewer-token"},
+        json={"payload": {"module_id": "host-runtime", "config": {}}},
+    )
+    preview = client.post(
+        "/smart-actions/collector-preview/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"module_id": "host-runtime", "config": {}}},
+    )
+    result = client.post(
+        "/smart-actions/collector-preview/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={
+            "payload": {
+                "module_id": "host-runtime",
+                "config": {"api_key": "supersecret"},
+            }
+        },
+    )
+
+    assert viewer.status_code == 403
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "success"
+    assert result.status_code == 200
+    assert result.json()["status"] == "failed"
+    executions = Store(secure.data_path).list_execution_runs(client_id="acme")
+    assert executions
+    steps = Store(secure.data_path).list_execution_steps(executions[0].id or 0)
+    assert steps
+    assert "supersecret" not in steps[0].input_json
+    audit = Store(secure.data_path).list_audit_events(client_id="acme")
+    assert any(event.event_type == "collector.previewed" for event in audit)
 
 
 def test_agent_scope_and_definition_bounds_are_enforced(settings) -> None:

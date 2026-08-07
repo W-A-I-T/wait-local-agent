@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
-from typing import Literal, Protocol, cast
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
@@ -16,10 +16,24 @@ from wait_local_agent.providers import (
     provider_from_settings,
 )
 from wait_local_agent.rbac import Role
-from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+
+if TYPE_CHECKING:
+    from wait_local_agent.collectors import CollectorPreview
+
+
+class CollectorPreviewProvider(Protocol):
+    def preview(
+        self,
+        module_id: str,
+        config: dict[str, object],
+        *,
+        client_id: str | None = None,
+    ) -> CollectorPreview:
+        """Validate and preview an existing read-only collector."""
 
 ActionStatus = Literal[
     "success",
@@ -54,6 +68,7 @@ class ActionContext:
     actor: str = ""
     client_id: str | None = None
     provider_available: bool = False
+    collector_service: CollectorPreviewProvider | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +358,63 @@ class FindSimilarTicketsAction:
         )
 
 
+class CollectorPreviewAction:
+    manifest = SmartActionManifest(
+        action_id="collector-preview",
+        title="Preview collector operation",
+        description="Validate an existing read-only collector and estimate its local operation.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["module_id"],
+            "properties": {"module_id": "string", "config": "object"},
+        },
+        output_schema={
+            "module_id": "string",
+            "source_name": "string",
+            "estimated_assets": "number",
+            "estimated_observations": "number",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=2,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        module_id = payload.get("module_id")
+        if not isinstance(module_id, str) or not module_id.strip():
+            return _failed("module_id must be a non-empty string")
+        config = payload.get("config", {})
+        if not isinstance(config, dict):
+            return _failed("config must be an object when provided")
+        if context.collector_service is None:
+            return _failed("collector preview service is unavailable")
+        try:
+            preview = context.collector_service.preview(
+                module_id.strip(),
+                config,
+                client_id=context.client_id,
+            )
+        except KeyError:
+            return _failed("collector module is not registered")
+        except ValueError as exc:
+            return _failed(redact_text(str(exc)))
+        except Exception:
+            return _failed("collector preview failed")
+        output = cast(dict[str, object], asdict(preview))
+        output["estimate"] = self.manifest.estimated_minutes_saved
+        evidence = [
+            {
+                "type": "collector_preview",
+                "module_id": module_id.strip(),
+                "scopes": output.get("scopes", []),
+            }
+        ]
+        return ActionResult(status="success", output=output, evidence=evidence)
+
+
 class DispatchSuggestionAction:
     manifest = SmartActionManifest(
         action_id="dispatch-suggestion",
@@ -406,6 +478,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
         TicketQualityAction(),
+        CollectorPreviewAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     ):
@@ -424,11 +497,13 @@ class SmartActionService:
         provider: ModelProvider | None = None,
         registry: SmartActionRegistry | None = None,
         provider_configured: bool | None = None,
+        collector_service: CollectorPreviewProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.provider = provider or provider_from_settings(settings)
         self.registry = registry or default_registry
+        self.collector_service = collector_service
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
             if provider_configured is not None
@@ -719,6 +794,7 @@ class SmartActionService:
             actor=actor or "",
             client_id=client_id,
             provider_available=self.provider_configured,
+            collector_service=self.collector_service,
         )
 
     def _persist_result(

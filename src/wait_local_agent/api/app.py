@@ -263,7 +263,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
-    smart_action_service = SmartActionService(store, active_settings)
+    smart_action_service = SmartActionService(
+        store,
+        active_settings,
+        collector_service=collector_service,
+    )
     agent_service = AgentService(store, active_settings, smart_action_service)
     event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
@@ -1131,10 +1135,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def collector_preview(
         module_id: str,
         payload: CollectorConfigRequest,
-        _: ViewerAccess,
+        context: ViewerAccess,
     ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
         try:
-            return asdict(collector_service.preview(module_id, payload.config))
+            return asdict(
+                collector_service.preview(
+                    module_id,
+                    payload.config,
+                    client_id=scoped_client_id,
+                )
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="collector module not found") from exc
         except ValueError as exc:
