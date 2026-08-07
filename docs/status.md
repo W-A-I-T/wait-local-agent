@@ -20,7 +20,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
 - JSON and CSV event history export.
 - Optional Fernet-backed local secrets vault for connector credentials.
-- Connector setup validation commands for HaloPSA, Hudu, NinjaOne, and Autotask.
+- Connector setup validation commands for HaloPSA, Hudu, IT Glue, NinjaOne, and Autotask.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
@@ -79,7 +79,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Next
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
-- Additional connector families beyond HaloPSA and Hudu.
+- Additional connector families beyond HaloPSA, Hudu, IT Glue, NinjaOne, and Autotask.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
