@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import {
   type EvidenceReport,
   type EvidenceStatus,
@@ -13,10 +13,12 @@ import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 
 type ReportDetail = Record<string, unknown>;
-type EvidenceDisplayStatus = EvidenceStatus | "unavailable";
+type EvidenceDisplayStatus = EvidenceStatus | "loading" | "unavailable";
+type EvidenceLoadState = "loading" | "loaded" | "unavailable";
 
 const EVIDENCE_COPY: Record<"hardening" | "restore", Record<EvidenceDisplayStatus, string>> = {
   hardening: {
+    loading: "Loading hardening evidence",
     not_run: "These checks haven't been run yet",
     no_evidence: "A run was recorded but produced no evidence",
     partial: "Some checks couldn't complete",
@@ -24,6 +26,7 @@ const EVIDENCE_COPY: Record<"hardening" | "restore", Record<EvidenceDisplayStatu
     unavailable: "Evidence couldn't be loaded"
   },
   restore: {
+    loading: "Loading restore drill evidence",
     not_run: "A restore drill hasn't been run yet",
     no_evidence: "A drill was recorded but produced no evidence",
     partial: "Some parts of the restore drill couldn't complete",
@@ -50,19 +53,8 @@ const CHECK_SCOPES: Record<string, string> = {
   updates: "Software updates"
 };
 
-const REMEDIATION_COPY: Record<string, string> = {
-  "api-auth-token": "Set up sign-in protection for this appliance.",
-  "rbac-roles": "Set up access for every operator role.",
-  "vault-permissions": "Set up secure local storage and limit access to this appliance.",
-  "sqlite-permissions": "Limit access to the appliance state file.",
-  "backup-recency": "Create a recent backup, then run these checks again.",
-  "update-channel-pinned": "Set up a trusted source for software updates.",
-  "audit-log": "Ensure this appliance can save activity history.",
-  "data-directory-permissions": "Limit access to the appliance data folder."
-};
-
 export function Reports() {
-  const { role } = useDashboard();
+  const { role, roleResolved } = useDashboard();
   const [reports, setReports] = useState<EvidenceReport[]>([]);
   const [hardeningRuns, setHardeningRuns] = useState<HardeningRun[]>([]);
   const [restoreExercises, setRestoreExercises] = useState<RestoreExercise[]>([]);
@@ -76,10 +68,12 @@ export function Reports() {
   const [restoreEncrypted, setRestoreEncrypted] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [runningAction, setRunningAction] = useState<"hardening" | "restore" | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadState, setLoadState] = useState<EvidenceLoadState>("loading");
+  const [technicalError, setTechnicalError] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoadState("loading");
+    setTechnicalError("");
     try {
       const [reportRows, hardeningRows, restoreRows] = await Promise.all([
         apiFetch<EvidenceReport[]>("/reports"),
@@ -89,12 +83,10 @@ export function Reports() {
       setReports(reportRows);
       setHardeningRuns(sortByLatest(hardeningRows, (run) => run.completed_at || run.started_at));
       setRestoreExercises(sortByLatest(restoreRows, (exercise) => exercise.completed_at || exercise.started_at));
-      setLoaded(true);
-      setLoadFailed(false);
+      setLoadState("loaded");
     } catch (error) {
-      setLoaded(false);
-      setLoadFailed(true);
-      setStatusMessage(error instanceof Error ? error.message : "Unable to load evidence reports.");
+      setLoadState("unavailable");
+      showError(error, "Unable to load evidence reports.", setStatusMessage, setTechnicalError);
     }
   }, []);
 
@@ -114,8 +106,8 @@ export function Reports() {
   const latestRestoreReport = latestReport(reports, "restore_evidence");
   const latestHardeningRun = hardeningRuns[0];
   const latestRestoreExercise = restoreExercises[0];
-  const hardeningStatus = evidenceStatus(latestHardeningReport, latestHardeningRun, loaded, loadFailed);
-  const restoreStatus = evidenceStatus(latestRestoreReport, latestRestoreExercise, loaded, loadFailed);
+  const hardeningStatus = evidenceStatus(latestHardeningReport, latestHardeningRun, loadState);
+  const restoreStatus = evidenceStatus(latestRestoreReport, latestRestoreExercise, loadState);
 
   async function openReport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,7 +118,7 @@ export function Reports() {
       const detail = await apiFetch<ReportExport>(`/reports/${encodeURIComponent(selectedReport.id)}`);
       setSelectedDetail(detail);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to load report detail.");
+      showError(error, "Unable to load report detail.", setStatusMessage, setTechnicalError);
     }
   }
 
@@ -145,7 +137,7 @@ export function Reports() {
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Report export failed.");
+      showError(error, "Report export failed.", setStatusMessage, setTechnicalError);
     }
   }
 
@@ -160,7 +152,7 @@ export function Reports() {
       setStatusMessage("Checks completed. The latest evidence is now shown below.");
       await refresh();
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Checks could not be started.");
+      showError(error, "Checks could not be started.", setStatusMessage, setTechnicalError);
     } finally {
       setRunningAction(null);
     }
@@ -183,7 +175,7 @@ export function Reports() {
       setStatusMessage("Restore drill completed. The latest evidence is now shown below.");
       await refresh();
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Restore drill could not be started.");
+      showError(error, "Restore drill could not be started.", setStatusMessage, setTechnicalError);
     } finally {
       setRunningAction(null);
     }
@@ -192,6 +184,7 @@ export function Reports() {
   return (
     <div className="screen-stack">
       {statusMessage ? <div className="notice" role="status">{statusMessage}</div> : null}
+      {technicalError ? <TechnicalDetails value={technicalError} /> : null}
 
       <EvidencePanel
         title="Hardening posture"
@@ -202,8 +195,9 @@ export function Reports() {
       >
         <RoleGate
           role={role}
+          resolved={roleResolved}
           allowed={["admin"]}
-          fallback={<p className="screen-note">You have read-only access. An administrator can run these checks.</p>}
+          fallback={<p className="screen-note">{roleResolved ? "You have read-only access. An administrator can run these checks." : "Checking your access before actions are available."}</p>}
         >
           <button type="button" disabled={runningAction !== null} onClick={() => void runHardening()}>
             {runningAction === "hardening" ? "Running checks…" : "Run checks now"}
@@ -220,15 +214,16 @@ export function Reports() {
 
       <EvidencePanel
         title="Restore drill evidence"
-        description="A drill restores a backup into a temporary scratch copy and never touches live data."
+        description="A drill restores a backup into an isolated temporary copy. It never replaces live operational records, and records what was verified."
         status={restoreStatus}
         report={latestRestoreReport}
         onExport={exportReport}
       >
         <RoleGate
           role={role}
+          resolved={roleResolved}
           allowed={["admin"]}
-          fallback={<p className="screen-note">You have read-only access. An administrator can run a restore drill.</p>}
+          fallback={<p className="screen-note">{roleResolved ? "You have read-only access. An administrator can run a restore drill." : "Checking your access before actions are available."}</p>}
         >
           <form className="restore-drill-form" onSubmit={runRestoreDrill}>
             <label>
@@ -252,9 +247,9 @@ export function Reports() {
             </button>
           </form>
         </RoleGate>
-        {latestRestoreExercise ? <RestoreExerciseCard exercise={latestRestoreExercise} /> : (
+        {latestRestoreExercise ? <RestoreExerciseCard exercise={latestRestoreExercise} /> : restoreStatus !== "loading" ? (
           <p className="screen-note">Choose a backup copy above to verify that it can be restored safely.</p>
-        )}
+        ) : null}
       </EvidencePanel>
 
       <section className="panel">
@@ -282,7 +277,8 @@ export function Reports() {
             <button type="submit">Load detail</button>
           </div>
         </form>
-        {visibleReports.length === 0 ? <p>No reports available.</p> : null}
+        {loadState === "loading" ? <p>Loading reports…</p> : null}
+        {loadState === "loaded" && visibleReports.length === 0 ? <p>No reports available.</p> : null}
         <div className="table-list">
           {visibleReports.map((report) => (
             <article className="table-row" key={report.id}>
@@ -363,7 +359,7 @@ function HardeningCheckCard({ check }: { check: HardeningCheckResult }) {
       </div>
       <StatusChip status={check.status} />
       <span>Coverage: {CHECK_SCOPES[check.scope] ?? humanize(check.scope)}</span>
-      {failed ? <p className="remediation-hint">Recommended fix: {REMEDIATION_COPY[check.check_id] ?? "Review the technical details, correct the issue, then run this check again."}</p> : null}
+      {failed ? <p className="remediation-hint">Recommended fix: {check.remediation_hint?.trim() || "Review the technical details, correct the issue, then run this check again."}</p> : null}
       <TechnicalDetails value={{ check_id: check.check_id, evidence: check.evidence, remediation_hint: check.remediation_hint }} />
     </article>
   );
@@ -400,14 +396,13 @@ function TechnicalDetails({ value }: { value: unknown }) {
 function evidenceStatus(
   report: EvidenceReport | undefined,
   record: HardeningRun | RestoreExercise | undefined,
-  loaded: boolean,
-  loadFailed: boolean
+  loadState: EvidenceLoadState
 ): EvidenceDisplayStatus {
-  if (loadFailed) {
+  if (loadState === "unavailable") {
     return "unavailable";
   }
-  if (!loaded) {
-    return "not_run";
+  if (loadState === "loading") {
+    return "loading";
   }
   if (report?.evidence_status) {
     return report.evidence_status;
@@ -416,6 +411,21 @@ function evidenceStatus(
     return "not_run";
   }
   return record.status === "completed" || record.status === "passed" ? "completed" : "partial";
+}
+
+function showError(
+  error: unknown,
+  fallback: string,
+  setMessage: (message: string) => void,
+  setTechnicalError: (detail: string) => void
+) {
+  if (error instanceof ApiRequestError) {
+    setMessage(error.message);
+    setTechnicalError(error.technicalDetail);
+    return;
+  }
+  setMessage(fallback);
+  setTechnicalError(error instanceof Error ? error.message : fallback);
 }
 
 function latestReport(reports: EvidenceReport[], reportType: string): EvidenceReport | undefined {

@@ -977,7 +977,16 @@ dd svg {
   font-size: 0.9rem;
 }
 
-.evidence-not_run,
+.evidence-loading {
+  background: #eaf0ff;
+  border-color: #c4cff2;
+}
+
+.evidence-not_run {
+  background: #eef2f0;
+  border-color: #d2dbd7;
+}
+
 .evidence-partial {
   background: #fff8e6;
   border-color: #ead49b;

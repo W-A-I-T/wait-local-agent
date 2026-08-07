@@ -2,10 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Reports } from "../src/screens/Reports";
 
-const dashboard = vi.hoisted(() => ({ role: "admin" as "admin" | "viewer" }));
+const dashboard = vi.hoisted(() => ({ role: "admin" as "admin" | "viewer", roleResolved: true }));
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ role: dashboard.role })
+  useDashboard: () => ({ role: dashboard.role, roleResolved: dashboard.roleResolved })
 }));
 
 const stateCopy = {
@@ -18,6 +18,7 @@ const stateCopy = {
 describe("Reports evidence views", () => {
   beforeEach(() => {
     dashboard.role = "admin";
+    dashboard.roleResolved = true;
     vi.stubGlobal("fetch", vi.fn(baseFetch));
   });
 
@@ -83,7 +84,7 @@ describe("Reports evidence views", () => {
 
     render(<Reports />);
 
-    expect(await screen.findByText("Recommended fix: Create a recent backup, then run these checks again.")).toBeInTheDocument();
+    expect(await screen.findByText("Recommended fix: Create a backup newer than the configured recency window.")).toBeInTheDocument();
     expect(screen.getByText("Priority: High")).toBeInTheDocument();
     expect(screen.getByText("Coverage: Stored appliance data")).toBeInTheDocument();
     expect(screen.getByText("Verified 2 stored record groups")).toBeInTheDocument();
@@ -99,6 +100,28 @@ describe("Reports evidence views", () => {
     expect(screen.getByText("You have read-only access. An administrator can run a restore drill.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run checks now" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run a restore drill" })).not.toBeInTheDocument();
+  });
+
+  it("never presents a slow evidence fetch as not run", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+
+    render(<Reports />);
+
+    expect(screen.getByText("Loading hardening evidence")).toBeInTheDocument();
+    expect(screen.getByText("Loading restore drill evidence")).toBeInTheDocument();
+    expect(screen.queryByText("These checks haven't been run yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("A restore drill hasn't been run yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not run yet")).not.toBeInTheDocument();
+  });
+
+  it("shows a plain-language transport error and keeps its raw detail technical", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Response(JSON.stringify({ detail: "backend rejection" }), { status: 403 })));
+
+    render(<Reports />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("You do not have permission to do that. Check your access and try again.");
+    const technicalDetail = screen.getByText(/\/reports failed with HTTP 403/);
+    expect(technicalDetail.closest("details")).toBeInTheDocument();
   });
 
   it("exposes downloadable JSON and Markdown exports for both evidence reports", async () => {

@@ -1,14 +1,43 @@
 import { apiUrl } from "../lib/config";
 import { buildApiHeaders } from "./headers";
 
+export class ApiRequestError extends Error {
+  readonly technicalDetail: string;
+  readonly status?: number;
+
+  constructor(message: string, technicalDetail: string, status?: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.technicalDetail = technicalDetail;
+    this.status = status;
+  }
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(buildApiHeaders(Boolean(init.body)));
   new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-  const response = await fetch(apiUrl(path), { ...init, headers });
-  const payload = await readResponsePayload(response);
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), { ...init, headers });
+  } catch (error) {
+    throw new ApiRequestError(
+      "We couldn't connect to the appliance. Check that it is available, then try again.",
+      `${path} request could not be completed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readResponsePayload(response);
+  } catch (error) {
+    throw new ApiRequestError(
+      "The appliance sent an unreadable response. Try again.",
+      `${path} response could not be read: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   if (!response.ok) {
-    throw new Error(`${path} failed with HTTP ${response.status}${errorSuffix(payload)}`);
+    throw new ApiRequestError(apiErrorMessage(response.status), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status);
   }
 
   return payload as T;
@@ -38,4 +67,20 @@ function errorSuffix(payload: unknown): string {
     }
   }
   return "";
+}
+
+function apiErrorMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return "You do not have permission to do that. Check your access and try again.";
+  }
+  if (status === 404) {
+    return "That information is no longer available. Refresh and try again.";
+  }
+  if (status === 409) {
+    return "That action conflicts with the appliance's current state. Refresh and try again.";
+  }
+  if (status >= 500) {
+    return "The appliance couldn't complete the request. Try again shortly.";
+  }
+  return "The request could not be completed. Check the details and try again.";
 }

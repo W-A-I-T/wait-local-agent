@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch } from "../../api/client";
+import { ApiRequestError, apiFetch } from "../../api/client";
 import { FolderPicker } from "../../components/FolderPicker";
 import { Wizard, type WizardStep } from "../../components/Wizard";
 
@@ -51,11 +51,7 @@ export function FounderJourney() {
   }, []);
 
   function isFounderUnavailable(error: unknown): boolean {
-    return typeof error === "string"
-      ? /HTTP 501/.test(error)
-      : error instanceof Error
-        ? /HTTP 501/.test(error.message)
-        : false;
+    return error instanceof ApiRequestError && error.status === 501;
   }
 
   async function loadScan(path = scanPath): Promise<boolean> {

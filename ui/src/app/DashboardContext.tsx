@@ -48,6 +48,7 @@ type DashboardContextValue = {
   refreshErrors: string[];
   statusMessage: string;
   loading: boolean;
+  roleResolved: boolean;
   busyId: number | "draft" | null;
   selectedTicketId: string;
   canWrite: boolean;
@@ -70,7 +71,8 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
-  const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
+  const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [roleResolved, setRoleResolved] = useState(false);
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
@@ -91,6 +93,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setRole("viewer");
+    setRoleResolved(false);
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
       const results = await Promise.allSettled([
@@ -112,6 +116,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       });
 
       setRole(auth.role);
+      setRoleResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
       setHaloTickets(asArray(ticketResponse.items));
@@ -123,6 +128,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
     } catch (error) {
+      setRole("viewer");
+      setRoleResolved(false);
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
     } finally {
       setLoading(false);
@@ -251,10 +258,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       refreshErrors,
       statusMessage,
       loading,
+      roleResolved,
       busyId,
       selectedTicketId,
-      canWrite: role !== "viewer",
-      isAdmin: role === "admin",
+      canWrite: roleResolved && role !== "viewer",
+      isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       setApiToken,
@@ -286,6 +294,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     executeApproval,
     haloTickets,
     loading,
+    roleResolved,
     refresh,
     refreshErrors,
     role,
