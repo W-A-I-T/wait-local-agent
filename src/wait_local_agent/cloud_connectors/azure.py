@@ -6,6 +6,13 @@ from datetime import date, datetime
 from importlib import import_module
 from typing import Any
 
+from wait_local_agent.cloud_connectors._safe import (
+    provider_outcome,
+    result_errors,
+    result_status,
+    truncation_outcome,
+)
+
 
 class _FallbackAzureError(Exception):
     """Fallback for test environments where Azure SDK packages are not installed yet."""
@@ -76,6 +83,28 @@ class AzureInventoryConnector:
             "shell": False,
         }
 
+    def preflight(self, config: AzureConfig = None) -> None:
+        """Verify access to the configured subscription with a read-only GET."""
+        session = self._session(config)
+        subscription_id = config.get("subscription_id", "") if isinstance(config, Mapping) else ""
+        if not subscription_id:
+            subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+        authorization = self._client(session, "authorization")
+        role_definitions = getattr(authorization, "role_definitions", None)
+        role_definition_list = getattr(role_definitions, "list", None)
+        if callable(role_definition_list):
+            response = role_definition_list(scope=f"/subscriptions/{subscription_id}")
+            # Azure management SDK list calls return lazy ItemPaged objects.  Pull
+            # the first item so credential and authorization failures surface here.
+            if response is not None:
+                next(iter(response), None)
+        else:
+            # The authorization client is already a shipped dependency; this fallback
+            # keeps lightweight test and compatibility sessions usable.
+            response = authorization.role_assignments.list_for_subscription()
+            if response is not None:
+                next(iter(response), None)
+
     def validate_config(self, config: AzureConfig = None) -> dict[str, Any]:
         errors: list[str] = []
         if config is not None and not isinstance(config, Mapping):
@@ -118,21 +147,7 @@ class AzureInventoryConnector:
         return self._collect_result(config, preview=False, default_limit=None)
 
     def _collect_result(self, config: AzureConfig, *, preview: bool, default_limit: int | None) -> dict[str, Any]:
-        limit = self._config_limit(config, default=default_limit)
-        if limit == 0:
-            return self._result([], preview=preview)
-
-        session = self._session(config)
-        records = [
-            *self._virtual_machine_records(session),
-            *self._storage_account_records(session),
-            *self._network_security_group_records(session),
-            *self._role_assignment_records(session),
-        ]
-        records.sort(key=lambda record: str(record["asset_id"]))
-        if limit is not None:
-            records = records[:limit]
-        return self._result(records, preview=preview)
+        return self.collect_detailed(config, preview=preview)["result"]
 
     @staticmethod
     def _config_limit(config: AzureConfig, default: int | None) -> int | None:
@@ -159,12 +174,12 @@ class AzureInventoryConnector:
     def _client(session: Any, service_name: str) -> Any:
         return session.client(service_name)
 
-    def _virtual_machine_records(self, session: Any) -> list[dict[str, Any]]:
+    def _virtual_machine_records(self, session: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             compute = self._client(session, "compute")
             response = compute.virtual_machines.list_all()
         except AZURE_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for virtual_machine in response:
@@ -192,12 +207,12 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _storage_account_records(self, session: Any) -> list[dict[str, Any]]:
+    def _storage_account_records(self, session: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             storage = self._client(session, "storage")
             response = storage.storage_accounts.list()
         except AZURE_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for storage_account in response:
@@ -224,12 +239,12 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _network_security_group_records(self, session: Any) -> list[dict[str, Any]]:
+    def _network_security_group_records(self, session: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             network = self._client(session, "network")
             response = network.network_security_groups.list_all()
         except AZURE_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for security_group in response:
@@ -255,12 +270,12 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _role_assignment_records(self, session: Any) -> list[dict[str, Any]]:
+    def _role_assignment_records(self, session: Any, *, strict: bool = True) -> list[dict[str, Any]]:
         try:
             authorization = self._client(session, "authorization")
             response = authorization.role_assignments.list_for_subscription()
         except AZURE_ERROR_TYPES:
-            return []
+            raise
 
         records: list[dict[str, Any]] = []
         for assignment in response:
@@ -286,16 +301,63 @@ class AzureInventoryConnector:
             )
         return records
 
-    def _result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
+    def collect_detailed(self, config: AzureConfig = None, *, preview: bool = False) -> dict[str, Any]:
+        validation = self.validate_config(config)
+        if not validation["ok"]:
+            return {"result": self._invalid_result(validation["errors"]), "outcomes": []}
+        limit = self._config_limit(config, default=10 if preview else None)
+        if limit == 0:
+            limit_outcomes = [truncation_outcome(f"{self.module_id}:limit", limit=limit)]
+            return {
+                "result": self._result([], preview=preview, outcomes=limit_outcomes),
+                "outcomes": limit_outcomes,
+            }
+        session = self._session(config)
+        records: list[dict[str, Any]] = []
+        outcomes: list[dict[str, Any]] = []
+        sources = (
+            ("compute:virtual-machines", lambda: self._virtual_machine_records(session, strict=True)),
+            ("storage:accounts", lambda: self._storage_account_records(session, strict=True)),
+            ("network:security-groups", lambda: self._network_security_group_records(session, strict=True)),
+            ("authorization:role-assignments", lambda: self._role_assignment_records(session, strict=True)),
+        )
+        for source_id, read_source in sources:
+            try:
+                source_records = read_source()
+            except Exception as exc:
+                outcomes.append(
+                    provider_outcome(
+                        source_id,
+                        exc,
+                        permission_hint=(
+                            "Grant the Azure read-only permissions listed in docs/cloud-permissions-azure.md."
+                        ),
+                    )
+                )
+            else:
+                records.extend(source_records)
+        records.sort(key=lambda record: str(record["asset_id"]))
+        truncated = limit is not None and len(records) > limit
+        if limit is not None:
+            records = records[:limit]
+        if truncated and limit is not None:
+            outcomes.append(truncation_outcome(f"{self.module_id}:limit", limit=limit))
+        return {"result": self._result(records, preview=preview, outcomes=outcomes), "outcomes": outcomes}
+
+    def _result(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        preview: bool,
+        outcomes: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> dict[str, Any]:
         assets = [self._asset(record) for record in records]
-        observations = [
-            observation
-            for record in records
-            for observation in self._observations(record)
-        ]
-        return {
+        observations = [observation for record in records for observation in self._observations(record)]
+        status = result_status(len(assets), outcomes)
+        result = {
             "module_id": self.module_id,
-            "ok": True,
+            "ok": status in {"success", "empty"},
+            "status": status,
             "preview": preview,
             "assets": assets,
             "observations": observations,
@@ -308,6 +370,10 @@ class AzureInventoryConnector:
             ],
             "count": len(assets),
         }
+        errors = result_errors(outcomes)
+        if errors:
+            result["errors"] = errors
+        return result
 
     @staticmethod
     def _invalid_result(errors: list[str]) -> dict[str, Any]:

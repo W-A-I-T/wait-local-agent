@@ -3905,3 +3905,16 @@ TypedWebServicesCollector = WebServicesCollector
 default_registry.register(RoutingTableCollector())
 default_registry.register(EndpointAgentsCollector())
 default_registry.register(WebServicesCollector())
+
+
+from wait_local_agent.cloud_connectors.adapters import (  # noqa: E402
+    AwsCloudAdapter,
+    AzureCloudAdapter,
+    GcpCloudAdapter,
+    M365CloudAdapter,
+)
+
+default_registry.register(AwsCloudAdapter())
+default_registry.register(AzureCloudAdapter())
+default_registry.register(GcpCloudAdapter())
+default_registry.register(M365CloudAdapter())

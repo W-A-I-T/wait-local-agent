@@ -11,6 +11,7 @@ export function AppShell() {
     clearApiToken,
     refresh,
     role,
+    roleResolved,
     writeHealth,
     liveWritesReady,
     statusMessage,
@@ -47,7 +48,7 @@ export function AppShell() {
             <button className="icon-button" type="button" onClick={() => void clearApiToken()}>
               Clear Token
             </button>
-            <div className="status-pill">Role: {role}</div>
+            <div className="status-pill">Role: {roleResolved ? role : "checking access"}</div>
             <div className={`status-pill ${liveWritesReady ? "" : "danger"}`}>
               {liveWritesReady ? (
                 <CheckCircle2 size={18} aria-hidden="true" />

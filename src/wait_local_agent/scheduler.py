@@ -96,6 +96,8 @@ class SchedulerManager:
                 scheduled_job.template_id,
                 ticket_id,
                 client_id=client_id,
+                actor="scheduler",
+                trigger_source="scheduler",
             )
         except Exception as exc:
             self._store.add_audit_event(

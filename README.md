@@ -113,6 +113,15 @@ wait-local-agent update check
 wait-local-agent packs status
 ```
 
+Cloud inventory connectors are governed read-only adapters for AWS, Azure,
+GCP, and Microsoft 365. They require a vault credential reference and never
+persist credential material. See the provider-specific permission guides:
+
+- [AWS](docs/cloud-permissions-aws.md)
+- [Azure](docs/cloud-permissions-azure.md)
+- [GCP](docs/cloud-permissions-gcp.md)
+- [Microsoft 365](docs/cloud-permissions-m365.md)
+
 ## Authentication and Demo Mode
 
 Demo mode keeps local walkthroughs simple:

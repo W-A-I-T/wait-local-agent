@@ -8,6 +8,7 @@ from typing import Literal, Protocol, cast
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
+from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
     ModelProvider,
@@ -399,6 +400,15 @@ class SmartActionService:
                 f"{normalized_id} not_authorized",
                 client_id=effective_client_id,
             )
+            self._record_execution(
+                normalized_id,
+                run.id,
+                normalized_payload,
+                result,
+                actor="",
+                client_id=effective_client_id,
+                trigger_source="invoke",
+            )
             return _result_with_run(result, run.id)
 
         if action.manifest.requires_approval:
@@ -411,6 +421,7 @@ class SmartActionService:
                     draft,
                     confirm=confirm,
                     client_id=effective_client_id,
+                    payload=normalized_payload,
                 )
             pending_output = cast(dict[str, object], redact_value({**draft.output, "approval_required": True}))
             run, approval = self.store.create_pending_smart_action(
@@ -427,15 +438,22 @@ class SmartActionService:
             )
             if approval.id is None:
                 raise RuntimeError("smart action approval was not persisted")
-            return _result_with_run(
-                ActionResult(
-                    status="pending_approval",
-                    output=pending_output,
-                    evidence=draft.evidence,
-                    approval_id=approval.id,
-                ),
-                run.id or 0,
+            pending_result = ActionResult(
+                status="pending_approval",
+                output=pending_output,
+                evidence=draft.evidence,
+                approval_id=approval.id,
             )
+            self._record_execution(
+                normalized_id,
+                run.id,
+                normalized_payload,
+                pending_result,
+                actor=actor,
+                client_id=effective_client_id,
+                trigger_source="invoke",
+            )
+            return _result_with_run(pending_result, run.id or 0)
 
         result = _safe_run(action, context, normalized_payload)
         return self._persist_result(
@@ -445,6 +463,7 @@ class SmartActionService:
             result,
             confirm=confirm,
             client_id=effective_client_id,
+            payload=normalized_payload,
         )
 
     def complete_approval(
@@ -487,13 +506,24 @@ class SmartActionService:
                 client_id=approval.client_id,
                 approver_id=approver,
             )
-            return ActionResult(
+            rejected_result = ActionResult(
                 status="rejected",
                 output=_json_object(run.output_json),
                 evidence=_json_list(run.evidence_json),
                 run_id=run.id,
                 approval_id=approval_id,
             )
+            self._record_execution(
+                action_id,
+                run.id,
+                {"approval_id": approval_id, "approval_status": approval.status},
+                rejected_result,
+                actor=run.actor,
+                client_id=approval.client_id,
+                trigger_source="approval_completion",
+                step_kind="smart_action.approval_completed",
+            )
+            return rejected_result
         if approval.status != "approved":
             return ActionResult(
                 status="pending_approval",
@@ -544,16 +574,24 @@ class SmartActionService:
             client_id=approval.client_id,
             approver_id=approver,
         )
-        return _result_with_run(
-            ActionResult(
-                status=result.status,
-                output=result.output,
-                evidence=result.evidence,
-                error_detail=result.error_detail,
-                approval_id=approval_id,
-            ),
-            run.id,
+        final_result = ActionResult(
+            status=result.status,
+            output=result.output,
+            evidence=result.evidence,
+            error_detail=result.error_detail,
+            approval_id=approval_id,
         )
+        self._record_execution(
+            action_id,
+            run.id,
+            {"approval_id": approval_id, "approval_status": approval.status},
+            final_result,
+            actor=run.actor,
+            client_id=approval.client_id,
+            trigger_source="approval_completion",
+            step_kind="smart_action.approval_completed",
+        )
+        return _result_with_run(final_result, run.id)
 
     def update_approval(
         self,
@@ -611,6 +649,7 @@ class SmartActionService:
         *,
         confirm: bool,
         client_id: str | None = None,
+        payload: dict[str, object] | None = None,
     ) -> ActionResult:
         safe_result = _redact_result(result)
         run = self.store.create_smart_action_run(
@@ -636,7 +675,63 @@ class SmartActionService:
             f"{action_id} {result.status}",
             client_id=client_id,
         )
+        self._record_execution(
+            action_id,
+            run.id,
+            payload if payload is not None else {},
+            result=safe_result,
+            actor=actor,
+            client_id=client_id,
+            trigger_source="invoke",
+        )
         return _result_with_run(safe_result, run.id)
+
+    def _record_execution(
+        self,
+        action_id: str,
+        run_id: int | None,
+        payload: dict[str, object],
+        result: ActionResult,
+        *,
+        actor: str,
+        client_id: str | None,
+        trigger_source: str,
+        step_kind: str = "smart_action.invoke",
+    ) -> None:
+        """Record the run for observability; never changes the run outcome."""
+        step = StepRecord(
+            kind=step_kind,
+            name=action_id,
+            status=result.status,
+            input=payload,
+            output=result.output,
+            error_detail=result.error_detail,
+        )
+        artifacts: tuple[ArtifactRecord, ...] = ()
+        if result.evidence:
+            artifacts = (
+                ArtifactRecord(
+                    name="evidence.json",
+                    media_type="application/json",
+                    content=json.dumps(
+                        redact_value(result.evidence),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8"),
+                    step_ordinal=None,
+                ),
+            )
+        ExecutionRecorder(self.store).record_execution(
+            run_kind="smart_action",
+            source_run_id=run_id,
+            actor=actor,
+            status=result.status,
+            trigger_source=trigger_source,
+            client_id=client_id,
+            steps=(step,),
+            artifacts=artifacts,
+        )
 
 
 def _safe_run(action: SmartAction, context: ActionContext, payload: dict[str, object]) -> ActionResult:

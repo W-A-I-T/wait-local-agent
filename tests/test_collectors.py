@@ -41,6 +41,10 @@ def test_default_registry_exposes_typed_local_collectors() -> None:
     modules = default_registry.list()
 
     assert [module.manifest.id for module in modules] == [
+        "cloud-aws",
+        "cloud-azure",
+        "cloud-gcp",
+        "cloud-m365",
         "database-inventory",
         "endpoint-agents",
         "firewall-rules",
@@ -54,6 +58,11 @@ def test_default_registry_exposes_typed_local_collectors() -> None:
     ]
     for module in modules:
         if module.manifest.id == "host-runtime":
+            continue
+        if module.manifest.id.startswith("cloud-"):
+            assert module.manifest.platforms == ("cloud",)
+            assert len(module.manifest.config_schema) >= 2
+            assert module.manifest.config_schema[0]["type"] == "secret_ref"
             continue
         assert module.manifest.platforms == ("linux",)
         assert len(module.manifest.config_schema) == 1

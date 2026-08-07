@@ -55,6 +55,23 @@ class FakeAsyncCollection(FakeCollectionBase):
         return self._response()
 
 
+class PagedCollection(FakeCollection):
+    def __init__(self, pages: list[list[Any]]) -> None:
+        super().__init__(pages[0])
+        self.pages = pages
+        self.page_index = 0
+
+    def get(self) -> FakeCollectionResponse:
+        response: FakeCollectionResponse = {"value": self.pages[self.page_index]}
+        if self.page_index + 1 < len(self.pages):
+            response["@odata.nextLink"] = f"https://graph.example/page/{self.page_index + 1}"
+        return response
+
+    def with_url(self, url: str) -> PagedCollection:
+        self.page_index = int(url.rsplit("/", 1)[-1])
+        return self
+
+
 class FakeClient:
     def __init__(
         self,
@@ -375,7 +392,9 @@ def test_preview_marks_preview_and_uses_default_limit() -> None:
         }
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("truncated" in error for error in result["errors"])
     assert result["preview"] is True
     assert result["count"] == 10
 
@@ -392,7 +411,9 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"client": FakeClient(), "limit": 2})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 2
     assert [item["canonical_asset"]["asset_id"] for item in result["items"]] == [
         "m365:application:a1",
@@ -404,7 +425,9 @@ def test_collect_with_limit_zero_returns_empty_without_clients() -> None:
     client = FakeClient()
     result = _connector().collect({"client": client, "limit": 0})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("capped at 0 assets" in error for error in result["errors"])
     assert result["preview"] is False
     assert result["items"] == []
     assert result["assets"] == []
@@ -439,7 +462,9 @@ def test_m365_error_for_one_resource_type_is_swallowed() -> None:
     result = _connector().collect({"client": FakeClient(fail_users=True)})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert "m365:user:u1" not in asset_ids
     assert asset_ids == [
         "m365:application:a1",
@@ -462,7 +487,9 @@ def test_m365_errors_are_isolated_per_resource_type(client: FakeClient, absent_a
     result = _connector().collect({"client": client})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert absent_asset_id not in asset_ids
     assert len(asset_ids) == 4
 
@@ -566,3 +593,29 @@ def test_resolves_async_graph_get_calls() -> None:
 
 def test_format_value_supports_plain_dates() -> None:
     assert _connector()._format_value(date(2026, 7, 19)) == "2026-07-19"
+
+
+def test_public_collect_follows_graph_next_links() -> None:
+    users = PagedCollection(
+        [
+            [SimpleNamespace(id="u-page-1", display_name="Page 1")],
+            [SimpleNamespace(id="u-page-2", display_name="Page 2")],
+        ]
+    )
+    client = SimpleNamespace(
+        users=users,
+        groups=FakeCollection([]),
+        applications=FakeCollection([]),
+        service_principals=FakeCollection([]),
+        identity=SimpleNamespace(
+            conditional_access=SimpleNamespace(policies=FakeCollection([]))
+        ),
+    )
+
+    result = _connector().collect({"client": client})
+
+    assert result["ok"] is True
+    assert {asset["asset_id"] for asset in result["assets"]} == {
+        "m365:user:u-page-1",
+        "m365:user:u-page-2",
+    }

@@ -119,6 +119,19 @@ export type KnowledgeChunk = {
   client_id?: string | null;
 };
 
+export type CollectorConfigFieldOption = string | { value: string; label?: string };
+
+export type CollectorConfigField = {
+  name: string;
+  label?: string;
+  help?: string;
+  type?: string;
+  required?: boolean;
+  default?: unknown;
+  options?: CollectorConfigFieldOption[];
+  items?: { type?: string };
+};
+
 export type CollectorModule = {
   id: string;
   name: string;
@@ -127,11 +140,29 @@ export type CollectorModule = {
   capabilities: string[];
   scopes: string[];
   report_types: string[];
+  platforms?: string[];
+  config_schema?: CollectorConfigField[];
 };
 
 export type CollectorConfigPayload = {
-  config: Record<string, string | number | boolean | null>;
+  config: Record<string, unknown>;
   client_id?: string;
+};
+
+export type CollectorSourceOutcome = {
+  source_id: string;
+  status: string;
+  record_count?: number;
+  error_code?: string | null;
+  error_detail?: string | null;
+  remediation_hint?: string | null;
+};
+
+export type CollectorRunResult = {
+  status?: string;
+  collection_scope?: string;
+  source_outcomes?: CollectorSourceOutcome[];
+  metadata?: Record<string, unknown>;
 };
 
 export type CollectorRunPayload = CollectorConfigPayload & {
@@ -168,6 +199,8 @@ export type CollectorRun = {
   message?: string | null;
   client_id?: string | null;
   actor_id?: string | null;
+  result_status?: string | null;
+  result_json?: string;
 };
 
 export type CollectorRunDetail = CollectorRun & {
@@ -194,6 +227,49 @@ export type ReportExport = {
   subject: string;
   metadata: Record<string, unknown>;
   sections: Record<string, unknown>[];
+};
+
+export type EvidenceStatus = "not_run" | "no_evidence" | "partial" | "completed";
+
+export type HardeningCheckResult = {
+  id: number | null;
+  run_id: number;
+  check_id: string;
+  title: string;
+  scope: string;
+  severity: string;
+  status: string;
+  evidence: Record<string, unknown>;
+  remediation_hint: string | null;
+};
+
+export type HardeningRun = {
+  id: number | null;
+  status: string;
+  started_at: string;
+  completed_at: string;
+  expected_check_count: number;
+  result_count: number;
+  results: HardeningCheckResult[];
+};
+
+export type RestoreExercise = {
+  id: number | null;
+  exercise_id: string;
+  status: string;
+  target: string;
+  backup_artifact_id: string;
+  validation_json: string;
+  evidence_json: string;
+  started_at: string;
+  completed_at: string;
+};
+
+export type EvidenceReport = ReportSummary & {
+  title?: string;
+  evidence_status?: EvidenceStatus;
+  metadata?: Record<string, unknown>;
+  sections?: Record<string, unknown>[];
 };
 
 export type AuditEvent = {

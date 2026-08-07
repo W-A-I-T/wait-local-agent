@@ -7,20 +7,18 @@ from typing import Any
 
 from wait_local_agent.reports.models import GeneratedReport, ReportFormat
 
-SENSITIVE_KEY_PARTS = (
-    "secret",
-    "token",
-    "api_key",
-    "password",
-    "apikey",
-    "auth_token",
-    "bearer",
-    "authorization",
-    "x-api-key",
-    "client_secret",
-    "access_token",
-    "credential",
-    "private_key",
+SENSITIVE_KEY_TOKENS = frozenset(
+    {
+        "key",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "credential",
+        "authorization",
+        "bearer",
+        "private",
+    }
 )
 
 REDACTED = "[redacted]"
@@ -36,11 +34,27 @@ _AWS_ACCESS_KEY_PATTERN = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 def redact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     redacted: dict[str, Any] = {}
     for key, value in payload.items():
-        if any(part in key.lower() for part in SENSITIVE_KEY_PARTS):
+        if _is_sensitive_key(key):
             redacted[key] = REDACTED
         else:
             redacted[key] = redact_value(value)
     return redacted
+
+
+def _normalized_key_tokens(key: object) -> tuple[str, ...]:
+    """Split keys at camel-case and separator boundaries before matching."""
+
+    normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", str(key))
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized)
+    normalized = re.sub(r"[^A-Za-z0-9]+", " ", normalized).lower()
+    return tuple(normalized.split())
+
+
+def _is_sensitive_key(key: object) -> bool:
+    # Exact tokens avoid substring false positives such as ``monkey`` and
+    # ``keyboard`` while still matching ``key``, ``api-key``, and ``apiKey``.
+    tokens = _normalized_key_tokens(key)
+    return bool(SENSITIVE_KEY_TOKENS.intersection(tokens)) or "".join(tokens) in SENSITIVE_KEY_TOKENS
 
 
 def redact_value(value: Any) -> Any:

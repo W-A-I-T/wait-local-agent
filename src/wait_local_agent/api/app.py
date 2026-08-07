@@ -13,7 +13,7 @@ from typing import Annotated, Literal, cast
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -70,6 +70,10 @@ from wait_local_agent.lp_client import (
     LaunchPassportPayloadTooLarge,
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
+)
+from wait_local_agent.observability import (
+    ESTIMATED_MINUTES_SAVED_DERIVATION,
+    build_analytics_summary,
 )
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import AuthContext, Role, require_role
@@ -1070,7 +1074,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def run_workflow(
         template_id: str,
         request: WorkflowRunRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
             return asdict(
@@ -1079,6 +1083,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     template_id,
                     request.ticket_id,
                     client_id=request.client_id,
+                    actor=context.approver_id or "api",
+                    trigger_source="api",
                 )
             )
         except KeyError as exc:
@@ -1119,6 +1125,94 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
             ],
         }
+
+    @app.get("/executions")
+    def executions(
+        context: ViewerAccess,
+        kind: str | None = None,
+        status: str | None = None,
+        started_from: Annotated[str | None, Query(alias="from")] = None,
+        started_to: Annotated[str | None, Query(alias="to")] = None,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [
+            _execution_run_view(run)
+            for run in store.list_execution_runs(
+                client_id=scoped_client_id,
+                run_kind=kind,
+                status=status,
+                started_from=started_from,
+                started_to=started_to,
+            )
+        ]
+
+    @app.get("/executions/{execution_id}")
+    def execution_detail(
+        execution_id: int, context: ViewerAccess, client_id: str | None = None
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="execution not found")
+        run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+        if run is None or run.id is None:
+            raise HTTPException(status_code=404, detail="execution not found")
+        return {
+            **_execution_run_view(run),
+            "steps": [
+                _execution_step_view(step) for step in store.list_execution_steps(run.id)
+            ],
+            "artifacts": [
+                _execution_artifact_view(artifact)
+                for artifact in store.list_execution_artifacts(run.id)
+            ],
+        }
+
+    @app.get("/executions/{execution_id}/artifacts/{artifact_id}")
+    def execution_artifact_download(
+        execution_id: int,
+        artifact_id: int,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> FileResponse:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="execution artifact not found")
+        run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+        if run is None or run.id is None:
+            raise HTTPException(status_code=404, detail="execution artifact not found")
+        artifact = store.get_execution_artifact(artifact_id)
+        if artifact is None or artifact.execution_run_id != run.id:
+            raise HTTPException(status_code=404, detail="execution artifact not found")
+        path = Path(artifact.storage_path).resolve()
+        # Artifacts are content-addressed: the file name must be its digest.
+        if path.name != artifact.sha256 or not path.is_file():
+            raise HTTPException(status_code=404, detail="execution artifact not found")
+        return FileResponse(path, media_type=artifact.media_type, filename=artifact.name)
+
+    @app.get("/analytics/summary")
+    def analytics_summary(
+        context: ViewerAccess,
+        started_from: Annotated[str | None, Query(alias="from")] = None,
+        started_to: Annotated[str | None, Query(alias="to")] = None,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        estimates = {
+            manifest.action_id: manifest.estimated_minutes_saved
+            for manifest in smart_action_service.list()
+        }
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return _empty_analytics_summary(started_from, started_to)
+        return build_analytics_summary(
+            store,
+            estimates,
+            started_from=started_from,
+            started_to=started_to,
+            client_id=scoped_client_id,
+        )
 
     @app.post("/knowledge/ingest")
     def ingest_knowledge(
@@ -1248,6 +1342,74 @@ def _smart_action_run_view(run) -> dict[str, object]:
         "created_at": run.created_at,
         "updated_at": run.updated_at,
         "client_id": run.client_id,
+    }
+
+
+def _execution_run_view(run) -> dict[str, object]:
+    return {
+        "id": run.id,
+        "run_kind": run.run_kind,
+        "source_run_id": run.source_run_id,
+        "actor": run.actor,
+        "status": run.status,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "trigger_source": run.trigger_source,
+        "client_id": run.client_id,
+    }
+
+
+def _execution_step_view(step) -> dict[str, object]:
+    # Step payloads are redacted at persistence and again here at
+    # serialization so legacy rows never surface secrets.
+    return {
+        "id": step.id,
+        "ordinal": step.ordinal,
+        "kind": step.kind,
+        "name": step.name,
+        "status": step.status,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+        "input_digest": step.input_digest,
+        "output_digest": step.output_digest,
+        "input": redact_value(_safe_json_value(step.input_json)),
+        "output": redact_value(_safe_json_value(step.output_json)),
+        "error_detail": redact_text(step.error_detail),
+    }
+
+
+def _execution_artifact_view(artifact) -> dict[str, object]:
+    return {
+        "id": artifact.id,
+        "step_ordinal": artifact.step_ordinal,
+        "name": artifact.name,
+        "media_type": artifact.media_type,
+        "byte_size": artifact.byte_size,
+        "sha256": artifact.sha256,
+    }
+
+
+def _safe_json_value(payload_json: str) -> object:
+    try:
+        return json.loads(payload_json)
+    except json.JSONDecodeError:
+        return None
+
+
+def _empty_analytics_summary(
+    started_from: str | None, started_to: str | None
+) -> dict[str, object]:
+    return {
+        "range": {"from": started_from, "to": started_to},
+        "client_id": None,
+        "executions_over_time": [],
+        "success_rate": {"total": 0, "succeeded": 0, "rate": 0.0},
+        "failures_by_status": [],
+        "estimated_minutes_saved": {
+            "minutes": 0,
+            "estimate": True,
+            "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
+        },
     }
 
 

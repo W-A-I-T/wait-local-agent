@@ -16,6 +16,9 @@ from wait_local_agent.models import (
     ConfigDiff,
     ConfigSnapshot,
     EventHistoryEntry,
+    ExecutionArtifact,
+    ExecutionRun,
+    ExecutionStep,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
@@ -278,12 +281,29 @@ class Store:
                     bundle_json text not null,
                     created_at text not null,
                     previewed_at text not null default '',
-                    uploaded_at text not null default ''
+                    uploaded_at text not null default '',
+                    remote_scan_id text not null default '',
+                    remote_scan_status text not null default '',
+                    remote_scan_json text not null default '{}',
+                    latest_report_reference text not null default '',
+                    latest_report_json text not null default '{}',
+                    polling_status text not null default ''
                 )
                 """
             )
             self._ensure_column(connection, "founder_artifacts", "previewed_at", "text not null default ''")
             self._ensure_column(connection, "founder_artifacts", "uploaded_at", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_id", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_status", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_json", "text not null default '{}'")
+            self._ensure_column(
+                connection,
+                "founder_artifacts",
+                "latest_report_reference",
+                "text not null default ''",
+            )
+            self._ensure_column(connection, "founder_artifacts", "latest_report_json", "text not null default '{}'")
+            self._ensure_column(connection, "founder_artifacts", "polling_status", "text not null default ''")
             connection.execute(
                 """
                 create table if not exists founder_artifact_previews (
@@ -433,6 +453,92 @@ class Store:
                 )
                 """
             )
+            connection.execute(
+                """
+                create table if not exists execution_runs (
+                    id integer primary key autoincrement,
+                    run_kind text not null,
+                    source_run_id integer,
+                    actor text not null,
+                    client_id text,
+                    status text not null,
+                    started_at text not null,
+                    finished_at text not null,
+                    trigger_source text not null default ''
+                )
+                """
+            )
+            for column_name, definition in (
+                ("run_kind", "text not null default 'workflow'"),
+                ("source_run_id", "integer"),
+                ("actor", "text not null default 'system'"),
+                ("client_id", "text"),
+                ("status", "text not null default 'unknown'"),
+                ("started_at", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("trigger_source", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_runs", column_name, definition)
+            connection.execute(
+                """
+                create table if not exists execution_steps (
+                    id integer primary key autoincrement,
+                    execution_run_id integer not null
+                      references execution_runs(id) on delete cascade,
+                    ordinal integer not null,
+                    kind text not null,
+                    name text not null,
+                    status text not null,
+                    started_at text not null,
+                    finished_at text not null,
+                    input_digest text not null,
+                    output_digest text not null,
+                    input_json text not null,
+                    output_json text not null,
+                    error_detail text not null default ''
+                )
+                """
+            )
+            for column_name, definition in (
+                ("execution_run_id", "integer"),
+                ("ordinal", "integer not null default 0"),
+                ("kind", "text not null default 'unknown'"),
+                ("name", "text not null default ''"),
+                ("status", "text not null default 'unknown'"),
+                ("started_at", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("input_digest", "text not null default ''"),
+                ("output_digest", "text not null default ''"),
+                ("input_json", "text not null default '{}'"),
+                ("output_json", "text not null default '{}'"),
+                ("error_detail", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_steps", column_name, definition)
+            connection.execute(
+                """
+                create table if not exists execution_artifacts (
+                    id integer primary key autoincrement,
+                    execution_run_id integer not null
+                      references execution_runs(id) on delete cascade,
+                    step_ordinal integer,
+                    name text not null,
+                    media_type text not null,
+                    byte_size integer not null,
+                    sha256 text not null,
+                    storage_path text not null
+                )
+                """
+            )
+            for column_name, definition in (
+                ("execution_run_id", "integer"),
+                ("step_ordinal", "integer"),
+                ("name", "text not null default ''"),
+                ("media_type", "text not null default 'application/octet-stream'"),
+                ("byte_size", "integer not null default 0"),
+                ("sha256", "text not null default ''"),
+                ("storage_path", "text not null default ''"),
+            ):
+                self._ensure_column(connection, "execution_artifacts", column_name, definition)
 
     @staticmethod
     def _ensure_column(
@@ -2468,6 +2574,322 @@ class Store:
             ids = [int(row["id"]) for row in connection.execute("select id from hardening_runs order by id desc")]
         return [run for run_id in ids if (run := self.get_hardening_run(run_id)) is not None]
 
+    def create_execution_run(
+        self,
+        run_kind: str,
+        source_run_id: int | None,
+        actor: str,
+        status: str,
+        started_at: str,
+        finished_at: str,
+        trigger_source: str,
+        *,
+        client_id: str | None = None,
+    ) -> ExecutionRun:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into execution_runs
+                  (run_kind, source_run_id, actor, client_id, status,
+                   started_at, finished_at, trigger_source)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_kind,
+                    source_run_id,
+                    actor,
+                    _normalize_client_id(client_id),
+                    status,
+                    started_at,
+                    finished_at,
+                    trigger_source,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("execution run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        run = self.get_execution_run(run_id)
+        if run is None:
+            raise RuntimeError("execution run was not persisted")
+        return run
+
+    def get_execution_run(
+        self, run_id: int, client_id: str | None = None
+    ) -> ExecutionRun | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from execution_runs where id = ?", (run_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from execution_runs where id = ? and client_id = ?",
+                    (run_id, normalized_client_id),
+                ).fetchone()
+        return _execution_run_from_row(row) if row else None
+
+    def find_execution_run(
+        self, run_kind: str, source_run_id: int
+    ) -> ExecutionRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from execution_runs
+                where run_kind = ? and source_run_id = ?
+                order by id desc
+                """,
+                (run_kind, source_run_id),
+            ).fetchone()
+        return _execution_run_from_row(row) if row else None
+
+    def update_execution_run(
+        self, run_id: int, status: str, finished_at: str
+    ) -> ExecutionRun:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update execution_runs set status = ?, finished_at = ? where id = ?",
+                (status, finished_at, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+        run = self.get_execution_run(run_id)
+        if run is None:
+            raise RuntimeError("execution run was not persisted")
+        return run
+
+    def list_execution_runs(
+        self,
+        client_id: str | None = None,
+        *,
+        run_kind: str | None = None,
+        status: str | None = None,
+        started_from: str | None = None,
+        started_to: str | None = None,
+    ) -> list[ExecutionRun]:
+        clauses: list[str] = []
+        params: list[object] = []
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        if run_kind:
+            clauses.append("run_kind = ?")
+            params.append(run_kind)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if started_from:
+            clauses.append("date(started_at) >= date(?)")
+            params.append(started_from)
+        if started_to:
+            clauses.append("date(started_at) <= date(?)")
+            params.append(started_to)
+        where = f" where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from execution_runs{where} order by id desc",  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [_execution_run_from_row(row) for row in rows]
+
+    def add_execution_step(
+        self,
+        execution_run_id: int,
+        ordinal: int,
+        kind: str,
+        name: str,
+        status: str,
+        started_at: str,
+        finished_at: str,
+        input_digest: str,
+        output_digest: str,
+        input_json: str,
+        output_json: str,
+        error_detail: str = "",
+    ) -> ExecutionStep:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into execution_steps
+                  (execution_run_id, ordinal, kind, name, status, started_at,
+                   finished_at, input_digest, output_digest, input_json,
+                   output_json, error_detail)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_run_id,
+                    ordinal,
+                    kind,
+                    name,
+                    status,
+                    started_at,
+                    finished_at,
+                    input_digest,
+                    output_digest,
+                    input_json,
+                    output_json,
+                    error_detail,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("execution step insert did not return an id")
+            step_id = int(cursor.lastrowid)
+            row = connection.execute(
+                "select * from execution_steps where id = ?", (step_id,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("execution step was not persisted")
+        return _execution_step_from_row(row)
+
+    def list_execution_steps(self, execution_run_id: int) -> list[ExecutionStep]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from execution_steps
+                where execution_run_id = ?
+                order by ordinal, id
+                """,
+                (execution_run_id,),
+            ).fetchall()
+        return [_execution_step_from_row(row) for row in rows]
+
+    def next_execution_step_ordinal(self, execution_run_id: int) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select max(ordinal) as top from execution_steps where execution_run_id = ?",
+                (execution_run_id,),
+            ).fetchone()
+        if row is None or row["top"] is None:
+            return 0
+        return int(row["top"]) + 1
+
+    def add_execution_artifact(
+        self,
+        execution_run_id: int,
+        step_ordinal: int | None,
+        name: str,
+        media_type: str,
+        byte_size: int,
+        sha256: str,
+        storage_path: str,
+    ) -> ExecutionArtifact:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into execution_artifacts
+                  (execution_run_id, step_ordinal, name, media_type,
+                   byte_size, sha256, storage_path)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_run_id,
+                    step_ordinal,
+                    name,
+                    media_type,
+                    byte_size,
+                    sha256,
+                    storage_path,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("execution artifact insert did not return an id")
+            artifact_id = int(cursor.lastrowid)
+        artifact = self.get_execution_artifact(artifact_id)
+        if artifact is None:
+            raise RuntimeError("execution artifact was not persisted")
+        return artifact
+
+    def get_execution_artifact(self, artifact_id: int) -> ExecutionArtifact | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from execution_artifacts where id = ?", (artifact_id,)
+            ).fetchone()
+        return _execution_artifact_from_row(row) if row else None
+
+    def list_execution_artifacts(self, execution_run_id: int) -> list[ExecutionArtifact]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from execution_artifacts
+                where execution_run_id = ?
+                order by id
+                """,
+                (execution_run_id,),
+            ).fetchall()
+        return [_execution_artifact_from_row(row) for row in rows]
+
+    def execution_daily_status_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str, int]]:
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id) as (
+                    select 'workflow', id, status, created_at, client_id from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select date(er.started_at) as day, er.status as status, count(*) as count
+                from all_runs er{clauses}
+                group by day, status
+                order by day
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [(str(row["day"]), str(row["status"]), int(row["count"])) for row in rows]
+
+    def execution_smart_action_success_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, int]]:
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        prefix = " where" if not clauses else f"{clauses} and"
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id) as (
+                    select 'smart_action', id, status, created_at, client_id from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select sar.action_id as action_id, count(*) as count
+                from all_runs er
+                join smart_action_runs sar on sar.id = er.source_run_id
+                {prefix} er.run_kind = 'smart_action' and er.status = 'success'
+                group by sar.action_id
+                order by sar.action_id
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [(str(row["action_id"]), int(row["count"])) for row in rows]
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None
@@ -2551,7 +2973,13 @@ class Store:
                   bundle_json=excluded.bundle_json,
                   created_at=excluded.created_at,
                   previewed_at='',
-                  uploaded_at=''
+                  uploaded_at='',
+                  remote_scan_id='',
+                  remote_scan_status='',
+                  remote_scan_json='{}',
+                  latest_report_reference='',
+                  latest_report_json='{}',
+                  polling_status=''
                 """,
                 (artifact_id, project_id, bundle_hash, _json_dumps(bundle), utc_now()),
             )
@@ -2565,15 +2993,52 @@ class Store:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "artifact_id": str(row["artifact_id"]),
-            "project_id": str(row["project_id"]),
-            "bundle_hash": str(row["bundle_hash"]),
-            "bundle": json.loads(str(row["bundle_json"])),
-            "created_at": str(row["created_at"]),
-            "previewed_at": str(row["previewed_at"]),
-            "uploaded_at": str(row["uploaded_at"]),
-        }
+        return self._founder_artifact_from_row(row)
+
+    def list_founder_artifacts(self, project_id: str = "") -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from founder_artifacts "
+                "where (? = '' or project_id = ?) order by created_at desc, artifact_id",
+                (project_id, project_id),
+            ).fetchall()
+        return [self._founder_artifact_from_row(row) for row in rows]
+
+    def update_founder_artifact_remote(
+        self,
+        artifact_id: str,
+        *,
+        scan_id: str | None = None,
+        scan_status: str | None = None,
+        scan: dict[str, object] | None = None,
+        report_reference: str | None = None,
+        report: dict[str, object] | list[object] | None = None,
+        polling_status: str | None = None,
+    ) -> None:
+        if all(value is None for value in (scan_id, scan_status, scan, report_reference, report, polling_status)):
+            return
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update founder_artifacts
+                set remote_scan_id = coalesce(?, remote_scan_id),
+                    remote_scan_status = coalesce(?, remote_scan_status),
+                    remote_scan_json = coalesce(?, remote_scan_json),
+                    latest_report_reference = coalesce(?, latest_report_reference),
+                    latest_report_json = coalesce(?, latest_report_json),
+                    polling_status = coalesce(?, polling_status)
+                where artifact_id = ?
+                """,
+                (
+                    scan_id,
+                    scan_status,
+                    _json_dumps_value(scan) if scan is not None else None,
+                    report_reference,
+                    _json_dumps_value(report) if report is not None else None,
+                    polling_status,
+                    artifact_id,
+                ),
+            )
 
     def mark_founder_artifact_previewed(self, artifact_id: str) -> None:
         with self._connect() as connection:
@@ -2612,6 +3077,24 @@ class Store:
                 "update founder_artifacts set uploaded_at = ? where artifact_id = ?",
                 (utc_now(), artifact_id),
             )
+
+    @staticmethod
+    def _founder_artifact_from_row(row: sqlite3.Row) -> dict[str, object]:
+        return {
+            "artifact_id": str(row["artifact_id"]),
+            "project_id": str(row["project_id"]),
+            "bundle_hash": str(row["bundle_hash"]),
+            "bundle": json.loads(str(row["bundle_json"])),
+            "created_at": str(row["created_at"]),
+            "previewed_at": str(row["previewed_at"]),
+            "uploaded_at": str(row["uploaded_at"]),
+            "remote_scan_id": str(row["remote_scan_id"]),
+            "remote_scan_status": str(row["remote_scan_status"]),
+            "remote_scan": _json_object_or_empty(row["remote_scan_json"]),
+            "latest_report_reference": str(row["latest_report_reference"]),
+            "latest_report": _json_value_or_empty(row["latest_report_json"]),
+            "polling_status": str(row["polling_status"]),
+        }
 
     def get_report(self, report_id: str) -> GeneratedReport | None:
         with self._connect() as connection:
@@ -2694,6 +3177,18 @@ def _json_dumps_value(payload: object) -> str:
     return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
 
 
+def _json_value_or_empty(payload: object) -> object:
+    try:
+        return json.loads(str(payload))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _json_object_or_empty(payload: object) -> dict[str, object]:
+    value = _json_value_or_empty(payload)
+    return value if isinstance(value, dict) else {}
+
+
 def _redact_json_text(payload_json: str) -> str:
     try:
         payload = json.loads(payload_json)
@@ -2713,6 +3208,45 @@ def _event_history_from_row(row: sqlite3.Row) -> EventHistoryEntry:
     payload["message"] = _redact_text(str(payload["message"]))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     return EventHistoryEntry(**payload)
+
+
+def _execution_run_from_row(row: sqlite3.Row) -> ExecutionRun:
+    return ExecutionRun(**dict(row))
+
+
+def _execution_step_from_row(row: sqlite3.Row) -> ExecutionStep:
+    payload = dict(row)
+    # Redact at read time as well so rows written before redaction existed
+    # (legacy rows) never surface secrets.
+    payload["input_json"] = _redact_json_text(str(payload["input_json"]))
+    payload["output_json"] = _redact_json_text(str(payload["output_json"]))
+    payload["error_detail"] = _redact_text(str(payload["error_detail"]))
+    return ExecutionStep(**payload)
+
+
+def _execution_artifact_from_row(row: sqlite3.Row) -> ExecutionArtifact:
+    return ExecutionArtifact(**dict(row))
+
+
+def _execution_range_filters(
+    started_from: str | None,
+    started_to: str | None,
+    client_id: str | None,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    normalized_client_id = _normalize_client_id(client_id)
+    if normalized_client_id is not None:
+        clauses.append("er.client_id = ?")
+        params.append(normalized_client_id)
+    if started_from:
+        clauses.append("date(er.started_at) >= date(?)")
+        params.append(started_from)
+    if started_to:
+        clauses.append("date(er.started_at) <= date(?)")
+        params.append(started_to)
+    where = f" where {' and '.join(clauses)}" if clauses else ""
+    return where, params
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:
