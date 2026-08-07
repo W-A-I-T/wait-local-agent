@@ -29,7 +29,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is
-  revoked when its agent run is cancelled.
+  revoked when its agent run is cancelled. Failed and cancelled runs expose a
+  bounded retry route with persisted retry lineage.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, and delivery history APIs. Conversational and

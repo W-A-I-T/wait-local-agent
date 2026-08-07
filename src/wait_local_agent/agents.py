@@ -25,6 +25,7 @@ from wait_local_agent.store import Store, _normalize_client_id
 
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
+MAX_AGENT_RETRIES = 3
 SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled", "event"})
 SUPPORTED_ENTITY_TYPE = "ticket"
 SUPPORTED_EVENT_TYPES = frozenset(
@@ -215,6 +216,8 @@ class AgentService:
         entity_id: str,
         actor: str,
         input_payload: dict[str, object],
+        retry_count: int = 0,
+        retry_of_run_id: int | None = None,
     ) -> AgentExecutionResult:
         if not definition.enabled:
             raise AgentDefinitionError("agent is disabled")
@@ -228,7 +231,10 @@ class AgentService:
             "input": redact_value(input_payload),
             "steps": [],
             "pending_approval_step": None,
+            "retry_count": retry_count,
         }
+        if retry_of_run_id is not None:
+            state["retry_of_run_id"] = retry_of_run_id
         run = self.store.create_agent_run(
             definition.id,
             entity_id,
@@ -240,6 +246,32 @@ class AgentService:
             client_id=client_id,
         )
         return self._continue(definition, run, actor, start_step=0, state=state)
+
+    def retry(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+    ) -> AgentExecutionResult:
+        """Retry a failed or cancelled run with a small persisted attempt cap."""
+        if run.status not in {"failed", "cancelled"}:
+            raise AgentDefinitionError("only failed or cancelled runs can be retried")
+        state = _state_object(run.state_json)
+        retry_count = state.get("retry_count", 0)
+        if not isinstance(retry_count, int) or retry_count < 0:
+            raise AgentDefinitionError("agent retry state is malformed")
+        if retry_count >= MAX_AGENT_RETRIES:
+            raise AgentDefinitionError(f"agent retry limit of {MAX_AGENT_RETRIES} has been reached")
+        input_payload = _state_object(state.get("input"))
+        return self.run(
+            definition,
+            entity_id=run.entity_id,
+            actor=actor,
+            input_payload=input_payload,
+            retry_count=retry_count + 1,
+            retry_of_run_id=run.id,
+        )
 
     def resume(
         self,

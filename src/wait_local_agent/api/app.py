@@ -887,6 +887,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
 
+    @app.post("/agent-runs/{run_id}/retry")
+    def retry_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        run = store.get_agent_run(run_id, scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        definition = agent_service.get(run.agent_id, run.client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent definition not found")
+        try:
+            result = agent_service.retry(
+                definition,
+                run,
+                actor=context.approver_id or "api",
+            )
+        except (AgentDefinitionError, PermissionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return asdict(result)
+
     @app.post("/automation/events")
     @limiter.limit(active_settings.rate_limit_general)
     def ingest_automation_event(
