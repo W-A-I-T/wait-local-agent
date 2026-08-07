@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+from wait_local_agent.communication import DraftOnlyCommunicationClient, build_message_draft
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
@@ -13,6 +14,7 @@ from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
+    BuildMessageAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
@@ -153,6 +155,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         context,
         {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": 1}]},
     )
+    message = BuildMessageAction().run(
+        context,
+        {"ticket_id": "TCK-1001", "channel": "ticket_note"},
+    )
 
     assert (
         triage.status
@@ -162,6 +168,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == quality.status
         == similar.status
         == dispatch.status
+        == message.status
         == "success"
     )
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
@@ -170,6 +177,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert quality.output["passed"] is True
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
+    assert message.output["send_enabled"] is False
 
 
 def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settings) -> None:
@@ -226,6 +234,7 @@ def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settin
         TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
+        BuildMessageAction(),
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
@@ -286,6 +295,26 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
     }
 
 
+def test_communication_draft_contract_is_preview_only() -> None:
+    draft = build_message_draft(
+        "EMAIL",
+        recipient=" user@example.test ",
+        subject=" Subject ",
+        body=" Message ",
+    )
+    assert draft.channel == "email"
+    assert draft.recipient == "user@example.test"
+    assert DraftOnlyCommunicationClient().preview(draft) == draft
+
+    for channel, recipient, subject, body, message in (
+        ("fax", "user", "", "body", "unsupported"),
+        ("email", "", "", "body", "recipient"),
+        ("email", "user", "x" * 201, "body", "subject"),
+        ("email", "user", "", "x" * 4001, "body"),
+        ("email", "user", "", "", "body"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            build_message_draft(channel, recipient=recipient, subject=subject, body=body)
 def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
     store = Store(settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
@@ -435,6 +464,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "build-message",
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",

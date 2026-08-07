@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Literal, Protocol, cast
 
+from wait_local_agent.communication import build_message_draft
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
@@ -322,6 +323,53 @@ class M365IdentityContextAction:
         )
 
 
+class BuildMessageAction:
+    manifest = SmartActionManifest(
+        action_id="build-message",
+        title="Build message draft",
+        description="Build a preview-only ticket or end-user communication draft for later approval.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id", "channel"],
+            "properties": {"channel": "string", "recipient": "string", "subject": "string", "body": "string"},
+        },
+        output_schema={"draft": "object", "approval_required": "boolean"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        channel = payload.get("channel")
+        if not isinstance(channel, str):
+            return _failed("channel must be a string")
+        recipient = payload.get("recipient", ticket.id if channel.strip().lower() == "ticket_note" else "")
+        subject = payload.get("subject", f"Re: {ticket.subject}")
+        body = payload.get("body", f"Regarding {ticket.subject}:\n\n{ticket.body}")
+        if not isinstance(recipient, str) or not isinstance(subject, str) or not isinstance(body, str):
+            return _failed("recipient, subject, and body must be strings")
+        try:
+            draft = build_message_draft(
+                channel,
+                recipient=recipient,
+                subject=subject,
+                body=body,
+            )
+        except ValueError as exc:
+            return _failed(str(exc))
+        return ActionResult(
+            status="success",
+            output={"draft": asdict(draft), "approval_required": True, "send_enabled": False},
+            evidence=[_ticket_evidence(ticket, ["client", "subject", "body"])],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -481,6 +529,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
         M365IdentityContextAction(),
+        BuildMessageAction(),
         TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

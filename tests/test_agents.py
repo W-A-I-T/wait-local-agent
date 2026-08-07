@@ -53,6 +53,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     tools = {tool.id: tool for tool in service.list_tools()}
 
     assert set(tools) == {
+        "build-message",
         "ticket-triage",
         "ticket-summary",
         "suggest-resolution",
