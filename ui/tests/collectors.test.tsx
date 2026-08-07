@@ -113,6 +113,17 @@ describe("Collectors screen", () => {
 
     // Generated form from the manifest, with an instructive first-run state.
     const sourceName = await screen.findByLabelText("Source name");
+    const sourceNameLabel = screen.getByText("Source name", { selector: "label" });
+    expect(sourceNameLabel).toHaveAttribute("for", sourceName.id);
+    expect(sourceName).toHaveAttribute("id", "collector-host-runtime-source_name");
+    expect(sourceName).toBeRequired();
+    expect(sourceName).toHaveAttribute("aria-required", "true");
+    const limit = screen.getByLabelText("Maximum items");
+    const limitLabel = screen.getByText("Maximum items", { selector: "label" });
+    expect(limitLabel).toHaveAttribute("for", limit.id);
+    expect(limit).toHaveAttribute("id", "collector-host-runtime-limit");
+    expect(limit).not.toBeRequired();
+    expect(limit).not.toHaveAttribute("aria-required");
     expect(screen.getByText("A friendly name for this source.")).toBeInTheDocument();
     expect(screen.getByText(/No runs yet/)).toBeInTheDocument();
 
@@ -157,7 +168,8 @@ describe("Collectors screen", () => {
     expect((await screen.findAllByText("Partly collected")).length).toBeGreaterThan(0);
     expect(screen.getByText("Collected from inside the app's container")).toBeInTheDocument();
     expect(screen.getByText("Network socket (TCP)")).toBeInTheDocument();
-    expect(screen.getByText("Source ID: socket:tcp")).toBeInTheDocument();
+    const sourceId = screen.getByText("Source ID: socket:tcp");
+    expect(sourceId.closest("details")).toHaveTextContent("Technical details");
     expect(screen.getByText("No permission — check the credentials")).toBeInTheDocument();
     expect(screen.getByText("Check the saved credential for this source.")).toBeInTheDocument();
     expect(screen.queryByText("backend PermissionError with private detail")).not.toBeInTheDocument();

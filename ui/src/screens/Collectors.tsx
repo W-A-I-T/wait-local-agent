@@ -322,7 +322,7 @@ export function Collectors() {
                   <article className="table-row" key={outcome.source_id}>
                     <div>
                       <strong>{humanizeSourceId(outcome.source_id)}</strong>
-                      <span className="technical-detail">Source ID: {outcome.source_id}</span>
+                      <TechnicalDetails values={[`Source ID: ${outcome.source_id}`]} />
                       <StatusChip
                         status={outcome.status}
                         hint={outcome.remediation_hint ?? undefined}
