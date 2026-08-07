@@ -281,12 +281,29 @@ class Store:
                     bundle_json text not null,
                     created_at text not null,
                     previewed_at text not null default '',
-                    uploaded_at text not null default ''
+                    uploaded_at text not null default '',
+                    remote_scan_id text not null default '',
+                    remote_scan_status text not null default '',
+                    remote_scan_json text not null default '{}',
+                    latest_report_reference text not null default '',
+                    latest_report_json text not null default '{}',
+                    polling_status text not null default ''
                 )
                 """
             )
             self._ensure_column(connection, "founder_artifacts", "previewed_at", "text not null default ''")
             self._ensure_column(connection, "founder_artifacts", "uploaded_at", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_id", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_status", "text not null default ''")
+            self._ensure_column(connection, "founder_artifacts", "remote_scan_json", "text not null default '{}'")
+            self._ensure_column(
+                connection,
+                "founder_artifacts",
+                "latest_report_reference",
+                "text not null default ''",
+            )
+            self._ensure_column(connection, "founder_artifacts", "latest_report_json", "text not null default '{}'")
+            self._ensure_column(connection, "founder_artifacts", "polling_status", "text not null default ''")
             connection.execute(
                 """
                 create table if not exists founder_artifact_previews (
@@ -2956,7 +2973,13 @@ class Store:
                   bundle_json=excluded.bundle_json,
                   created_at=excluded.created_at,
                   previewed_at='',
-                  uploaded_at=''
+                  uploaded_at='',
+                  remote_scan_id='',
+                  remote_scan_status='',
+                  remote_scan_json='{}',
+                  latest_report_reference='',
+                  latest_report_json='{}',
+                  polling_status=''
                 """,
                 (artifact_id, project_id, bundle_hash, _json_dumps(bundle), utc_now()),
             )
@@ -2970,15 +2993,52 @@ class Store:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "artifact_id": str(row["artifact_id"]),
-            "project_id": str(row["project_id"]),
-            "bundle_hash": str(row["bundle_hash"]),
-            "bundle": json.loads(str(row["bundle_json"])),
-            "created_at": str(row["created_at"]),
-            "previewed_at": str(row["previewed_at"]),
-            "uploaded_at": str(row["uploaded_at"]),
-        }
+        return self._founder_artifact_from_row(row)
+
+    def list_founder_artifacts(self, project_id: str = "") -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from founder_artifacts "
+                "where (? = '' or project_id = ?) order by created_at desc, artifact_id",
+                (project_id, project_id),
+            ).fetchall()
+        return [self._founder_artifact_from_row(row) for row in rows]
+
+    def update_founder_artifact_remote(
+        self,
+        artifact_id: str,
+        *,
+        scan_id: str | None = None,
+        scan_status: str | None = None,
+        scan: dict[str, object] | None = None,
+        report_reference: str | None = None,
+        report: dict[str, object] | list[object] | None = None,
+        polling_status: str | None = None,
+    ) -> None:
+        if all(value is None for value in (scan_id, scan_status, scan, report_reference, report, polling_status)):
+            return
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update founder_artifacts
+                set remote_scan_id = coalesce(?, remote_scan_id),
+                    remote_scan_status = coalesce(?, remote_scan_status),
+                    remote_scan_json = coalesce(?, remote_scan_json),
+                    latest_report_reference = coalesce(?, latest_report_reference),
+                    latest_report_json = coalesce(?, latest_report_json),
+                    polling_status = coalesce(?, polling_status)
+                where artifact_id = ?
+                """,
+                (
+                    scan_id,
+                    scan_status,
+                    _json_dumps_value(scan) if scan is not None else None,
+                    report_reference,
+                    _json_dumps_value(report) if report is not None else None,
+                    polling_status,
+                    artifact_id,
+                ),
+            )
 
     def mark_founder_artifact_previewed(self, artifact_id: str) -> None:
         with self._connect() as connection:
@@ -3017,6 +3077,24 @@ class Store:
                 "update founder_artifacts set uploaded_at = ? where artifact_id = ?",
                 (utc_now(), artifact_id),
             )
+
+    @staticmethod
+    def _founder_artifact_from_row(row: sqlite3.Row) -> dict[str, object]:
+        return {
+            "artifact_id": str(row["artifact_id"]),
+            "project_id": str(row["project_id"]),
+            "bundle_hash": str(row["bundle_hash"]),
+            "bundle": json.loads(str(row["bundle_json"])),
+            "created_at": str(row["created_at"]),
+            "previewed_at": str(row["previewed_at"]),
+            "uploaded_at": str(row["uploaded_at"]),
+            "remote_scan_id": str(row["remote_scan_id"]),
+            "remote_scan_status": str(row["remote_scan_status"]),
+            "remote_scan": _json_object_or_empty(row["remote_scan_json"]),
+            "latest_report_reference": str(row["latest_report_reference"]),
+            "latest_report": _json_value_or_empty(row["latest_report_json"]),
+            "polling_status": str(row["polling_status"]),
+        }
 
     def get_report(self, report_id: str) -> GeneratedReport | None:
         with self._connect() as connection:
@@ -3097,6 +3175,18 @@ def _json_dumps_value(payload: object) -> str:
     from wait_local_agent.reports.renderers import redact_value
 
     return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
+
+
+def _json_value_or_empty(payload: object) -> object:
+    try:
+        return json.loads(str(payload))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _json_object_or_empty(payload: object) -> dict[str, object]:
+    value = _json_value_or_empty(payload)
+    return value if isinstance(value, dict) else {}
 
 
 def _redact_json_text(payload_json: str) -> str:

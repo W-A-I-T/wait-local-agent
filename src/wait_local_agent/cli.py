@@ -23,6 +23,7 @@ from wait_local_agent.api.founder import (
     configure_founder,
     invoke_founder,
     json_object,
+    open_founder_launch_scan,
     open_founder_preview,
     open_founder_results,
     open_founder_scan,
@@ -32,6 +33,7 @@ from wait_local_agent.api.founder import (
     require_fresh_preview,
     resolve_open_config,
     sanitized_pack_bundle,
+    watch_founder_scan,
 )
 from wait_local_agent.api.founder import (
     render_json as render_founder_json,
@@ -349,14 +351,86 @@ def founder_status() -> None:
 
 
 @founder_app.command("results")
-def founder_results() -> None:
+def founder_results(
+    watch: Annotated[bool, typer.Option("--watch", help="Poll a scan until it reaches a terminal state.")] = False,
+    scan_id: Annotated[str | None, typer.Option("--scan-id")] = None,
+    artifact_id: Annotated[str | None, typer.Option("--artifact-id")] = None,
+    max_duration: Annotated[float, typer.Option("--max-duration", min=1.0)] = 3600.0,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", min=1)] = 120,
+) -> None:
     pack = _founder_pack_or_none()
     if pack is not None:
         response = json_object(invoke_founder(pack, "results"), operation="results")
     else:
-        settings, _, config = _open_cli_config()
+        settings, store, config = _open_cli_config()
         response = open_founder_results(settings, config)
+        if watch:
+            selected_scan_id = scan_id or _latest_scan_id(response.get("scans"))
+            if not selected_scan_id:
+                raise typer.BadParameter("no scan id was returned; pass --scan-id")
+            response = watch_founder_scan(
+                settings,
+                store,
+                config,
+                selected_scan_id,
+                artifact_id=artifact_id,
+                max_duration=max_duration,
+                max_attempts=max_attempts,
+            )
     typer.echo(render_founder_json(response))
+
+
+@founder_app.command("launch-scan")
+def founder_launch_scan(
+    artifact_id: Annotated[str | None, typer.Option("--artifact-id")] = None,
+    watch: Annotated[
+        bool, typer.Option("--watch", help="Poll the launched scan until it reaches a terminal state.")
+    ] = False,
+    max_duration: Annotated[float, typer.Option("--max-duration", min=1.0)] = 3600.0,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", min=1)] = 120,
+) -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "launch_scan"), operation="launch_scan")
+        typer.echo(render_founder_json(response))
+        return
+    settings, store, config = _open_cli_config()
+    response = open_founder_launch_scan(settings, store, config, artifact_id)
+    if watch and response.get("status") not in {"not_authorized", "insufficient_credits", "rate_limited"}:
+        selected_scan_id = _scan_id_from_response(response)
+        if not selected_scan_id:
+            raise typer.BadParameter("Launch Passport did not return a scan id")
+        response = watch_founder_scan(
+            settings,
+            store,
+            config,
+            selected_scan_id,
+            artifact_id=artifact_id,
+            max_duration=max_duration,
+            max_attempts=max_attempts,
+        )
+    typer.echo(render_founder_json(response))
+
+
+def _latest_scan_id(scans: object) -> str:
+    if not isinstance(scans, list) or not scans:
+        return ""
+    candidate = scans[0]
+    return _scan_id_from_response(candidate) if isinstance(candidate, dict) else ""
+
+
+def _scan_id_from_response(response: dict[str, object]) -> str:
+    nested = response.get("scan")
+    if isinstance(nested, dict):
+        for key in ("scanId", "scan_id", "id"):
+            value = nested.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("scanId", "scan_id"):
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 @app.command()
@@ -1385,7 +1459,11 @@ def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
     uvicorn.run(create_app(), host=host, port=port)
 
 
-try:
-    sync_pack_cli()
-except Exception as exc:  # noqa: BLE001
-    LOGGER.warning("Pack CLI discovery failed during startup: %s", exc)
+def _sync_pack_cli_on_startup() -> None:
+    try:
+        sync_pack_cli()
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Pack CLI discovery failed during startup: %s", exc)
+
+
+_sync_pack_cli_on_startup()

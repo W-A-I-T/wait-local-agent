@@ -9,16 +9,6 @@ from fastapi.testclient import TestClient
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import (
-    DatabaseInventoryCollector,
-    EndpointAgentsCollector,
-    FirewallRulesCollector,
-    HostRuntimeCollector,
-    ListeningPortsCollector,
-    NetworkInterfacesCollector,
-    ProcessInventoryCollector,
-    RoutingTableCollector,
-    WebServicesCollector,
-    WifiInventoryCollector,
     default_registry,
 )
 from wait_local_agent.models import (
@@ -32,41 +22,16 @@ from wait_local_agent.models import (
 from wait_local_agent.store import Store
 
 
-def test_api_lists_exactly_ten_collector_modules(settings, isolated_default_registry) -> None:
-    default_registry.clear()
-    for module in (
-        DatabaseInventoryCollector(),
-        EndpointAgentsCollector(),
-        FirewallRulesCollector(),
-        HostRuntimeCollector(),
-        ListeningPortsCollector(),
-        NetworkInterfacesCollector(),
-        ProcessInventoryCollector(),
-        RoutingTableCollector(),
-        WebServicesCollector(),
-        WifiInventoryCollector(),
-    ):
-        default_registry.register(module)
+def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default_registry) -> None:
     client = TestClient(create_app(settings))
 
     response = client.get("/collectors/modules")
 
     assert response.status_code == 200
     modules = response.json()
-    assert [module["id"] for module in modules] == [
-        "database-inventory",
-        "endpoint-agents",
-        "firewall-rules",
-        "host-runtime",
-        "listening-ports",
-        "network-interfaces",
-        "process-inventory",
-        "routing-table",
-        "web-services",
-        "wifi-inventory",
-    ]
-    assert len(modules) == 10
-    assert len(default_registry.list()) == 10
+    registered_ids = [module.manifest.id for module in default_registry.list()]
+    assert [module["id"] for module in modules] == registered_ids
+    assert len(modules) == len(registered_ids) == 14
 
 
 def test_health_reports_safe_defaults(settings) -> None:

@@ -151,7 +151,7 @@ describe("App", () => {
 
     expect(await screen.findByText("No approval requests yet.")).toBeInTheDocument();
     expect(screen.getByText("No workflow runs visible.")).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("/workflow-runs failed with HTTP 503");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
   });
 
   it("hides write controls for viewer role", async () => {
