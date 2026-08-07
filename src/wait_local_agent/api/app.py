@@ -21,6 +21,7 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
+from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
@@ -144,6 +145,31 @@ class SmartActionInvokeRequest(BaseModel):
     client_id: str | None = None
 
 
+class AgentStepRequest(BaseModel):
+    tool_id: str
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class AgentDefinitionRequest(BaseModel):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    trigger: Literal["manual"] = "manual"
+    entity_type: Literal["ticket"] = "ticket"
+    filters: dict[str, object] = Field(default_factory=dict)
+    enabled_tools: list[str]
+    steps: list[AgentStepRequest]
+    max_steps: int = Field(default=8, ge=1, le=8)
+    execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    client_id: str | None = None
+
+
+class AgentRunStartRequest(BaseModel):
+    entity_id: str
+    input: dict[str, object] = Field(default_factory=dict)
+    client_id: str | None = None
+
+
 class ScheduledJobCreateRequest(BaseModel):
     template_id: str
     cron: str
@@ -208,6 +234,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
     smart_action_service = SmartActionService(store, active_settings)
+    agent_service = AgentService(store, active_settings, smart_action_service)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -368,6 +395,155 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/smart-actions")
     def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(manifest) for manifest in smart_action_service.list()]
+
+    @app.get("/tools")
+    def tools(_: ViewerAccess) -> list[dict[str, object]]:
+        return [asdict(tool) for tool in agent_service.list_tools()]
+
+    @app.get("/agents")
+    def agents(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [
+            _agent_definition_view(definition)
+            for definition in agent_service.list_definitions(scoped_client_id)
+        ]
+
+    @app.post("/agents")
+    def create_agent(
+        payload: AgentDefinitionRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            definition = agent_service.create(
+                name=payload.name,
+                description=payload.description,
+                enabled=payload.enabled,
+                trigger=payload.trigger,
+                entity_type=payload.entity_type,
+                filters=payload.filters,
+                enabled_tools=payload.enabled_tools,
+                steps=[step.model_dump() for step in payload.steps],
+                max_steps=payload.max_steps,
+                execution_timeout_seconds=payload.execution_timeout_seconds,
+                client_id=scoped_client_id,
+            )
+        except AgentDefinitionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _agent_definition_view(definition)
+
+    @app.get("/agents/{agent_id}")
+    def agent_detail(agent_id: str, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        definition = agent_service.get(agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        return _agent_definition_view(definition)
+
+    @app.put("/agents/{agent_id}")
+    def update_agent(
+        agent_id: str,
+        payload: AgentDefinitionRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        existing = agent_service.get(agent_id, scoped_client_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        if payload.client_id is not None and _normalize_client_id(payload.client_id) != existing.client_id:
+            raise HTTPException(status_code=409, detail="agent tenant scope cannot be changed")
+        try:
+            updated = agent_service.update(
+                existing,
+                name=payload.name,
+                description=payload.description,
+                enabled=payload.enabled,
+                trigger=payload.trigger,
+                entity_type=payload.entity_type,
+                filters=payload.filters,
+                enabled_tools=payload.enabled_tools,
+                steps=[step.model_dump() for step in payload.steps],
+                max_steps=payload.max_steps,
+                execution_timeout_seconds=payload.execution_timeout_seconds,
+            )
+        except AgentDefinitionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _agent_definition_view(updated)
+
+    @app.post("/agents/{agent_id}/run")
+    def run_agent(
+        agent_id: str,
+        payload: AgentRunStartRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definition = agent_service.get(agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        if definition.client_id is None and scoped_client_id is not None:
+            definition = replace(definition, client_id=scoped_client_id)
+        try:
+            result = agent_service.run(
+                definition,
+                entity_id=payload.entity_id,
+                actor=context.approver_id or "api",
+                input_payload=payload.input,
+            )
+        except AgentDefinitionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(result)
+
+    @app.get("/agent-runs")
+    def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        return [_agent_run_view(run) for run in store.list_agent_runs(scoped_client_id)]
+
+    @app.get("/agent-runs/{run_id}")
+    def agent_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        run = store.get_agent_run(run_id, scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        return _agent_run_view(run)
+
+    @app.post("/agent-runs/{run_id}/resume")
+    def resume_agent(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        run = store.get_agent_run(run_id, scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        definition = agent_service.get(run.agent_id, run.client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent definition not found")
+        try:
+            result = agent_service.resume(
+                definition,
+                run,
+                approver=context.approver_id or "api",
+                approver_role=context.role,
+            )
+        except (AgentDefinitionError, PermissionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return asdict(result)
 
     @app.get("/smart-actions/runs")
     def smart_action_runs(
@@ -1343,6 +1519,52 @@ def _smart_action_run_view(run) -> dict[str, object]:
         "updated_at": run.updated_at,
         "client_id": run.client_id,
     }
+
+
+def _agent_definition_view(definition) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "id": definition.id,
+                "name": definition.name,
+                "description": definition.description,
+                "enabled": definition.enabled,
+                "trigger": definition.trigger,
+                "entity_type": definition.entity_type,
+                "filters": definition.filters,
+                "enabled_tools": definition.enabled_tools,
+                "steps": definition.steps,
+                "max_steps": definition.max_steps,
+                "execution_timeout_seconds": definition.execution_timeout_seconds,
+                "client_id": definition.client_id,
+                "version": definition.version,
+                "created_at": definition.created_at,
+                "updated_at": definition.updated_at,
+            }
+        ),
+    )
+
+
+def _agent_run_view(run) -> dict[str, object]:
+    state = _safe_json_object(run.state_json)
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "id": run.id,
+                "agent_id": run.agent_id,
+                "entity_id": run.entity_id,
+                "actor": run.actor,
+                "status": run.status,
+                "current_step": run.current_step,
+                "state": state,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+                "client_id": run.client_id,
+            }
+        ),
+    )
 
 
 def _execution_run_view(run) -> dict[str, object]:

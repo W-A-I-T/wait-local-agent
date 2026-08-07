@@ -80,7 +80,7 @@ class ExecutionRecorder:
     def record_execution(
         self,
         *,
-        run_kind: Literal["workflow", "smart_action"],
+        run_kind: Literal["workflow", "smart_action", "agent"],
         source_run_id: int | None,
         actor: str,
         status: str,
@@ -131,7 +131,7 @@ class ExecutionRecorder:
     def _record_execution(
         self,
         *,
-        run_kind: Literal["workflow", "smart_action"],
+        run_kind: Literal["workflow", "smart_action", "agent"],
         source_run_id: int | None,
         actor: str,
         status: str,

@@ -17,6 +17,7 @@ ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "c
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 RiskLevel = Literal["low", "medium", "high"]
+AgentRunStatus = Literal["queued", "pending_approval", "completed", "failed", "rejected"]
 
 
 @dataclass(frozen=True)
@@ -495,6 +496,39 @@ class ExecutionArtifact:
     byte_size: int
     sha256: str
     storage_path: str
+
+
+@dataclass(frozen=True)
+class AgentDefinition:
+    id: str
+    name: str
+    description: str
+    enabled: bool
+    trigger: str
+    entity_type: str
+    filters: dict[str, object]
+    enabled_tools: list[str]
+    steps: list[dict[str, object]]
+    max_steps: int
+    execution_timeout_seconds: float
+    client_id: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AgentRun:
+    id: int | None
+    agent_id: str
+    entity_id: str
+    actor: str
+    status: AgentRunStatus
+    current_step: int
+    state_json: str
+    started_at: str
+    finished_at: str
+    client_id: str | None = None
 
 
 def utc_now() -> str:
