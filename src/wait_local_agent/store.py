@@ -4022,7 +4022,7 @@ class Store:
         where = f" where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             rows = connection.execute(
-                f"select status, count(*) as count from approval_requests{where} group by status",
+                f"select status, count(*) as count from approval_requests{where} group by status",  # nosec B608: where clauses are static and values are parameterized
                 params,
             ).fetchall()
         counts = {str(row["status"]): int(row["count"]) for row in rows}
