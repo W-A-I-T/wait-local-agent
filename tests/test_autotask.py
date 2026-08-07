@@ -32,6 +32,9 @@ def test_autotask_defaults_block_and_missing_credentials(settings) -> None:
     missing = AutotaskClient(replace(settings, allow_http_probing=True)).health()
     assert missing.status == "not_configured"
     assert "WAIT_AUTOTASK_BASE_URL" in missing.message
+    assert AutotaskClient(replace(settings, allow_http_probing=True)).list_tickets().result.status == "not_configured"
+    assert AutotaskClient(settings).get_ticket("7").result.status == "blocked"
+    assert AutotaskClient(replace(settings, allow_http_probing=True)).get_ticket("7").result.status == "not_configured"
 
 
 def test_autotask_read_contract_normalizes_tickets_and_companies(settings) -> None:
@@ -54,7 +57,15 @@ def test_autotask_read_contract_normalizes_tickets_and_companies(settings) -> No
         if request.url.path.endswith("/Tickets/7"):
             return httpx.Response(200, json={"id": 7, "companyID": 3, "isActive": True})
         if request.url.path.endswith("/Companies/query"):
-            return httpx.Response(200, json=[{"companyID": 3, "companyName": "Acme", "isActive": "yes"}])
+            return httpx.Response(
+                200,
+                json=[
+                    {"companyID": 3, "companyName": "Acme", "isActive": "yes"},
+                    {"companyID": 4, "companyName": "Beta", "isActive": True},
+                    {"companyID": 5, "companyName": "Gamma", "isActive": 1},
+                    {"companyName": "missing"},
+                ],
+            )
         raise AssertionError(request.url)
 
     client = AutotaskClient(_configured(settings), transport=httpx.MockTransport(handler))
@@ -65,6 +76,8 @@ def test_autotask_read_contract_normalizes_tickets_and_companies(settings) -> No
     assert tickets.items[0]["ticket_number"] == "T-7"
     assert ticket.items[0]["company_id"] == "3"
     assert companies.items[0] == {"id": "3", "name": "Acme", "active": True}
+    assert companies.items[1]["active"] is True
+    assert companies.items[2]["active"] is True
     assert calls.count(("GET", "/atservicesrest/v1.0/Tickets/entityInformation")) == 1
 
 
@@ -93,6 +106,31 @@ def test_autotask_sanitizes_transport_http_and_json_failures(settings) -> None:
         _configured(settings), transport=httpx.MockTransport(malformed)
     ).list_tickets()
     assert "malformed JSON" in result.result.message
+
+    def protocol_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ProtocolError("private transport detail")
+
+    failed = AutotaskClient(
+        _configured(settings), transport=httpx.MockTransport(protocol_error)
+    ).list_tickets()
+    assert failed.result.status == "failed"
+    assert failed.result.message == "Autotask request failed."
+
+    blocked = AutotaskClient(_configured(settings, allow_http_probing=False))
+    try:
+        blocked._get("Tickets/query")
+    except AutotaskReadError as exc:
+        assert "WAIT_ALLOW_HTTP_PROBING=true" in str(exc)
+    else:
+        raise AssertionError("blocked live read was not rejected")
+
+    missing = AutotaskClient(replace(settings, allow_http_probing=True))
+    try:
+        missing._get("Tickets/query")
+    except AutotaskReadError as exc:
+        assert "WAIT_AUTOTASK_BASE_URL" in str(exc)
+    else:
+        raise AssertionError("unconfigured live read was not rejected")
 
 
 def test_autotask_helper_edges_and_safe_ids(settings) -> None:
