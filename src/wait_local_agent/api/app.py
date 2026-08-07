@@ -180,6 +180,13 @@ class AgentRunStartRequest(BaseModel):
     client_id: str | None = None
 
 
+class AgentBackfillCreateRequest(BaseModel):
+    agent_id: str
+    entity_ids: list[str] = Field(min_length=1, max_length=100)
+    input: dict[str, object] = Field(default_factory=dict)
+    client_id: str | None = None
+
+
 class EventIngestRequest(BaseModel):
     event_type: str
     entity_type: Literal["ticket"] = "ticket"
@@ -588,6 +595,214 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return asdict(result)
+
+    def _backfill_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return scoped_client_id
+
+    def _process_backfill(
+        backfill,
+        definition,
+        context: AuthContext,
+        scoped_client_id: str | None,
+    ):
+        entity_ids = [
+            item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)
+        ]
+        input_payload = _safe_json_object(backfill.input_json)
+        run_ids = [
+            item for item in _safe_json_values(backfill.run_ids_json)
+            if isinstance(item, int) and not isinstance(item, bool)
+        ]
+        failed_entity_ids = [
+            item
+            for item in _safe_json_values(backfill.failed_entity_ids_json)
+            if isinstance(item, str)
+        ]
+        errors = [backfill.error_detail] if backfill.error_detail else []
+        if definition.client_id is None and scoped_client_id is not None:
+            definition = replace(definition, client_id=scoped_client_id)
+        store.update_agent_backfill(
+            backfill.id or 0,
+            status="running",
+            next_index=backfill.next_index,
+            processed_count=backfill.processed_count,
+            succeeded_count=backfill.succeeded_count,
+            failed_count=backfill.failed_count,
+            run_ids=run_ids,
+            failed_entity_ids=failed_entity_ids,
+            error_detail="; ".join(errors),
+        )
+        processed_count = backfill.processed_count
+        succeeded_count = backfill.succeeded_count
+        failed_count = backfill.failed_count
+        for index in range(backfill.next_index, len(entity_ids)):
+            entity_id = entity_ids[index]
+            try:
+                result = agent_service.run(
+                    definition,
+                    entity_id=entity_id,
+                    actor=backfill.actor or context.approver_id or "api",
+                    input_payload=input_payload,
+                )
+                if result.run_id:
+                    run_ids.append(result.run_id)
+                if result.status in {"completed", "pending_approval"}:
+                    succeeded_count += 1
+                else:
+                    failed_count += 1
+                    failed_entity_ids.append(entity_id)
+                    errors.append(f"{entity_id}: agent run status {result.status}")
+            except Exception as exc:  # noqa: BLE001 - continue independent entities
+                failed_count += 1
+                failed_entity_ids.append(entity_id)
+                errors.append(redact_text(f"{entity_id}: {exc}"))
+            processed_count += 1
+            store.update_agent_backfill(
+                backfill.id or 0,
+                status="running",
+                next_index=index + 1,
+                processed_count=processed_count,
+                succeeded_count=succeeded_count,
+                failed_count=failed_count,
+                run_ids=run_ids,
+                failed_entity_ids=failed_entity_ids,
+                error_detail="; ".join(errors),
+            )
+        final_status = "completed_with_errors" if failed_entity_ids else "completed"
+        return store.update_agent_backfill(
+            backfill.id or 0,
+            status=final_status,
+            next_index=len(entity_ids),
+            processed_count=processed_count,
+            succeeded_count=succeeded_count,
+            failed_count=failed_count,
+            run_ids=run_ids,
+            failed_entity_ids=failed_entity_ids,
+            error_detail="; ".join(errors),
+        )
+
+    @app.post("/agent-backfills")
+    def create_agent_backfill(
+        payload: AgentBackfillCreateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, payload.client_id)
+        if len(set(payload.entity_ids)) != len(payload.entity_ids):
+            raise HTTPException(status_code=422, detail="entity_ids must not contain duplicates")
+        definition = agent_service.get(payload.agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        for entity_id in payload.entity_ids:
+            if store.get_ticket(entity_id, client_id=scoped_client_id) is None:
+                raise HTTPException(status_code=404, detail=f"ticket not found: {entity_id}")
+        backfill = store.create_agent_backfill(
+            payload.agent_id,
+            payload.entity_ids,
+            payload.input,
+            actor=context.approver_id or "api",
+            client_id=scoped_client_id,
+        )
+        return _agent_backfill_view(backfill)
+
+    @app.get("/agent-backfills")
+    def agent_backfills(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _backfill_scope(context, client_id)
+        return [_agent_backfill_view(item) for item in store.list_agent_backfills(scoped_client_id)]
+
+    @app.get("/agent-backfills/{backfill_id}")
+    def agent_backfill_detail(backfill_id: int, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, None)
+        backfill = store.get_agent_backfill(backfill_id, scoped_client_id)
+        if backfill is None:
+            raise HTTPException(status_code=404, detail="agent backfill not found")
+        return _agent_backfill_view(backfill)
+
+    @app.post("/agent-backfills/{backfill_id}/run")
+    def run_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, None)
+        backfill = store.get_agent_backfill(backfill_id, scoped_client_id)
+        if backfill is None:
+            raise HTTPException(status_code=404, detail="agent backfill not found")
+        if backfill.status not in {"queued", "paused"}:
+            raise HTTPException(status_code=409, detail="agent backfill is not runnable in its current state")
+        definition = agent_service.get(backfill.agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        return _agent_backfill_view(_process_backfill(backfill, definition, context, scoped_client_id))
+
+    @app.post("/agent-backfills/{backfill_id}/pause")
+    def pause_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, None)
+        backfill = store.get_agent_backfill(backfill_id, scoped_client_id)
+        if backfill is None:
+            raise HTTPException(status_code=404, detail="agent backfill not found")
+        if backfill.status != "queued":
+            raise HTTPException(status_code=409, detail="only queued backfills can be paused")
+        return _agent_backfill_view(
+            store.update_agent_backfill(
+                backfill_id,
+                status="paused",
+                next_index=backfill.next_index,
+                processed_count=backfill.processed_count,
+                succeeded_count=backfill.succeeded_count,
+                failed_count=backfill.failed_count,
+                run_ids=[
+                    item for item in _safe_json_values(backfill.run_ids_json)
+                    if isinstance(item, int) and not isinstance(item, bool)
+                ],
+                failed_entity_ids=[
+                    item for item in _safe_json_values(backfill.failed_entity_ids_json)
+                    if isinstance(item, str)
+                ],
+                error_detail=backfill.error_detail,
+            )
+        )
+
+    @app.post("/agent-backfills/{backfill_id}/cancel")
+    def cancel_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, None)
+        backfill = store.get_agent_backfill(backfill_id, scoped_client_id)
+        if backfill is None:
+            raise HTTPException(status_code=404, detail="agent backfill not found")
+        if backfill.status in {"completed", "completed_with_errors", "cancelled"}:
+            raise HTTPException(status_code=409, detail="agent backfill is already terminal")
+        return _agent_backfill_view(
+            store.update_agent_backfill(
+                backfill_id,
+                status="cancelled",
+                next_index=backfill.next_index,
+                processed_count=backfill.processed_count,
+                succeeded_count=backfill.succeeded_count,
+                failed_count=backfill.failed_count,
+                run_ids=[],
+                failed_entity_ids=[],
+                error_detail=backfill.error_detail,
+            )
+        )
+
+    @app.post("/agent-backfills/{backfill_id}/rerun-failed")
+    def rerun_failed_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, None)
+        backfill = store.get_agent_backfill(backfill_id, scoped_client_id)
+        if backfill is None:
+            raise HTTPException(status_code=404, detail="agent backfill not found")
+        failed_entity_ids = [
+            item for item in _safe_json_values(backfill.failed_entity_ids_json)
+            if isinstance(item, str)
+        ]
+        if not failed_entity_ids:
+            raise HTTPException(status_code=409, detail="agent backfill has no failed entities")
+        reset = store.reset_agent_backfill_failed(backfill_id, failed_entity_ids)
+        definition = agent_service.get(reset.agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        return _agent_backfill_view(_process_backfill(reset, definition, context, scoped_client_id))
 
     @app.get("/agent-runs")
     def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
@@ -1884,6 +2099,27 @@ def _agent_run_view(run) -> dict[str, object]:
             }
         ),
     )
+
+
+def _agent_backfill_view(backfill) -> dict[str, object]:
+    return {
+        "id": backfill.id,
+        "agent_id": backfill.agent_id,
+        "entity_ids": _safe_json_values(backfill.entity_ids_json),
+        "input": _safe_redacted_json_object(backfill.input_json),
+        "status": backfill.status,
+        "next_index": backfill.next_index,
+        "processed_count": backfill.processed_count,
+        "succeeded_count": backfill.succeeded_count,
+        "failed_count": backfill.failed_count,
+        "run_ids": _safe_json_values(backfill.run_ids_json),
+        "failed_entity_ids": _safe_json_values(backfill.failed_entity_ids_json),
+        "actor": redact_text(backfill.actor),
+        "error_detail": redact_text(backfill.error_detail),
+        "created_at": backfill.created_at,
+        "updated_at": backfill.updated_at,
+        "client_id": backfill.client_id,
+    }
 
 
 def _execution_run_view(run) -> dict[str, object]:

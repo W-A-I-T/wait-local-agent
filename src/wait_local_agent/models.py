@@ -582,5 +582,25 @@ class AgentRun:
     client_id: str | None = None
 
 
+@dataclass(frozen=True)
+class AgentBackfill:
+    id: int | None
+    agent_id: str
+    entity_ids_json: str
+    input_json: str
+    status: str
+    next_index: int
+    processed_count: int
+    succeeded_count: int
+    failed_count: int
+    run_ids_json: str
+    failed_entity_ids_json: str
+    actor: str
+    error_detail: str
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
