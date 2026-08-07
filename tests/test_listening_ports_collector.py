@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.ListeningPortsCollectorModule
 
@@ -291,6 +294,101 @@ def test_collect_returns_empty_on_non_linux(
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"] == []
+
+    typed_result = collectors.ListeningPortsCollector().collect({})
+    assert typed_result.status is CollectionStatus.EMPTY
+    assert typed_result.source_outcomes[0].remediation_hint is not None
+
+
+def test_typed_collect_converts_legacy_records_to_typed_result(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    _use_proc_net(monkeypatch, proc_root)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.SUCCESS
+    assert result.source_outcomes[0].record_count == 1
+    assert result.assets[0].canonical_id == "socket:tcp:0.0.0.0:5000"
+    assert result.observations[0].canonical_id == result.assets[0].canonical_id
+
+
+def test_listening_ports_round_trips_through_governed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+    settings,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    _use_proc_net(monkeypatch, proc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.ListeningPortsCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    assert service.validate("listening-ports", {}).passed is True
+    preview = service.preview("listening-ports", {})
+    run = service.run("listening-ports", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert len(store.list_canonical_assets(run_id=run.id)) == 1
+    assert len(store.list_asset_observations(run_id=run.id)) == 4
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
+
+
+def test_typed_listening_ports_permission_error_is_not_authorized(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _use_proc_net(monkeypatch, proc_root)
+
+    def deny_socket_file(*args: Any, **kwargs: Any) -> str:
+        raise PermissionError("socket table denied")
+
+    monkeypatch.setattr(Path, "read_text", deny_socket_file)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+    assert result.source_outcomes[0].error_detail == "socket table denied"
+
+
+def test_typed_listening_ports_collect_returns_partial_when_one_table_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    (proc_root / "tcp6").mkdir()
+    _use_proc_net(monkeypatch, proc_root)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert len(result.assets) == 1
+    assert any(outcome.status is CollectionStatus.UNAVAILABLE for outcome in result.source_outcomes)
+
+
+def test_typed_listening_ports_generic_exception_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _use_proc_net(monkeypatch, proc_root)
+
+    def explode(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("socket parser unavailable")
+
+    monkeypatch.setattr(Path, "read_text", explode)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert result.source_outcomes[0].error_code == "collection_unavailable"
+    assert result.source_outcomes[0].error_detail == "socket parser unavailable"
 
 
 def test_collect_returns_empty_when_socket_files_missing(

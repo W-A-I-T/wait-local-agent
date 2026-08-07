@@ -1,3 +1,10 @@
+from wait_local_agent.reports.hardening_checks import (
+    CheckResult,
+    HardeningCheck,
+    HardeningContext,
+    HardeningRunRecord,
+    run_hardening_checks,
+)
 from wait_local_agent.reports.models import (
     GeneratedReport,
     ReportFormat,
@@ -12,4 +19,9 @@ __all__ = [
     "ReportSection",
     "ReportService",
     "ReportType",
+    "CheckResult",
+    "HardeningCheck",
+    "HardeningContext",
+    "HardeningRunRecord",
+    "run_hardening_checks",
 ]

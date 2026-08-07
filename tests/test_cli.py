@@ -4,6 +4,16 @@ from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
 from wait_local_agent.cli import app
+from wait_local_agent.collectors import (
+    DatabaseInventoryCollector,
+    FirewallRulesCollector,
+    HostRuntimeCollector,
+    ListeningPortsCollector,
+    NetworkInterfacesCollector,
+    ProcessInventoryCollector,
+    WifiInventoryCollector,
+    default_registry,
+)
 from wait_local_agent.config import load_settings
 from wait_local_agent.models import (
     HaloClient,
@@ -14,6 +24,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 
@@ -30,6 +41,39 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "timeout_seconds=20" in result.output
     assert "llm_inference_enabled=False" in result.output
     assert "write_actions_enabled=False" in result.output
+
+
+def test_collectors_list_shows_exactly_seven_modules(
+    monkeypatch, tmp_path, isolated_default_registry
+) -> None:
+    default_registry.clear()
+    for module in (
+        DatabaseInventoryCollector(),
+        FirewallRulesCollector(),
+        HostRuntimeCollector(),
+        ListeningPortsCollector(),
+        NetworkInterfacesCollector(),
+        ProcessInventoryCollector(),
+        WifiInventoryCollector(),
+    ):
+        default_registry.register(module)
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["collectors", "list"])
+
+    module_lines = [line for line in result.output.splitlines() if line.strip()]
+    assert result.exit_code == 0
+    assert len(module_lines) == 7
+    assert [line.split()[0] for line in module_lines] == [
+        "database-inventory",
+        "firewall-rules",
+        "host-runtime",
+        "listening-ports",
+        "network-interfaces",
+        "process-inventory",
+        "wifi-inventory",
+    ]
 
 
 def test_doctor_requires_all_halopsa_credentials(monkeypatch, tmp_path) -> None:
@@ -152,6 +196,71 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert backup.exit_code == 0
     assert backup_path.exists()
     assert restore.exit_code == 0
+
+
+def test_hardening_and_restore_commands_report_success(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    backup_path = tmp_path / "backup.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    runner = CliRunner()
+
+    backup = runner.invoke(app, ["backup", "create", str(backup_path)])
+    hardening = runner.invoke(app, ["hardening", "run"])
+    listed_hardening = runner.invoke(app, ["hardening", "list"])
+    exercise = runner.invoke(app, ["backup", "restore-exercise", str(backup_path)])
+
+    assert backup.exit_code == 0
+    assert hardening.exit_code == 0
+    assert '"run"' in hardening.output
+    assert listed_hardening.exit_code == 0
+    assert "count=1" in listed_hardening.output
+    assert exercise.exit_code == 0
+    assert '"exercise"' in exercise.output
+
+
+def test_hardening_and_restore_cli_error_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        cli_module,
+        "run_hardening_checks",
+        lambda *args, **kwargs: HardeningRunRecord(None, "completed", "start", "", 0, 0),
+    )
+    hardening = runner.invoke(app, ["hardening", "run"])
+    assert hardening.exit_code != 0
+    assert "hardening run was not persisted" in hardening.output
+
+    monkeypatch.setattr(
+        cli_module,
+        "run_restore_exercise",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot start")),
+    )
+    exercise = runner.invoke(app, ["backup", "restore-exercise", "missing.db"])
+    assert exercise.exit_code != 0
+    assert "restore exercise could not be started" in exercise.output
+
+
+def test_secret_and_update_cli_error_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_VAULT_PATH", str(tmp_path / "vault"))
+    runner = CliRunner()
+
+    invalid_set = runner.invoke(app, ["secrets", "set", "", "value"])
+    invalid_get = runner.invoke(app, ["secrets", "get", ""])
+    monkeypatch.setattr(
+        cli_module,
+        "check_for_updates",
+        lambda _settings: (_ for _ in ()).throw(RuntimeError("network failed")),
+    )
+    update = runner.invoke(app, ["update", "check"])
+
+    assert invalid_set.exit_code != 0
+    assert "secret key must not be empty" in invalid_set.output
+    assert invalid_get.exit_code != 0
+    assert "secret key must not be empty" in invalid_get.output
+    assert update.exit_code == 1
+    assert "status=error detail=internal_error message=network failed" in update.output
 
 
 def test_halopsa_cli_read_commands_block_without_http_flag(monkeypatch, tmp_path) -> None:

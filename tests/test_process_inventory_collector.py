@@ -14,6 +14,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.ProcessInventoryCollectorModule
 
@@ -268,6 +271,76 @@ def test_collect_returns_empty_on_non_linux(
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"] == []
+
+    typed_result = collectors.ProcessInventoryCollector().collect({})
+    assert typed_result.status is CollectionStatus.EMPTY
+    assert typed_result.source_outcomes[0].remediation_hint is not None
+
+
+def test_typed_collect_maps_permission_error_to_not_authorized(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
+
+    def deny_reader(path: Path, *, strict: bool = False) -> str:
+        raise PermissionError(f"denied: {path}")
+
+    monkeypatch.setattr(collectors, "_read_process_inventory_text", deny_reader)
+
+    result = collectors.ProcessInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+    assert result.source_outcomes[0].error_detail == "denied: " + str(proc_root / "1" / "status")
+
+
+def test_typed_process_collect_returns_partial_when_one_entry_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_process(proc_root, 100)
+    _write_process(proc_root, 101)
+    _use_proc(monkeypatch, proc_root)
+    real_read_text = Path.read_text
+
+    def deny_process(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.parent.name == "101":
+            raise PermissionError("process metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_process)
+    result = collectors.ProcessInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["process:100"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
+def test_process_inventory_round_trips_through_governed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+    settings,
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.ProcessInventoryCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    assert service.validate("process-inventory", {}).passed is True
+    preview = service.preview("process-inventory", {})
+    run = service.run("process-inventory", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert len(store.list_canonical_assets(run_id=run.id)) == 1
+    assert len(store.list_asset_observations(run_id=run.id)) == 4
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 def test_collect_returns_empty_when_proc_missing(

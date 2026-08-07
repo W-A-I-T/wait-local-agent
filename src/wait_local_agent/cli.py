@@ -15,12 +15,23 @@ from fastapi import HTTPException
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
     FOUNDER_INSTALL_HINT,
+    FounderNotConfiguredError,
     FounderPackContractError,
     FounderPackUnavailableError,
+    FounderUploadConflictError,
     build_upload_preview,
+    configure_founder,
     invoke_founder,
     json_object,
+    open_founder_preview,
+    open_founder_results,
+    open_founder_scan,
+    open_founder_status,
+    open_founder_upload,
     require_founder_pack,
+    require_fresh_preview,
+    resolve_open_config,
+    sanitized_pack_bundle,
 )
 from wait_local_agent.api.founder import (
     render_json as render_founder_json,
@@ -31,8 +42,8 @@ from wait_local_agent.api.packs.loader import (
     install_pack_tarball,
     load_pack_registry,
 )
-from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state
-from wait_local_agent.collectors import CollectorService
+from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
+from wait_local_agent.collectors import CollectorService, collector_run_result_status
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
@@ -47,6 +58,11 @@ from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
+from wait_local_agent.reports.builders import (
+    build_appliance_hardening_report,
+    build_restore_evidence_report,
+)
+from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
@@ -69,6 +85,7 @@ workflows_app = typer.Typer(help="Workflow template and run commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
+hardening_app = typer.Typer(help="Appliance hardening check commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
@@ -85,6 +102,7 @@ app.add_typer(workflows_app, name="workflows")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
+app.add_typer(hardening_app, name="hardening")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
 app.add_typer(packs_app, name="packs")
@@ -210,7 +228,49 @@ def install_pack(
 
 @founder_app.command("scan")
 def founder_scan(path: Path) -> None:
-    response = json_object(_invoke_founder_cli("scan", path), operation="scan")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        response = open_founder_scan(store, settings, config, path)
+    else:
+        response = json_object(invoke_founder(pack, "scan", path), operation="scan")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("configure")
+def founder_configure(
+    base_url: Annotated[str, typer.Option("--base-url")],
+    project_id: Annotated[str, typer.Option("--project-id")],
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help="Token for scripting only; visible in shell history/process arguments. Prefer the hidden prompt.",
+        ),
+    ] = None,
+) -> None:
+    token_value = token if token is not None else typer.prompt("Launch Passport token", hide_input=True)
+    try:
+        response = configure_founder(load_settings(), _store(), base_url, project_id, token_value)
+    except (ValueError, SecretVaultError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("preview")
+def founder_preview(artifact_id: Annotated[str, typer.Argument()]) -> None:
+    pack = _founder_pack_or_none()
+    if pack is None:
+        _, store, _ = _open_cli_config()
+        try:
+            response = open_founder_preview(store, artifact_id)
+        except KeyError as exc:
+            raise typer.BadParameter("artifact not found") from exc
+        store.mark_founder_artifact_previewed(artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        response = build_upload_preview(artifact_id, bundle)
+        _store().mark_founder_artifact_previewed(artifact_id)
     typer.echo(render_founder_json(response))
 
 
@@ -247,12 +307,50 @@ def founder_upload(
     artifact_id: Annotated[str, typer.Option("--artifact-id")],
     yes: Annotated[bool, typer.Option("--yes", help="Confirm the upload after printing the preview.")] = False,
 ) -> None:
-    bundle = json_object(_invoke_founder_cli("export_bundle", artifact_id), operation="export_bundle")
-    typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
-    if not yes:
-        typer.echo("re-run with --yes to confirm upload")
-        raise typer.Exit(code=1)
-    response = json_object(_invoke_founder_cli("upload", artifact_id), operation="upload")
+    pack = _founder_pack_or_none()
+    if pack is None:
+        settings, store, config = _open_cli_config()
+        if not yes:
+            typer.echo("upload requires a prior preview; run `founder preview ARTIFACT_ID`, then re-run with --yes")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(store, artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = open_founder_upload(settings, store, config, artifact_id)
+    else:
+        bundle = sanitized_pack_bundle(pack, artifact_id)
+        typer.echo(render_founder_json(build_upload_preview(artifact_id, bundle)))
+        if not yes:
+            typer.echo("re-run with --yes after this preview to confirm upload")
+            raise typer.Exit(code=1)
+        try:
+            require_fresh_preview(_store(), artifact_id)
+        except FounderUploadConflictError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = json_object(invoke_founder(pack, "upload", artifact_id, bundle), operation="upload")
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("status")
+def founder_status() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_status(settings, config)
+    typer.echo(render_founder_json(response))
+
+
+@founder_app.command("results")
+def founder_results() -> None:
+    pack = _founder_pack_or_none()
+    if pack is not None:
+        response = json_object(invoke_founder(pack, "results"), operation="results")
+    else:
+        settings, _, config = _open_cli_config()
+        response = open_founder_results(settings, config)
     typer.echo(render_founder_json(response))
 
 
@@ -751,7 +849,10 @@ def run_collector(
         raise typer.BadParameter("collector module not found") from exc
     except (PermissionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    typer.echo(f"run_id={run.id} status={run.status} module={run.module_id}")
+    result_status = collector_run_result_status(run) or "unknown"
+    typer.echo(
+        f"run_id={run.id} status={run.status} result_status={result_status} module={run.module_id}"
+    )
 
 
 @collectors_app.command("export")
@@ -870,6 +971,80 @@ def restore_backup(
     typer.echo(f"restored={path}")
 
 
+@hardening_app.command("run")
+def run_hardening() -> None:
+    settings = load_settings()
+    store = _store()
+    store.add_audit_event("hardening.run_requested", "hardening", "operator requested hardening checks")
+    context = HardeningContext.from_settings(
+        settings,
+        store=store,
+        backup_paths=tuple(
+            path
+            for path in settings.data_path.parent.glob("*")
+            if path.is_file() and path != settings.data_path
+        ),
+        audit_event_count=len(store.list_audit_events()),
+    )
+    run = run_hardening_checks(context, store=store)
+    if run.id is None:
+        raise typer.BadParameter("hardening run was not persisted")
+    sections, metadata = build_appliance_hardening_report(store, run.id)
+    report = ReportService(store).create_report(
+        ReportType.APPLIANCE_HARDENING,
+        f"Appliance Hardening Evidence {run.id}",
+        sections,
+        metadata=metadata,
+    )
+    store.add_audit_event("hardening.run_completed", str(run.id), run.status)
+    typer.echo(json.dumps({"run": asdict(run), "report": asdict(report)}, sort_keys=True, indent=2))
+
+
+@hardening_app.command("list")
+def list_hardening_runs() -> None:
+    runs = _store().list_hardening_runs()
+    for run in runs:
+        typer.echo(
+            f"{run.id} status={run.status} results={run.result_count}/{run.expected_check_count} "
+            f"started_at={run.started_at}"
+        )
+    typer.echo(f"count={len(runs)}")
+
+
+@backup_app.command("restore-exercise")
+def restore_exercise(
+    backup_id: str,
+    encrypted: Annotated[
+        bool,
+        typer.Option("--encrypted", help="The backup artifact is Fernet encrypted."),
+    ] = False,
+) -> None:
+    settings = load_settings()
+    store = _store()
+    store.add_audit_event(
+        "backup.restore_exercise_requested",
+        backup_id,
+        "operator requested restore exercise",
+    )
+    try:
+        result = run_restore_exercise(
+            backup_id,
+            store=store,
+            settings=settings,
+            encrypted=encrypted,
+        )
+    except OSError as exc:
+        raise typer.BadParameter("restore exercise could not be started") from exc
+    sections, metadata = build_restore_evidence_report(store)
+    report = ReportService(store).create_report(
+        ReportType.RESTORE_EVIDENCE,
+        "Restore Evidence",
+        sections,
+        metadata=metadata,
+    )
+    typer.echo(json.dumps({"exercise": asdict(result), "report": asdict(report)}, sort_keys=True, indent=2))
+
+
 @secrets_app.command("init")
 def init_secret_vault() -> None:
     settings = load_settings()
@@ -922,16 +1097,41 @@ def update_check() -> None:
 
 
 def _doctor_founder_lp_status() -> str:
-    try:
-        payload = json_object(invoke_founder(require_founder_pack(), "lp_status"), operation="lp_status")
-    except FounderPackUnavailableError:
-        return "not_installed"
-    except FounderPackContractError:
-        return "contract_error"
+    pack = _founder_pack_or_none()
+    if pack is None:
+        try:
+            settings = load_settings()
+            store = _store()
+            payload = open_founder_status(settings, resolve_open_config(settings, store))
+        except FounderNotConfiguredError:
+            return "not_configured"
+    else:
+        try:
+            payload = json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
+        except FounderPackContractError:
+            return "contract_error"
     status = payload.get("status")
     if isinstance(status, str):
         return status
     return json.dumps(payload, sort_keys=True)
+
+
+def _founder_pack_or_none():
+    try:
+        return require_founder_pack()
+    except FounderPackUnavailableError:
+        return None
+
+
+def _open_cli_config():
+    settings = load_settings()
+    store = _store()
+    try:
+        config = resolve_open_config(settings, store)
+    except FounderNotConfiguredError as exc:
+        typer.echo("launch passport not configured")
+        raise typer.Exit(code=1) from exc
+    return settings, store, config
 
 
 def _invoke_founder_cli(operation: str, *args: object) -> object:

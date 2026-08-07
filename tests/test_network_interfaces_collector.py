@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.NetworkInterfacesCollectorModule
 
@@ -217,6 +220,79 @@ def test_collect_returns_empty_on_non_linux(
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"] == []
+
+    typed_result = collectors.NetworkInterfacesCollector().collect({})
+    assert typed_result.status is CollectionStatus.EMPTY
+    assert typed_result.source_outcomes[0].remediation_hint is not None
+
+
+def test_typed_collect_maps_interface_permission_error(
+    monkeypatch: pytest.MonkeyPatch,
+    sys_net_root: Path,
+) -> None:
+    _write_interface(sys_net_root, "eth0")
+    _use_sys_class_net(monkeypatch, sys_net_root)
+
+    real_read_text = Path.read_text
+
+    def deny_address(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == "address":
+            raise PermissionError("interface metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_address)
+
+    result = collectors.NetworkInterfacesCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+
+
+def test_typed_network_interfaces_collect_returns_partial_when_one_interface_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    sys_net_root: Path,
+) -> None:
+    _write_interface(sys_net_root, "eth0")
+    _write_interface(sys_net_root, "eth1")
+    _use_sys_class_net(monkeypatch, sys_net_root)
+    real_read_text = Path.read_text
+
+    def deny_eth1(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == sys_net_root / "eth1" / "address":
+            raise PermissionError("interface metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_eth1)
+    result = collectors.NetworkInterfacesCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["netif:eth0"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
+def test_network_interfaces_round_trips_through_governed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    sys_net_root: Path,
+    settings,
+) -> None:
+    _write_interface(sys_net_root, "eth0")
+    _use_sys_class_net(monkeypatch, sys_net_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.NetworkInterfacesCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    assert service.validate("network-interfaces", {}).passed is True
+    preview = service.preview("network-interfaces", {})
+    run = service.run("network-interfaces", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert len(store.list_canonical_assets(run_id=run.id)) == 1
+    assert len(store.list_asset_observations(run_id=run.id)) == 6
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 def test_collect_returns_empty_when_path_missing(

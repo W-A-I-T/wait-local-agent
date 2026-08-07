@@ -1,14 +1,22 @@
+"""Collector contracts, typed adapters, and read-only legacy collectors.
+
+Legacy observation records are intentionally persisted as flattened
+``<module>.metadata`` observations for compatibility with existing evidence.
+"""
+
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import platform
 import platform as _process_inventory_platform
 import re
 import socket
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path as _ProcessInventoryPath
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from wait_local_agent.models import (
     AssetObservationWrite,
@@ -46,6 +54,8 @@ class CollectorManifest:
     capabilities: tuple[str, ...] = ()
     scopes: tuple[str, ...] = ()
     report_types: tuple[str, ...] = ("collector_bundle",)
+    platforms: tuple[str, ...] = ()
+    config_schema: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,30 @@ class CollectorPreview:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class CollectionStatus(StrEnum):
+    SUCCESS = "success"
+    EMPTY = "empty"
+    NOT_AUTHORIZED = "not_authorized"
+    UNAVAILABLE = "unavailable"
+    PARTIAL = "partial"
+
+
+@dataclass(frozen=True)
+class SourceOutcome:
+    source_id: str
+    status: CollectionStatus
+    record_count: int = 0
+    error_code: str | None = None
+    error_detail: str | None = None
+    remediation_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class _TypedCollection:
+    records: list[dict[str, Any]]
+    source_outcomes: tuple[SourceOutcome, ...] = ()
+
+
 @dataclass(frozen=True)
 class CollectorResult:
     assets: list[CollectorAssetWrite] = field(default_factory=list)
@@ -77,6 +111,9 @@ class CollectorResult:
     config_diffs: list[ConfigDiffWrite] = field(default_factory=list)
     restore_exercises: list[RestoreExerciseWrite] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    status: CollectionStatus = CollectionStatus.SUCCESS
+    source_outcomes: tuple[SourceOutcome, ...] = ()
+    collection_scope: Literal["host", "container"] = "host"
 
 
 class CollectorModule(Protocol):
@@ -192,10 +229,27 @@ class CollectorService:
                 result,
                 client_id=client_id,
             )
+            result_payload = asdict(result)
+            error_outcome = next(
+                (
+                    outcome
+                    for outcome in result.source_outcomes
+                    if outcome.error_code is not None or outcome.error_detail is not None
+                ),
+                None,
+            )
+            if error_outcome is not None:
+                result_payload["error_code"] = error_outcome.error_code
+                result_payload["error_detail"] = error_outcome.error_detail
+            run_status = (
+                "failed"
+                if result.status in {CollectionStatus.NOT_AUTHORIZED, CollectionStatus.UNAVAILABLE}
+                else "completed"
+            )
             return self.store.complete_collector_run(
                 run.id,
-                "completed",
-                result=asdict(result),
+                run_status,
+                result=result_payload,
             )
         except Exception as exc:
             self.store.complete_collector_run(
@@ -243,6 +297,16 @@ class CollectorService:
             client_id=run.client_id,
         )
         return report
+
+
+def collector_run_result_status(run: CollectorRun) -> str | None:
+    """Return the typed collection status persisted in a collector run."""
+    try:
+        payload = json.loads(run.result_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    return status if isinstance(status, str) else None
 
 
 class HostRuntimeCollector:
@@ -612,46 +676,58 @@ class ProcessInventoryCollectorModule:
             },
         ]
 
-    def _process_records(self, limit=None):
+    def _process_records(self, limit=None, *, strict=False):
+        return self._process_records_with_outcomes(limit=limit, strict=strict).records
+
+    def _process_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
         proc_path = _ProcessInventoryPath("/proc")
         if not proc_path.exists() or not proc_path.is_dir():
-            return []
+            return _TypedCollection([])
 
         records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
         try:
             entries = list(proc_path.iterdir())
         except OSError:
-            return []
+            if strict:
+                raise
+            return _TypedCollection([])
 
         for entry in entries:
             if not entry.name.isdigit():
                 continue
 
-            record = self._read_proc_entry(entry)
+            try:
+                record = self._read_proc_entry(entry, strict=strict)
+            except Exception as exc:
+                if not strict:
+                    continue
+                source_outcomes.append(_source_outcome_for_exception(f"process:{entry.name}", exc))
+                continue
             if record is None:
                 continue
 
             records.append(record)
-            if limit is not None and len(records) >= limit:
-                break
 
         records.sort(key=lambda item: item["pid"])
-        return records
+        if limit is None:
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
     @staticmethod
-    def _read_proc_entry(entry):
+    def _read_proc_entry(entry, *, strict=False):
         try:
             pid = int(entry.name)
         except ValueError:
             return None
 
-        status = _read_process_inventory_text(entry / "status")
+        status = _read_process_inventory_text(entry / "status", strict=strict)
         name = ""
         state = ""
         for line in status.splitlines():
@@ -660,9 +736,9 @@ class ProcessInventoryCollectorModule:
             elif line.startswith("State:"):
                 state = line.split(":", 1)[1].strip()
 
-        cmdline = _read_process_inventory_cmdline(entry / "cmdline")
+        cmdline = _read_process_inventory_cmdline(entry / "cmdline", strict=strict)
         if not name:
-            comm = _read_process_inventory_text(entry / "comm").strip()
+            comm = _read_process_inventory_text(entry / "comm", strict=strict).strip()
             name = comm
 
         if not name and not cmdline:
@@ -834,12 +910,15 @@ class ListeningPortsCollectorModule:
             },
         ]
 
-    def _socket_records(self, limit=None):
+    def _socket_records(self, limit=None, *, strict=False):
+        return self._socket_records_with_outcomes(limit=limit, strict=strict).records
+
+    def _socket_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
         files = (
             ("tcp", "/proc/net/tcp"),
@@ -848,21 +927,30 @@ class ListeningPortsCollectorModule:
             ("udp6", "/proc/net/udp6"),
         )
         records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
 
         for protocol, path in files:
-            records.extend(self._read_socket_file(_ListeningPortsPath(path), protocol))
-            if limit is not None and len(records) >= limit:
-                break
+            try:
+                records.extend(self._read_socket_file(_ListeningPortsPath(path), protocol, strict=strict))
+            except Exception as exc:
+                if not strict:
+                    continue
+                source_outcomes.append(_source_outcome_for_exception(f"socket:{protocol}", exc))
+                continue
 
         records.sort(key=lambda item: (item["protocol"], item["local_port"]))
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _read_socket_file(self, path, protocol):
+    def _read_socket_file(self, path, protocol, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return []
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return []
 
         if not lines:
@@ -1119,29 +1207,41 @@ class NetworkInterfacesCollectorModule:
             },
         ]
 
-    def _interface_records(self, limit=None):
+    def _interface_records(self, limit=None, *, strict=False):
+        return self._interface_records_with_outcomes(limit=limit, strict=strict).records
+
+    def _interface_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
         sys_net_root = _NetworkInterfacesPath("/sys/class/net")
         if not sys_net_root.exists() or not sys_net_root.is_dir():
-            return []
+            return _TypedCollection([])
 
         try:
             entries = list(sys_net_root.iterdir())
         except OSError:
-            return []
+            if strict:
+                raise
+            return _TypedCollection([])
 
         records = []
+        source_outcomes: list[SourceOutcome] = []
         for entry in entries:
             interface_name = entry.name
             if not interface_name:
                 continue
 
-            record = self._read_interface_record(entry)
+            try:
+                record = self._read_interface_record(entry, strict=strict)
+            except Exception as exc:
+                if not strict:
+                    continue
+                source_outcomes.append(_source_outcome_for_exception(f"interface:{interface_name}", exc))
+                continue
             if record is None:
                 continue
 
@@ -1149,29 +1249,33 @@ class NetworkInterfacesCollectorModule:
 
         records.sort(key=lambda item: item["interface"])
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _read_interface_record(self, entry):
+    def _read_interface_record(self, entry, *, strict=False):
         interface_name = entry.name
         if not interface_name:
             return None
 
-        mtu_raw = self._read_interface_file(entry / "mtu")
+        mtu_raw = self._read_interface_file(entry / "mtu", strict=strict)
         return {
             "interface": interface_name,
-            "operstate": self._read_interface_file(entry / "operstate"),
-            "mac": self._read_interface_file(entry / "address"),
+            "operstate": self._read_interface_file(entry / "operstate", strict=strict),
+            "mac": self._read_interface_file(entry / "address", strict=strict),
             "mtu": self._coerce_mtu(mtu_raw),
-            "type": self._read_interface_file(entry / "type"),
-            "flags": self._read_interface_file(entry / "flags"),
+            "type": self._read_interface_file(entry / "type", strict=strict),
+            "flags": self._read_interface_file(entry / "flags", strict=strict),
         }
 
     @staticmethod
-    def _read_interface_file(path):
+    def _read_interface_file(path, *, strict=False):
         try:
             return path.read_text(encoding="utf-8", errors="replace").strip()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return ""
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return ""
 
     @staticmethod
@@ -1181,6 +1285,373 @@ class NetworkInterfacesCollectorModule:
             return int(value)
         except (ValueError, TypeError):
             return value
+
+
+def _typed_legacy_validation(
+    module_id: str,
+    legacy_module: Any,
+    config: dict[str, Any],
+) -> CollectorValidationResult:
+    if not isinstance(config, dict):
+        return CollectorValidationResult(
+            module_id=module_id,
+            passed=False,
+            message="collector config must be a mapping",
+            errors=["config must be a mapping when provided"],
+        )
+
+    legacy_result = legacy_module.validate_config(config)
+    errors = list(legacy_result.get("errors", []))
+    if errors:
+        return CollectorValidationResult(
+            module_id=module_id,
+            passed=False,
+            message="collector configuration is invalid",
+            errors=errors,
+        )
+    return CollectorValidationResult(
+        module_id=module_id,
+        passed=True,
+        message="ok",
+        normalized_config=dict(config),
+    )
+
+
+def _source_outcome_for_exception(source_id: str, exc: Exception) -> SourceOutcome:
+    status = CollectionStatus.NOT_AUTHORIZED if isinstance(exc, PermissionError) else CollectionStatus.UNAVAILABLE
+    detail = str(exc) or exc.__class__.__name__
+    if status is CollectionStatus.NOT_AUTHORIZED:
+        return SourceOutcome(
+            source_id=source_id,
+            status=status,
+            error_code="permission_denied",
+            error_detail=detail,
+            remediation_hint="Grant read access to the local collector source and retry.",
+        )
+    return SourceOutcome(
+        source_id=source_id,
+        status=status,
+        error_code="collection_unavailable",
+        error_detail=detail,
+        remediation_hint="Verify that the local collector source is available and retry.",
+    )
+
+
+def _typed_result_from_legacy(
+    module_id: str,
+    legacy_result: dict[str, Any],
+    *,
+    status: CollectionStatus,
+    source_outcomes: tuple[SourceOutcome, ...] = (),
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    remediation_hint: str | None = None,
+) -> CollectorResult:
+    assets: list[CollectorAssetWrite] = []
+    for asset in legacy_result.get("assets", []):
+        asset_id = str(asset["asset_id"])
+        attributes = asset.get("attributes", {})
+        assets.append(
+            CollectorAssetWrite(
+                canonical_id=asset_id,
+                asset_type=str(asset["asset_type"]),
+                display_name=str(asset.get("name") or asset_id),
+                attributes=dict(attributes) if isinstance(attributes, dict) else {},
+                source_module=module_id,
+                source_id=asset_id,
+            )
+        )
+
+    observations: list[AssetObservationWrite] = []
+    for observation in legacy_result.get("observations", []):
+        observation_key = str(observation.get("key", "value"))
+        observations.append(
+            AssetObservationWrite(
+                canonical_id=str(observation["asset_id"]),
+                observation_type=f"{module_id}.metadata",
+                payload={
+                    "asset_type": observation.get("asset_type", ""),
+                    "key": observation_key,
+                    "value": observation.get("value"),
+                },
+            )
+        )
+
+    outcomes = source_outcomes or (
+        SourceOutcome(
+            source_id=module_id,
+            status=status,
+            record_count=len(assets),
+            error_code=error_code,
+            error_detail=error_detail,
+            remediation_hint=remediation_hint,
+        ),
+    )
+    return CollectorResult(
+        assets=assets,
+        observations=observations,
+        metadata={"legacy_module_id": module_id},
+        status=status,
+        source_outcomes=outcomes,
+    )
+
+
+class _TypedLegacyCollector:
+    """Adapter shared by typed wrappers around legacy collectors."""
+
+    manifest: CollectorManifest
+    _legacy_type: type[Any]
+    _platform_hint: str
+
+    def __init__(self) -> None:
+        self._legacy_module = self._legacy_type()
+
+    def validate_config(self, config: dict[str, Any]) -> CollectorValidationResult:
+        return _typed_legacy_validation(self.manifest.id, self._legacy_module, config)
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return _TypedCollection(self._records(config, limit=limit, strict=strict))
+
+    def _legacy_result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
+        return self._legacy_module._result(records, preview=preview)
+
+    def preview(self, config: dict[str, Any]) -> CollectorPreview:
+        validation = self.validate_config(config)
+        if not validation.passed:
+            raise ValueError(validation.message)
+        normalized_config = validation.normalized_config
+        if _process_inventory_platform.system() != "Linux":
+            return CollectorPreview(
+                module_id=self.manifest.id,
+                source_name=self.manifest.id,
+                scopes=list(self.manifest.scopes),
+                estimated_assets=0,
+                estimated_observations=0,
+                expected_reports=list(self.manifest.report_types),
+                warnings=[self._platform_hint],
+                metadata={"status": CollectionStatus.EMPTY.value},
+            )
+
+        records = self._records(
+            normalized_config,
+            limit=self._config_limit(normalized_config, default=10),
+            strict=False,
+        )
+        legacy_result = self._legacy_result(records, preview=True)
+        return CollectorPreview(
+            module_id=self.manifest.id,
+            source_name=self.manifest.id,
+            scopes=list(self.manifest.scopes),
+            estimated_assets=len(legacy_result.get("assets", [])),
+            estimated_observations=len(legacy_result.get("observations", [])),
+            expected_reports=list(self.manifest.report_types),
+            metadata={"status": CollectionStatus.SUCCESS.value},
+        )
+
+    def _config_limit(self, config: dict[str, Any], *, default: int | None) -> int | None:
+        limit = config.get("limit", default)
+        return limit if isinstance(limit, int) else default
+
+    def collect(self, config: dict[str, Any]) -> CollectorResult:
+        validation = self.validate_config(config)
+        if not validation.passed:
+            raise ValueError(validation.message)
+        normalized_config = validation.normalized_config
+        if _process_inventory_platform.system() != "Linux":
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.EMPTY,
+                remediation_hint=self._platform_hint,
+            )
+
+        limit = self._config_limit(normalized_config, default=None)
+        if limit == 0:
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.EMPTY,
+            )
+
+        try:
+            collection = self._records_with_outcomes(normalized_config, limit=limit, strict=True)
+            records = collection.records
+            legacy_result = self._legacy_result(records, preview=False)
+        except PermissionError as exc:
+            detail = str(exc) or exc.__class__.__name__
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.NOT_AUTHORIZED,
+                error_code="permission_denied",
+                error_detail=detail,
+                remediation_hint="Grant read access to the local collector source and retry.",
+            )
+        except Exception as exc:
+            detail = str(exc) or exc.__class__.__name__
+            return _typed_result_from_legacy(
+                self.manifest.id,
+                {"assets": [], "observations": []},
+                status=CollectionStatus.UNAVAILABLE,
+                error_code="collection_unavailable",
+                error_detail=detail,
+                remediation_hint="Verify that the local collector source is available and retry.",
+            )
+
+        failures = collection.source_outcomes
+        if failures and legacy_result.get("assets"):
+            status = CollectionStatus.PARTIAL
+            source_outcomes = (
+                SourceOutcome(
+                    source_id=self.manifest.id,
+                    status=CollectionStatus.SUCCESS,
+                    record_count=len(legacy_result.get("assets", [])),
+                ),
+                *failures,
+            )
+        elif failures:
+            status = (
+                CollectionStatus.NOT_AUTHORIZED
+                if all(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in failures)
+                else CollectionStatus.UNAVAILABLE
+            )
+            source_outcomes = failures
+        else:
+            status = CollectionStatus.SUCCESS if legacy_result.get("assets") else CollectionStatus.EMPTY
+            source_outcomes = ()
+        return _typed_result_from_legacy(
+            self.manifest.id,
+            legacy_result,
+            status=status,
+            source_outcomes=source_outcomes,
+        )
+
+
+class ProcessInventoryCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="process-inventory",
+        name="Process Inventory",
+        version="1.0",
+        description="Read-only inventory of local running processes.",
+        capabilities=("local_process_inventory", "safe_read_only"),
+        scopes=("local_host", "processes"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum processes",
+                "help": "Limit the number of process records returned; omit for all readable processes.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = ProcessInventoryCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /proc process metadata."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._process_records(limit=limit, strict=strict)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._process_records_with_outcomes(limit=limit, strict=strict)
+
+
+class ListeningPortsCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="listening-ports",
+        name="Listening Ports",
+        version="1.0",
+        description="Read-only inventory of local listening sockets.",
+        capabilities=("local_socket_inventory", "safe_read_only"),
+        scopes=("local_host", "network_sockets"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum listening sockets",
+                "help": "Limit the number of socket records returned; omit for all readable sockets.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = ListeningPortsCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /proc/net socket tables."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._socket_records(limit=limit, strict=strict)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._socket_records_with_outcomes(limit=limit, strict=strict)
+
+
+class NetworkInterfacesCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="network-interfaces",
+        name="Network Interfaces",
+        version="1.0",
+        description="Read-only inventory of local network interface metadata.",
+        capabilities=("local_network_interface_inventory", "safe_read_only"),
+        scopes=("local_host", "network_interfaces"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum interfaces",
+                "help": "Limit the number of interface records returned; omit for all readable interfaces.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = NetworkInterfacesCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux /sys/class/net interface metadata."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._interface_records(limit=limit, strict=strict)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._interface_records_with_outcomes(limit=limit, strict=strict)
+
+
+TypedProcessInventoryCollector = ProcessInventoryCollector
+TypedListeningPortsCollector = ListeningPortsCollector
+TypedNetworkInterfacesCollector = NetworkInterfacesCollector
+
+
+default_registry.register(ProcessInventoryCollector())
+default_registry.register(ListeningPortsCollector())
+default_registry.register(NetworkInterfacesCollector())
 
 
 class FirewallRulesCollectorModule:
@@ -1342,28 +1813,40 @@ class FirewallRulesCollectorModule:
         ]
 
     def _firewall_rule_records(self, limit=None):
+        return self._firewall_rule_records_with_outcomes(limit=limit, strict=False).records
+
+    def _firewall_rule_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
         records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
         for config_path in self._config_paths:
             path = _FirewallRulesPath(config_path)
-            records.extend(self._read_firewall_rule_file(path, config_path))
-            if limit is not None and len(records) >= limit:
-                break
+            try:
+                records.extend(self._read_firewall_rule_file(path, config_path, strict=strict))
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"firewall:{config_path}", exc))
+                continue
 
         records.sort(key=lambda item: (item["source_file"], item["index"]))
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _read_firewall_rule_file(self, path, source_file):
+    def _read_firewall_rule_file(self, path, source_file, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return []
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return []
 
         records: list[dict[str, Any]] = []
@@ -1613,31 +2096,45 @@ class DatabaseInventoryCollectorModule:
         ]
 
     def _database_records(self, limit=None):
+        return self._database_records_with_outcomes(limit=limit, strict=False).records
+
+    def _database_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
-        records = []
-        for record in (
-            self._postgresql_record(),
-            self._mysql_record(),
-            self._mariadb_record(),
-            self._mongodb_record(),
-            self._redis_record(),
-        ):
+        records: list[dict[str, Any]] = []
+        source_outcomes: list[SourceOutcome] = []
+        readers = (
+            ("postgresql", self._postgresql_record),
+            ("mysql", self._mysql_record),
+            ("mariadb", self._mariadb_record),
+            ("mongodb", self._mongodb_record),
+            ("redis", self._redis_record),
+        )
+        for source_id, reader in readers:
+            try:
+                record = reader(strict=strict)
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"database:{source_id}", exc))
+                continue
             if record is not None:
                 records.append(record)
 
         records.sort(key=lambda item: item["engine"])
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _postgresql_record(self):
-        paths = self._glob_paths("/etc/postgresql", "*/main/postgresql.conf")
-        settings = self._read_first_assignment_settings(paths, ("port", "data_directory", "listen_addresses"))
+    def _postgresql_record(self, *, strict=False):
+        paths = self._glob_paths("/etc/postgresql", "*/main/postgresql.conf", strict=strict)
+        settings = self._read_first_assignment_settings(
+            paths, ("port", "data_directory", "listen_addresses"), strict=strict
+        )
         if settings is None:
             return None
 
@@ -1649,9 +2146,9 @@ class DatabaseInventoryCollectorModule:
             bind=settings.get("listen_addresses", ""),
         )
 
-    def _mysql_record(self):
+    def _mysql_record(self, *, strict=False):
         paths = [_DatabaseInventoryPath("/etc/mysql/my.cnf")]
-        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"))
+        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"), strict=strict)
         if settings is None:
             return None
 
@@ -1663,9 +2160,9 @@ class DatabaseInventoryCollectorModule:
             bind=settings.get("bind-address", ""),
         )
 
-    def _mariadb_record(self):
-        paths = self._glob_paths("/etc/mysql/mariadb.conf.d", "*.cnf")
-        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"))
+    def _mariadb_record(self, *, strict=False):
+        paths = self._glob_paths("/etc/mysql/mariadb.conf.d", "*.cnf", strict=strict)
+        settings = self._read_first_assignment_settings(paths, ("port", "datadir", "bind-address"), strict=strict)
         if settings is None:
             return None
 
@@ -1677,9 +2174,9 @@ class DatabaseInventoryCollectorModule:
             bind=settings.get("bind-address", ""),
         )
 
-    def _mongodb_record(self):
+    def _mongodb_record(self, *, strict=False):
         path = _DatabaseInventoryPath("/etc/mongod.conf")
-        settings = self._read_first_colon_settings([path], ("port", "dbpath", "bindip"))
+        settings = self._read_first_colon_settings([path], ("port", "dbpath", "bindip"), strict=strict)
         if settings is None:
             return None
 
@@ -1691,9 +2188,9 @@ class DatabaseInventoryCollectorModule:
             bind=settings.get("bindip", ""),
         )
 
-    def _redis_record(self):
+    def _redis_record(self, *, strict=False):
         path = _DatabaseInventoryPath("/etc/redis/redis.conf")
-        settings = self._read_first_assignment_settings([path], ("port", "dir", "bind"))
+        settings = self._read_first_assignment_settings([path], ("port", "dir", "bind"), strict=strict)
         if settings is None:
             return None
 
@@ -1716,15 +2213,17 @@ class DatabaseInventoryCollectorModule:
         }
 
     @staticmethod
-    def _glob_paths(root, pattern):
+    def _glob_paths(root, pattern, *, strict=False):
         try:
             return sorted(_DatabaseInventoryPath(root).glob(pattern), key=lambda path: str(path))
         except OSError:
+            if strict:
+                raise
             return []
 
-    def _read_first_assignment_settings(self, paths, keys):
+    def _read_first_assignment_settings(self, paths, keys, *, strict=False):
         for path in paths:
-            text = self._read_database_config(path)
+            text = self._read_database_config(path, strict=strict)
             if text is None:
                 continue
             settings = self._parse_assignment_settings(text, keys)
@@ -1732,9 +2231,9 @@ class DatabaseInventoryCollectorModule:
             return settings
         return None
 
-    def _read_first_colon_settings(self, paths, keys):
+    def _read_first_colon_settings(self, paths, keys, *, strict=False):
         for path in paths:
-            text = self._read_database_config(path)
+            text = self._read_database_config(path, strict=strict)
             if text is None:
                 continue
             settings = self._parse_colon_settings(text, keys)
@@ -1743,12 +2242,16 @@ class DatabaseInventoryCollectorModule:
         return None
 
     @staticmethod
-    def _read_database_config(path):
+    def _read_database_config(path, *, strict=False):
         try:
             if not path.exists() or not path.is_file():
                 return None
             return path.read_text(encoding="utf-8", errors="replace")
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return None
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return None
 
     @classmethod
@@ -1970,24 +2473,45 @@ class WifiInventoryCollectorModule:
         ]
 
     def _wifi_records(self, limit=None):
+        return self._wifi_records_with_outcomes(limit=limit, strict=False).records
+
+    def _wifi_records_with_outcomes(self, limit=None, *, strict=False):
         if limit == 0:
-            return []
+            return _TypedCollection([])
 
         if _process_inventory_platform.system() != "Linux":
-            return []
+            return _TypedCollection([])
 
         wireless_path = _WifiInventoryPath("/proc/net/wireless")
         sys_net_root = _WifiInventoryPath("/sys/class/net")
-        proc_records = self._wireless_rows(wireless_path)
+        source_outcomes: list[SourceOutcome] = []
+        try:
+            proc_records = self._wireless_rows(wireless_path, strict=strict)
+        except Exception as exc:
+            if not strict:
+                raise
+            source_outcomes.append(_source_outcome_for_exception("wifi:proc-net-wireless", exc))
+            proc_records = {}
         interface_names = set(proc_records)
 
-        interface_names.update(self._wireless_interfaces_from_sys(sys_net_root))
+        try:
+            interface_names.update(self._wireless_interfaces_from_sys(sys_net_root, strict=strict))
+        except Exception as exc:
+            if not strict:
+                raise
+            source_outcomes.append(_source_outcome_for_exception("wifi:sys-class-net", exc))
         if not interface_names:
-            return []
+            return _TypedCollection([], tuple(source_outcomes))
 
         records = []
         for interface_name in sorted(interface_names):
-            sys_record = self._read_sys_wifi_record(sys_net_root / interface_name)
+            try:
+                sys_record = self._read_sys_wifi_record(sys_net_root / interface_name, strict=strict)
+            except Exception as exc:
+                if not strict:
+                    raise
+                source_outcomes.append(_source_outcome_for_exception(f"wifi:{interface_name}", exc))
+                continue
             record = {
                 "interface": interface_name,
                 "mac": sys_record.get("mac", ""),
@@ -1999,13 +2523,17 @@ class WifiInventoryCollectorModule:
             records.append(record)
 
         if limit is None:
-            return records
-        return records[:limit]
+            return _TypedCollection(records, tuple(source_outcomes))
+        return _TypedCollection(records[:limit], tuple(source_outcomes))
 
-    def _wireless_rows(self, path):
+    def _wireless_rows(self, path, *, strict=False):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
+            return {}
+        except (PermissionError, OSError):
+            if strict:
+                raise
             return {}
 
         records = {}
@@ -2033,13 +2561,15 @@ class WifiInventoryCollectorModule:
         }
 
     @staticmethod
-    def _wireless_interfaces_from_sys(sys_net_root):
+    def _wireless_interfaces_from_sys(sys_net_root, *, strict=False):
         if not sys_net_root.exists() or not sys_net_root.is_dir():
             return []
 
         try:
             entries = list(sys_net_root.iterdir())
         except OSError:
+            if strict:
+                raise
             return []
 
         interfaces = []
@@ -2048,18 +2578,141 @@ class WifiInventoryCollectorModule:
                 interfaces.append(entry.name)
         return interfaces
 
-    def _read_sys_wifi_record(self, entry):
+    def _read_sys_wifi_record(self, entry, *, strict=False):
         return {
-            "mac": self._read_wifi_file(entry / "address"),
-            "operstate": self._read_wifi_file(entry / "operstate"),
+            "mac": self._read_wifi_file(entry / "address", strict=strict),
+            "operstate": self._read_wifi_file(entry / "operstate", strict=strict),
         }
 
     @staticmethod
-    def _read_wifi_file(path):
+    def _read_wifi_file(path, *, strict=False):
         try:
             return path.read_text(encoding="utf-8", errors="replace").strip()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError:
             return ""
+        except (PermissionError, OSError):
+            if strict:
+                raise
+            return ""
+
+
+class FirewallRulesCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="firewall-rules",
+        name="Firewall Rules",
+        version="1.0",
+        description="Read-only inventory of host firewall rules from local config files.",
+        capabilities=("local_firewall_inventory", "safe_read_only"),
+        scopes=("local_host", "firewall_rules"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum firewall rules",
+                "help": "Limit the number of firewall rule records returned; omit for all readable rules.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = FirewallRulesCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux firewall configuration files."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._firewall_rule_records(limit=limit)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._firewall_rule_records_with_outcomes(limit=limit, strict=strict)
+
+
+class DatabaseInventoryCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="database-inventory",
+        name="Database Inventory",
+        version="1.0",
+        description="Read-only inventory of local database engine configuration files.",
+        capabilities=("local_database_inventory", "safe_read_only"),
+        scopes=("local_host", "databases"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum database instances",
+                "help": "Limit the number of database records returned; omit for all readable configurations.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = DatabaseInventoryCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux database configuration files."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._database_records(limit=limit)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._database_records_with_outcomes(limit=limit, strict=strict)
+
+
+class WifiInventoryCollector(_TypedLegacyCollector):
+    manifest = CollectorManifest(
+        id="wifi-inventory",
+        name="Wi-Fi Inventory",
+        version="1.0",
+        description="Read-only inventory of local wireless interface metadata.",
+        capabilities=("local_wifi_inventory", "safe_read_only"),
+        scopes=("local_host", "wifi_interfaces"),
+        platforms=("linux",),
+        config_schema=(
+            {
+                "name": "limit",
+                "label": "Maximum Wi-Fi interfaces",
+                "help": "Limit the number of wireless interface records returned; omit for all readable interfaces.",
+                "type": "number",
+                "required": False,
+                "default": None,
+            },
+        ),
+    )
+    _legacy_type = WifiInventoryCollectorModule
+    _platform_hint = "Platform guard: this collector requires Linux wireless interface metadata."
+
+    def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
+        return self._legacy_module._wifi_records(limit=limit)
+
+    def _records_with_outcomes(
+        self,
+        config: dict[str, Any],
+        *,
+        limit: int | None,
+        strict: bool,
+    ) -> _TypedCollection:
+        return self._legacy_module._wifi_records_with_outcomes(limit=limit, strict=strict)
+
+
+TypedFirewallRulesCollector = FirewallRulesCollector
+TypedDatabaseInventoryCollector = DatabaseInventoryCollector
+TypedWifiInventoryCollector = WifiInventoryCollector
+
+
+default_registry.register(FirewallRulesCollector())
+default_registry.register(DatabaseInventoryCollector())
+default_registry.register(WifiInventoryCollector())
+
 
 class RoutingTableCollectorModule:
     """Read-only collector that inventories local IPv4 and IPv6 routes from /proc/net."""
@@ -3018,17 +3671,25 @@ class WebServicesCollectorModule:
         return cleaned.strip()
 
 
-def _read_process_inventory_text(path):
+def _read_process_inventory_text(path, *, strict=False):
     try:
         return path.read_text(encoding="utf-8", errors="replace")
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+    except FileNotFoundError:
+        return ""
+    except (PermissionError, ProcessLookupError, OSError):
+        if strict:
+            raise
         return ""
 
 
-def _read_process_inventory_cmdline(path):
+def _read_process_inventory_cmdline(path, *, strict=False):
     try:
         raw = path.read_bytes()
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+    except FileNotFoundError:
+        return ""
+    except (PermissionError, ProcessLookupError, OSError):
+        if strict:
+            raise
         return ""
 
     parts = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
