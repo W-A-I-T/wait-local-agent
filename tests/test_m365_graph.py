@@ -12,6 +12,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroup,
     M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
+    M365GraphLicenseChangeResult,
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
@@ -752,6 +753,7 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         (_safe_endpoint, "users/other/extra"),
         (_safe_endpoint, "//host"),
         (_safe_endpoint, "users/bad\nvalue/mailFolders"),
+        (_safe_endpoint, "users/user-1/assignLicense/extra"),
     ):
         with pytest.raises(M365GraphReadError):
             helper(value)
@@ -764,6 +766,7 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         "users/user%40example.test/mailFolders"
     )
     assert _safe_endpoint("users/user%40example.test") == "users/user%40example.test"
+    assert _safe_endpoint("users/user-1/assignLicense") == "users/user-1/assignLicense"
 
 
 def test_m365_graph_user_disable_patches_only_account_enabled(settings) -> None:
@@ -970,6 +973,87 @@ def test_m365_graph_group_membership_delete_guards_and_transport_failures(settin
     )
     assert transport_error.status == "failed"
     assert transport_error.message == "Microsoft Graph request failed."
+
+
+def test_m365_graph_license_changes_use_assign_license_contract(settings) -> None:
+    sku_ids = [
+        "84a661c4-e949-4bd2-a560-ed7766fcaf2b",
+        "f30db892-07e9-47e9-837c-80727f46fd3d",
+    ]
+    requests: list[tuple[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.url.path, json.loads(request.content)))
+        assert request.method == "POST"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(200, json={"id": "must-not-be-persisted"})
+
+    client = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    added = client.change_user_licenses(
+        user_id="user-1", sku_ids=sku_ids, operation="add"
+    )
+    removed = client.change_user_licenses(
+        user_id="user-1", sku_ids=[sku_ids[0]], operation="remove"
+    )
+
+    assert requests == [
+        (
+            "/v1.0/users/user-1/assignLicense",
+            {
+                "addLicenses": [
+                    {"disabledPlans": [], "skuId": sku_ids[0]},
+                    {"disabledPlans": [], "skuId": sku_ids[1]},
+                ],
+                "removeLicenses": [],
+            },
+        ),
+        (
+            "/v1.0/users/user-1/assignLicense",
+            {"addLicenses": [], "removeLicenses": [sku_ids[0]]},
+        ),
+    ]
+    assert added == M365GraphLicenseChangeResult(
+        "succeeded",
+        "Microsoft Graph user license add succeeded.",
+        user_id="user-1",
+        operation="add",
+        sku_ids=tuple(sku_ids),
+        status_code=200,
+    )
+    assert removed.operation == "remove"
+    assert "must-not-be-persisted" not in removed.message
+
+
+def test_m365_graph_license_changes_are_strict_and_write_gated(settings) -> None:
+    sku_id = "84a661c4-e949-4bd2-a560-ed7766fcaf2b"
+    blocked = M365GraphClient(_configured(settings)).change_user_licenses(
+        user_id="user-1", sku_ids=[sku_id], operation="add"
+    )
+    invalid_operation = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).change_user_licenses(user_id="user-1", sku_ids=[sku_id], operation="replace")
+    invalid_sku = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).change_user_licenses(user_id="user-1", sku_ids=["not-a-guid"], operation="add")
+    duplicate_sku = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).change_user_licenses(user_id="user-1", sku_ids=[sku_id, sku_id], operation="add")
+    empty_skus = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).change_user_licenses(user_id="user-1", sku_ids=[], operation="add")
+    non_string_sku = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).change_user_licenses(user_id="user-1", sku_ids=[7], operation="add")  # type: ignore[list-item]
+
+    assert blocked.status == "blocked"
+    assert invalid_operation.status == "failed"
+    assert invalid_sku.status == "failed"
+    assert duplicate_sku.status == "failed"
+    assert empty_skus.status == "failed"
+    assert non_string_sku.status == "failed"
 
 
 def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(settings) -> None:

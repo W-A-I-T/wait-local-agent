@@ -166,6 +166,32 @@ def test_m365_group_membership_draft_command_is_available(monkeypatch, tmp_path)
     assert "password" not in shown.output.lower()
 
 
+def test_m365_license_change_draft_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+    sku_id = "84a661c4-e949-4bd2-a560-ed7766fcaf2b"
+
+    result = runner.invoke(
+        app,
+        [
+            "connectors",
+            "draft-m365-license-change",
+            "user-1",
+            "--sku-id",
+            sku_id,
+            "--operation",
+            "add",
+        ],
+    )
+    shown = runner.invoke(app, ["approvals", "show", "1"])
+
+    assert result.exit_code == 0
+    assert "action_type=m365.users.licenses.add" in result.output
+    assert shown.exit_code == 0
+    assert sku_id in shown.output
+    assert "password" not in shown.output.lower()
+
+
 def test_collectors_list_shows_exactly_fourteen_modules(
     monkeypatch, tmp_path, isolated_default_registry
 ) -> None:

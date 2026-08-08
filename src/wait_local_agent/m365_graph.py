@@ -157,6 +157,16 @@ class M365GraphGroupMembershipResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphLicenseChangeResult:
+    status: str
+    message: str
+    user_id: str = ""
+    operation: str = ""
+    sku_ids: tuple[str, ...] = ()
+    status_code: int | None = None
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
@@ -382,6 +392,45 @@ class M365GraphClient:
             group_id=safe_group_id,
             user_id=safe_user_id,
             operation=operation,
+            status_code=status_code,
+        )
+
+    def change_user_licenses(
+        self,
+        *,
+        user_id: str,
+        sku_ids: list[str],
+        operation: str,
+    ) -> M365GraphLicenseChangeResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphLicenseChangeResult("blocked", health.message)
+        try:
+            safe_user_id = _safe_directory_object_id(user_id, "user_id")
+            safe_sku_ids = _safe_sku_ids(sku_ids)
+            if operation not in {"add", "remove"}:
+                raise M365GraphReadError("Microsoft Graph license operation is invalid.")
+            endpoint = f"users/{quote(safe_user_id, safe='')}/assignLicense"
+            payload: dict[str, object]
+            if operation == "add":
+                payload = {
+                    "addLicenses": [
+                        {"disabledPlans": [], "skuId": sku_id}
+                        for sku_id in safe_sku_ids
+                    ],
+                    "removeLicenses": [],
+                }
+            else:
+                payload = {"addLicenses": [], "removeLicenses": safe_sku_ids}
+            _, status_code = self._post(endpoint, payload)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseChangeResult("failed", exc.message)
+        return M365GraphLicenseChangeResult(
+            "succeeded",
+            f"Microsoft Graph user license {operation} succeeded.",
+            user_id=safe_user_id,
+            operation=operation,
+            sku_ids=tuple(safe_sku_ids),
             status_code=status_code,
         )
 
@@ -711,6 +760,13 @@ def _safe_endpoint(endpoint: str) -> str:
         and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_user_license_endpoint = (
+        len(endpoint_parts) == 3
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "assignLicense"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_group_members_add_endpoint = (
         len(endpoint_parts) == 4
         and endpoint_parts[0] == "groups"
@@ -736,6 +792,7 @@ def _safe_endpoint(endpoint: str) -> str:
     } and (
         not is_mail_folder_endpoint
         and not is_user_endpoint
+        and not is_user_license_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint
     ):
@@ -813,6 +870,29 @@ def _safe_directory_object_id(value: str, field: str) -> str:
     ):
         raise M365GraphReadError(f"Microsoft Graph {field} is invalid.")
     return stripped
+
+
+def _safe_sku_ids(values: list[str]) -> list[str]:
+    if not isinstance(values, list) or not 1 <= len(values) <= 50:
+        raise M365GraphReadError("Microsoft Graph sku_ids must contain 1 to 50 IDs.")
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise M365GraphReadError("Microsoft Graph sku_id is invalid.")
+        stripped = value.strip()
+        parts = stripped.split("-")
+        if (
+            len(stripped) != 36
+            or len(parts) != 5
+            or [len(part) for part in parts] != [8, 4, 4, 4, 12]
+            or any(character not in "0123456789abcdefABCDEF" for character in stripped.replace("-", ""))
+        ):
+            raise M365GraphReadError("Microsoft Graph sku_id is invalid.")
+        canonical = stripped.lower()
+        if canonical in normalized:
+            raise M365GraphReadError("Microsoft Graph sku_ids must be unique.")
+        normalized.append(canonical)
+    return normalized
 
 
 def _safe_mail_nickname(value: str) -> str:
@@ -1077,6 +1157,7 @@ __all__ = [
     "M365GraphGroup",
     "M365GraphGroupMembershipResult",
     "M365GraphGroupReadResponse",
+    "M365GraphLicenseChangeResult",
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",
     "M365GraphMailFolderReadResponse",

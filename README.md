@@ -407,7 +407,8 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
-context plus explicitly approval-gated user lifecycle operations.
+context plus explicitly approval-gated user lifecycle and direct user license
+operations.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -453,8 +454,11 @@ mailbox data, or mutate Intune devices. Approved group membership changes are
 exposed through `POST /connectors/m365/groups/membership-drafts` with an
 explicit `add` or `remove` operation using immutable group and user IDs. The
 matching CLI command is `draft-m365-group-membership`; execution uses the
-same approval endpoint and `execute-m365` command. License, session, mailbox,
-and Intune mutations remain separate future actions.
+same approval endpoint and `execute-m365` command. Approved direct user license
+changes are exposed through `POST /connectors/m365/users/license-drafts` or
+`draft-m365-license-change`; only explicit add/remove operations using immutable
+user IDs and SKU GUIDs are supported. Session, mailbox, and Intune mutations
+remain separate future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads

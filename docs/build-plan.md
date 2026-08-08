@@ -340,8 +340,9 @@ The shipped public-core adapter uses an operator-supplied delegated or
 application bearer token through `WAIT_M365_GRAPH_BASE_URL` and
 `WAIT_M365_ACCESS_TOKEN`. Write paths additionally require the explicit HTTP
 and write safety flags and an admin approval. Current write coverage is user
-creation, user disable/offboarding, and strict-ID group membership add/remove;
-license, mailbox, session, and Intune mutations remain future slices.
+creation, user disable/offboarding, strict-ID group membership add/remove, and
+strict-ID direct user license add/remove; mailbox, session, and Intune mutations
+remain future slices.
 
 Docs: `docs/cloud-permissions-m365.md` and `docs/connector-setup.md`.
 
