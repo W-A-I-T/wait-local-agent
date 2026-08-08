@@ -41,6 +41,7 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
     install_pack_tarball,
 )
+from wait_local_agent.autotask import AutotaskClient, PsaReadResponse
 from wait_local_agent.backup import (
     BackupEncryptionError,
     backup_state,
@@ -56,15 +57,19 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_ninjaone_script_execution,
     execute_halopsa_approval_request,
+    execute_ninjaone_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.lp_client import (
     LaunchPassportError,
@@ -88,11 +93,14 @@ from wait_local_agent.reports.hardening_checks import HardeningContext, run_hard
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.rmm import DattoRmmClient, NinjaOneClient, RmmReadResponse
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -148,6 +156,17 @@ class TemplateGalleryCreateRequest(BaseModel):
     client_id: str | None = None
 
 
+class TemplateGalleryImportEntry(BaseModel):
+    source_template_id: str
+    provenance: str = Field(min_length=1, max_length=1000)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class TemplateGalleryImportRequest(BaseModel):
+    entries: list[TemplateGalleryImportEntry] = Field(min_length=1, max_length=100)
+    client_id: str | None = None
+
+
 class SmartActionInvokeRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     confirm: bool = False
@@ -170,6 +189,9 @@ class AgentDefinitionRequest(BaseModel):
     steps: list[AgentStepRequest]
     max_steps: int = Field(default=8, ge=1, le=8)
     execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    execution_window_start: str | None = None
+    execution_window_end: str | None = None
+    execution_timezone: str = "UTC"
     client_id: str | None = None
     run_once_per_entity: bool = True
     depends_on_agent_ids: list[str] = Field(default_factory=list)
@@ -186,6 +208,7 @@ class AgentBackfillCreateRequest(BaseModel):
     entity_ids: list[str] = Field(min_length=1, max_length=100)
     input: dict[str, object] = Field(default_factory=dict)
     client_id: str | None = None
+    dry_run: bool = False
 
 
 class EventIngestRequest(BaseModel):
@@ -205,6 +228,7 @@ class ScheduledJobCreateRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = "UTC"
     params: dict[str, object] = Field(default_factory=dict)
 
 
@@ -213,6 +237,7 @@ class ScheduledJobRescheduleRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = "UTC"
 
 
 class CollectorConfigRequest(BaseModel):
@@ -222,6 +247,16 @@ class CollectorConfigRequest(BaseModel):
 
 class CollectorRunRequest(CollectorConfigRequest):
     confirm: bool = False
+
+
+class NinjaScriptPreviewRequest(BaseModel):
+    script_id: str = Field(min_length=1, max_length=200)
+    variables: dict[str, object] = Field(default_factory=dict)
+
+
+class NinjaScriptExecutionRequest(NinjaScriptPreviewRequest):
+    run_as: str = Field(default="", max_length=200)
+    client_id: str | None = None
 
 
 class PackInstallRequest(BaseModel):
@@ -268,6 +303,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
+    itglue_client = ItGlueClient(active_settings)
+    ninjaone_client = NinjaOneClient(active_settings)
+    dattormm_client = DattoRmmClient(active_settings)
+    autotask_client = AutotaskClient(active_settings)
+    connectwise_client = ConnectWiseClient(active_settings)
+    syncro_client = SyncroClient(active_settings)
+    servicenow_client = ServiceNowClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -344,9 +386,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and active_settings.halopsa_client_secret
                 and active_settings.halopsa_tenant
             ),
-            "hudu_configured": bool(
-                active_settings.hudu_base_url and active_settings.hudu_api_key
-            ),
+            "hudu_configured": bool(active_settings.hudu_base_url and active_settings.hudu_api_key),
         }
 
     @app.get("/auth/role")
@@ -452,10 +492,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _agent_definition_view(definition)
-            for definition in agent_service.list_definitions(scoped_client_id)
-        ]
+        return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
 
     @app.post("/agents")
     def create_agent(
@@ -477,6 +514,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 client_id=scoped_client_id,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
@@ -561,6 +601,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
             )
@@ -595,6 +638,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=[step.model_dump() for step in payload.steps],
                 max_steps=payload.max_steps,
                 execution_timeout_seconds=payload.execution_timeout_seconds,
+                execution_window_start=payload.execution_window_start,
+                execution_window_end=payload.execution_window_end,
+                execution_timezone=payload.execution_timezone,
                 run_once_per_entity=payload.run_once_per_entity,
                 depends_on_agent_ids=payload.depends_on_agent_ids,
             )
@@ -639,18 +685,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AuthContext,
         scoped_client_id: str | None,
     ):
-        entity_ids = [
-            item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)
-        ]
+        entity_ids = [item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)]
         input_payload = _safe_json_object(backfill.input_json)
         run_ids = [
-            item for item in _safe_json_values(backfill.run_ids_json)
+            item
+            for item in _safe_json_values(backfill.run_ids_json)
             if isinstance(item, int) and not isinstance(item, bool)
         ]
         failed_entity_ids = [
-            item
-            for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         errors = [backfill.error_detail] if backfill.error_detail else []
         if definition.client_id is None and scoped_client_id is not None:
@@ -729,6 +772,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for entity_id in payload.entity_ids:
             if store.get_ticket(entity_id, client_id=scoped_client_id) is None:
                 raise HTTPException(status_code=404, detail=f"ticket not found: {entity_id}")
+        if payload.dry_run:
+            tools_by_id = {tool.id: tool for tool in agent_service.list_tools()}
+            tool_plan: list[dict[str, object]] = []
+            for step in definition.steps:
+                if not isinstance(step, dict):
+                    continue
+                tool_id = step.get("tool_id")
+                if not isinstance(tool_id, str):
+                    continue
+                tool = tools_by_id.get(tool_id)
+                if tool is None:
+                    continue
+                tool_plan.append(
+                    {
+                        "id": tool.id,
+                        "name": tool.name,
+                        "access_mode": tool.access_mode,
+                        "risk_level": tool.risk_level,
+                        "approval_required": tool.approval_required,
+                    }
+                )
+            requires_approval = any(tool["approval_required"] for tool in tool_plan)
+            warnings = []
+            if not definition.enabled:
+                warnings.append("agent is disabled; every planned run will fail")
+            if requires_approval:
+                warnings.append("approval-gated tools will pause each run for technician review")
+            return {
+                "dry_run": True,
+                "agent_id": definition.id,
+                "client_id": scoped_client_id,
+                "entity_ids": list(payload.entity_ids),
+                "entity_count": len(payload.entity_ids),
+                "estimated_runs": len(payload.entity_ids),
+                "estimated_steps": len(payload.entity_ids) * len(definition.steps),
+                "max_entities": 100,
+                "tool_plan": tool_plan,
+                "requires_approval": requires_approval,
+                "warnings": warnings,
+            }
         backfill = store.create_agent_backfill(
             payload.agent_id,
             payload.entity_ids,
@@ -784,12 +867,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 succeeded_count=backfill.succeeded_count,
                 failed_count=backfill.failed_count,
                 run_ids=[
-                    item for item in _safe_json_values(backfill.run_ids_json)
+                    item
+                    for item in _safe_json_values(backfill.run_ids_json)
                     if isinstance(item, int) and not isinstance(item, bool)
                 ],
                 failed_entity_ids=[
-                    item for item in _safe_json_values(backfill.failed_entity_ids_json)
-                    if isinstance(item, str)
+                    item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
                 ],
                 error_detail=backfill.error_detail,
             )
@@ -824,8 +907,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if backfill is None:
             raise HTTPException(status_code=404, detail="agent backfill not found")
         failed_entity_ids = [
-            item for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         if not failed_entity_ids:
             raise HTTPException(status_code=409, detail="agent backfill has no failed entities")
@@ -996,9 +1078,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _event_delivery_view(delivery)
 
     @app.get("/smart-actions/runs")
-    def smart_action_runs(
-        context: ViewerAccess, client_id: str | None = None
-    ) -> list[dict[str, object]]:
+    def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
@@ -1008,9 +1088,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/smart-actions/runs/{run_id}")
-    def smart_action_run_detail(
-        run_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def smart_action_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="smart action run not found")
@@ -1071,10 +1149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
         scoped_client_id = _approval_client_scope(context, client_id)
-        return [
-            _approval_view(request)
-            for request in store.list_approval_requests(client_id=scoped_client_id)
-        ]
+        return [_approval_view(request) for request in store.list_approval_requests(client_id=scoped_client_id)]
 
     @app.get("/approval-requests/{request_id}")
     def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
@@ -1139,6 +1214,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
+            elif payload.status == "approved" and approval.action_type == "ninjaone.script.run":
+                try:
+                    approval = execute_ninjaone_approval_request(store, ninjaone_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
             return _approval_view(approval)
@@ -1227,16 +1307,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result_status": collector_run_result_status(run),
             "collection_scope": collector_run_collection_scope(run),
             "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
-            "observations": [
-                asdict(observation) for observation in store.list_asset_observations(run_id=run_id)
-            ],
-            "config_snapshots": [
-                asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)
-            ],
+            "observations": [asdict(observation) for observation in store.list_asset_observations(run_id=run_id)],
+            "config_snapshots": [asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)],
             "config_diffs": [asdict(diff) for diff in store.list_config_diffs(run_id=run_id)],
-            "restore_exercises": [
-                asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)
-            ],
+            "restore_exercises": [asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)],
         }
 
     @app.post("/collectors/runs/{run_id}/export")
@@ -1293,9 +1367,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             rendered,
             media_type=media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'},
         )
 
     @app.get("/audit")
@@ -1336,7 +1408,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         all_events = store.list_audit_events(client_id=client_id)
         filtered = [
-            e for e in all_events
+            e
+            for e in all_events
             if (from_ is None or datetime.fromisoformat(e.created_at) >= from_.astimezone(UTC))
             and (to_ is None or datetime.fromisoformat(e.created_at) <= to_.astimezone(UTC))
         ]
@@ -1636,6 +1709,365 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _hudu_response("folders.list", response)
 
+    @app.get("/connectors/itglue/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = itglue_client.health()
+        _audit_itglue_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/itglue/organizations")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_organizations(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_organizations(page=page, page_size=page_size)
+        return _itglue_response("organizations.list", response)
+
+    @app.get("/connectors/itglue/organizations/{organization_id}/documents")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_documents(
+        organization_id: str,
+        request: Request,
+        _: ViewerAccess,
+        folder_id: str | None = None,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_documents(
+            organization_id,
+            folder_id=folder_id,
+            page=page,
+            page_size=page_size,
+        )
+        return _itglue_response("documents.list", response)
+
+    @app.get("/connectors/itglue/documents/{document_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_document(document_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = itglue_client.get_document(document_id)
+        return _itglue_response("documents.get", response)
+
+    @app.get("/connectors/itglue/organizations/{organization_id}/folders")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def itglue_folders(
+        organization_id: str,
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = itglue_client.list_folders(organization_id, page=page, page_size=page_size)
+        return _itglue_response("folders.list", response)
+
+    @app.get("/connectors/ninjaone/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = ninjaone_client.health()
+        store.add_audit_event("rmm.read", "ninjaone.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/ninjaone/devices")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_devices(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.devices.list",
+            ninjaone_client.list_devices(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/ninjaone/devices/{device_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_device(device_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("ninjaone.device.get", ninjaone_client.get_device(device_id))
+
+    @app.get("/connectors/ninjaone/alerts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_alerts(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.alerts.list",
+            ninjaone_client.list_alerts(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/ninjaone/scripts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_scripts(request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("ninjaone.scripts.list", ninjaone_client.list_scripts())
+
+    @app.post("/connectors/ninjaone/devices/{device_id}/script-preview")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ninjaone_script_preview(
+        device_id: str,
+        payload: NinjaScriptPreviewRequest,
+        request: Request,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "ninjaone.script.preview",
+            ninjaone_client.preview_script(device_id, payload.script_id, payload.variables),
+        )
+
+    @app.post("/connectors/ninjaone/devices/{device_id}/script-requests")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_ninjaone_script_request(
+        device_id: str,
+        payload: NinjaScriptExecutionRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        try:
+            approval = draft_ninjaone_script_execution(
+                store,
+                device_id,
+                payload.script_id,
+                payload.variables,
+                run_as=payload.run_as,
+                client_id=scoped_client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/ninjaone/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_ninjaone_approval(
+        request_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
+            return _approval_view(execute_ninjaone_approval_request(store, ninjaone_client, request_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/connectors/dattormm/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = dattormm_client.health()
+        store.add_audit_event("rmm.read", "dattormm.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/dattormm/devices")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_devices(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.devices.list",
+            dattormm_client.list_devices(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/dattormm/devices/{device_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_device(device_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("dattormm.device.get", dattormm_client.get_device(device_id))
+
+    @app.get("/connectors/dattormm/alerts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_alerts(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.alerts.list",
+            dattormm_client.list_alerts(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/dattormm/scripts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_scripts(request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("dattormm.components.list", dattormm_client.list_scripts())
+
+    @app.post("/connectors/dattormm/devices/{device_id}/script-preview")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_script_preview(
+        device_id: str,
+        payload: NinjaScriptPreviewRequest,
+        request: Request,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.component.preview",
+            dattormm_client.preview_script(device_id, payload.script_id, payload.variables),
+        )
+
+    @app.get("/connectors/autotask/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = autotask_client.health()
+        store.add_audit_event("autotask.read", "autotask.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/autotask/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _autotask_response(
+            "tickets.list",
+            autotask_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/autotask/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _autotask_response("tickets.get", autotask_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/autotask/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _autotask_response(
+            "companies.list",
+            autotask_client.list_companies(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/connectwise/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = connectwise_client.health()
+        store.add_audit_event("connectwise.read", "connectwise.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/connectwise/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _connectwise_response(
+            "tickets.list",
+            connectwise_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/connectwise/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _connectwise_response("tickets.get", connectwise_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/connectwise/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _connectwise_response(
+            "companies.list",
+            connectwise_client.list_companies(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/syncro/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = syncro_client.health()
+        store.add_audit_event("syncro.read", "syncro.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/syncro/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _syncro_response(
+            "tickets.list",
+            syncro_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/syncro/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _syncro_response("tickets.get", syncro_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/syncro/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _syncro_response(
+            "companies.list",
+            syncro_client.list_companies(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/servicenow/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = servicenow_client.health()
+        store.add_audit_event("servicenow.read", "servicenow.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/servicenow/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _servicenow_response(
+            "tickets.list",
+            servicenow_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/servicenow/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _servicenow_response("tickets.get", servicenow_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/servicenow/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _servicenow_response(
+            "companies.list",
+            servicenow_client.list_companies(page=page, page_size=page_size),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -1648,10 +2080,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _template_gallery_view(entry)
-            for entry in store.list_template_gallery_entries(scoped_client_id)
+        return [_template_gallery_view(entry) for entry in store.list_template_gallery_entries(scoped_client_id)]
+
+    @app.get("/workflow-templates/gallery/export")
+    def export_template_gallery(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return {"format": "wait.template-gallery", "version": 1, "entries": []}
+        entries = store.list_template_gallery_entries(scoped_client_id)
+        return {
+            "format": "wait.template-gallery",
+            "version": 1,
+            "entries": [_template_gallery_export_view(entry) for entry in entries],
+        }
+
+    @app.post("/workflow-templates/gallery/import")
+    def import_template_gallery(
+        payload: TemplateGalleryImportRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        templates = [get_workflow_template(item.source_template_id) for item in payload.entries]
+        if any(template is None for template in templates):
+            raise HTTPException(status_code=422, detail="import contains an unknown workflow template")
+        imported = [
+            store.create_template_gallery_entry(
+                template,
+                provenance=item.provenance,
+                client_id=scoped_client_id,
+                name=item.display_name,
+            )
+            for item, template in zip(payload.entries, templates, strict=True)
+            if template is not None
         ]
+        return {
+            "format": "wait.template-gallery",
+            "version": 1,
+            "imported": [_template_gallery_view(entry) for entry in imported],
+        }
 
     @app.post("/workflow-templates/gallery")
     def create_template_gallery_entry(
@@ -1747,6 +2218,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1780,8 +2252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         params = dict(request.params)
         raw_client_id = params.get("client_id")
         if (
-            raw_client_id is None
-            or (isinstance(raw_client_id, str) and not raw_client_id.strip())
+            raw_client_id is None or (isinstance(raw_client_id, str) and not raw_client_id.strip())
         ) and ticket.client_id:
             params["client_id"] = ticket.client_id
         input_payload = params.get("input", {})
@@ -1798,6 +2269,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1838,6 +2310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cron=request.cron,
                     interval_seconds=request.interval_seconds,
                     run_at=request.run_at,
+                    timezone=request.timezone,
                 )
             )
         except KeyError as exc:
@@ -1883,22 +2356,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (item for item in list_workflow_templates() if item.id == run.template_id),
             None,
         )
-        approval = (
-            store.get_approval_request(run.approval_request_id)
-            if run.approval_request_id is not None
-            else None
-        )
+        approval = store.get_approval_request(run.approval_request_id) if run.approval_request_id is not None else None
         return {
             **asdict(run),
             "template": asdict(template) if template is not None else None,
             "approval_request": (
-                _approval_view(approval)
-                if approval is not None and _approval_in_scope(context, approval)
-                else None
+                _approval_view(approval) if approval is not None and _approval_in_scope(context, approval) else None
             ),
-            "events": [
-                asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
-            ],
+            "events": [asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)],
         }
 
     @app.get("/executions")
@@ -1925,9 +2390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/executions/{execution_id}")
-    def execution_detail(
-        execution_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def execution_detail(execution_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="execution not found")
@@ -1936,13 +2399,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="execution not found")
         return {
             **_execution_run_view(run),
-            "steps": [
-                _execution_step_view(step) for step in store.list_execution_steps(run.id)
-            ],
-            "artifacts": [
-                _execution_artifact_view(artifact)
-                for artifact in store.list_execution_artifacts(run.id)
-            ],
+            "steps": [_execution_step_view(step) for step in store.list_execution_steps(run.id)],
+            "artifacts": [_execution_artifact_view(artifact) for artifact in store.list_execution_artifacts(run.id)],
         }
 
     @app.get("/executions/{execution_id}/artifacts/{artifact_id}")
@@ -1975,10 +2433,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
-        estimates = {
-            manifest.action_id: manifest.estimated_minutes_saved
-            for manifest in smart_action_service.list()
-        }
+        estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         if context.role < Role.ADMIN and scoped_client_id is None:
             return _empty_analytics_summary(started_from, started_to)
         return build_analytics_summary(
@@ -2045,19 +2500,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": [asdict(item) for item in response.items],
         }
 
+    def _rmm_response(read_type: str, response: RmmReadResponse) -> dict[str, object]:
+        store.add_audit_event("rmm.read", read_type, f"{response.result.status} count={response.result.count}")
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
+        }
+
+    def _autotask_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "autotask.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _connectwise_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "connectwise.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _syncro_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "syncro.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _servicenow_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "servicenow.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
     def _audit_hudu_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("hudu.read", read_type, f"{status} count={count}")
 
+    def _itglue_response(read_type: str, response: ItGlueReadResponse) -> dict[str, object]:
+        _audit_itglue_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+        }
+
+    def _audit_itglue_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("itglue.read", read_type, f"{status} count={count}")
+
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
-        workflow_run = (
-            store.get_workflow_run_for_approval(request.id)
-            if request.id is not None
-            else None
-        )
+        workflow_run = store.get_workflow_run_for_approval(request.id) if request.id is not None else None
         can_execute, block_reason = _approval_execution_state(request)
         view = asdict(request)
         view["payload_json"] = _redact_json_text(request.payload_json)
@@ -2073,12 +2573,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
-        if not request.action_type.startswith("halopsa."):
-            return False, "Only HaloPSA approvals have live execution in this release."
+        is_halo = request.action_type.startswith("halopsa.")
+        is_ninjaone = request.action_type == "ninjaone.script.run"
+        if not is_halo and not is_ninjaone:
+            return False, "Only approved HaloPSA and NinjaOne actions have live execution."
         if request.status != "approved":
             return False, "Approval must be approved before execution."
         if request.execution_status == "succeeded":
             return False, "Approval request has already executed successfully."
+        if is_ninjaone:
+            if not active_settings.allow_http_probing:
+                return False, "NinjaOne script execution is blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            if not active_settings.allow_write_actions:
+                return False, "NinjaOne script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            health = ninjaone_client.health()
+            if health.status != "ready":
+                return False, health.message
+            return True, ""
         if not hasattr(halopsa_client, "write_health"):
             return False, "HaloPSA write health is unavailable."
         write_health = halopsa_client.write_health()
@@ -2097,6 +2608,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "schedule_type": job.schedule_type,
             "interval_seconds": job.interval_seconds,
             "run_at": job.run_at,
+            "timezone": job.timezone,
             "paused": job.paused,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
@@ -2142,6 +2654,9 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "steps": definition.steps,
                 "max_steps": definition.max_steps,
                 "execution_timeout_seconds": definition.execution_timeout_seconds,
+                "execution_window_start": definition.execution_window_start,
+                "execution_window_end": definition.execution_window_end,
+                "execution_timezone": definition.execution_timezone,
                 "client_id": definition.client_id,
                 "version": definition.version,
                 "run_once_per_entity": definition.run_once_per_entity,
@@ -2198,6 +2713,14 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
         "client_id": entry.client_id,
+    }
+
+
+def _template_gallery_export_view(entry) -> dict[str, object]:
+    return {
+        "source_template_id": entry.source_template_id,
+        "display_name": entry.name,
+        "provenance": redact_text(entry.provenance),
     }
 
 
@@ -2325,9 +2848,7 @@ def _safe_json_value(payload_json: str) -> object:
         return None
 
 
-def _empty_analytics_summary(
-    started_from: str | None, started_to: str | None
-) -> dict[str, object]:
+def _empty_analytics_summary(started_from: str | None, started_to: str | None) -> dict[str, object]:
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": None,
@@ -2356,11 +2877,7 @@ def _approval_client_scope(context: AuthContext, requested_client_id: str | None
 def _approval_in_scope(context: AuthContext, approval) -> bool:
     scoped_client_id = _approval_client_scope(context, None)
     approval_client_id = _normalize_client_id(approval.client_id)
-    return (
-        scoped_client_id is None
-        or approval_client_id is None
-        or approval_client_id == scoped_client_id
-    )
+    return scoped_client_id is None or approval_client_id is None or approval_client_id == scoped_client_id
 
 
 def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:

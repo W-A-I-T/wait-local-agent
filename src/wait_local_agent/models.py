@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-ApprovalStatus = Literal["pending", "approved", "rejected"]
+ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
 ActionKind = Literal[
     "ticket.triage",
@@ -85,6 +85,7 @@ class ApprovalRequest:
     execution_result_json: str = "{}"
     client_id: str | None = None
     approver_id: str | None = None
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -309,6 +310,7 @@ class ScheduledJob:
     schedule_type: str = "cron"
     interval_seconds: int | None = None
     run_at: str | None = None
+    timezone: str = "UTC"
 
 
 @dataclass(frozen=True)
@@ -566,6 +568,9 @@ class AgentDefinition:
     updated_at: str
     run_once_per_entity: bool = True
     depends_on_agent_ids: list[str] = field(default_factory=list)
+    execution_window_start: str | None = None
+    execution_window_end: str | None = None
+    execution_timezone: str = "UTC"
 
 
 @dataclass(frozen=True)

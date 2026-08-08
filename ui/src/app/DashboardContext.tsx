@@ -213,8 +213,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const executeApproval = useCallback(async (requestId: number) => {
     setBusyId(requestId);
     try {
+      const request = approvalRequests.find((item) => item.id === requestId);
+      const endpoint = request?.action_type === "ninjaone.script.run"
+        ? `/connectors/ninjaone/approval-requests/${requestId}/execute`
+        : `/connectors/halopsa/approval-requests/${requestId}/execute`;
       const approval = await apiFetch<ApprovalRequest>(
-        `/connectors/halopsa/approval-requests/${requestId}/execute`,
+        endpoint,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -228,7 +232,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } finally {
       setBusyId(null);
     }
-  }, [refresh]);
+  }, [approvalRequests, refresh]);
 
   const savePayloadFields = useCallback(async (request: ApprovalRequest, fields: Record<string, string>) => {
     setBusyId(request.id);

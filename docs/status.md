@@ -7,6 +7,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - FastAPI operator API and Typer CLI.
 - Optional bearer token API gate outside local demo mode, with admin, technician, and viewer roles.
 - SQLite-backed tickets, approvals, approval requests, workflow runs, audit events, event history, documents, and FTS5 chunks.
+- Approval requests persist a 24-hour default expiry; expired requests are
+  audited and cannot be approved, edited, or executed.
 - Tenant and client scoping on stored workflow, approval, scheduled job, and audit records.
 - Markdown, text, and text-based PDF ingestion.
 - Optional Docling parser/OCR configuration for scanned or richer documents when the optional dependency is installed and OCR is explicitly enabled.
@@ -18,16 +20,49 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
 - JSON and CSV event history export.
 - Optional Fernet-backed local secrets vault for connector credentials.
-- Connector setup validation commands for HaloPSA and Hudu.
+- Connector setup validation commands for HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, Syncro, and ServiceNow.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- IT Glue read-only organization, document, and folder lookup; no IT Glue write
+  operations are enabled.
+- NinjaOne RMM adapter for device inventory, active alerts, automation script
+  metadata, safe previews, and approval-gated script execution with persisted
+  metadata-only results. General NinjaOne management mutations remain disabled.
+- Datto RMM read-only account device, open-alert, and component inventory with
+  metadata-only component previews. Datto RMM execution and management writes
+  remain disabled.
+- Autotask PSA read-only ticket and company inventory; mutation endpoints remain
+  disabled.
+- ConnectWise PSA read-only ticket and company inventory; mutation endpoints
+  remain disabled.
+- SyncroMSP read-only ticket and customer inventory; mutation endpoints remain
+  disabled.
+- ServiceNow read-only incident and company inventory; mutation endpoints remain
+  disabled.
+- Preview-only communication drafts support ticket notes, email, Teams, Slack,
+  and SMS-shaped messages; outbound delivery adapters are not enabled.
+- Deterministic ticket sentiment reports explainable terms and an escalation
+  signal without requiring a model provider.
+- Deterministic SLA assessment reports priority/status risk without pretending
+  to calculate elapsed-time SLA clocks.
+- The `m365-identity-context` agent tool can read only completed, tenant-scoped
+  Microsoft 365 collector runs; Graph mutation paths remain disabled.
+- The `m365-user-lookup` tool searches that same scoped evidence without a
+  second remote client or mutation path.
+- The `m365-group-lookup` tool searches the same scoped evidence for groups;
+  licenses, mailbox, and Intune operations remain unexposed.
+- Governed read-only AWS, Azure, GCP, and Microsoft 365 collector modules with
+  CLI/API validation, preview, persisted runs, redacted evidence, and export.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete,
   reschedule, and audit trail. Cron, interval, and one-time triggers use the
-  existing UTC APScheduler path and persist their agent/entity target.
+  existing APScheduler path with validated IANA timezones (UTC by default) and
+  persist their agent/entity target.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, and grouped execution traces.
+  Scheduled and event agents may enforce a persisted `HH:MM` execution window
+  in a validated IANA timezone; manual runs remain available for recovery.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, and delivery history APIs. Conversational and
@@ -39,14 +74,18 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   bounded retry; event
   agents also support same-tenant dependency chains with cycle prevention. A
   provenance-bearing tenant-scoped template gallery can run reviewed core
-  workflows through the existing approval path. Persisted sequential agent
+  workflows through the existing approval path. Gallery metadata can be
+  exported and imported through a versioned JSON envelope; imports validate all
+  source template IDs before creating copies. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
-  estimated-time-saved metrics.
-- A `/tools` API catalog that exposes existing smart-action schemas, risk,
-  required role, approval requirement, and read/write classification.
+  estimated-time-saved metrics, plus requested/decided approval counts and an
+  explainable approval rate.
+- A `/tools` API catalog that exposes existing smart-action schemas, including
+  read-only local knowledge search and ticket-quality checks, risk, required
+  role, approval requirement, and read/write classification.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
 - Founder API and CLI public contract with stable "pack not installed" behavior when proprietary founder code is absent.
@@ -57,7 +96,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Next
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
-- Additional connector families beyond HaloPSA and Hudu.
+- Additional connector families beyond HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, Syncro, and ServiceNow.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
@@ -66,7 +105,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Live RMM, M365, Hudu, IT Glue, or SharePoint write synchronization.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
-- Ungated side effects. HaloPSA writes require explicit flags, credentials, rate-limit budget, and approval; other live writes remain disabled.
+- Ungated side effects. HaloPSA writes and NinjaOne scripts require explicit flags, credentials, rate-limit budget, and approval; other live writes remain disabled.
 - Paid MSP Pack or Founder Pack implementation in this public repo.
 
 ## Commercial readiness
@@ -98,11 +137,14 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
-| IT Glue connector | Future paid pack or open-core interface |
-| ConnectWise PSA connector | Future paid pack or open-core interface |
-| Autotask connector | Future paid pack or open-core interface |
-| RMM connectors | Future paid pack or open-core interface |
-| M365 / Entra read-only | Future connector phase |
+| IT Glue connector | Built in open core as a read-only adapter; writes and richer mapping remain future work |
+| ConnectWise PSA connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
+| Autotask connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
+| SyncroMSP connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
+| ServiceNow connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
+| NinjaOne RMM | Built in open core with approval-gated script execution; additional RMM management mutations remain future work |
+| Datto RMM | Built in open core as a read-only device, alert, and component adapter; execution and management mutations remain future work |
+| M365 / Entra read-only inventory | Built through governed collector modules |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

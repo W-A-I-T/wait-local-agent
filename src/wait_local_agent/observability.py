@@ -453,6 +453,7 @@ def build_analytics_summary(
             started_from, started_to, client_id
         )
     ]
+    approval_metrics = store.approval_metrics(started_from, started_to, client_id)
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": client_id,
@@ -464,6 +465,7 @@ def build_analytics_summary(
         },
         "failures_by_status": failures_by_status,
         "activity_breakdown": activity_breakdown,
+        "approval_metrics": approval_metrics,
         "estimated_minutes_saved": {
             "minutes": minutes,
             "estimate": True,

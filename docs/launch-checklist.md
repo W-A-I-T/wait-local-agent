@@ -8,7 +8,7 @@ Use this checklist before a public release tag or launch announcement.
 - [x] `WAIT_ALLOW_HTTP_PROBING=false` in `.env.example`, Dockerfile, and Compose defaults.
 - [x] `WAIT_ALLOW_CLOUD_FALLBACK=false` in `.env.example`, Dockerfile, and Compose defaults.
 - [x] `WAIT_ALLOW_LLM_INFERENCE=false` in `.env.example`, Dockerfile, and Compose defaults.
-- [x] HaloPSA write execution requires an approved approval request.
+- [x] HaloPSA writes and NinjaOne script execution require an approved approval request.
 - [x] Hudu remains read-only.
 - [x] `packs/` is gitignored.
 - [x] No proprietary pack implementation is committed.

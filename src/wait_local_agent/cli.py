@@ -44,6 +44,7 @@ from wait_local_agent.api.packs.loader import (
     install_pack_tarball,
     load_pack_registry,
 )
+from wait_local_agent.autotask import AutotaskClient, PsaReadResponse
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
 from wait_local_agent.collectors import (
     CollectorService,
@@ -53,14 +54,18 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_ninjaone_script_execution,
     execute_halopsa_approval_request,
+    execute_ninjaone_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
@@ -74,10 +79,13 @@ from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.rmm import DattoRmmClient, NinjaOneClient, RmmReadResponse
 from wait_local_agent.security import auth_required
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -142,6 +150,34 @@ def _hudu_client() -> HuduClient:
     return HuduClient(load_settings())
 
 
+def _itglue_client() -> ItGlueClient:
+    return ItGlueClient(load_settings())
+
+
+def _ninjaone_client() -> NinjaOneClient:
+    return NinjaOneClient(load_settings())
+
+
+def _dattormm_client() -> DattoRmmClient:
+    return DattoRmmClient(load_settings())
+
+
+def _autotask_client() -> AutotaskClient:
+    return AutotaskClient(load_settings())
+
+
+def _connectwise_client() -> ConnectWiseClient:
+    return ConnectWiseClient(load_settings())
+
+
+def _syncro_client() -> SyncroClient:
+    return SyncroClient(load_settings())
+
+
+def _servicenow_client() -> ServiceNowClient:
+    return ServiceNowClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -184,6 +220,37 @@ def doctor() -> None:
     typer.echo(f"halopsa_configured={halopsa_configured}")
     hudu_configured = bool(settings.hudu_base_url and settings.hudu_api_key)
     typer.echo(f"hudu_configured={hudu_configured}")
+    itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
+    typer.echo(f"itglue_configured={itglue_configured}")
+    ninjaone_configured = bool(
+        settings.ninjaone_base_url and settings.ninjaone_client_id and settings.ninjaone_client_secret
+    )
+    typer.echo(f"ninjaone_configured={ninjaone_configured}")
+    dattormm_configured = bool(
+        settings.dattormm_base_url and settings.dattormm_api_key and settings.dattormm_api_secret
+    )
+    typer.echo(f"dattormm_configured={dattormm_configured}")
+    autotask_configured = bool(
+        settings.autotask_base_url
+        and settings.autotask_username
+        and settings.autotask_secret
+        and settings.autotask_integration_code
+    )
+    typer.echo(f"autotask_configured={autotask_configured}")
+    connectwise_configured = bool(
+        settings.connectwise_base_url
+        and settings.connectwise_company_id
+        and settings.connectwise_public_key
+        and settings.connectwise_private_key
+        and settings.connectwise_client_id
+    )
+    typer.echo(f"connectwise_configured={connectwise_configured}")
+    syncro_configured = bool(settings.syncro_base_url and settings.syncro_api_key)
+    typer.echo(f"syncro_configured={syncro_configured}")
+    servicenow_configured = bool(
+        settings.servicenow_base_url and settings.servicenow_username and settings.servicenow_password
+    )
+    typer.echo(f"servicenow_configured={servicenow_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -493,10 +560,7 @@ def export_audit_events(
 @events_app.command("list")
 def list_event_history() -> None:
     for event in _store().list_event_history():
-        typer.echo(
-            f"{event.id} {event.event_type} {event.subject_id} "
-            f"{event.status} {event.message}"
-        )
+        typer.echo(f"{event.id} {event.event_type} {event.subject_id} {event.status} {event.message}")
 
 
 @approvals_app.command("list")
@@ -594,14 +658,16 @@ def list_connectors() -> None:
 def list_secrets() -> None:
     settings = load_settings()
     for secret in list_secret_records(settings):
-        typer.echo(
-            f"{secret.key} configured={secret.configured} "
-            f"required_for={secret.required_for}"
-        )
+        typer.echo(f"{secret.key} configured={secret.configured} required_for={secret.required_for}")
 
 
 @connectors_app.command("validate")
-def validate_connector(connector: Annotated[str, typer.Argument(help="Connector id: halopsa or hudu.")]) -> None:
+def validate_connector(
+    connector: Annotated[
+        str,
+        typer.Argument(help="Connector id, such as halopsa, hudu, autotask, connectwise, syncro, or servicenow."),
+    ],
+) -> None:
     settings = load_settings()
     try:
         result = validate_connector_credentials(
@@ -609,6 +675,13 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             settings,
             halopsa_client=_halopsa_client(),
             hudu_client=_hudu_client(),
+            itglue_client=_itglue_client(),
+            ninjaone_client=_ninjaone_client(),
+            dattormm_client=_dattormm_client(),
+            autotask_client=_autotask_client(),
+            connectwise_client=_connectwise_client(),
+            syncro_client=_syncro_client(),
+            servicenow_client=_servicenow_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -749,12 +822,291 @@ def hudu_folders(
     )
 
 
+@connectors_app.command("itglue-health")
+def itglue_health() -> None:
+    result = _itglue_client().health()
+    _audit_itglue_cli_read("itglue.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("itglue-organizations")
+def itglue_organizations(page: int = 1, page_size: int | None = None) -> None:
+    _print_itglue_response(
+        "organizations.list",
+        _itglue_client().list_organizations(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("itglue-documents")
+def itglue_documents(
+    organization_id: str,
+    folder_id: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_itglue_response(
+        "documents.list",
+        _itglue_client().list_documents(
+            organization_id,
+            folder_id=folder_id,
+            page=page,
+            page_size=page_size,
+        ),
+    )
+
+
+@connectors_app.command("itglue-document")
+def itglue_document(document_id: str) -> None:
+    _print_itglue_response("documents.get", _itglue_client().get_document(document_id))
+
+
+@connectors_app.command("itglue-folders")
+def itglue_folders(organization_id: str, page: int = 1, page_size: int | None = None) -> None:
+    _print_itglue_response(
+        "folders.list",
+        _itglue_client().list_folders(organization_id, page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("ninjaone-health")
+def ninjaone_health() -> None:
+    result = _ninjaone_client().health()
+    _audit_rmm_cli_read("ninjaone.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("ninjaone-devices")
+def ninjaone_devices(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "ninjaone.devices.list",
+        _ninjaone_client().list_devices(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("ninjaone-device")
+def ninjaone_device(device_id: str) -> None:
+    _print_rmm_response("ninjaone.device.get", _ninjaone_client().get_device(device_id))
+
+
+@connectors_app.command("ninjaone-alerts")
+def ninjaone_alerts(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "ninjaone.alerts.list",
+        _ninjaone_client().list_alerts(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("ninjaone-scripts")
+def ninjaone_scripts() -> None:
+    _print_rmm_response("ninjaone.scripts.list", _ninjaone_client().list_scripts())
+
+
+@connectors_app.command("ninjaone-script-preview")
+def ninjaone_script_preview(device_id: str, script_id: str) -> None:
+    _print_rmm_response(
+        "ninjaone.script.preview",
+        _ninjaone_client().preview_script(device_id, script_id),
+    )
+
+
+@connectors_app.command("ninjaone-script-request")
+def ninjaone_script_request(
+    device_id: str,
+    script_id: str,
+    variables_json: str = "{}",
+    run_as: str = "",
+) -> None:
+    try:
+        variables = json.loads(variables_json)
+        if not isinstance(variables, dict):
+            raise ValueError("variables_json must decode to an object")
+        approval = draft_ninjaone_script_execution(
+            _store(),
+            device_id,
+            script_id,
+            variables,
+            run_as=run_as,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_id={approval.id} status={approval.status} "
+        f"subject_id={approval.subject_id} action_type={approval.action_type}"
+    )
+
+
+@connectors_app.command("ninjaone-script-execute")
+def ninjaone_script_execute(request_id: int) -> None:
+    try:
+        approval = execute_ninjaone_approval_request(_store(), _ninjaone_client(), request_id)
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_id={approval.id} status={approval.status} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
+
+
+@connectors_app.command("dattormm-health")
+def dattormm_health() -> None:
+    result = _dattormm_client().health()
+    _audit_rmm_cli_read("dattormm.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("dattormm-devices")
+def dattormm_devices(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "dattormm.devices.list",
+        _dattormm_client().list_devices(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("dattormm-device")
+def dattormm_device(device_id: str) -> None:
+    _print_rmm_response("dattormm.device.get", _dattormm_client().get_device(device_id))
+
+
+@connectors_app.command("dattormm-alerts")
+def dattormm_alerts(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "dattormm.alerts.list",
+        _dattormm_client().list_alerts(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("dattormm-scripts")
+def dattormm_scripts() -> None:
+    _print_rmm_response("dattormm.components.list", _dattormm_client().list_scripts())
+
+
+@connectors_app.command("dattormm-script-preview")
+def dattormm_script_preview(device_id: str, script_id: str) -> None:
+    _print_rmm_response(
+        "dattormm.component.preview",
+        _dattormm_client().preview_script(device_id, script_id),
+    )
+
+
+@connectors_app.command("autotask-health")
+def autotask_health() -> None:
+    result = _autotask_client().health()
+    _audit_autotask_cli_read("autotask.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("autotask-tickets")
+def autotask_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_autotask_response(
+        "tickets.list",
+        _autotask_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("autotask-ticket")
+def autotask_ticket(ticket_id: str) -> None:
+    _print_autotask_response("tickets.get", _autotask_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("autotask-companies")
+def autotask_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_autotask_response(
+        "companies.list",
+        _autotask_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("connectwise-health")
+def connectwise_health() -> None:
+    result = _connectwise_client().health()
+    _audit_connectwise_cli_read("connectwise.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("connectwise-tickets")
+def connectwise_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_connectwise_response(
+        "tickets.list",
+        _connectwise_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("connectwise-ticket")
+def connectwise_ticket(ticket_id: str) -> None:
+    _print_connectwise_response("tickets.get", _connectwise_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("connectwise-companies")
+def connectwise_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_connectwise_response(
+        "companies.list",
+        _connectwise_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("syncro-health")
+def syncro_health() -> None:
+    result = _syncro_client().health()
+    _audit_syncro_cli_read("syncro.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("syncro-tickets")
+def syncro_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_syncro_response(
+        "tickets.list",
+        _syncro_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("syncro-ticket")
+def syncro_ticket(ticket_id: str) -> None:
+    _print_syncro_response("tickets.get", _syncro_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("syncro-companies")
+def syncro_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_syncro_response(
+        "companies.list",
+        _syncro_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("servicenow-health")
+def servicenow_health() -> None:
+    result = _servicenow_client().health()
+    _audit_servicenow_cli_read("servicenow.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("servicenow-tickets")
+def servicenow_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_servicenow_response(
+        "tickets.list",
+        _servicenow_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("servicenow-ticket")
+def servicenow_ticket(ticket_id: str) -> None:
+    _print_servicenow_response("tickets.get", _servicenow_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("servicenow-companies")
+def servicenow_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_servicenow_response(
+        "companies.list",
+        _servicenow_client().list_companies(page=page, page_size=page_size),
+    )
+
+
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
-        typer.echo(
-            f"{template.id} {template.trigger} approval_required={template.approval_required}"
-        )
+        typer.echo(f"{template.id} {template.trigger} approval_required={template.approval_required}")
 
 
 @workflows_app.command("run")
@@ -780,17 +1132,13 @@ def ingest_knowledge(
     documents = service.ingest_path(path)
     typer.echo(f"documents={len(documents)}")
     for document in documents:
-        typer.echo(
-            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
-        )
+        typer.echo(f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}")
 
 
 @knowledge_app.command("list")
 def list_knowledge_documents() -> None:
     for document in _store().list_knowledge_documents():
-        typer.echo(
-            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
-        )
+        typer.echo(f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}")
 
 
 @knowledge_app.command("search")
@@ -864,10 +1212,7 @@ def list_smart_action_runs(
     settings = load_settings()
     store = Store(settings.data_path)
     for run in store.list_smart_action_runs(client_id=client_id):
-        typer.echo(
-            f"{run.id} {run.action_id} {run.status} actor={run.actor} "
-            f"approval_id={run.approval_id}"
-        )
+        typer.echo(f"{run.id} {run.action_id} {run.status} actor={run.actor} approval_id={run.approval_id}")
 
 
 def _cli_execution_scope(settings, token: str | None, client_id: str | None) -> str | None:
@@ -917,9 +1262,7 @@ def show_execution(
         raise typer.BadParameter("execution not found")
     payload = {
         **asdict(run),
-        "steps": [
-            _execution_cli_step_view(step) for step in store.list_execution_steps(run.id)
-        ],
+        "steps": [_execution_cli_step_view(step) for step in store.list_execution_steps(run.id)],
         "artifacts": [
             {
                 "id": artifact.id,
@@ -946,9 +1289,7 @@ def analytics_summary_command(
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
     service = SmartActionService(store, settings)
-    estimates = {
-        manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()
-    }
+    estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()}
     summary = build_analytics_summary(
         store,
         estimates,
@@ -991,10 +1332,7 @@ def list_collectors() -> None:
         typer.echo("no collector modules registered")
         return
     for manifest in modules:
-        typer.echo(
-            f"{manifest.id} version={manifest.version} "
-            f"capabilities={','.join(manifest.capabilities) or '-'}"
-        )
+        typer.echo(f"{manifest.id} version={manifest.version} capabilities={','.join(manifest.capabilities) or '-'}")
 
 
 @collectors_app.command("validate")
@@ -1088,14 +1426,9 @@ def list_reports(
     except ValueError as exc:
         typer.echo(f"unknown report type: {report_type}")
         raise typer.Exit(code=1) from exc
-    stored = service.list_reports(
-        report_type=type_filter, client_id=client_id, project_id=project_id
-    )
+    stored = service.list_reports(report_type=type_filter, client_id=client_id, project_id=project_id)
     for report in stored:
-        typer.echo(
-            f"{report.id} type={report.report_type.value} title={report.title} "
-            f"created_at={report.created_at}"
-        )
+        typer.echo(f"{report.id} type={report.report_type.value} title={report.title} created_at={report.created_at}")
     typer.echo(f"count={len(stored)}")
 
 
@@ -1179,9 +1512,7 @@ def run_hardening() -> None:
         settings,
         store=store,
         backup_paths=tuple(
-            path
-            for path in settings.data_path.parent.glob("*")
-            if path.is_file() and path != settings.data_path
+            path for path in settings.data_path.parent.glob("*") if path.is_file() and path != settings.data_path
         ),
         audit_event_count=len(store.list_audit_events()),
     )
@@ -1358,12 +1689,78 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
         typer.echo(asdict(item))
 
 
+def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None:
+    _audit_itglue_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(asdict(item))
+
+
+def _print_rmm_response(read_type: str, response: RmmReadResponse) -> None:
+    _audit_rmm_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
+def _print_autotask_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_autotask_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
+def _print_connectwise_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_connectwise_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
+def _print_syncro_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_syncro_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
 
 def _audit_hudu_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("hudu.read", read_type, f"{status} count={count}")
+
+
+def _audit_itglue_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("itglue.read", read_type, f"{status} count={count}")
+
+
+def _audit_rmm_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("rmm.read", read_type, f"{status} count={count}")
+
+
+def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("autotask.read", read_type, f"{status} count={count}")
+
+
+def _audit_connectwise_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("connectwise.read", read_type, f"{status} count={count}")
+
+
+def _audit_syncro_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("syncro.read", read_type, f"{status} count={count}")
+
+
+def _print_servicenow_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_servicenow_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
+def _audit_servicenow_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("servicenow.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:
@@ -1450,11 +1847,7 @@ def _format_update_status(status: UpdateStatus) -> str:
             f"notes_url={status.notes_url}"
         )
     if status.status == "up_to_date":
-        return (
-            "status=up_to_date "
-            f"current_version={status.current_version} "
-            f"remote_version={status.remote_version}"
-        )
+        return f"status=up_to_date current_version={status.current_version} remote_version={status.remote_version}"
     if status.status == "invalid_signature":
         return "status=invalid_signature warning=update_metadata_signature_invalid"
     return f"status=unknown detail={status.detail}"

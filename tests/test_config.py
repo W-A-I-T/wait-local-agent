@@ -25,6 +25,30 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_ITGLUE_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_NINJAONE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_NINJAONE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WAIT_NINJAONE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_NINJAONE_SCOPE", raising=False)
+    monkeypatch.delenv("WAIT_NINJAONE_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_API_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_USERNAME", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_INTEGRATION_CODE", raising=False)
+    monkeypatch.delenv("WAIT_AUTOTASK_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_USERNAME", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_PASSWORD", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_PAGE_SIZE", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -60,6 +84,36 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.itglue_base_url == "https://api.itglue.com"
+    assert settings.itglue_api_key == ""
+    assert settings.itglue_page_size == 25
+    assert settings.ninjaone_base_url == ""
+    assert settings.ninjaone_client_id == ""
+    assert settings.ninjaone_client_secret == ""
+    assert settings.ninjaone_scope == "monitoring"
+    assert settings.ninjaone_page_size == 50
+    assert settings.dattormm_base_url == ""
+    assert settings.dattormm_api_key == ""
+    assert settings.dattormm_api_secret == ""
+    assert settings.dattormm_page_size == 50
+    assert settings.autotask_base_url == ""
+    assert settings.autotask_username == ""
+    assert settings.autotask_secret == ""
+    assert settings.autotask_integration_code == ""
+    assert settings.autotask_page_size == 50
+    assert settings.connectwise_base_url == ""
+    assert settings.connectwise_company_id == ""
+    assert settings.connectwise_public_key == ""
+    assert settings.connectwise_private_key == ""
+    assert settings.connectwise_client_id == ""
+    assert settings.connectwise_page_size == 50
+    assert settings.syncro_base_url == ""
+    assert settings.syncro_api_key == ""
+    assert settings.syncro_page_size == 50
+    assert settings.servicenow_base_url == ""
+    assert settings.servicenow_username == ""
+    assert settings.servicenow_password == ""
+    assert settings.servicenow_page_size == 50
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -90,6 +144,14 @@ def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:
     assert settings.local_model_timeout_seconds == 20.0
 
 
+def test_invalid_page_size_env_falls_back_to_default(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_HUDU_PAGE_SIZE", "not-an-integer")
+
+    settings = load_settings()
+
+    assert settings.hudu_page_size == 25
+
+
 def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_DOCUMENT_PARSER", "docling")
     monkeypatch.setenv("WAIT_ALLOW_OCR", "true")
@@ -98,6 +160,36 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_HUDU_BASE_URL", "https://hudu.example.test")
     monkeypatch.setenv("WAIT_HUDU_API_KEY", "api-key")
     monkeypatch.setenv("WAIT_HUDU_PAGE_SIZE", "10")
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://itglue.example.test")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "itglue-key")
+    monkeypatch.setenv("WAIT_ITGLUE_PAGE_SIZE", "10")
+    monkeypatch.setenv("WAIT_NINJAONE_BASE_URL", "https://app.ninjarmm.com")
+    monkeypatch.setenv("WAIT_NINJAONE_CLIENT_ID", "ninja-client")
+    monkeypatch.setenv("WAIT_NINJAONE_CLIENT_SECRET", "ninja-secret")
+    monkeypatch.setenv("WAIT_NINJAONE_SCOPE", "monitoring")
+    monkeypatch.setenv("WAIT_NINJAONE_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_DATTORMM_BASE_URL", "https://merlot-api.centrastage.net")
+    monkeypatch.setenv("WAIT_DATTORMM_API_KEY", "datto-key")
+    monkeypatch.setenv("WAIT_DATTORMM_API_SECRET", "datto-secret")
+    monkeypatch.setenv("WAIT_DATTORMM_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "api-secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
+    monkeypatch.setenv("WAIT_AUTOTASK_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://connectwise.example.test/api")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY_ID", "Acme+MSP")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_SYNCRO_BASE_URL", "https://acme.syncromsp.com/api/v1")
+    monkeypatch.setenv("WAIT_SYNCRO_API_KEY", "syncro-key")
+    monkeypatch.setenv("WAIT_SYNCRO_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_SERVICENOW_BASE_URL", "https://acme.service-now.com")
+    monkeypatch.setenv("WAIT_SERVICENOW_USERNAME", "readonly")
+    monkeypatch.setenv("WAIT_SERVICENOW_PASSWORD", "password")
+    monkeypatch.setenv("WAIT_SERVICENOW_PAGE_SIZE", "20")
 
     settings = load_settings()
 
@@ -108,6 +200,36 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+    assert settings.itglue_base_url == "https://itglue.example.test"
+    assert settings.itglue_api_key == "itglue-key"
+    assert settings.itglue_page_size == 10
+    assert settings.ninjaone_base_url == "https://app.ninjarmm.com"
+    assert settings.ninjaone_client_id == "ninja-client"
+    assert settings.ninjaone_client_secret == "ninja-secret"
+    assert settings.ninjaone_scope == "monitoring"
+    assert settings.ninjaone_page_size == 20
+    assert settings.dattormm_base_url == "https://merlot-api.centrastage.net"
+    assert settings.dattormm_api_key == "datto-key"
+    assert settings.dattormm_api_secret == "datto-secret"
+    assert settings.dattormm_page_size == 20
+    assert settings.autotask_base_url == "https://webservices1.autotask.net"
+    assert settings.autotask_username == "api-user"
+    assert settings.autotask_secret == "api-secret"
+    assert settings.autotask_integration_code == "integration-code"
+    assert settings.autotask_page_size == 20
+    assert settings.connectwise_base_url == "https://connectwise.example.test/api"
+    assert settings.connectwise_company_id == "Acme+MSP"
+    assert settings.connectwise_public_key == "public-key"
+    assert settings.connectwise_private_key == "private-key"
+    assert settings.connectwise_client_id == "client-id"
+    assert settings.connectwise_page_size == 20
+    assert settings.syncro_base_url == "https://acme.syncromsp.com/api/v1"
+    assert settings.syncro_api_key == "syncro-key"
+    assert settings.syncro_page_size == 20
+    assert settings.servicenow_base_url == "https://acme.service-now.com"
+    assert settings.servicenow_username == "readonly"
+    assert settings.servicenow_password == "password"
+    assert settings.servicenow_page_size == 20
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

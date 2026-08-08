@@ -12,7 +12,9 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 
-HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
+HaloPSA live writes and NinjaOne script execution require all of the following:
+`WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete
+connector credentials, and an approved `ApprovalRequest` record.
 
 ## API authentication
 
@@ -63,20 +65,21 @@ Redaction recurses through nested dictionaries and lists. Stored execution resul
 
 ## Approval gate design
 
-Every HaloPSA write follows this path:
+Every HaloPSA write and NinjaOne script execution follows this path:
 
 ```text
 1. draft_* creates an ApprovalRequest with status=pending.
 2. Technician reviews payload in the UI or CLI.
 3. Technician may edit only the fields payload while pending.
 4. Technician approves or rejects with a comment.
-5. Execution checks connector, action type, ticket id, approval status, flags, and prior execution state.
-6. PSA API call is made only after the checks pass.
+5. Execution checks connector, action type, resource id, approval status, flags, and prior execution state.
+6. The vendor API call is made only after the checks pass.
 7. Audit and event history rows are written.
 8. A succeeded approval cannot be executed again.
 ```
 
-Hudu is read-only in the public repo.
+Hudu is read-only in the public repo. NinjaOne execution records contain
+metadata only; script parameters are not returned in execution results.
 
 ## Audit trail and export
 

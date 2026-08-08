@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -41,6 +42,7 @@ from wait_local_agent.models import (
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
 SMART_ACTION_APPROVAL_CAPABILITY = object()
+DEFAULT_APPROVAL_TTL = timedelta(hours=24)
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
@@ -120,7 +122,8 @@ class Store:
                     executed_at text not null default '',
                     execution_result_json text not null default '{}',
                     client_id text,
-                    approver_id text
+                    approver_id text,
+                    expires_at text
                 )
                 """
             )
@@ -148,6 +151,7 @@ class Store:
                 "execution_result_json",
                 "text not null default '{}'",
             )
+            self._ensure_column(connection, "approval_requests", "expires_at", "text")
             connection.execute(
                 """
                 create table if not exists event_history (
@@ -251,7 +255,8 @@ class Store:
                     entity_id text,
                     schedule_type text not null default 'cron',
                     interval_seconds integer,
-                    run_at text
+                    run_at text,
+                    timezone text not null default 'UTC'
                 )
                 """
             )
@@ -274,7 +279,10 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     run_once_per_entity integer not null default 1,
-                    depends_on_agent_ids_json text not null default '[]'
+                    depends_on_agent_ids_json text not null default '[]',
+                    execution_window_start text,
+                    execution_window_end text,
+                    execution_timezone text not null default 'UTC'
                 )
                 """
             )
@@ -359,6 +367,7 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
             self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
             self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
+            self._ensure_column(connection, "scheduled_jobs", "timezone", "text not null default 'UTC'")
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -370,6 +379,14 @@ class Store:
                 "agent_definitions",
                 "depends_on_agent_ids_json",
                 "text not null default '[]'",
+            )
+            self._ensure_column(connection, "agent_definitions", "execution_window_start", "text")
+            self._ensure_column(connection, "agent_definitions", "execution_window_end", "text")
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "execution_timezone",
+                "text not null default 'UTC'",
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
@@ -827,10 +844,12 @@ class Store:
         payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_at: str | None = None,
     ) -> ApprovalRequest:
         now = utc_now()
         payload_json = _json_dumps(payload)
         normalized_client_id = _normalize_client_id(client_id)
+        normalized_expires_at = _approval_expiry(now, expires_at)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -843,11 +862,22 @@ class Store:
                     comment,
                     created_at,
                     updated_at,
-                    client_id
+                    client_id,
+                    expires_at
                   )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject_id, action_type, payload_json, "pending", "", now, now, normalized_client_id),
+                (
+                    subject_id,
+                    action_type,
+                    payload_json,
+                    "pending",
+                    "",
+                    now,
+                    now,
+                    normalized_client_id,
+                    normalized_expires_at,
+                ),
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("approval request insert did not return an id")
@@ -891,6 +921,14 @@ class Store:
             if row is None:
                 raise KeyError(request_id)
             current_status = str(row["status"])
+            if current_status == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("approval request disappeared during expiry")
+                current_status = str(row["status"])
             is_smart_action = str(row["action_type"]).startswith("smart_action:")
             if is_smart_action and _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
                 raise PermissionError("smart-action approvals must be updated through SmartActionService")
@@ -948,6 +986,13 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            if str(row["status"]) == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("approval request disappeared during expiry")
             if str(row["status"]) != "pending":
                 raise PermissionError("approval payload can only be edited while pending")
             connection.execute(
@@ -989,6 +1034,7 @@ class Store:
         status: str,
         message: str,
         result: dict[str, object],
+        event_type: str = "halopsa.write",
     ) -> ApprovalRequest:
         now = utc_now()
         result_json = _json_dumps(result)
@@ -1012,7 +1058,7 @@ class Store:
             detail = f"{action_type} execution {status}: {message}"
             self._add_audit_event(
                 connection,
-                "halopsa.write",
+                event_type,
                 subject_id,
                 detail,
                 client_id=str(row["client_id"]) if row["client_id"] is not None else None,
@@ -1020,7 +1066,7 @@ class Store:
             )
             self._add_event_history(
                 connection,
-                "halopsa.write",
+                event_type,
                 subject_id,
                 status,
                 message,
@@ -1037,6 +1083,11 @@ class Store:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
             ).fetchone()
+            if row is not None and str(row["status"]) == "pending" and _approval_expired(str(row["expires_at"] or "")):
+                self._expire_approval_request(connection, row)
+                row = connection.execute(
+                    "select * from approval_requests where id = ?", (request_id,)
+                ).fetchone()
         if row is None:
             return None
         payload = dict(row)
@@ -1046,6 +1097,7 @@ class Store:
         return ApprovalRequest(**payload)
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
+        self.expire_pending_approvals()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
@@ -1065,6 +1117,64 @@ class Store:
             payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
             requests.append(ApprovalRequest(**payload))
         return requests
+
+    def expire_pending_approvals(self) -> int:
+        expired = 0
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from approval_requests where status = 'pending' and expires_at is not null"
+            ).fetchall()
+            for row in rows:
+                if _approval_expired(str(row["expires_at"] or "")):
+                    self._expire_approval_request(connection, row)
+                    expired += 1
+        return expired
+
+    @staticmethod
+    def _expire_approval_request(connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+        now = utc_now()
+        request_id = int(row["id"])
+        connection.execute(
+            """
+            update approval_requests
+            set status = 'expired', comment = ?, updated_at = ?
+            where id = ? and status = 'pending'
+            """,
+            ("Approval expired before it was completed.", now, request_id),
+        )
+        connection.execute(
+            """
+            update workflow_runs
+            set status = 'rejected', updated_at = ?
+            where approval_request_id = ?
+            """,
+            (now, request_id),
+        )
+        client_id = str(row["client_id"]) if row["client_id"] is not None else None
+        subject_id = str(row["subject_id"])
+        self_event = _redact_text(f"{row['action_type']} approval expired")
+        connection.execute(
+            """
+            insert into audit_events (event_type, subject_id, detail, created_at, client_id, approver_id)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("approval_request.expired", subject_id, self_event, now, client_id, None),
+        )
+        connection.execute(
+            """
+            insert into event_history (event_type, subject_id, status, message, payload_json, created_at, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "approval_request.expired",
+                subject_id,
+                "expired",
+                self_event,
+                _redact_json_text(str(row["payload_json"])),
+                now,
+                client_id,
+            ),
+        )
 
     def add_audit_event(
         self,
@@ -1534,8 +1644,9 @@ class Store:
                   (id, name, description, enabled, trigger, entity_type,
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
-                   run_once_per_entity, depends_on_agent_ids_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   run_once_per_entity, depends_on_agent_ids_json,
+                   execution_window_start, execution_window_end, execution_timezone)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1555,6 +1666,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_timezone,
                 ),
             )
             self._add_audit_event(
@@ -1607,7 +1721,8 @@ class Store:
                 set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
                     filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
-                    run_once_per_entity = ?, depends_on_agent_ids_json = ?
+                    run_once_per_entity = ?, depends_on_agent_ids_json = ?,
+                    execution_window_start = ?, execution_window_end = ?, execution_timezone = ?
                 where id = ?
                 """,
                 (
@@ -1626,6 +1741,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_timezone,
                     definition.id,
                 ),
             )
@@ -2016,10 +2134,12 @@ class Store:
         approval_payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_at: str | None = None,
     ) -> tuple[SmartActionRun, ApprovalRequest]:
         """Create a pending run, approval, and audit trail in one transaction."""
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
+        normalized_expires_at = _approval_expiry(now, expires_at)
         output_json = _json_dumps(output)
         evidence_json = _json_dumps_value(evidence)
         approval_payload_json = _json_dumps(approval_payload)
@@ -2054,8 +2174,8 @@ class Store:
                 """
                 insert into approval_requests
                   (subject_id, action_type, payload_json, status, comment,
-                   created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                   created_at, updated_at, client_id, expires_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(run_id),
@@ -2066,6 +2186,7 @@ class Store:
                     now,
                     now,
                     normalized_client_id,
+                    normalized_expires_at,
                 ),
             )
             if approval_cursor.lastrowid is None:
@@ -2154,9 +2275,9 @@ class Store:
             ).fetchone()
             if approval is None or not str(approval["action_type"]).startswith("smart_action:"):
                 raise PermissionError("smart action completion requires a linked smart-action approval")
-            if str(approval["status"]) not in {"approved", "rejected"}:
+            if str(approval["status"]) not in {"approved", "rejected", "expired"}:
                 raise PermissionError("smart action completion requires a completed approval")
-            if str(approval["approver_id"] or "") != approver_id:
+            if str(approval["status"]) != "expired" and str(approval["approver_id"] or "") != approver_id:
                 raise PermissionError("smart action completion requires the approval approver")
             cursor = connection.execute(
                 """
@@ -2231,6 +2352,7 @@ class Store:
         schedule_type: str = "cron",
         interval_seconds: int | None = None,
         run_at: str | None = None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -2252,9 +2374,10 @@ class Store:
                     entity_id,
                     schedule_type,
                     interval_seconds,
-                    run_at
+                    run_at,
+                    timezone
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -2270,6 +2393,7 @@ class Store:
                     schedule_type,
                     interval_seconds,
                     run_at,
+                    timezone,
                 ),
             )
             if cursor.lastrowid is None:
@@ -2366,6 +2490,7 @@ class Store:
         cron: str,
         interval_seconds: int | None,
         run_at: str | None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         with self._connect() as connection:
@@ -2378,10 +2503,10 @@ class Store:
             connection.execute(
                 """
                 update scheduled_jobs
-                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, updated_at = ?
+                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, timezone = ?, updated_at = ?
                 where id = ?
                 """,
-                (cron, schedule_type, interval_seconds, run_at, now, job_id),
+                (cron, schedule_type, interval_seconds, run_at, timezone, now, job_id),
             )
             client_id = str(row["client_id"]) if row["client_id"] is not None else None
             detail = f"{schedule_type} schedule updated"
@@ -2404,6 +2529,7 @@ class Store:
                         "schedule_type": schedule_type,
                         "interval_seconds": interval_seconds,
                         "run_at": run_at,
+                        "timezone": timezone,
                     },
                     sort_keys=True,
                 ),
@@ -3876,6 +4002,45 @@ class Store:
             for row in rows
         ]
 
+    def approval_metrics(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        clauses: list[str] = []
+        params: list[object] = []
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        if started_from:
+            clauses.append("date(created_at) >= date(?)")
+            params.append(started_from)
+        if started_to:
+            clauses.append("date(created_at) <= date(?)")
+            params.append(started_to)
+        where = f" where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select status, count(*) as count from approval_requests{where} group by status",  # nosec B608: where clauses are static and values are parameterized
+                params,
+            ).fetchall()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        approved = counts.get("approved", 0)
+        rejected = counts.get("rejected", 0)
+        expired = counts.get("expired", 0)
+        decided = approved + rejected + expired
+        return {
+            "requested": sum(counts.values()),
+            "pending": counts.get("pending", 0),
+            "approved": approved,
+            "rejected": rejected,
+            "expired": expired,
+            "decided": decided,
+            "approval_rate": (approved / decided) if decided else 0.0,
+        }
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None
@@ -4142,7 +4307,7 @@ def _bounded_search_limit(limit: int) -> int:
 def _workflow_status_for_approval(status: str) -> str:
     if status == "approved":
         return "approved"
-    if status == "rejected":
+    if status in {"rejected", "expired"}:
         return "rejected"
     return "pending_approval"
 
@@ -4331,3 +4496,30 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _approval_expiry(created_at: str, expires_at: str | None) -> str:
+    if expires_at is not None and expires_at.strip():
+        try:
+            parsed = datetime.fromisoformat(expires_at)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC).isoformat()
+        except ValueError as exc:
+            raise ValueError("expires_at must be a valid ISO-8601 timestamp") from exc
+    created = datetime.fromisoformat(created_at)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return (created.astimezone(UTC) + DEFAULT_APPROVAL_TTL).isoformat()
+
+
+def _approval_expired(expires_at: str) -> bool:
+    if not expires_at.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC) <= datetime.now(UTC)

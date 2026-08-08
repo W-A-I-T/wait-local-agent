@@ -23,6 +23,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs persist in SQLite
 - Stored views accept `client_id` filters so operators can scope data per tenant
 - Approval execution captures a hashed approver identifier instead of raw token material
+- Approval requests persist an expiry timestamp (24 hours by default); expiry transitions the request to an audited terminal state and blocks late edits or execution
 
 ## Knowledge and Ticket Intelligence
 
@@ -47,8 +48,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
-- UTC cron, interval, and future one-time schedules with pause, resume, delete,
-  reschedule, and audit tracking
+- Cron, interval, and future one-time schedules with validated IANA timezones
+  (UTC by default), pause, resume, delete, reschedule, and audit tracking
 
 ## Bounded agents
 
@@ -57,9 +58,12 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The first public agent mode is ticket-scoped. Definitions allow only
   registered tools, cap runs at eight steps and 120 seconds, and retain the
   configured client scope. Manual runs and persisted five-field cron schedules
-  are supported.
+  are supported, with optional execution windows for scheduled and event
+  triggers using a validated IANA timezone.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
+- Approval-paused work persists a 24-hour default deadline; expired approvals
+  transition to an audited terminal state and cannot resume or execute later.
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and
@@ -78,7 +82,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 The local gallery stores provenance-bearing copies of the fixed core workflow
 catalog. Gallery entries retain the source template identity and tenant scope;
 execution resolves back to the reviewed core implementation, so the gallery
-does not create an unrestricted code or prompt execution surface.
+does not create an unrestricted code or prompt execution surface. A versioned
+JSON export/import envelope carries only reviewed template IDs, display names,
+and provenance; imports validate every ID before creating tenant-scoped copies.
 
 ## Backfills
 

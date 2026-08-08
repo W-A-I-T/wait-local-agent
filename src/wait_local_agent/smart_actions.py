@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Literal, Protocol, cast
 
+from wait_local_agent.communication import build_message_draft
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
@@ -18,7 +19,7 @@ from wait_local_agent.providers import (
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.retrieval import retrieve_sources
-from wait_local_agent.services import classify_ticket
+from wait_local_agent.services import assess_ticket_sentiment, classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
 ActionStatus = Literal[
@@ -216,6 +217,403 @@ class SuggestResolutionAction:
         )
 
 
+class KnowledgeSearchAction:
+    manifest = SmartActionManifest(
+        action_id="knowledge-search",
+        title="Search knowledge",
+        description="Search permitted local documentation for evidence related to a ticket.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"sources": "array", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        citations = [_source_citation(source) for source in _sources_for_ticket(context, ticket)]
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "sources": citations,
+                "count": len(citations),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=citations,
+        )
+
+
+class M365IdentityContextAction:
+    manifest = SmartActionManifest(
+        action_id="m365-identity-context",
+        title="M365 identity context",
+        description="Read persisted Microsoft 365 identity inventory from a completed, tenant-scoped collector run.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["collector_run_id"],
+            "properties": {"collector_run_id": "integer", "limit": "integer"},
+        },
+        output_schema={"identities": "array", "collector_run_id": "integer", "count": "integer"},
+        requires_approval=False,
+        estimated_minutes_saved=6,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        run_id = payload.get("collector_run_id")
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+            return _failed("collector_run_id must be a positive integer")
+        run = context.store.get_collector_run(run_id)
+        if run is None:
+            return _failed("collector_run_id must identify an existing collector run")
+        if context.client_id is not None and run.client_id != context.client_id:
+            return _failed("collector run is outside the tenant scope")
+        if run.module_id != "cloud-m365":
+            return _failed("collector run is not a Microsoft 365 inventory run")
+        if run.status != "completed":
+            return _failed("Microsoft 365 inventory run is not completed")
+        try:
+            result = json.loads(run.result_json)
+        except json.JSONDecodeError:
+            return _failed("Microsoft 365 inventory run has malformed persisted results")
+        if not isinstance(result, dict):
+            return _failed("Microsoft 365 inventory run has invalid persisted results")
+        raw_assets = result.get("assets", [])
+        if not isinstance(raw_assets, list):
+            return _failed("Microsoft 365 inventory run has invalid identity results")
+        limit = payload.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            return _failed("limit must be an integer between 1 and 100")
+        matching_assets = [
+            asset
+            for asset in raw_assets
+            if isinstance(asset, dict) and str(asset.get("asset_type", "")).startswith("m365-")
+        ]
+        identities: list[dict[str, object]] = []
+        for asset in matching_assets:
+            attributes = asset.get("attributes", {})
+            identities.append(
+                {
+                    "asset_id": str(asset.get("canonical_id", "")),
+                    "asset_type": str(asset.get("asset_type", "")),
+                    "display_name": str(asset.get("display_name", "")),
+                    "attributes": dict(attributes) if isinstance(attributes, dict) else {},
+                }
+            )
+        identities = identities[:limit]
+        evidence = [{"type": "m365_collector_run", "collector_run_id": run_id, "client_id": run.client_id}]
+        return ActionResult(
+            status="success",
+            output={
+                "collector_run_id": run_id,
+                "identities": identities,
+                "count": len(identities),
+                "truncated": len(identities) < len(matching_assets),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=evidence,
+        )
+
+
+class BuildMessageAction:
+    manifest = SmartActionManifest(
+        action_id="build-message",
+        title="Build message draft",
+        description="Build a preview-only ticket or end-user communication draft for later approval.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id", "channel"],
+            "properties": {"channel": "string", "recipient": "string", "subject": "string", "body": "string"},
+        },
+        output_schema={"draft": "object", "approval_required": "boolean"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        channel = payload.get("channel")
+        if not isinstance(channel, str):
+            return _failed("channel must be a string")
+        recipient = payload.get("recipient", ticket.id if channel.strip().lower() == "ticket_note" else "")
+        subject = payload.get("subject", f"Re: {ticket.subject}")
+        body = payload.get("body", f"Regarding {ticket.subject}:\n\n{ticket.body}")
+        if not isinstance(recipient, str) or not isinstance(subject, str) or not isinstance(body, str):
+            return _failed("recipient, subject, and body must be strings")
+        try:
+            draft = build_message_draft(
+                channel,
+                recipient=recipient,
+                subject=subject,
+                body=body,
+            )
+        except ValueError as exc:
+            return _failed(str(exc))
+        return ActionResult(
+            status="success",
+            output={"draft": asdict(draft), "approval_required": True, "send_enabled": False},
+            evidence=[_ticket_evidence(ticket, ["client", "subject", "body"])],
+        )
+
+
+class M365GroupLookupAction:
+    manifest = SmartActionManifest(
+        action_id="m365-group-lookup",
+        title="M365 group lookup",
+        description="Find a Microsoft 365 group in a completed, tenant-scoped identity inventory run.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["collector_run_id", "query"],
+            "properties": {"collector_run_id": "integer", "query": "string"},
+        },
+        output_schema={"matches": "array", "collector_run_id": "integer", "count": "integer"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return _failed("query must be a non-empty string")
+        run_payload = dict(payload)
+        run_payload["limit"] = 100
+        inventory = M365IdentityContextAction().run(context, run_payload)
+        if inventory.status != "success":
+            return inventory
+        identities = inventory.output.get("identities", [])
+        if not isinstance(identities, list):
+            return _failed("Microsoft 365 identity results are malformed")
+        needle = query.strip().casefold()
+        matches: list[dict[str, object]] = []
+        for identity in identities:
+            if not isinstance(identity, dict) or identity.get("asset_type") != "m365-group":
+                continue
+            attributes = identity.get("attributes", {})
+            searchable = " ".join(
+                str(value)
+                for value in (
+                    identity.get("asset_id", ""),
+                    identity.get("display_name", ""),
+                    attributes.get("mail", "") if isinstance(attributes, dict) else "",
+                )
+            ).casefold()
+            if needle in searchable:
+                matches.append(identity)
+        return ActionResult(
+            status="success",
+            output={
+                "collector_run_id": inventory.output.get("collector_run_id"),
+                "matches": matches,
+                "count": len(matches),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=inventory.evidence,
+        )
+
+
+class M365UserLookupAction:
+    manifest = SmartActionManifest(
+        action_id="m365-user-lookup",
+        title="M365 user lookup",
+        description="Find a Microsoft 365 user in a completed, tenant-scoped identity inventory run.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["collector_run_id", "query"],
+            "properties": {"collector_run_id": "integer", "query": "string"},
+        },
+        output_schema={"matches": "array", "collector_run_id": "integer", "count": "integer"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return _failed("query must be a non-empty string")
+        run_payload = dict(payload)
+        run_payload["limit"] = 100
+        inventory = M365IdentityContextAction().run(context, run_payload)
+        if inventory.status != "success":
+            return inventory
+        identities = inventory.output.get("identities", [])
+        if not isinstance(identities, list):
+            return _failed("Microsoft 365 identity results are malformed")
+        needle = query.strip().casefold()
+        matches: list[dict[str, object]] = []
+        for identity in identities:
+            if not isinstance(identity, dict) or identity.get("asset_type") != "m365-user":
+                continue
+            attributes = identity.get("attributes", {})
+            searchable = " ".join(
+                str(value)
+                for value in (
+                    identity.get("asset_id", ""),
+                    identity.get("display_name", ""),
+                    attributes.get("user_principal_name", "") if isinstance(attributes, dict) else "",
+                    attributes.get("mail", "") if isinstance(attributes, dict) else "",
+                )
+            ).casefold()
+            if needle in searchable:
+                matches.append(identity)
+        return ActionResult(
+            status="success",
+            output={
+                "collector_run_id": inventory.output.get("collector_run_id"),
+                "matches": matches,
+                "count": len(matches),
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=inventory.evidence,
+        )
+
+
+class TicketSentimentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sentiment",
+        title="Ticket sentiment",
+        description="Assess customer sentiment with explainable deterministic terms and an escalation signal.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"sentiment": "object", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        sentiment = assess_ticket_sentiment(ticket.subject, ticket.body)
+        return ActionResult(
+            status="success",
+            output={"ticket_id": ticket.id, "sentiment": sentiment, "estimate": self.manifest.estimated_minutes_saved},
+            evidence=[_ticket_evidence(ticket, ["subject", "body"])],
+        )
+
+
+class TicketSlaAssessmentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sla-assessment",
+        title="SLA assessment",
+        description="Assess priority and active status for an explainable escalation signal; no SLA clock is invented.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"assessment": "object", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        priority = ticket.priority.strip().lower()
+        status = ticket.status.strip().lower()
+        risk_by_priority = {
+            "critical": "immediate",
+            "p1": "immediate",
+            "high": "high",
+            "p2": "high",
+            "medium": "medium",
+            "p3": "medium",
+            "low": "low",
+            "p4": "low",
+        }
+        risk = risk_by_priority.get(priority, "unknown")
+        active = status not in {"resolved", "closed"}
+        escalation_required = active and risk in {"immediate", "high"}
+        assessment = {
+            "priority": ticket.priority,
+            "status": ticket.status,
+            "risk": risk,
+            "active": active,
+            "escalation_required": escalation_required,
+            "basis": "priority/status heuristic; no elapsed-time SLA calculation",
+        }
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "assessment": assessment,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["priority", "status"])],
+        )
+
+
+class TicketQualityAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-quality",
+        title="Ticket quality check",
+        description="Check required ticket fields and controlled priority/status values.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"issues": "array", "quality_score": "number", "ticket_id": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        issues: list[str] = []
+        if not ticket.client.strip():
+            issues.append("missing_client")
+        if not ticket.subject.strip():
+            issues.append("missing_subject")
+        if not ticket.body.strip():
+            issues.append("missing_body")
+        if ticket.priority.strip().lower() not in {
+            "low", "medium", "high", "critical", "p1", "p2", "p3", "p4"
+        }:
+            issues.append("unknown_priority")
+        if ticket.status.strip().lower() not in {"new", "open", "pending", "resolved", "closed"}:
+            issues.append("unknown_status")
+        score = max(0, 100 - (len(issues) * 20))
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "issues": issues,
+                "quality_score": score,
+                "passed": not issues,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["client", "subject", "body", "priority", "status"])],
+        )
+
+
 class FindSimilarTicketsAction:
     manifest = SmartActionManifest(
         action_id="find-similar-tickets",
@@ -328,6 +726,14 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        KnowledgeSearchAction(),
+        M365IdentityContextAction(),
+        M365GroupLookupAction(),
+        M365UserLookupAction(),
+        BuildMessageAction(),
+        TicketSentimentAction(),
+        TicketSlaAssessmentAction(),
+        TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     ):
@@ -527,6 +933,35 @@ class SmartActionService:
                 step_kind="smart_action.approval_completed",
             )
             return rejected_result
+        if approval.status == "expired":
+            self.store.complete_smart_action_run(
+                run.id,
+                "rejected",
+                _json_object(run.output_json),
+                _json_list(run.evidence_json),
+                approval_id=approval_id,
+                approver_id=approver,
+                _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
+            )
+            expired_result = ActionResult(
+                status="rejected",
+                output=_json_object(run.output_json),
+                evidence=_json_list(run.evidence_json),
+                error_detail="approval expired",
+                run_id=run.id,
+                approval_id=approval_id,
+            )
+            self._record_execution(
+                action_id,
+                run.id,
+                {"approval_id": approval_id, "approval_status": approval.status},
+                expired_result,
+                actor=run.actor,
+                client_id=approval.client_id,
+                trigger_source="approval_completion",
+                step_kind="smart_action.approval_expired",
+            )
+            return expired_result
         if approval.status != "approved":
             return ActionResult(
                 status="pending_approval",

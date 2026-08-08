@@ -2,22 +2,33 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from wait_local_agent.communication import DraftOnlyCommunicationClient, build_message_draft
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.services import assess_ticket_sentiment
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
+    BuildMessageAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
+    KnowledgeSearchAction,
+    M365GroupLookupAction,
+    M365IdentityContextAction,
+    M365UserLookupAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
     SuggestResolutionAction,
+    TicketQualityAction,
+    TicketSentimentAction,
+    TicketSlaAssessmentAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -142,24 +153,150 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
+    knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
+    quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
     dispatch = DispatchSuggestionAction().run(
         context,
         {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": 1}]},
     )
+    message = BuildMessageAction().run(
+        context,
+        {"ticket_id": "TCK-1001", "channel": "ticket_note"},
+    )
 
-    assert triage.status == summary.status == resolution.status == similar.status == dispatch.status == "success"
+    assert (
+        triage.status
+        == summary.status
+        == resolution.status
+        == knowledge.status
+        == quality.status
+        == similar.status
+        == dispatch.status
+        == message.status
+        == "success"
+    )
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
     assert resolution.output["citations"]
+    assert knowledge.output["ticket_id"] == "TCK-1001"
+    assert quality.output["passed"] is True
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
+    assert message.output["send_enabled"] is False
+
+
+def test_ticket_sentiment_is_explainable_and_tenant_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-SENTIMENT", "Acme", "Outage", "I am frustrated and angry; this is urgent", "High", "Open", "acme"),
+        )
+    result = TicketSentimentAction().run(
+        _action_context(store, settings, client_id="acme"), {"ticket_id": "TCK-SENTIMENT"}
+    )
+    assert result.status == "success"
+    assert result.output["sentiment"]["label"] == "negative"  # type: ignore[index]
+    assert result.output["sentiment"]["escalation_signal"] is True  # type: ignore[index]
+    assert assess_ticket_sentiment("Thanks", "Great, happy and resolved") ["label"] == "positive"
+    assert assess_ticket_sentiment("Question", "Please advise") ["label"] == "neutral"
+    assert TicketSentimentAction().run(
+        _action_context(store, settings, client_id="other"), {"ticket_id": "TCK-SENTIMENT"}
+    ).status == "failed"
+
+
+def test_ticket_sla_assessment_is_a_priority_status_heuristic(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-P1", "Acme", "Outage", "Service unavailable", "P1", "Open"),
+        )
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-CLOSED", "Acme", "Done", "Resolved", "High", "Closed"),
+        )
+    action = TicketSlaAssessmentAction()
+    urgent = action.run(_action_context(store, settings), {"ticket_id": "TCK-P1"})
+    closed = action.run(_action_context(store, settings), {"ticket_id": "TCK-CLOSED"})
+    assert urgent.output["assessment"]["risk"] == "immediate"  # type: ignore[index]
+    assert urgent.output["assessment"]["escalation_required"] is True  # type: ignore[index]
+    assert closed.output["assessment"]["active"] is False  # type: ignore[index]
+    assert closed.output["assessment"]["escalation_required"] is False  # type: ignore[index]
+
+
+def test_m365_identity_context_reads_only_completed_scoped_collector_runs(settings) -> None:
+    store = Store(settings.data_path)
+    run = store.create_collector_run(
+        module_id="cloud-m365",
+        source_id=None,
+        status="running",
+        mode="confirmed",
+        scope={"read_only": True},
+        preview={},
+        client_id="acme",
+        actor_id="technician",
+    )
+    assert run.id is not None
+    store.complete_collector_run(
+        run.id,
+        "completed",
+        result={
+            "assets": [
+                {
+                    "canonical_id": "m365:user:u1",
+                    "asset_type": "m365-user",
+                    "display_name": "User One",
+                    "attributes": {"user_principal_name": "user@example.test"},
+                },
+                {
+                    "canonical_id": "m365:group:g1",
+                    "asset_type": "m365-group",
+                    "display_name": "Helpdesk",
+                    "attributes": {"mail": "helpdesk@example.test"},
+                },
+                {"canonical_id": "host:1", "asset_type": "host", "display_name": "Host"},
+            ]
+        },
+    )
+    context = _action_context(store, settings, client_id="acme")
+    result = M365IdentityContextAction().run(context, {"collector_run_id": run.id})
+    assert result.status == "success"
+    assert result.output["count"] == 2
+    assert result.output["truncated"] is False
+    assert result.output["identities"][0]["asset_id"] == "m365:user:u1"  # type: ignore[index]
+    lookup = M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": "user@example"})
+    assert lookup.status == "success"
+    assert lookup.output["count"] == 1
+    group_lookup = M365GroupLookupAction().run(context, {"collector_run_id": run.id, "query": "helpdesk"})
+    assert group_lookup.status == "success"
+    assert group_lookup.output["count"] == 1
+    assert M365UserLookupAction().run(context, {"collector_run_id": run.id, "query": ""}).status == "failed"
+
+    for payload, message in (
+        ({"collector_run_id": run.id, "limit": 0}, "between 1 and 100"),
+        ({"collector_run_id": run.id + 1}, "existing collector run"),
+    ):
+        failed = M365IdentityContextAction().run(context, cast(dict[str, object], payload))
+        assert failed.status == "failed"
+        assert message in failed.error_detail
+    assert "tenant scope" in M365IdentityContextAction().run(
+        _action_context(store, settings, client_id="other"), {"collector_run_id": run.id}
+    ).error_detail
 
     actions = (
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        KnowledgeSearchAction(),
+        TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
+        BuildMessageAction(),
+        M365GroupLookupAction(),
+        M365UserLookupAction(),
+        TicketSentimentAction(),
+        TicketSlaAssessmentAction(),
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
@@ -218,6 +355,45 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
     assert _source_citation(SourceReference("Title", "path", "excerpt")) == {
         "type": "knowledge", "title": "Title", "path": "path", "excerpt": "excerpt"
     }
+
+
+def test_communication_draft_contract_is_preview_only() -> None:
+    draft = build_message_draft(
+        "EMAIL",
+        recipient=" user@example.test ",
+        subject=" Subject ",
+        body=" Message ",
+    )
+    assert draft.channel == "email"
+    assert draft.recipient == "user@example.test"
+    assert DraftOnlyCommunicationClient().preview(draft) == draft
+
+    for channel, recipient, subject, body, message in (
+        ("fax", "user", "", "body", "unsupported"),
+        ("email", "", "", "body", "recipient"),
+        ("email", "user", "x" * 201, "body", "subject"),
+        ("email", "user", "", "x" * 4001, "body"),
+        ("email", "user", "", "", "body"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            build_message_draft(channel, recipient=recipient, subject=subject, body=body)
+def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-BAD", "", "", "", "urgent", "waiting"),
+        )
+    result = TicketQualityAction().run(_action_context(store, settings), {"ticket_id": "TCK-BAD"})
+    assert result.status == "success"
+    assert result.output["issues"] == [
+        "missing_client",
+        "missing_subject",
+        "missing_body",
+        "unknown_priority",
+        "unknown_status",
+    ]
+    assert result.output["quality_score"] == 0
 
 
 def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
@@ -350,9 +526,17 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "build-message",
         "dispatch-suggestion",
         "find-similar-tickets",
+        "knowledge-search",
+        "m365-group-lookup",
+        "m365-identity-context",
+        "m365-user-lookup",
         "suggest-resolution",
+        "ticket-quality",
+        "ticket-sentiment",
+        "ticket-sla-assessment",
         "ticket-summary",
         "ticket-triage",
     ]
@@ -471,6 +655,36 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert isinstance(completed.output["recommendation"], dict)
     assert completed.output["recommendation"]["technician_id"] == "tech-a"
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_expired_smart_action_approval_is_rejected_without_execution(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke(
+        "dispatch-suggestion",
+        {"ticket_id": "TCK-1001", "technicians": []},
+        "requester",
+    )
+
+    assert pending.approval_id is not None and pending.run_id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2020-01-01T00:00:00+00:00", pending.approval_id),
+        )
+
+    result = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert result is not None
+    assert result.status == "rejected"
+    assert result.error_detail == "approval expired"
+    assert store.get_approval_request(pending.approval_id).status == "expired"  # type: ignore[union-attr]
+    assert store.get_smart_action_run(pending.run_id).status == "rejected"  # type: ignore[union-attr]
 
 
 def test_approval_completion_requires_authorized_different_approver(settings) -> None:

@@ -176,6 +176,39 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert restore.exit_code == 0
 
 
+def test_ninjaone_script_request_command_only_creates_pending_approval(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    request = runner.invoke(
+        app,
+        [
+            "connectors",
+            "ninjaone-script-request",
+            "17",
+            "4",
+            "--variables-json",
+            '{"Path":"/tmp/logs"}',
+        ],
+    )
+    rejected = runner.invoke(
+        app,
+        [
+            "connectors",
+            "ninjaone-script-request",
+            "17",
+            "4",
+            "--variables-json",
+            '{"api_token":"secret"}',
+        ],
+    )
+
+    assert request.exit_code == 0
+    assert "status=pending" in request.output
+    assert rejected.exit_code != 0
+    assert "secret-like" in rejected.output
+
+
 def test_hardening_and_restore_commands_report_success(monkeypatch, tmp_path) -> None:
     data_path = tmp_path / "state.db"
     backup_path = tmp_path / "backup.db"

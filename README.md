@@ -20,18 +20,35 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
+- Approval requests receive a persisted 24-hour default expiry; expired requests
+  are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
-- Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
+- IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `itglue`, `ninjaone`, `dattormm`, `autotask`, `connectwise`, `syncro`, and `servicenow`.
+- NinjaOne RMM inventory for devices, alerts, and automation scripts, plus an
+  approval-gated script execution request path with persisted execution history.
+- Datto RMM read-only device, open-alert, and component inventory with a
+  non-executing component preview; Datto RMM writes are not exposed.
+- Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
+- Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
+- Read-only SyncroMSP ticket and customer inventory; Syncro writes are not exposed.
+- Read-only ServiceNow incident and company inventory; ServiceNow writes are not exposed.
+- Preview-only `build-message` drafts cover ticket notes, email, Teams, Slack, and
+  SMS-shaped messages; no outbound transport is enabled.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
-  UTC cron, interval, and future one-time schedules plus pause/resume/delete
-  and reschedule controls.
+  cron, interval, and future one-time schedules with validated IANA timezones
+  (UTC by default), plus pause/resume/delete and reschedule controls.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
-  `/tools`, tenant-scoped ticket runs, and approval pause/resume. Agents may
+  `/tools` including read-only local knowledge search, ticket-quality checks,
+  deterministic ticket sentiment and SLA assessment, preview-only message drafts, and tenant-scoped
+  M365 identity context plus tenant-scoped user and group lookup sourced from completed collector runs;
+  tenant-scoped ticket runs and approval pause/resume are also supported. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity
-  protection; conversational and unrestricted execution remain outside this
-  slice.
+  protection. Scheduled and event agents can also enforce a persisted local
+  `HH:MM` execution window in a validated IANA timezone; conversational and
+  unrestricted execution remain outside this slice.
 - Event-triggered agent APIs under `/automation/events` and
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
   tenant checks, and auditable delivery history.
@@ -47,6 +64,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   into tenant-scoped records and run them through the existing approval path.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
   failures, pause/cancel state, and failed-item reruns.
+- Local analytics under `/analytics/summary` include explainable approval
+  requested/decided/approval-rate metrics alongside execution outcomes.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
@@ -274,6 +293,7 @@ Live HaloPSA writes require:
 - configured credentials
 - a pending draft
 - explicit approval
+- an unexpired approval request
 
 ### Hudu
 
@@ -301,6 +321,115 @@ wait-local-agent connectors hudu-folders
 ```
 
 Hudu is read-only in the public repo.
+
+### IT Glue
+
+The public IT Glue adapter is read-only and requires explicit HTTP probing.
+Configure `WAIT_ITGLUE_BASE_URL` (normally `https://api.itglue.com`) and
+`WAIT_ITGLUE_API_KEY`, then use:
+
+```bash
+wait-local-agent connectors validate itglue
+wait-local-agent connectors itglue-health
+wait-local-agent connectors itglue-organizations
+wait-local-agent connectors itglue-documents <organization-id>
+wait-local-agent connectors itglue-document <document-id>
+wait-local-agent connectors itglue-folders <organization-id>
+```
+
+No IT Glue write operation is performed by these commands.
+
+### NinjaOne RMM
+
+The public NinjaOne adapter is read-first and requires explicit HTTP probing.
+Configure `WAIT_NINJAONE_BASE_URL`, `WAIT_NINJAONE_CLIENT_ID`, and
+`WAIT_NINJAONE_CLIENT_SECRET`, then use:
+
+```bash
+wait-local-agent connectors validate ninjaone
+wait-local-agent connectors ninjaone-devices
+wait-local-agent connectors ninjaone-alerts
+wait-local-agent connectors ninjaone-scripts
+wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
+wait-local-agent connectors ninjaone-script-request <device-id> <script-id> '{}'
+wait-local-agent connectors ninjaone-script-execute <approval-id>
+```
+
+The request command only creates a pending approval. Execution requires an
+approved request, `WAIT_ALLOW_HTTP_PROBING=true`, and
+`WAIT_ALLOW_WRITE_ACTIONS=true`; script variables must not contain secret-like
+names. Device, alert, and script metadata remain read-only, and no general
+NinjaOne management mutation is exposed.
+
+### Datto RMM
+
+The public Datto RMM adapter is read-only and requires explicit HTTP probing.
+Configure the API URL shown for the API-enabled Datto RMM user, the generated
+API key and secret, then use:
+
+```bash
+wait-local-agent connectors validate dattormm
+wait-local-agent connectors dattormm-devices
+wait-local-agent connectors dattormm-device <device-uid>
+wait-local-agent connectors dattormm-alerts
+wait-local-agent connectors dattormm-scripts
+wait-local-agent connectors dattormm-script-preview <device-uid> <component-uid>
+```
+
+The API equivalents are under `/connectors/dattormm`. The adapter reads account
+devices, open alerts, and components through the documented Datto RMM API v2.
+The preview is metadata-only: no quick job or other Datto mutation endpoint is
+called.
+
+### Autotask PSA
+
+The public Autotask adapter is read-only and requires explicit HTTP probing.
+Configure the API-only user, secret, integration code, and zone base URL, then
+use the `autotask` connector validation and read commands. No Autotask mutation
+endpoint is exposed.
+
+### ConnectWise PSA
+
+The public ConnectWise adapter is read-only and requires explicit HTTP probing.
+Configure the API base URL, company identifier, public/private API keys, and
+application client ID, then use the `connectwise` validation and read commands.
+No ConnectWise mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate connectwise
+wait-local-agent connectors connectwise-health
+wait-local-agent connectors connectwise-tickets
+wait-local-agent connectors connectwise-companies
+```
+
+### SyncroMSP
+
+The public Syncro adapter is read-only and requires explicit HTTP probing.
+Configure the Syncro subdomain API base URL and API key, then use the `syncro`
+validation and read commands. The API key is sent only in the vendor-documented
+request query parameter and is never printed in connector results or audit text.
+No Syncro mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate syncro
+wait-local-agent connectors syncro-health
+wait-local-agent connectors syncro-tickets
+wait-local-agent connectors syncro-companies
+```
+
+### ServiceNow
+
+The public ServiceNow adapter is read-only and requires explicit HTTP probing.
+Configure the instance URL and a least-privileged Table API username/password,
+then use the `servicenow` validation and read commands. Requests use a bounded
+field list and pagination; no ServiceNow mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate servicenow
+wait-local-agent connectors servicenow-health
+wait-local-agent connectors servicenow-tickets
+wait-local-agent connectors servicenow-companies
+```
 
 ## Scheduled Workflows and Tenancy Filters
 

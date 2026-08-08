@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -8,10 +9,13 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 from wait_local_agent.api.app import create_app
+from wait_local_agent.autotask import PsaReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
+from wait_local_agent.itglue import ItGlueDocument, ItGlueFolder, ItGlueOrganization, ItGlueReadResponse
 from wait_local_agent.models import (
+    ConnectorReadResult,
     HaloReadResult,
     HaloTicket,
     HaloWriteResult,
@@ -19,6 +23,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.rmm import RmmExecutionResult, RmmReadResponse
 from wait_local_agent.store import Store
 
 
@@ -48,9 +53,7 @@ def test_health_reports_safe_defaults(settings) -> None:
 
 
 def test_api_auth_is_off_in_default_demo_mode(settings) -> None:
-    demo_settings = settings.__class__(
-        **{**settings.__dict__, "api_token": "local-secret", "demo_mode": True}
-    )
+    demo_settings = settings.__class__(**{**settings.__dict__, "api_token": "local-secret", "demo_mode": True})
     client = TestClient(create_app(demo_settings))
 
     response = client.get("/health")
@@ -64,9 +67,7 @@ def test_api_auth_is_off_in_default_demo_mode(settings) -> None:
 
 
 def test_api_auth_requires_bearer_token_when_demo_mode_disabled(settings) -> None:
-    secure_settings = settings.__class__(
-        **{**settings.__dict__, "api_token": "local-secret", "demo_mode": False}
-    )
+    secure_settings = settings.__class__(**{**settings.__dict__, "api_token": "local-secret", "demo_mode": False})
     client = TestClient(create_app(secure_settings))
 
     missing = client.get("/health")
@@ -148,6 +149,7 @@ def test_audit_event_export_json_and_csv(settings) -> None:
     assert "unit.test.later" in csv_export.text
     assert future_filter.status_code == 200
     assert future_filter.json() == {"count": 0, "events": []}
+
 
 def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     secure_settings = settings.__class__(
@@ -1239,6 +1241,28 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
     assert detail.status_code == 200
     assert detail.json()["id"] == entry_id
 
+    exported = client.get("/workflow-templates/gallery/export", params={"client_id": "acme"})
+    assert exported.status_code == 200
+    assert exported.json()["format"] == "wait.template-gallery"
+    assert exported.json()["entries"] == [
+        {
+            "source_template_id": "ticket-triage",
+            "display_name": "Acme triage starter",
+            "provenance": "Reviewed by the local operator",
+        }
+    ]
+
+    imported = client.post(
+        "/workflow-templates/gallery/import",
+        json={
+            "client_id": "acme",
+            "entries": exported.json()["entries"],
+        },
+    )
+    assert imported.status_code == 200
+    assert len(imported.json()["imported"]) == 1
+    assert imported.json()["imported"][0]["client_id"] == "acme"
+
     run = client.post(
         f"/workflow-templates/gallery/{entry_id}/runs",
         json={"ticket_id": "TCK-1001", "client_id": "acme"},
@@ -1260,10 +1284,18 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
         f"/workflow-templates/gallery/{entry_id}/runs",
         json={"ticket_id": "NO-SUCH-TICKET", "client_id": "acme"},
     )
+    unknown_import = client.post(
+        "/workflow-templates/gallery/import",
+        json={
+            "client_id": "acme",
+            "entries": [{"source_template_id": "not-a-template", "provenance": "review"}],
+        },
+    )
     assert unknown_source.status_code == 404
     assert foreign_run.status_code == 404
     assert missing_entry.status_code == 404
     assert missing_ticket.status_code == 404
+    assert unknown_import.status_code == 422
 
     secure = settings.__class__(
         **{
@@ -1274,24 +1306,51 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
         }
     )
     secure_client = TestClient(create_app(secure))
-    assert secure_client.get(
-        "/workflow-templates/gallery",
-        headers=_auth("viewer-token"),
-    ).json() == []
-    assert secure_client.get(
-        "/workflow-templates/gallery/anything",
-        headers=_auth("viewer-token"),
-    ).status_code == 404
-    assert secure_client.post(
-        "/workflow-templates/gallery",
-        headers=_auth("tech-token"),
-        json={"source_template_id": "ticket-triage", "provenance": "review"},
-    ).status_code == 403
-    assert secure_client.post(
-        "/workflow-templates/gallery/anything/runs",
-        headers=_auth("tech-token"),
-        json={"ticket_id": "TCK-1001"},
-    ).status_code == 403
+    assert (
+        secure_client.get(
+            "/workflow-templates/gallery",
+            headers=_auth("viewer-token"),
+        ).json()
+        == []
+    )
+    assert (
+        secure_client.get(
+            "/workflow-templates/gallery/anything",
+            headers=_auth("viewer-token"),
+        ).status_code
+        == 404
+    )
+    assert (
+        secure_client.get(
+            "/workflow-templates/gallery/export",
+            headers=_auth("viewer-token"),
+        ).json()["entries"]
+        == []
+    )
+    assert (
+        secure_client.post(
+            "/workflow-templates/gallery",
+            headers=_auth("tech-token"),
+            json={"source_template_id": "ticket-triage", "provenance": "review"},
+        ).status_code
+        == 403
+    )
+    assert (
+        secure_client.post(
+            "/workflow-templates/gallery/import",
+            headers=_auth("tech-token"),
+            json={"entries": [{"source_template_id": "ticket-triage", "provenance": "review"}]},
+        ).status_code
+        == 403
+    )
+    assert (
+        secure_client.post(
+            "/workflow-templates/gallery/anything/runs",
+            headers=_auth("tech-token"),
+            json={"ticket_id": "TCK-1001"},
+        ).status_code
+        == 403
+    )
 
 
 def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
@@ -1313,6 +1372,24 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     )
     assert agent.status_code == 200
     agent_id = agent.json()["id"]
+
+    dry_run = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "dry-run-secret"},
+            "client_id": "acme",
+            "dry_run": True,
+        },
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json()["dry_run"] is True
+    assert dry_run.json()["estimated_runs"] == 2
+    assert dry_run.json()["estimated_steps"] == 2
+    assert dry_run.json()["requires_approval"] is False
+    assert "dry-run-secret" not in dry_run.text
+    assert client.get("/agent-backfills").json() == []
 
     created = client.post(
         "/agent-backfills",
@@ -1430,14 +1507,15 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     )
     secure_client = TestClient(create_app(secure))
     assert secure_client.get("/agent-backfills", headers=_auth("viewer-token")).status_code == 403
-    assert secure_client.get(
-        "/agent-backfills/1", headers=_auth("viewer-token")
-    ).status_code == 403
-    assert secure_client.post(
-        "/agent-backfills",
-        headers=_auth("tech-token"),
-        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"]},
-    ).status_code == 403
+    assert secure_client.get("/agent-backfills/1", headers=_auth("viewer-token")).status_code == 403
+    assert (
+        secure_client.post(
+            "/agent-backfills",
+            headers=_auth("tech-token"),
+            json={"agent_id": agent_id, "entity_ids": ["TCK-1001"]},
+        ).status_code
+        == 403
+    )
 
 
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
@@ -1476,6 +1554,305 @@ def test_halopsa_api_read_surfaces_block_without_http_flag(settings) -> None:
     assert any(event["event_type"] == "halopsa.read" for event in audit.json())
 
 
+def test_ninjaone_api_read_surfaces_block_and_safe_script_preview(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/ninjaone/health")
+    devices = client.get("/connectors/ninjaone/devices")
+    alerts = client.get("/connectors/ninjaone/alerts")
+    scripts = client.get("/connectors/ninjaone/scripts")
+    preview = client.post(
+        "/connectors/ninjaone/devices/17/script-preview",
+        json={"script_id": "4", "variables": {"api_token": "secret-value"}},
+    )
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "blocked"
+    assert devices.json()["result"]["status"] == "blocked"
+    assert alerts.json()["result"]["status"] == "blocked"
+    assert scripts.json()["result"]["status"] == "blocked"
+    assert preview.status_code == 200
+    assert preview.json()["result"]["status"] == "ready"
+    assert preview.json()["items"][0]["execution_enabled"] is False
+    assert preview.json()["items"][0]["variable_names"] == ["api_token"]
+    assert "secret-value" not in preview.text
+    assert any(event["event_type"] == "rmm.read" for event in client.get("/audit").json())
+
+
+def test_ninjaone_api_ready_read_surfaces_use_shared_contract(settings, monkeypatch) -> None:
+    result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
+
+    class FakeNinjaOneClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "script-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(
+                result,
+                [{"device_id": device_id, "script_id": script_id, "variable_names": sorted(variables or {})}],
+            )
+
+    monkeypatch.setattr(app_module, "NinjaOneClient", FakeNinjaOneClient)
+    client = TestClient(create_app(settings))
+
+    assert client.get("/connectors/ninjaone/health").json()["status"] == "ready"
+    assert client.get("/connectors/ninjaone/devices").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/ninjaone/devices/device-1").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/ninjaone/alerts").json()["items"] == [{"id": "alert-1"}]
+    assert client.get("/connectors/ninjaone/scripts").json()["items"] == [{"id": "script-1"}]
+    preview = client.post(
+        "/connectors/ninjaone/devices/device-1/script-preview",
+        json={"script_id": "script-1", "variables": {"token": "never-return"}},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["items"][0]["variable_names"] == ["token"]
+
+
+def test_dattormm_api_read_surfaces_are_blocked_and_use_shared_contract(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    assert blocked_client.get("/connectors/dattormm/health").json()["status"] == "blocked"
+    assert blocked_client.get("/connectors/dattormm/devices").json()["result"]["status"] == "blocked"
+    preview = blocked_client.post(
+        "/connectors/dattormm/devices/device-1/script-preview",
+        json={"script_id": "component-1", "variables": {"secret_token": "never-return"}},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["items"][0]["execution_enabled"] is False
+    assert "never-return" not in preview.text
+
+    result = ConnectorReadResult("ready", "fake Datto RMM response", 1)
+
+    class FakeDattoRmmClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "component-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(
+                result,
+                [{"device_id": device_id, "script_id": script_id, "variable_names": sorted(variables or {})}],
+            )
+
+    monkeypatch.setattr(app_module, "DattoRmmClient", FakeDattoRmmClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/dattormm/health").json()["status"] == "ready"
+    assert client.get("/connectors/dattormm/devices").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/dattormm/devices/device-1").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/dattormm/alerts").json()["items"] == [{"id": "alert-1"}]
+    assert client.get("/connectors/dattormm/scripts").json()["items"] == [{"id": "component-1"}]
+    assert any(event["event_type"] == "rmm.read" for event in client.get("/audit").json())
+
+
+def test_ninjaone_api_script_request_requires_approval_and_records_execution(settings, monkeypatch) -> None:
+    class FakeNinjaOneClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ready")
+
+        def execute_script(self, device_id, script_id, variables, run_as):
+            assert (device_id, script_id, variables, run_as) == ("17", "4", {"Path": "/tmp/logs"}, "system")
+            return RmmExecutionResult("succeeded", "accepted", device_id, script_id, 202, "job-17")
+
+    monkeypatch.setattr(app_module, "NinjaOneClient", FakeNinjaOneClient)
+    client = TestClient(create_app(replace(settings, allow_http_probing=True, allow_write_actions=True)))
+    requested = client.post(
+        "/connectors/ninjaone/devices/17/script-requests",
+        json={"script_id": "4", "variables": {"Path": "/tmp/logs"}, "run_as": "system"},
+    )
+    assert requested.status_code == 200
+    approval_id = requested.json()["id"]
+    assert requested.json()["action_type"] == "ninjaone.script.run"
+    assert requested.json()["can_execute"] is False
+
+    approved = client.post(
+        f"/approval-requests/{approval_id}",
+        json={"status": "approved", "comment": "approved for maintenance"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["execution_status"] == "succeeded"
+    assert approved.json()["output"]["remote_id"] == "job-17"
+    assert "Path" not in approved.json()["execution_result_json"]
+    repeated = client.post(
+        f"/connectors/ninjaone/approval-requests/{approval_id}/execute",
+        json={},
+    )
+    assert repeated.status_code == 400
+    assert "already executed" in repeated.json()["detail"]
+
+
+def test_ninjaone_api_script_request_rejects_secret_like_variables(settings) -> None:
+    client = TestClient(create_app(settings))
+    response = client.post(
+        "/connectors/ninjaone/devices/17/script-requests",
+        json={"script_id": "4", "variables": {"api_token": "secret-value"}},
+    )
+    assert response.status_code == 400
+    assert "secret-like" in response.json()["detail"]
+
+
+def test_autotask_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/autotask/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake Autotask response", 1)
+
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "AutotaskClient", FakeAutotaskClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/autotask/health").json()["status"] == "ready"
+    assert client.get("/connectors/autotask/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/autotask/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/autotask/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(event["event_type"] == "autotask.read" for event in client.get("/audit").json())
+
+
+def test_connectwise_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/connectwise/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake ConnectWise response", 1)
+
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/connectwise/health").json()["status"] == "ready"
+    assert client.get("/connectors/connectwise/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/connectwise/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/connectwise/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(event["event_type"] == "connectwise.read" for event in client.get("/audit").json())
+
+
+def test_syncro_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/syncro/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake Syncro response", 1)
+
+    class FakeSyncroClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "customer-1"}])
+
+    monkeypatch.setattr(app_module, "SyncroClient", FakeSyncroClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/syncro/health").json()["status"] == "ready"
+    assert client.get("/connectors/syncro/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/syncro/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/syncro/companies").json()["items"] == [{"id": "customer-1"}]
+    assert any(event["event_type"] == "syncro.read" for event in client.get("/audit").json())
+
+
+def test_servicenow_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/servicenow/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake ServiceNow response", 1)
+
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "incident-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "ServiceNowClient", FakeServiceNowClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/servicenow/health").json()["status"] == "ready"
+    assert client.get("/connectors/servicenow/tickets").json()["items"] == [{"id": "incident-1"}]
+    assert client.get("/connectors/servicenow/tickets/incident-1").json()["items"] == [{"id": "incident-1"}]
+    assert client.get("/connectors/servicenow/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(event["event_type"] == "servicenow.read" for event in client.get("/audit").json())
+
+
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
     configured_settings = settings.__class__(
         **{
@@ -1502,6 +1879,16 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
             "halopsa_client_id": "client-id",
             "halopsa_client_secret": "secret",
             "halopsa_tenant": "tenant",
+            "connectwise_base_url": "https://connectwise.example.test/api",
+            "connectwise_company_id": "Acme+MSP",
+            "connectwise_public_key": "public-key",
+            "connectwise_private_key": "private-key",
+            "connectwise_client_id": "client-id",
+            "syncro_base_url": "https://acme.syncromsp.com/api/v1",
+            "syncro_api_key": "syncro-key",
+            "servicenow_base_url": "https://acme.service-now.com",
+            "servicenow_username": "readonly",
+            "servicenow_password": "password",
         }
     )
     enabled_settings = blocked_settings.__class__(
@@ -1516,6 +1903,18 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
 
     assert blocked.json()[0]["status"] == "blocked"
     assert enabled.json()[0]["status"] == "configured"
+    blocked_connectwise = next(item for item in blocked.json() if item["id"] == "connectwise")
+    enabled_connectwise = next(item for item in enabled.json() if item["id"] == "connectwise")
+    assert blocked_connectwise["status"] == "blocked"
+    assert enabled_connectwise["status"] == "configured"
+    blocked_syncro = next(item for item in blocked.json() if item["id"] == "syncro")
+    enabled_syncro = next(item for item in enabled.json() if item["id"] == "syncro")
+    assert blocked_syncro["status"] == "blocked"
+    assert enabled_syncro["status"] == "configured"
+    blocked_servicenow = next(item for item in blocked.json() if item["id"] == "servicenow")
+    enabled_servicenow = next(item for item in enabled.json() if item["id"] == "servicenow")
+    assert blocked_servicenow["status"] == "blocked"
+    assert enabled_servicenow["status"] == "configured"
 
 
 def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> None:
@@ -1580,9 +1979,7 @@ def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> N
     assert categories.json()["result"]["status"] == "ready"
 
 
-def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(
-    settings, monkeypatch
-) -> None:
+def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(settings, monkeypatch) -> None:
     executed = []
 
     class FakeHaloClient:
@@ -1683,9 +2080,7 @@ def test_smart_action_runs_and_ticket_lookup_are_client_scoped(settings) -> None
         json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "beta"},
     )
     listed = client.get("/smart-actions/runs", params={"client_id": "acme"})
-    hidden = client.get(
-        f"/smart-actions/runs/{beta.json()['run_id']}", params={"client_id": "acme"}
-    )
+    hidden = client.get(f"/smart-actions/runs/{beta.json()['run_id']}", params={"client_id": "acme"})
     cross_tenant = client.post(
         "/smart-actions/ticket-triage/invoke",
         json={"payload": {"ticket_id": "TCK-BETA"}, "client_id": "acme"},
@@ -1787,9 +2182,7 @@ def test_halopsa_manual_execute_rejects_non_approved_and_non_halopsa(settings) -
     assert missing.status_code == 404
 
 
-def test_halopsa_manual_execute_records_blocked_and_rejects_repeat_success(
-    settings, monkeypatch
-) -> None:
+def test_halopsa_manual_execute_records_blocked_and_rejects_repeat_success(settings, monkeypatch) -> None:
     class FakeHaloClient:
         def __init__(self, _settings) -> None:
             pass
@@ -1886,6 +2279,43 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
     assert any(event["event_type"] == "hudu.read" for event in audit.json())
 
 
+def test_itglue_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_organizations(self, *, page=1, page_size=None):
+            return _itglue_response([ItGlueOrganization("O-1", "Contoso", "active")])
+
+        def list_documents(self, organization_id, *, folder_id=None, page=1, page_size=None):
+            return _itglue_response([ItGlueDocument("D-1", "Runbook", organization_id, "F-1", "", "")])
+
+        def get_document(self, document_id):
+            return _itglue_response([ItGlueDocument(document_id, "Runbook", "O-1", "F-1", "", "")])
+
+        def list_folders(self, organization_id, *, page=1, page_size=None):
+            return _itglue_response([ItGlueFolder("F-1", "Ops", organization_id, "")])
+
+    blocked = TestClient(create_app(settings)).get("/connectors/itglue/health")
+    monkeypatch.setattr(app_module, "ItGlueClient", FakeItGlueClient)
+    client = TestClient(app_module.create_app(settings))
+    health = client.get("/connectors/itglue/health")
+    organizations = client.get("/connectors/itglue/organizations")
+    documents = client.get("/connectors/itglue/organizations/O-1/documents")
+    document = client.get("/connectors/itglue/documents/D-1")
+    folders = client.get("/connectors/itglue/organizations/O-1/folders")
+    assert blocked.json()["status"] == "blocked"
+    assert health.json()["status"] == "ready"
+    assert organizations.json()["items"][0]["name"] == "Contoso"
+    assert documents.json()["items"][0]["name"] == "Runbook"
+    assert document.json()["items"][0]["id"] == "D-1"
+    assert folders.json()["items"][0]["name"] == "Ops"
+    assert any(event["event_type"] == "itglue.read" for event in client.get("/audit").json())
+
+
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
     client = TestClient(create_app(settings))
 
@@ -1903,9 +2333,7 @@ def test_executions_api_lists_and_details_runs(settings) -> None:
     _seed_execution_tickets(store)
     client = TestClient(create_app(settings))
 
-    run = client.post(
-        "/workflows/templates/ticket-triage/runs", json={"ticket_id": "TCK-1001"}
-    )
+    run = client.post("/workflows/templates/ticket-triage/runs", json={"ticket_id": "TCK-1001"})
     assert run.status_code == 200
 
     listed = client.get("/executions")
@@ -1942,9 +2370,7 @@ def test_executions_api_serves_smart_action_artifact(settings) -> None:
     _seed_execution_tickets(store)
     client = TestClient(create_app(settings))
 
-    invoke = client.post(
-        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}}
-    )
+    invoke = client.post("/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}})
     assert invoke.status_code == 200
 
     detail = client.get("/executions", params={"kind": "smart_action"}).json()[0]
@@ -1977,22 +2403,41 @@ def test_executions_api_enforces_tenant_scope(settings) -> None:
     store = Store(secure_settings.data_path)
     _seed_execution_tickets(store)
     acme_run = store.create_execution_run(
-        "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
-        "2026-08-01T09:01:00+00:00", "test", client_id="acme",
+        "workflow",
+        1,
+        "a",
+        "completed",
+        "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00",
+        "test",
+        client_id="acme",
     )
     beta_run = store.create_execution_run(
-        "workflow", 2, "b", "completed", "2026-08-01T09:00:00+00:00",
-        "2026-08-01T09:01:00+00:00", "test", client_id="beta",
+        "workflow",
+        2,
+        "b",
+        "completed",
+        "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00",
+        "test",
+        client_id="beta",
     )
     assert acme_run.id is not None and beta_run.id is not None
     store.add_execution_step(
-        acme_run.id, 0, "workflow.template", "t", "completed",
-        "2026-08-01T09:00:00+00:00", "2026-08-01T09:01:00+00:00",
-        "d", "d", "{}", "{}", "",
+        acme_run.id,
+        0,
+        "workflow.template",
+        "t",
+        "completed",
+        "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00",
+        "d",
+        "d",
+        "{}",
+        "{}",
+        "",
     )
-    store.add_execution_artifact(
-        acme_run.id, 0, "a.bin", "application/octet-stream", 1, "f" * 64, "/tmp/nope"
-    )
+    store.add_execution_artifact(acme_run.id, 0, "a.bin", "application/octet-stream", 1, "f" * 64, "/tmp/nope")
     client = TestClient(create_app(secure_settings))
 
     viewer_list = client.get("/executions", headers=_auth("viewer-token"))
@@ -2001,25 +2446,19 @@ def test_executions_api_enforces_tenant_scope(settings) -> None:
 
     foreign_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("viewer-token"))
     assert foreign_detail.status_code == 404
-    foreign_artifact = client.get(
-        f"/executions/{beta_run.id}/artifacts/1", headers=_auth("tech-token")
-    )
+    foreign_artifact = client.get(f"/executions/{beta_run.id}/artifacts/1", headers=_auth("tech-token"))
     assert foreign_artifact.status_code == 404
 
     admin_list = client.get("/executions", headers=_auth("admin-token"))
     assert {run["id"] for run in admin_list.json()} == {acme_run.id, beta_run.id}
-    admin_filtered = client.get(
-        "/executions", params={"client_id": "beta"}, headers=_auth("admin-token")
-    )
+    admin_filtered = client.get("/executions", params={"client_id": "beta"}, headers=_auth("admin-token"))
     assert [run["id"] for run in admin_filtered.json()] == [beta_run.id]
     admin_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("admin-token"))
     assert admin_detail.status_code == 200
 
     # The artifact file name must equal its content digest; a tampered path 404s.
     artifacts = store.list_execution_artifacts(acme_run.id)
-    tampered = client.get(
-        f"/executions/{acme_run.id}/artifacts/{artifacts[0].id}", headers=_auth("tech-token")
-    )
+    tampered = client.get(f"/executions/{acme_run.id}/artifacts/{artifacts[0].id}", headers=_auth("tech-token"))
     assert tampered.status_code == 404
 
 
@@ -2034,8 +2473,14 @@ def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> No
     )
     store = Store(secure_settings.data_path)
     store.create_execution_run(
-        "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
-        "2026-08-01T09:01:00+00:00", "test", client_id="acme",
+        "workflow",
+        1,
+        "a",
+        "completed",
+        "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00",
+        "test",
+        client_id="acme",
     )
     client = TestClient(create_app(secure_settings))
 
@@ -2054,13 +2499,9 @@ def test_analytics_summary_api_returns_metric_groups(settings) -> None:
     _seed_execution_tickets(store)
     client = TestClient(create_app(settings))
 
-    invoke = client.post(
-        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}}
-    )
+    invoke = client.post("/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "TCK-1001"}})
     assert invoke.status_code == 200
-    failed = client.post(
-        "/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "NOPE"}}
-    )
+    failed = client.post("/smart-actions/ticket-triage/invoke", json={"payload": {"ticket_id": "NOPE"}})
     assert failed.status_code == 200
 
     response = client.get("/analytics/summary")
@@ -2081,8 +2522,13 @@ def test_analytics_summary_api_returns_metric_groups(settings) -> None:
 def test_execution_steps_are_redacted_at_serialization(settings) -> None:
     store = Store(settings.data_path)
     run = store.create_execution_run(
-        "smart_action", 1, "tech", "success", "2026-08-01T09:00:00+00:00",
-        "2026-08-01T09:01:00+00:00", "test",
+        "smart_action",
+        1,
+        "tech",
+        "success",
+        "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00",
+        "test",
     )
     assert run.id is not None
     with store._connect() as connection:  # noqa: SLF001
@@ -2114,6 +2560,10 @@ def _read_response(items):
 
 def _hudu_response(items):
     return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+
+
+def _itglue_response(items):
+    return ItGlueReadResponse(ConnectorReadResult("ready", "ok", len(items)), items)
 
 
 def _auth(token: str) -> dict[str, str]:

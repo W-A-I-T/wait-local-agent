@@ -96,6 +96,36 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    itglue_base_url: str = ""
+    itglue_api_key: str = ""
+    itglue_page_size: int = 25
+    ninjaone_base_url: str = ""
+    ninjaone_client_id: str = ""
+    ninjaone_client_secret: str = ""
+    ninjaone_scope: str = "monitoring"
+    ninjaone_page_size: int = 50
+    dattormm_base_url: str = ""
+    dattormm_api_key: str = ""
+    dattormm_api_secret: str = ""
+    dattormm_page_size: int = 50
+    autotask_base_url: str = ""
+    autotask_username: str = ""
+    autotask_secret: str = ""
+    autotask_integration_code: str = ""
+    autotask_page_size: int = 50
+    connectwise_base_url: str = ""
+    connectwise_company_id: str = ""
+    connectwise_public_key: str = ""
+    connectwise_private_key: str = ""
+    connectwise_client_id: str = ""
+    connectwise_page_size: int = 50
+    syncro_base_url: str = ""
+    syncro_api_key: str = ""
+    syncro_page_size: int = 50
+    servicenow_base_url: str = ""
+    servicenow_username: str = ""
+    servicenow_password: str = ""
+    servicenow_page_size: int = 50
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
@@ -187,6 +217,146 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        itglue_base_url=_secret_value(
+            "WAIT_ITGLUE_BASE_URL",
+            os.getenv("WAIT_ITGLUE_BASE_URL", "https://api.itglue.com"),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_api_key=_secret_value(
+            "WAIT_ITGLUE_API_KEY",
+            os.getenv("WAIT_ITGLUE_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_page_size=_int_env("WAIT_ITGLUE_PAGE_SIZE", 25),
+        ninjaone_base_url=_secret_value(
+            "WAIT_NINJAONE_BASE_URL",
+            os.getenv("WAIT_NINJAONE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_client_id=_secret_value(
+            "WAIT_NINJAONE_CLIENT_ID",
+            os.getenv("WAIT_NINJAONE_CLIENT_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_client_secret=_secret_value(
+            "WAIT_NINJAONE_CLIENT_SECRET",
+            os.getenv("WAIT_NINJAONE_CLIENT_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_scope=os.getenv("WAIT_NINJAONE_SCOPE", "monitoring").strip() or "monitoring",
+        ninjaone_page_size=_int_env("WAIT_NINJAONE_PAGE_SIZE", 50),
+        dattormm_base_url=_secret_value(
+            "WAIT_DATTORMM_BASE_URL",
+            os.getenv("WAIT_DATTORMM_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_api_key=_secret_value(
+            "WAIT_DATTORMM_API_KEY",
+            os.getenv("WAIT_DATTORMM_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_api_secret=_secret_value(
+            "WAIT_DATTORMM_API_SECRET",
+            os.getenv("WAIT_DATTORMM_API_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_page_size=_int_env("WAIT_DATTORMM_PAGE_SIZE", 50),
+        autotask_base_url=_secret_value(
+            "WAIT_AUTOTASK_BASE_URL",
+            os.getenv("WAIT_AUTOTASK_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_username=_secret_value(
+            "WAIT_AUTOTASK_USERNAME",
+            os.getenv("WAIT_AUTOTASK_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_secret=_secret_value(
+            "WAIT_AUTOTASK_SECRET",
+            os.getenv("WAIT_AUTOTASK_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_integration_code=_secret_value(
+            "WAIT_AUTOTASK_INTEGRATION_CODE",
+            os.getenv("WAIT_AUTOTASK_INTEGRATION_CODE", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_page_size=_int_env("WAIT_AUTOTASK_PAGE_SIZE", 50),
+        connectwise_base_url=_secret_value(
+            "WAIT_CONNECTWISE_BASE_URL",
+            os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_company_id=_secret_value(
+            "WAIT_CONNECTWISE_COMPANY_ID",
+            os.getenv("WAIT_CONNECTWISE_COMPANY_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_public_key=_secret_value(
+            "WAIT_CONNECTWISE_PUBLIC_KEY",
+            os.getenv("WAIT_CONNECTWISE_PUBLIC_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_private_key=_secret_value(
+            "WAIT_CONNECTWISE_PRIVATE_KEY",
+            os.getenv("WAIT_CONNECTWISE_PRIVATE_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_client_id=_secret_value(
+            "WAIT_CONNECTWISE_CLIENT_ID",
+            os.getenv("WAIT_CONNECTWISE_CLIENT_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_page_size=_int_env("WAIT_CONNECTWISE_PAGE_SIZE", 50),
+        syncro_base_url=_secret_value(
+            "WAIT_SYNCRO_BASE_URL",
+            os.getenv("WAIT_SYNCRO_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        syncro_api_key=_secret_value(
+            "WAIT_SYNCRO_API_KEY",
+            os.getenv("WAIT_SYNCRO_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        syncro_page_size=_int_env("WAIT_SYNCRO_PAGE_SIZE", 50),
+        servicenow_base_url=_secret_value(
+            "WAIT_SERVICENOW_BASE_URL",
+            os.getenv("WAIT_SERVICENOW_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_username=_secret_value(
+            "WAIT_SERVICENOW_USERNAME",
+            os.getenv("WAIT_SERVICENOW_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_password=_secret_value(
+            "WAIT_SERVICENOW_PASSWORD",
+            os.getenv("WAIT_SERVICENOW_PASSWORD", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_page_size=_int_env("WAIT_SERVICENOW_PAGE_SIZE", 50),
         license_key=_secret_value(
             "license_key",
             os.getenv("WAIT_LICENSE_KEY", ""),

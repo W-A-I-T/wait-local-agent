@@ -72,9 +72,11 @@ function ApprovalCard({
   workflowFor
 }: ApprovalCardProps) {
   const isHaloApproval = request.action_type.startsWith("halopsa.");
+  const isNinjaOneApproval = request.action_type === "ninjaone.script.run";
+  const canEditFields = isHaloApproval && canWrite && request.status === "pending";
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
   const workflow = workflowFor(request);
-  const canExecute = request.can_execute && liveWritesReady;
+  const canExecute = request.can_execute && (!isHaloApproval || liveWritesReady);
 
   return (
     <div className="approval-card">
@@ -98,9 +100,9 @@ function ApprovalCard({
           <pre>{formatPayload(request.payload)}</pre>
         </div>
         <label className="payload-editor">
-          Draft Fields
+          {isHaloApproval ? "Draft Fields" : "Action payload (read-only)"}
           <textarea
-            disabled={!canWrite || request.status !== "pending"}
+            disabled={!canEditFields}
             rows={6}
             value={payloadText}
             onChange={(event) => setDraftPayloadFields((current) => ({ ...current, [request.id]: event.target.value }))}
@@ -118,15 +120,17 @@ function ApprovalCard({
       </div>
       {canWrite ? (
         <div className="row-actions">
-          <button
-            className="icon-button"
-            disabled={busyId === request.id || request.status !== "pending"}
-            type="button"
-            onClick={() => void savePayloadFields(request, parseFields(payloadText))}
-          >
-            <Save size={16} aria-hidden="true" />
-            Save Fields
-          </button>
+          {isHaloApproval ? (
+            <button
+              className="icon-button"
+              disabled={busyId === request.id || !canEditFields}
+              type="button"
+              onClick={() => void savePayloadFields(request, parseFields(payloadText))}
+            >
+              <Save size={16} aria-hidden="true" />
+              Save Fields
+            </button>
+          ) : null}
           <button
             disabled={busyId === request.id || request.status !== "pending"}
             type="button"
@@ -144,12 +148,12 @@ function ApprovalCard({
             Reject
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "approved" || !isHaloApproval || !canExecute}
+            disabled={busyId === request.id || request.status !== "approved" || (!isHaloApproval && !isNinjaOneApproval) || !canExecute}
             type="button"
             onClick={() => void executeApproval(request.id)}
           >
             <PlayCircle size={16} aria-hidden="true" />
-            Execute
+            Execute action
           </button>
         </div>
       ) : null}
