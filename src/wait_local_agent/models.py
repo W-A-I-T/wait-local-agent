@@ -579,6 +579,7 @@ class AgentRun:
     state_json: str
     started_at: str
     finished_at: str
+    revision_version: int | None = None
     client_id: str | None = None
 
 

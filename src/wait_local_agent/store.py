@@ -300,10 +300,12 @@ class Store:
                     state_json text not null,
                     started_at text not null,
                     finished_at text not null,
+                    revision_version integer,
                     client_id text
                 )
                 """
             )
+            self._ensure_column(connection, "agent_runs", "revision_version", "integer")
             connection.execute(
                 """
                 create table if not exists agent_backfills (
@@ -1866,6 +1868,7 @@ class Store:
         current_step: int,
         state: dict[str, object],
         *,
+        revision_version: int | None = None,
         client_id: str | None = None,
     ) -> AgentRun:
         now = utc_now()
@@ -1876,8 +1879,8 @@ class Store:
                 """
                 insert into agent_runs
                   (agent_id, entity_id, actor, status, current_step, state_json,
-                   started_at, finished_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   started_at, finished_at, revision_version, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_id,
@@ -1888,6 +1891,7 @@ class Store:
                     state_json,
                     now,
                     now,
+                    revision_version,
                     normalized_client_id,
                 ),
             )

@@ -28,6 +28,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         smart_action_columns = _columns(connection, "smart_action_runs")
         event_history_columns = _columns(connection, "event_history")
         revision_columns = _columns(connection, "agent_definition_revisions")
+        agent_run_columns = _columns(connection, "agent_runs")
         backfill_columns = _columns(connection, "agent_backfills")
         ticket = connection.execute("select * from tickets where id = 'TCK-1'").fetchone()
         approval = connection.execute("select * from approval_requests where id = 1").fetchone()
@@ -49,6 +50,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
+    assert "revision_version" in agent_run_columns
     assert "depends_on_agent_ids_json" in _columns(connection, "agent_definitions")
     assert "failed_entity_ids_json" in backfill_columns
     assert "client_id" in knowledge_columns

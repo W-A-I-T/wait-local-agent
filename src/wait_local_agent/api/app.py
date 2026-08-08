@@ -501,6 +501,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for revision in store.list_agent_definition_revisions(agent_id, definition.client_id)
         ]
 
+    @app.get("/agents/{agent_id}/revisions/{version}/diff/{other_version}")
+    def agent_revision_diff(
+        agent_id: str,
+        version: int,
+        other_version: int,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        definition = agent_service.get(agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        left = store.get_agent_definition_revision(agent_id, version, definition.client_id)
+        right = store.get_agent_definition_revision(agent_id, other_version, definition.client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        return _agent_revision_diff_view(left, right)
+
     @app.post("/agents/{agent_id}/revisions/{version}/restore")
     def restore_agent_revision(
         agent_id: str,
@@ -2080,6 +2100,25 @@ def _agent_revision_view(revision) -> dict[str, object]:
     }
 
 
+def _agent_revision_diff_view(left, right) -> dict[str, object]:
+    left_definition = _safe_redacted_json_object(left.definition_json)
+    right_definition = _safe_redacted_json_object(right.definition_json)
+    changed_fields: list[dict[str, object]] = []
+    for field in sorted(set(left_definition) | set(right_definition)):
+        before = left_definition.get(field)
+        after = right_definition.get(field)
+        if before != after:
+            changed_fields.append({"field": field, "before": before, "after": after})
+    return {
+        "agent_id": left.agent_id,
+        "from_version": left.version,
+        "to_version": right.version,
+        "changed": bool(changed_fields),
+        "changes": changed_fields,
+        "client_id": left.client_id,
+    }
+
+
 def _agent_run_view(run) -> dict[str, object]:
     state = _safe_json_object(run.state_json)
     return cast(
@@ -2095,6 +2134,7 @@ def _agent_run_view(run) -> dict[str, object]:
                 "state": state,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,
+                "revision_version": run.revision_version,
                 "client_id": run.client_id,
             }
         ),
