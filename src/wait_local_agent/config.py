@@ -72,6 +72,16 @@ class Settings:
     end_user_client_id: str = ""
     end_user_user_id: str = ""
     end_user_support_enabled: bool = False
+    communication_email_host: str = ""
+    communication_email_port: int = 587
+    communication_email_username: str = ""
+    communication_email_password: str = ""
+    communication_email_from: str = ""
+    communication_email_tls: bool = True
+    communication_teams_webhook_url: str = ""
+    communication_slack_webhook_url: str = ""
+    communication_sms_webhook_url: str = ""
+    communication_sms_auth_token: str = ""
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -160,6 +170,51 @@ def load_settings() -> Settings:
         end_user_client_id=os.getenv("WAIT_END_USER_CLIENT_ID", "").strip(),
         end_user_user_id=os.getenv("WAIT_END_USER_USER_ID", "").strip(),
         end_user_support_enabled=_bool_env("WAIT_END_USER_SUPPORT_ENABLED"),
+        communication_email_host=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_HOST",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_HOST", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_port=_int_env("WAIT_COMMUNICATION_EMAIL_PORT", 587),
+        communication_email_username=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_USERNAME",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_password=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_PASSWORD",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_PASSWORD", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_from=os.getenv("WAIT_COMMUNICATION_EMAIL_FROM", "").strip(),
+        communication_email_tls=_bool_env("WAIT_COMMUNICATION_EMAIL_TLS", True),
+        communication_teams_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_TEAMS_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_TEAMS_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_slack_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_SLACK_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_SLACK_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_sms_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_SMS_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_SMS_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_sms_auth_token=_secret_value(
+            "WAIT_COMMUNICATION_SMS_AUTH_TOKEN",
+            os.getenv("WAIT_COMMUNICATION_SMS_AUTH_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,

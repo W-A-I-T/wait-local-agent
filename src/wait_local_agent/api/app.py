@@ -55,6 +55,7 @@ from wait_local_agent.collectors import (
     collector_run_result_status,
     default_registry,
 )
+from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
@@ -379,6 +380,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         collector_service=collector_service,
         halopsa_client=halopsa_client,
         hudu_client=hudu_client,
+        communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
     event_dispatcher = EventDispatcher(store, agent_service)
@@ -1345,6 +1347,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return asdict(service.summarize(ticket_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ticket not found") from exc
+
+    @app.get("/tickets/{ticket_id}/notes")
+    def ticket_notes(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if scoped_client_id is None and context.role >= Role.ADMIN:
+            ticket = store.get_ticket(ticket_id)
+            scoped_client_id = ticket.client_id if ticket is not None else None
+        if scoped_client_id is None:
+            return []
+        notes = store.list_ticket_notes(ticket_id, client_id=scoped_client_id)
+        return [
+            {
+                "id": note.id,
+                "ticket_id": note.ticket_id,
+                "author": redact_text(note.author),
+                "body": redact_text(note.body),
+                "created_at": note.created_at,
+            }
+            for note in notes
+        ]
 
     @app.post("/tickets/{ticket_id}/approvals")
     def update_approval(

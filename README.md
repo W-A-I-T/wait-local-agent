@@ -25,9 +25,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
 - Hudu read-only documentation context.
-- A preview-only communication draft tool for email, Microsoft Teams, Slack,
-  and SMS. Drafts are tenant-scoped, require technician approval, and never
-  send network traffic in the public core.
+- A preview and approval-gated communication tool for local ticket notes,
+  email, Microsoft Teams, Slack, and SMS. Local notes stay tenant-scoped;
+  external delivery requires explicit SMTP/webhook configuration and both
+  `WAIT_ALLOW_WRITE_ACTIONS=true` and `WAIT_ALLOW_HTTP_PROBING=true`.
 - Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `connectwise`, or `syncro`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
@@ -600,9 +601,10 @@ the run is created.
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 
 Communication previews are available through the `communication-draft` smart
-action and `/tools` catalog. Supported channels are `email`, `teams`, `slack`,
-and `sms`; the result is explicitly marked `delivery_mode: preview` and
-`sendable: false` until a separately governed connector execution path exists.
+action. `communication-send` creates an approval request and delivers only
+after approval. Supported channels are `ticket_note`, `email`, `teams`,
+`slack`, and `sms`; external channels use the configured SMTP/webhook adapters
+and remain blocked unless both write and outbound-call flags are enabled.
 
 ## Updates
 
