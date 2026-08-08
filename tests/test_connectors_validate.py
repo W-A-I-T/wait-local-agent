@@ -237,6 +237,29 @@ def test_validate_syncro_cli_requires_credentials_and_accepts_ready(monkeypatch,
     assert "PASS connector=syncro layer=connector" in ready.output
 
 
+def test_validate_servicenow_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ServiceNow read prerequisites are ready.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "servicenow"])
+    assert missing.exit_code == 1
+    assert "WAIT_SERVICENOW_BASE_URL" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_SERVICENOW_BASE_URL", "https://acme.service-now.com")
+    monkeypatch.setenv("WAIT_SERVICENOW_USERNAME", "readonly")
+    monkeypatch.setenv("WAIT_SERVICENOW_PASSWORD", "password")
+    monkeypatch.setattr(cli_module, "ServiceNowClient", FakeServiceNowClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "servicenow"])
+    assert ready.exit_code == 0
+    assert "PASS connector=servicenow layer=connector" in ready.output
+
+
 def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
     result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
 
@@ -359,6 +382,35 @@ def test_syncro_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> No
         ["connectors", "syncro-tickets"],
         ["connectors", "syncro-ticket", "ticket-1"],
         ["connectors", "syncro-companies"],
+    ]
+    results = [CliRunner().invoke(app, command) for command in commands]
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)
+
+
+def test_servicenow_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake ServiceNow response", 1)
+
+    class FakeServiceNowClient:
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "incident-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_servicenow_client", lambda: FakeServiceNowClient())
+    commands = [
+        ["connectors", "servicenow-health"],
+        ["connectors", "servicenow-tickets"],
+        ["connectors", "servicenow-ticket", "incident-1"],
+        ["connectors", "servicenow-companies"],
     ]
     results = [CliRunner().invoke(app, command) for command in commands]
     assert all(item.exit_code == 0 for item in results)

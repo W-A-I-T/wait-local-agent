@@ -24,12 +24,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
 - IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
-- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, `connectwise`, and `syncro`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, `connectwise`, `syncro`, and `servicenow`.
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
 - Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
 - Read-only SyncroMSP ticket and customer inventory; Syncro writes are not exposed.
+- Read-only ServiceNow incident and company inventory; ServiceNow writes are not exposed.
 - Preview-only `build-message` drafts cover ticket notes, email, Teams, Slack, and
   SMS-shaped messages; no outbound transport is enabled.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
@@ -386,6 +387,20 @@ wait-local-agent connectors validate syncro
 wait-local-agent connectors syncro-health
 wait-local-agent connectors syncro-tickets
 wait-local-agent connectors syncro-companies
+```
+
+### ServiceNow
+
+The public ServiceNow adapter is read-only and requires explicit HTTP probing.
+Configure the instance URL and a least-privileged Table API username/password,
+then use the `servicenow` validation and read commands. Requests use a bounded
+field list and pagination; no ServiceNow mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate servicenow
+wait-local-agent connectors servicenow-health
+wait-local-agent connectors servicenow-tickets
+wait-local-agent connectors servicenow-companies
 ```
 
 ## Scheduled Workflows and Tenancy Filters

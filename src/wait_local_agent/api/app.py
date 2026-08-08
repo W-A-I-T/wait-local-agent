@@ -94,6 +94,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.rmm import NinjaOneClient, RmmReadResponse
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
@@ -300,6 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     autotask_client = AutotaskClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
     syncro_client = SyncroClient(active_settings)
+    servicenow_client = ServiceNowClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1941,6 +1943,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             syncro_client.list_companies(page=page, page_size=page_size),
         )
 
+    @app.get("/connectors/servicenow/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = servicenow_client.health()
+        store.add_audit_event("servicenow.read", "servicenow.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/servicenow/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _servicenow_response(
+            "tickets.list",
+            servicenow_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/servicenow/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _servicenow_response("tickets.get", servicenow_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/servicenow/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _servicenow_response(
+            "companies.list",
+            servicenow_client.list_companies(page=page, page_size=page_size),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2421,6 +2461,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _syncro_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
         store.add_audit_event(
             "syncro.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _servicenow_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "servicenow.read",
             read_type,
             f"{response.result.status} count={response.result.count}",
         )

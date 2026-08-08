@@ -41,6 +41,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_SYNCRO_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_SYNCRO_API_KEY", raising=False)
     monkeypatch.delenv("WAIT_SYNCRO_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_USERNAME", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_PASSWORD", raising=False)
+    monkeypatch.delenv("WAIT_SERVICENOW_PAGE_SIZE", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -98,6 +102,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.syncro_base_url == ""
     assert settings.syncro_api_key == ""
     assert settings.syncro_page_size == 50
+    assert settings.servicenow_base_url == ""
+    assert settings.servicenow_username == ""
+    assert settings.servicenow_password == ""
+    assert settings.servicenow_page_size == 50
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -166,6 +174,10 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_SYNCRO_BASE_URL", "https://acme.syncromsp.com/api/v1")
     monkeypatch.setenv("WAIT_SYNCRO_API_KEY", "syncro-key")
     monkeypatch.setenv("WAIT_SYNCRO_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_SERVICENOW_BASE_URL", "https://acme.service-now.com")
+    monkeypatch.setenv("WAIT_SERVICENOW_USERNAME", "readonly")
+    monkeypatch.setenv("WAIT_SERVICENOW_PASSWORD", "password")
+    monkeypatch.setenv("WAIT_SERVICENOW_PAGE_SIZE", "20")
 
     settings = load_settings()
 
@@ -198,6 +210,10 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.syncro_base_url == "https://acme.syncromsp.com/api/v1"
     assert settings.syncro_api_key == "syncro-key"
     assert settings.syncro_page_size == 20
+    assert settings.servicenow_base_url == "https://acme.service-now.com"
+    assert settings.servicenow_username == "readonly"
+    assert settings.servicenow_password == "password"
+    assert settings.servicenow_page_size == 20
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

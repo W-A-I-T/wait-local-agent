@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, and Syncro HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, Syncro, and ServiceNow HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -274,3 +274,21 @@ WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate syncro
 
 Use the vendor's current API documentation when selecting the account and
 subdomain endpoint: <https://api-docs.syncromsp.com/>.
+
+## ServiceNow
+
+The public ServiceNow adapter is read-only and requires explicit HTTP probing.
+Configure an instance URL and a least-privileged account that can read the
+`incident` and `core_company` tables. The adapter requests only a narrow field
+set and never calls ServiceNow mutation methods.
+
+```bash
+wait-local-agent secrets set WAIT_SERVICENOW_BASE_URL
+wait-local-agent secrets set WAIT_SERVICENOW_USERNAME
+wait-local-agent secrets set WAIT_SERVICENOW_PASSWORD
+wait-local-agent secrets set WAIT_SERVICENOW_PAGE_SIZE
+WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate servicenow
+```
+
+Use the official Table API documentation when validating instance ACLs and
+table permissions: <https://developer.servicenow.com/dev.do#!/reference>.

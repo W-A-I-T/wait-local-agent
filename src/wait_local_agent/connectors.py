@@ -20,6 +20,7 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import NinjaOneClient, RmmClient
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
 
@@ -89,6 +90,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     syncro_status: ConnectorStatusValue = "not_configured"
     if syncro_configured:
         syncro_status = "configured" if settings.allow_http_probing else "blocked"
+    servicenow_configured = bool(
+        settings.servicenow_base_url
+        and settings.servicenow_username
+        and settings.servicenow_password
+    )
+    servicenow_status: ConnectorStatusValue = "not_configured"
+    if servicenow_configured:
+        servicenow_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -209,6 +218,25 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
+        ConnectorStatus(
+            id="servicenow",
+            kind="psa",
+            name="ServiceNow",
+            status=servicenow_status,
+            message=(
+                "ServiceNow read-only incident and company inventory is configured."
+                if servicenow_status == "configured"
+                else (
+                    "ServiceNow credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if servicenow_status == "blocked"
+                    else (
+                        "Set WAIT_SERVICENOW_BASE_URL, WAIT_SERVICENOW_USERNAME, and "
+                        "WAIT_SERVICENOW_PASSWORD to enable read-only PSA inventory."
+                    )
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
     ]
 
 
@@ -262,6 +290,10 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_SYNCRO_BASE_URL", bool(settings.syncro_base_url), "syncro"),
         SecretRecord("WAIT_SYNCRO_API_KEY", bool(settings.syncro_api_key), "syncro"),
         SecretRecord("WAIT_SYNCRO_PAGE_SIZE", bool(settings.syncro_page_size), "syncro"),
+        SecretRecord("WAIT_SERVICENOW_BASE_URL", bool(settings.servicenow_base_url), "servicenow"),
+        SecretRecord("WAIT_SERVICENOW_USERNAME", bool(settings.servicenow_username), "servicenow"),
+        SecretRecord("WAIT_SERVICENOW_PASSWORD", bool(settings.servicenow_password), "servicenow"),
+        SecretRecord("WAIT_SERVICENOW_PAGE_SIZE", bool(settings.servicenow_page_size), "servicenow"),
     ]
 
 
@@ -276,6 +308,7 @@ def validate_connector_credentials(
     autotask_client: PsaClient | None = None,
     connectwise_client: PsaClient | None = None,
     syncro_client: PsaClient | None = None,
+    servicenow_client: PsaClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -404,6 +437,24 @@ def validate_connector_credentials(
                 f"Syncro credentials are incomplete: {', '.join(missing)}.",
             )
         result = (syncro_client or SyncroClient(settings)).health()
+    elif connector == "servicenow":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SERVICENOW_BASE_URL": settings.servicenow_base_url,
+                "WAIT_SERVICENOW_USERNAME": settings.servicenow_username,
+                "WAIT_SERVICENOW_PASSWORD": settings.servicenow_password,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"ServiceNow credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (servicenow_client or ServiceNowClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

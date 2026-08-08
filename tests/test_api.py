@@ -1714,6 +1714,42 @@ def test_syncro_api_read_surfaces_are_blocked_and_ready_without_writes(settings,
     )
 
 
+def test_servicenow_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/servicenow/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake ServiceNow response", 1)
+
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "incident-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "ServiceNowClient", FakeServiceNowClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/servicenow/health").json()["status"] == "ready"
+    assert client.get("/connectors/servicenow/tickets").json()["items"] == [{"id": "incident-1"}]
+    assert client.get("/connectors/servicenow/tickets/incident-1").json()["items"] == [{"id": "incident-1"}]
+    assert client.get("/connectors/servicenow/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(
+        event["event_type"] == "servicenow.read"
+        for event in client.get("/audit").json()
+    )
+
+
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
     configured_settings = settings.__class__(
         **{
@@ -1747,6 +1783,9 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
             "connectwise_client_id": "client-id",
             "syncro_base_url": "https://acme.syncromsp.com/api/v1",
             "syncro_api_key": "syncro-key",
+            "servicenow_base_url": "https://acme.service-now.com",
+            "servicenow_username": "readonly",
+            "servicenow_password": "password",
         }
     )
     enabled_settings = blocked_settings.__class__(
@@ -1769,6 +1808,10 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
     enabled_syncro = next(item for item in enabled.json() if item["id"] == "syncro")
     assert blocked_syncro["status"] == "blocked"
     assert enabled_syncro["status"] == "configured"
+    blocked_servicenow = next(item for item in blocked.json() if item["id"] == "servicenow")
+    enabled_servicenow = next(item for item in enabled.json() if item["id"] == "servicenow")
+    assert blocked_servicenow["status"] == "blocked"
+    assert enabled_servicenow["status"] == "configured"
 
 
 def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> None:
