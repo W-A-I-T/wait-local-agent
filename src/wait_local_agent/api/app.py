@@ -98,6 +98,7 @@ from wait_local_agent.lp_client import (
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupReadResponse,
+    M365GraphLicenseDetailReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessageReadResponse,
@@ -2751,6 +2752,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = m365_client.list_subscribed_skus(cursor=cursor)
         return _m365_license_response("licenses.list", response)
 
+    @app.get("/connectors/m365/users/license-details")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_user_license_details(
+        request: Request,
+        _: ViewerAccess,
+        identity: str,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = m365_client.list_license_details(
+            identity=identity,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        return _m365_license_detail_response("users.license-details.list", response)
+
     @app.get("/connectors/m365/mail-folders")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_mail_folders(
@@ -3751,6 +3770,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _m365_license_response(
         read_type: str,
         response: M365GraphLicenseReadResponse,
+    ) -> dict[str, object]:
+        _audit_m365_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _m365_license_detail_response(
+        read_type: str,
+        response: M365GraphLicenseDetailReadResponse,
     ) -> dict[str, object]:
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {

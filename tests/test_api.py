@@ -26,6 +26,8 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
     M365GraphLicenseChangeResult,
+    M365GraphLicenseDetail,
+    M365GraphLicenseDetailReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
@@ -3159,6 +3161,20 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "license-next-token",
             )
 
+        def list_license_details(self, **kwargs):
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphLicenseDetail(
+                        "detail-1",
+                        "sku-guid",
+                        "M365_BUSINESS_PREMIUM",
+                        (),
+                    )
+                ],
+                "detail-next-token",
+            )
+
         def list_mail_folders(self, **kwargs):
             return M365GraphMailFolderReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
@@ -3227,6 +3243,10 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/licenses",
         params={"cursor": "license-next"},
     )
+    license_details = client.get(
+        "/connectors/m365/users/license-details",
+        params={"identity": "adele@example.test", "cursor": "detail-next", "page_size": 2},
+    )
     mail_folders = client.get(
         "/connectors/m365/mail-folders",
         params={"identity": "adele@example.test", "cursor": "folder-next", "page_size": 2},
@@ -3255,6 +3275,8 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert groups.json()["next_cursor"] == "group-next-token"
     assert licenses.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
     assert licenses.json()["next_cursor"] == "license-next-token"
+    assert license_details.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
+    assert license_details.json()["next_cursor"] == "detail-next-token"
     assert mail_folders.json()["items"][0]["display_name"] == "Inbox"
     assert mail_folders.json()["next_cursor"] == "folder-next-token"
     assert mail_messages.json()["items"][0]["subject"] == "VPN issue"
@@ -3271,6 +3293,7 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     assert client.get("/connectors/m365/health").status_code == 401
     assert client.get("/connectors/m365/groups").status_code == 401
     assert client.get("/connectors/m365/licenses").status_code == 401
+    assert client.get("/connectors/m365/users/license-details", params={"identity": "user-1"}).status_code == 401
     assert client.get("/connectors/m365/mail-folders").status_code == 401
     assert client.get("/connectors/m365/mail-messages").status_code == 401
     assert client.get("/connectors/m365/managed-devices").status_code == 401

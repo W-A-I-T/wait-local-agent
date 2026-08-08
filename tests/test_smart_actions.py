@@ -12,6 +12,8 @@ from wait_local_agent.itglue import ItGlueDocument
 from wait_local_agent.m365_graph import (
     M365GraphGroup,
     M365GraphGroupReadResponse,
+    M365GraphLicenseDetail,
+    M365GraphLicenseDetailReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
@@ -340,6 +342,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 ConnectorReadResult("ready", "ok", 1),
                 [M365GraphSubscribedSku("sku-1", "sku-1", "BUSINESS", "Enabled", "User", 1, 2, 0, 0, 0)],
             ),
+            list_license_details=lambda identity, page_size: M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphLicenseDetail("detail-1", "sku-1", "BUSINESS", ())],
+            ),
             list_mail_folders=lambda identity, page_size: M365GraphMailFolderReadResponse(
                 ConnectorReadResult("ready", "ok", 1),
                 [M365GraphMailFolder("folder-1", "Inbox", "", 0, 1, 0, False)],
@@ -421,6 +427,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         connector_context, {"resource": "group", "identity": "it"}
     )
     m365_license = M365LiveContextAction().run(connector_context, {"resource": "licenses"})
+    m365_license_detail = M365LiveContextAction().run(
+        connector_context,
+        {"resource": "license_details", "identity": "alice@example.test"},
+    )
     m365_mail = M365LiveContextAction().run(
         connector_context, {"resource": "mailbox_folders", "identity": "alice@example.test"}
     )
@@ -467,6 +477,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == m365_user.status
         == m365_group.status
         == m365_license.status
+        == m365_license_detail.status
         == m365_mail.status
         == m365_messages.status
         == m365_device.status
@@ -509,6 +520,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert m365_user.output["count"] == 1
     assert m365_group.output["count"] == 1
     assert m365_license.output["count"] == 1
+    assert m365_license_detail.output["count"] == 1
     assert m365_mail.output["count"] == 1
     assert m365_messages.output["count"] == 1
     assert m365_device.output["count"] == 1
