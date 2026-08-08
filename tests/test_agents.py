@@ -58,6 +58,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "find-similar-tickets",
         "knowledge-search",
         "ticket-quality",
+        "ticket-escalation",
+        "ticket-sentiment",
         "dispatch-suggestion",
         "collector-preview",
     }
@@ -377,6 +379,45 @@ def test_collector_preview_tool_reuses_api_rbac_and_redacts_config(settings) -> 
     assert "supersecret" not in steps[0].input_json
     audit = Store(secure.data_path).list_audit_events(client_id="acme")
     assert any(event.event_type == "collector.previewed" for event in audit)
+
+
+def test_sentiment_and_escalation_tools_are_tenant_scoped_and_technician_gated(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure.data_path)
+    _seed(store, client_id="acme")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'beta' where id = 'TCK-1002'")
+    client = TestClient(create_app(secure))
+    viewer = client.post(
+        "/smart-actions/ticket-sentiment/invoke",
+        headers={"Authorization": "Bearer viewer-token"},
+        json={"payload": {"ticket_id": "TCK-1001"}},
+    )
+    sentiment = client.post(
+        "/smart-actions/ticket-sentiment/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"ticket_id": "TCK-1001"}},
+    )
+    foreign = client.post(
+        "/smart-actions/ticket-escalation/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"ticket_id": "TCK-1002"}},
+    )
+
+    assert viewer.status_code == 403
+    assert sentiment.status_code == 200
+    assert sentiment.json()["status"] == "success"
+    assert sentiment.json()["output"]["sentiment"] == "negative"
+    assert foreign.status_code == 200
+    assert foreign.json()["status"] == "failed"
 
 
 def test_agent_retry_rejects_completed_runs(settings) -> None:
