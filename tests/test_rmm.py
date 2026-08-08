@@ -498,6 +498,8 @@ def test_dattormm_guards_and_sanitizes_failures(settings) -> None:
     assert DattoRmmClient(blocked_settings).list_scripts().result.status == "blocked"
     missing = DattoRmmClient(replace(settings, allow_http_probing=True))
     assert missing.health().status == "not_configured"
+    assert missing.get_device("device-1").result.status == "not_configured"
+    assert missing.list_scripts().result.status == "not_configured"
     assert "WAIT_DATTORMM_BASE_URL" in missing.health().message
 
     def unauthorized(request: httpx.Request) -> httpx.Response:
@@ -509,6 +511,85 @@ def test_dattormm_guards_and_sanitizes_failures(settings) -> None:
     assert failed.status == "failed"
     assert "HTTP 401" in failed.message
     assert "datto-secret-response" not in failed.message
+
+
+def test_dattormm_maps_token_and_read_failures_without_leaking_payloads(settings) -> None:
+    def token_timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    assert "before receiving a response" in DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(token_timeout)
+    ).health().message
+
+    def token_read_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("read failed")
+
+    assert DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(token_read_error)
+    ).health().message == "Datto RMM token request failed."
+
+    def token_bad_json(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="private token body")
+
+    assert DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(token_bad_json)
+    ).health().message == "Datto RMM token response was malformed JSON."
+
+    def token_missing_access(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"expires_in": 10})
+
+    assert DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(token_missing_access)
+    ).health().message == "Datto RMM token response did not contain an access token."
+
+    def token_http_failure(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="private token body")
+
+    assert DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(token_http_failure)
+    ).health().message == "Datto RMM token request failed with HTTP 401."
+
+    def read_failure(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/oauth/token"):
+            return httpx.Response(200, json={"access_token": "token"})
+        raise httpx.ReadError("private read failure")
+
+    failed = DattoRmmClient(_configured_datto(settings), transport=httpx.MockTransport(read_failure)).list_devices()
+    assert failed.result.message == "Datto RMM request failed."
+    assert "private read failure" not in failed.result.message
+
+    def malformed_read(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/oauth/token"):
+            return httpx.Response(200, json={"access_token": "token"})
+        return httpx.Response(200, text="private read body")
+
+    malformed = DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(malformed_read)
+    ).list_devices()
+    assert malformed.result.message == "Datto RMM GET v2/account/devices returned malformed JSON."
+
+    def http_failure(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/oauth/token"):
+            return httpx.Response(200, json={"access_token": "token"})
+        return httpx.Response(503, text="private read body")
+
+    failed_http = DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(http_failure)
+    ).list_devices()
+    assert failed_http.result.message == "Datto RMM GET v2/account/devices failed with HTTP 503."
+
+    def read_timeout(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/oauth/token"):
+            return httpx.Response(200, json={"access_token": "token"})
+        raise httpx.ReadTimeout("timed out")
+
+    timeout = DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(read_timeout)
+    ).list_devices()
+    assert "before receiving a response" in timeout.result.message
+
+    invalid_device = DattoRmmClient(_configured_datto(settings)).get_device("device/escape")
+    assert invalid_device.result.status == "failed"
 
 
 def test_dattormm_endpoint_helpers() -> None:
