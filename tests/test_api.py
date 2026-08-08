@@ -1055,7 +1055,6 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert rescheduled.status_code == 200
         assert rescheduled.json()["schedule_type"] == "interval"
         assert rescheduled.json()["interval_seconds"] == 120
-
         paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
         resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
         deleted = client.delete(f"/scheduled-jobs/{job_id}", headers=_auth("tech-token"))
@@ -1068,8 +1067,12 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert resumed.json()["next_run_at"] is not None
         assert deleted.status_code == 200
         assert deleted.json()["id"] == job_id
-        assert client.delete(f"/scheduled-jobs/{interval.json()['id']}", headers=_auth("tech-token")).status_code == 200
-        assert client.delete(f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")).status_code == 200
+        assert client.delete(
+            f"/scheduled-jobs/{interval.json()['id']}", headers=_auth("tech-token")
+        ).status_code == 200
+        assert client.delete(
+            f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")
+        ).status_code == 200
         assert len(app.state.scheduler._scheduler.get_jobs()) == 0
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 

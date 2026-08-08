@@ -156,10 +156,24 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
     validate_schedule("once", "", None, "2099-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="interval_seconds"):
         validate_schedule("interval", "", None, None)
+    with pytest.raises(ValueError, match="between 1"):
+        validate_schedule("interval", "", 0, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("interval", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="cannot include interval"):
+        validate_schedule("cron", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require run_at"):
+        validate_schedule("once", "", None, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("once", "0 9 * * *", None, "2099-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="timezone"):
         validate_schedule("once", "", None, "2099-01-01T00:00:00")
+    with pytest.raises(ValueError, match="ISO-8601"):
+        validate_schedule("once", "", None, "not-a-date")
     with pytest.raises(ValueError, match="future"):
         validate_schedule("once", "", None, "2020-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="schedule_type"):
+        validate_schedule("unknown", "", None, None)
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=1,
@@ -205,6 +219,26 @@ def test_scheduler_validation_rejects_cross_type_and_malformed_schedule_values()
             run_at="2099-01-01T00:00:00+00:00",
         )
     ) is not None
+
+
+def test_scheduler_does_not_replay_expired_one_time_jobs(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = Store(tmp_path / "state.db")
+        manager = SchedulerManager(store, enabled=True)
+        manager.start()
+        expired = store.create_scheduled_job(
+            "documentation-assisted-response",
+            "",
+            {"ticket_id": "TCK-1001"},
+            schedule_type="once",
+            run_at="2020-01-01T00:00:00+00:00",
+        )
+        manager._register_live_job(expired)  # noqa: SLF001
+        assert manager._scheduler is not None  # noqa: SLF001
+        assert manager._scheduler.get_job(manager._job_identity(expired.id or 0)) is None  # noqa: SLF001
+        manager.shutdown()
+
+    asyncio.run(scenario())
 
 
 def test_scheduler_ignores_jobs_without_runtime_identity(tmp_path: Path) -> None:
