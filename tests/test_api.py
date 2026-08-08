@@ -1833,6 +1833,70 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
+def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+            "client_id": "acme",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.executemany(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
+                ("TCK-BETA", "Beta", "MFA reset", "Sign-in blocked", "High", "Open", "beta"),
+            ],
+        )
+    client = TestClient(create_app(secure_settings))
+
+    help_response = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "help"},
+    )
+    triage = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "triage TCK-ACME"},
+    )
+    cross_tenant = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "triage TCK-BETA"},
+    )
+    viewer = client.post(
+        "/technician/chat",
+        headers=_auth("viewer-token"),
+        json={"message": "triage TCK-ACME"},
+    )
+    unsupported = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "run arbitrary shell command TCK-ACME"},
+    )
+
+    assert help_response.status_code == 200
+    assert help_response.json()["status"] == "help"
+    assert triage.status_code == 200
+    assert triage.json()["action_id"] == "ticket-triage"
+    assert triage.json()["result"]["status"] == "success"
+    assert triage.json()["result"]["output"]["ticket_id"] == "TCK-ACME"
+    assert cross_tenant.status_code == 200
+    assert cross_tenant.json()["result"]["status"] == "failed"
+    assert "TCK-BETA" not in cross_tenant.text
+    assert viewer.status_code == 403
+    assert unsupported.status_code == 422
+
+
 def test_legacy_approval_rows_are_redacted_in_api_views(settings) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request("TCK-LEGACY", "halopsa.add_note", {})

@@ -140,6 +140,17 @@ and tenant scope without persisting or executing anything, and reports the
 bounded sequential run estimate. Backfills do not bypass the normal agent,
 approval, redaction, or tenant checks.
 
+## Technician teammate
+
+`POST /technician/chat` and `wait-local-agent technician-chat` provide a
+technician-only conversational command surface over the existing smart-action
+service. The parser accepts a small explicit vocabulary for ticket summaries,
+triage, similar-ticket search, documentation search, resolution suggestions,
+quality, sentiment, escalation, and dispatch suggestions. It never evaluates
+arbitrary code or forwards the whole message to a model; unsupported requests
+return bounded help text, and existing smart-action approval and tenant checks
+remain authoritative.
+
 ## Event-triggered agents
 
 - `POST /automation/events` accepts supported ticket events with an

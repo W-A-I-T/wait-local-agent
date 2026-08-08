@@ -50,6 +50,18 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "write_actions_enabled=False" in result.output
 
 
+def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    result = CliRunner().invoke(app, ["technician-chat", "triage TCK-1001"])
+
+    assert result.exit_code == 0
+    assert '"action_id": "ticket-triage"' in result.output
+    assert '"status": "success"' in result.output
+
+
 def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()

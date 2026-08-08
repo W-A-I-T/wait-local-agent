@@ -102,6 +102,7 @@ from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
+from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -545,6 +546,35 @@ def summarize_ticket(ticket_id: str) -> None:
     typer.echo(summary.suggested_response)
     for source in summary.sources:
         typer.echo(f"source={source.title} ({source.path})")
+
+
+@app.command("technician-chat")
+def technician_chat(
+    message: str,
+    ticket_id: Annotated[str | None, typer.Option("--ticket-id")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        command = parse_technician_message(message, ticket_id=ticket_id)
+    except TechnicianChatParseError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if command.action_id is None:
+        typer.echo(command.reply)
+        return
+    settings = load_settings()
+    service = SmartActionService(Store(settings.data_path), settings)
+    result = service.invoke(command.action_id, command.payload, "cli", client_id=client_id)
+    typer.echo(
+        json.dumps(
+            {
+                "status": result.status,
+                "message": command.reply,
+                "action_id": command.action_id,
+                "result": asdict(result),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 @audit_app.command("list")

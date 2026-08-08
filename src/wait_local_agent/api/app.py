@@ -117,6 +117,7 @@ from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
+from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -220,6 +221,12 @@ class TemplateGalleryCreateRequest(BaseModel):
 class SmartActionInvokeRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     confirm: bool = False
+    client_id: str | None = None
+
+
+class TechnicianChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    ticket_id: str | None = Field(default=None, max_length=100)
     client_id: str | None = None
 
 
@@ -1234,6 +1241,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="smart action not found") from exc
         return asdict(result)
+
+    @app.post("/technician/chat")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def technician_chat(
+        payload: TechnicianChatRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            command = parse_technician_message(payload.message, ticket_id=payload.ticket_id)
+        except TechnicianChatParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if command.action_id is None:
+            return {
+                "status": "help",
+                "message": command.reply,
+                "supported": True,
+            }
+        try:
+            result = smart_action_service.invoke(
+                command.action_id,
+                command.payload,
+                context.approver_id or "api",
+                client_id=scoped_client_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
+        return {
+            "status": result.status,
+            "message": command.reply,
+            "action_id": command.action_id,
+            "result": asdict(result),
+        }
 
     @app.get("/tickets/{ticket_id}/summary")
     def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
