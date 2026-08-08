@@ -13,6 +13,7 @@ from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
+from wait_local_agent.confluence import ConfluencePage, ConfluenceReadResponse
 from wait_local_agent.connectwise import ConnectWiseReadResponse
 from wait_local_agent.itglue import (
     ItGlueDocument,
@@ -2223,6 +2224,52 @@ def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
 def test_itglue_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/itglue/health")
+    assert response.status_code == 401
+
+
+def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeConfluenceClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Confluence ready", 0)
+
+        def list_pages(self, **kwargs):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ConfluencePage("9", "Runbook", "42", "current", "3", "today", "/page/9", "body")],
+            )
+
+        def get_page(self, page_id):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", "page ready", 1),
+                [ConfluencePage(page_id, "Runbook", "42", "current", "3", "today", "/page/9", "body")],
+            )
+
+    monkeypatch.setattr(app_module, "ConfluenceClient", FakeConfluenceClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/confluence/health")
+    pages = client.get(
+        "/connectors/confluence/pages",
+        params={"space_id": "42", "title": "Runbook", "cursor": "next", "page_size": 2},
+    )
+    page = client.get("/connectors/confluence/pages/9")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert pages.json()["items"][0]["title"] == "Runbook"
+    assert page.json()["items"][0]["id"] == "9"
+    assert any(connector["id"] == "confluence" for connector in connectors.json())
+    assert any(event["event_type"] == "confluence.read" for event in audit.json())
+
+
+def test_confluence_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/confluence/health")
     assert response.status_code == 401
 
 

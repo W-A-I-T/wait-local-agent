@@ -52,6 +52,7 @@ from wait_local_agent.collectors import (
     collector_run_result_status,
 )
 from wait_local_agent.config import load_settings
+from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,
@@ -167,6 +168,10 @@ def _itglue_client() -> ItGlueClient:
     return ItGlueClient(load_settings())
 
 
+def _confluence_client() -> ConfluenceClient:
+    return ConfluenceClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -226,6 +231,12 @@ def doctor() -> None:
     typer.echo(f"autotask_configured={autotask_configured}")
     itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
     typer.echo(f"itglue_configured={itglue_configured}")
+    confluence_configured = bool(
+        settings.confluence_base_url
+        and settings.confluence_email
+        and settings.confluence_api_token
+    )
+    typer.echo(f"confluence_configured={confluence_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -653,7 +664,7 @@ def validate_connector(
         typer.Argument(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
-                "autotask, or itglue."
+                "autotask, itglue, or confluence."
             )
         ),
     ]
@@ -670,6 +681,7 @@ def validate_connector(
             servicenow_client=_servicenow_client(),
             autotask_client=_autotask_client(),
             itglue_client=_itglue_client(),
+            confluence_client=_confluence_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1101,6 +1113,40 @@ def itglue_folders(
             ),
         ),
     )
+
+
+@connectors_app.command("confluence-health")
+def confluence_health() -> None:
+    result = _confluence_client().health()
+    _audit_confluence_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("confluence-pages")
+def confluence_pages(
+    space_id: str | None = None,
+    title: str | None = None,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_confluence_response(
+        "pages.list",
+        _confluence_client().list_pages(
+            space_id=space_id,
+            title=title,
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().confluence_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("confluence-page")
+def confluence_page(page_id: str) -> None:
+    _print_confluence_response("pages.get", _confluence_client().get_page(page_id))
 
 
 @workflows_app.command("templates")
@@ -1794,6 +1840,25 @@ def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None
 
 def _audit_itglue_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("itglue.read", read_type, f"{status} count={count}")
+
+
+def _print_confluence_response(read_type: str, response: ConfluenceReadResponse) -> None:
+    _audit_confluence_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_confluence_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("confluence.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

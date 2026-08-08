@@ -351,6 +351,32 @@ The API mirrors these commands under `/connectors/itglue/*`. The API key stays
 in the settings/vault boundary, requests are read-only and bounded, and live
 network access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([IT Glue API documentation](https://api.itglue.com/developer/)).
 
+### Confluence Cloud
+
+Required settings:
+
+```text
+WAIT_CONFLUENCE_BASE_URL=https://your-site.atlassian.net
+WAIT_CONFLUENCE_EMAIL=
+WAIT_CONFLUENCE_API_TOKEN=
+WAIT_CONFLUENCE_PAGE_SIZE=25
+```
+
+Read commands cover bounded page listing, optional space/title filters, cursor
+continuation, and page detail:
+
+```bash
+wait-local-agent connectors validate confluence
+wait-local-agent connectors confluence-health
+wait-local-agent connectors confluence-pages
+wait-local-agent connectors confluence-page <page-id>
+```
+
+The API mirrors these commands under `/connectors/confluence/*`. Direct API
+access uses Confluence Cloud basic authentication from settings/vault, only
+GET requests are issued, and live network access remains gated by
+`WAIT_ALLOW_HTTP_PROBING` ([Confluence REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/)).
+
 ### ConnectWise PSA
 
 Required settings:

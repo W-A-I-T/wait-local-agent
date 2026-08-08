@@ -55,6 +55,7 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.config import Settings, load_settings
+from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     execute_halopsa_approval_request,
@@ -278,6 +279,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     servicenow_client = ServiceNowClient(active_settings)
     autotask_client = AutotaskClient(active_settings)
     itglue_client = ItGlueClient(active_settings)
+    confluence_client = ConfluenceClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -379,6 +381,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "itglue_configured": bool(
                 active_settings.itglue_base_url and active_settings.itglue_api_key
+            ),
+            "confluence_configured": bool(
+                active_settings.confluence_base_url
+                and active_settings.confluence_email
+                and active_settings.confluence_api_token
             ),
         }
 
@@ -1999,6 +2006,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _itglue_response("folders.list", response)
 
+    @app.get("/connectors/confluence/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def confluence_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = confluence_client.health()
+        _audit_confluence_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/confluence/pages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def confluence_pages(
+        request: Request,
+        _: ViewerAccess,
+        space_id: str | None = None,
+        title: str | None = None,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = confluence_client.list_pages(
+            space_id=space_id,
+            title=title,
+            cursor=cursor,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.confluence_page_size
+            ),
+        )
+        return _confluence_response("pages.list", response)
+
+    @app.get("/connectors/confluence/pages/{page_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def confluence_page(page_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = confluence_client.get_page(page_id)
+        return _confluence_response("pages.get", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2481,6 +2523,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_itglue_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("itglue.read", read_type, f"{status} count={count}")
+
+    def _confluence_response(
+        read_type: str,
+        response: ConfluenceReadResponse,
+    ) -> dict[str, object]:
+        _audit_confluence_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _audit_confluence_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("confluence.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

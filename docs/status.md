@@ -32,6 +32,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   guarded HTTP boundary; write operations remain unavailable.
 - Autotask read-only ticket and company inventory through the common guarded
   HTTP boundary; write operations remain unavailable.
+- Confluence Cloud read-only page listing and detail through the common guarded
+  HTTP boundary; write operations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
@@ -85,13 +87,14 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Next
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
-- Additional connector families beyond HaloPSA and Hudu.
+- Additional connector families beyond HaloPSA and Hudu, including read-only
+  Confluence page access.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
 ## Not ready yet
 
-- Live RMM, M365, Hudu, IT Glue, or SharePoint write synchronization.
+- Live RMM, M365, Hudu, IT Glue, Confluence, or SharePoint write synchronization.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
 - Ungated side effects. HaloPSA writes require explicit flags, credentials, rate-limit budget, and approval; other live writes remain disabled.
@@ -130,6 +133,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ConnectWise PSA connector | Read-only core surface built |
 | Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |
+| Confluence connector | Read-only core surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
 | M365 / Entra read-only | Collected-inventory identity lookup built; live connector phase future |
 | Scheduled / proactive workflows | Built |
