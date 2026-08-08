@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
+import { buildApiHeaders } from "../api/headers";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
+import { apiUrl } from "../lib/config";
 
 function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
@@ -38,6 +40,24 @@ export function Executions() {
     }
   }
 
+  async function downloadArtifact(artifact: ExecutionDetail["artifacts"][number]) {
+    if (!selected) return;
+    try {
+      const response = await fetch(apiUrl(`/executions/${selected.id}/artifacts/${artifact.id}`), {
+        headers: buildApiHeaders()
+      });
+      if (!response.ok) throw new Error("The artifact could not be downloaded.");
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = artifact.name;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to download artifact.");
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -72,7 +92,7 @@ export function Executions() {
           {step.error_detail ? <p className="notice danger">{step.error_detail}</p> : null}
         </article>)}</div>
         <h3>Artifacts</h3>
-        {selected.artifacts.length === 0 ? <p>No artifacts recorded.</p> : <div className="table-list">{selected.artifacts.map((artifact) => <div className="table-row" key={artifact.id}><div><strong>{artifact.name}</strong><span>{artifact.media_type}</span></div><span>{artifact.byte_size} bytes</span><span>{artifact.sha256}</span></div>)}</div>}
+        {selected.artifacts.length === 0 ? <p>No artifacts recorded.</p> : <div className="table-list">{selected.artifacts.map((artifact) => <div className="table-row" key={artifact.id}><div><strong>{artifact.name}</strong><span>{artifact.media_type}</span></div><span>{artifact.byte_size} bytes</span><span>{artifact.sha256}</span><button type="button" className="secondary-button" onClick={() => void downloadArtifact(artifact)}>Download</button></div>)}</div>}
       </section> : null}
     </div>
   );

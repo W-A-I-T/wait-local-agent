@@ -118,8 +118,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   React dashboard exposes these local metrics at `/analytics`, including
   server-side date-range and client filters within the permitted tenant scope.
 - The React dashboard exposes `/executions` history with run-kind/status
-  filters, redacted step detail, and generated artifact metadata through the
-  existing tenant-scoped observability API. Smart-action records include
+  filters, redacted step detail, generated artifact metadata, and technician
+  artifact downloads through the existing tenant-scoped observability API.
+  Smart-action records include
   configured provider/model labels as redacted operational metadata; credentials
   and hidden reasoning are not persisted.
 - The public workflow catalog now includes four executable, low-risk review

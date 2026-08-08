@@ -32,6 +32,7 @@ describe("Executions", () => {
         steps: [{ id: 8, ordinal: 0, kind: "tool.invoke", name: "Ticket triage", status: "success", started_at: "", finished_at: "", output: { classification: "network" }, error_detail: "" }],
         artifacts: [{ id: 2, step_ordinal: 0, name: "summary.json", media_type: "application/json", byte_size: 42, sha256: "abc123" }]
       }), { status: 200 }));
+      if (path === "/executions/4/artifacts/2") return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -48,5 +49,20 @@ describe("Executions", () => {
     expect(screen.getByText("summary.json")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Run kind"), { target: { value: "agent" } });
     await waitFor(() => expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.some(([input]) => String(input) === "/executions?kind=agent")).toBe(true));
+  });
+
+  it("downloads an artifact through the technician-gated API", async () => {
+    const createObjectURL = vi.fn(() => "blob:artifact");
+    const revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    render(<MemoryRouter><Executions /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Run #4/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    await waitFor(() => expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.some(([input]) => String(input) === "/executions/4/artifacts/2")).toBe(true));
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:artifact");
   });
 });
