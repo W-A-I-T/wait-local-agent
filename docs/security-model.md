@@ -22,6 +22,14 @@ request-supplied authorization inputs. Inventory and execution lookup apply
 returned-row scope checks. Script execution additionally requires
 `WAIT_ALLOW_WRITE_ACTIONS=true` and a completed technician approval.
 
+Datto RMM calls use the same outbound HTTP gate. Each request requires a
+client ID that resolves through operator-controlled
+`WAIT_DATTORMM_SITE_MAP_JSON`; provider site IDs and credentials are never
+request-supplied authorization inputs. Device and alert responses are checked
+against the mapped site when the provider returns a site identifier. The
+public adapter is read-only, so Datto quick-job execution and execution lookup
+remain blocked.
+
 ## API authentication
 
 Current implementation:

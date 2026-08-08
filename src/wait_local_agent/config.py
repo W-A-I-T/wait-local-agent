@@ -86,6 +86,10 @@ class Settings:
     ninjaone_access_token: str = ""
     ninjaone_organization_map_json: str = ""
     ninjaone_page_size: int = 50
+    datto_rmm_base_url: str = ""
+    datto_rmm_access_token: str = ""
+    datto_rmm_site_map_json: str = ""
+    datto_rmm_page_size: int = 50
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -235,6 +239,20 @@ def load_settings() -> Settings:
             "WAIT_NINJAONE_ORGANIZATION_MAP_JSON", ""
         ),
         ninjaone_page_size=_int_env("WAIT_NINJAONE_PAGE_SIZE", 50),
+        datto_rmm_base_url=_secret_value(
+            "WAIT_DATTORMM_BASE_URL",
+            os.getenv("WAIT_DATTORMM_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        datto_rmm_access_token=_secret_value(
+            "WAIT_DATTORMM_ACCESS_TOKEN",
+            os.getenv("WAIT_DATTORMM_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        datto_rmm_site_map_json=os.getenv("WAIT_DATTORMM_SITE_MAP_JSON", ""),
+        datto_rmm_page_size=_int_env("WAIT_DATTORMM_PAGE_SIZE", 50),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,

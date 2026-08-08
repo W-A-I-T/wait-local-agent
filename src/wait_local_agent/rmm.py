@@ -181,6 +181,10 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.ninjaone import NinjaOneRmmAdapter
 
         return NinjaOneRmmAdapter(settings)
+    if settings.datto_rmm_base_url or settings.datto_rmm_access_token:
+        from wait_local_agent.dattormm import DattoRmmAdapter
+
+        return DattoRmmAdapter(settings)
     return LocalCollectorRmmAdapter(store)
 
 

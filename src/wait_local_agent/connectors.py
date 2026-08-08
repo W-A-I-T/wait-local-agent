@@ -148,6 +148,40 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ninjaone_status: ConnectorStatusValue = "not_configured"
     if ninjaone_configured:
         ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
+    datto_rmm_configured = bool(
+        settings.datto_rmm_base_url
+        and settings.datto_rmm_access_token
+        and settings.datto_rmm_site_map_json
+    )
+    datto_rmm_status: ConnectorStatusValue = "not_configured"
+    if datto_rmm_configured:
+        datto_rmm_status = "configured" if settings.allow_http_probing else "blocked"
+    rmm_configured_name = (
+        "NinjaOne RMM"
+        if ninjaone_configured
+        else "Datto RMM"
+        if datto_rmm_configured
+        else "RMM"
+    )
+    rmm_status = ninjaone_status if ninjaone_configured else datto_rmm_status
+    rmm_configuration_message = (
+        (
+            "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
+            if ninjaone_configured
+            else "Datto RMM is configured for tenant-scoped read-only inventory and component metadata."
+        )
+        if rmm_status == "configured"
+        else (
+            "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+            if ninjaone_configured
+            else "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+        )
+        if rmm_status == "blocked"
+        else (
+            "Set WAIT_NINJAONE_* or WAIT_DATTORMM_* values, including the explicit tenant map, "
+            "to enable a vendor RMM adapter."
+        )
+    )
     return [
         ConnectorStatus(
             id="halopsa",
@@ -309,19 +343,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         ConnectorStatus(
             id="rmm",
             kind="rmm",
-            name="NinjaOne RMM",
-            status=ninjaone_status,
-            message=(
-                "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
-                if ninjaone_status == "configured"
-                else "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
-                if ninjaone_status == "blocked"
-                else (
-                    "Set WAIT_NINJAONE_BASE_URL, WAIT_NINJAONE_ACCESS_TOKEN, and "
-                    "WAIT_NINJAONE_ORGANIZATION_MAP_JSON for NinjaOne."
-                )
-            ),
-            write_actions_enabled=settings.allow_write_actions,
+            name=rmm_configured_name,
+            status=rmm_status,
+            message=rmm_configuration_message,
+            write_actions_enabled=settings.allow_write_actions and ninjaone_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
     ]
@@ -407,6 +432,18 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "ninjaone",
         ),
         SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
+        SecretRecord("WAIT_DATTORMM_BASE_URL", bool(settings.datto_rmm_base_url), "dattormm"),
+        SecretRecord(
+            "WAIT_DATTORMM_ACCESS_TOKEN",
+            bool(settings.datto_rmm_access_token),
+            "dattormm",
+        ),
+        SecretRecord(
+            "WAIT_DATTORMM_SITE_MAP_JSON",
+            bool(settings.datto_rmm_site_map_json),
+            "dattormm",
+        ),
+        SecretRecord("WAIT_DATTORMM_PAGE_SIZE", bool(settings.datto_rmm_page_size), "dattormm"),
     ]
 
 

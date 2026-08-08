@@ -636,6 +636,25 @@ in settings or the encrypted vault, never in action payloads. See
 [NinjaOne Public API](https://app.ninjaone.com/apidocs/) and
 [NinjaOne OAuth token configuration](https://www.ninjaone.com/docs/application-programming-interface-api/oauth-token-configuration/).
 
+### Datto RMM
+
+The public Datto RMM adapter provides bounded, read-only device inventory,
+open-alert inventory, and component metadata through the shared RMM contract:
+
+```text
+WAIT_DATTORMM_BASE_URL=https://your-datto-api-host/api
+WAIT_DATTORMM_ACCESS_TOKEN=
+WAIT_DATTORMM_SITE_MAP_JSON={"acme":"site-uid"}
+WAIT_DATTORMM_PAGE_SIZE=50
+```
+
+The site map is operator-controlled and required for every request; returned
+rows with a conflicting site identifier are discarded. Datto component
+metadata and device/component validation are available, while quick-job
+execution and execution lookup remain explicitly blocked in this read-only
+adapter. Live calls require `WAIT_ALLOW_HTTP_PROBING=true`. See the
+[Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:
