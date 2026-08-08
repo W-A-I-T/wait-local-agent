@@ -16,7 +16,13 @@ from wait_local_agent.communication import (
     PreviewCommunicationProvider,
 )
 from wait_local_agent.config import Settings
-from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
+from wait_local_agent.models import (
+    DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    ApprovalRequest,
+    SourceReference,
+    Ticket,
+)
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
@@ -93,6 +99,7 @@ class SmartActionManifest:
     risk_level: str = "low"
     required_role: str = "technician"
     access_mode: str = "read"
+    approval_expiry_seconds: int = DEFAULT_APPROVAL_EXPIRY_SECONDS
 
 
 @dataclass
@@ -339,6 +346,16 @@ class SmartActionRegistry:
             raise ValueError("smart action id must be lowercase id text")
         if action_id in self._actions:
             raise ValueError(f"smart action {action_id} is already registered")
+        if action.manifest.requires_approval and (
+            isinstance(action.manifest.approval_expiry_seconds, bool)
+            or not isinstance(action.manifest.approval_expiry_seconds, int)
+            or action.manifest.approval_expiry_seconds < 1
+            or action.manifest.approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise ValueError(
+                "approval expiry must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
         self._actions[action_id] = action
 
     def clear(self) -> None:
@@ -1421,6 +1438,7 @@ class SmartActionService:
                     "payload": normalized_payload,
                 },
                 client_id=effective_client_id,
+                expires_in_seconds=action.manifest.approval_expiry_seconds,
             )
             if approval.id is None:
                 raise RuntimeError("smart action approval was not persisted")
@@ -1475,6 +1493,26 @@ class SmartActionService:
         if approver == run.actor:
             raise PermissionError("requesting actor cannot approve its own smart action")
         action_id = approval.action_type.removeprefix("smart_action:")
+        if approval.status == "expired":
+            expired_result = ActionResult(
+                status="rejected",
+                output=_json_object(run.output_json),
+                evidence=_json_list(run.evidence_json),
+                error_detail="approval expired",
+                run_id=run.id,
+                approval_id=approval_id,
+            )
+            self._record_execution(
+                action_id,
+                run.id,
+                {"approval_id": approval_id, "approval_status": approval.status},
+                expired_result,
+                actor=run.actor,
+                client_id=approval.client_id,
+                trigger_source="approval_expiry",
+                step_kind="smart_action.approval_expired",
+            )
+            return expired_result
         if approval.status == "rejected":
             self.store.complete_smart_action_run(
                 run.id,

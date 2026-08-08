@@ -69,6 +69,7 @@ class ToolDefinition:
     required_role: str
     approval_required: bool
     access_mode: str
+    approval_expiry_seconds: int
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ class AgentService:
                 required_role=manifest.required_role,
                 approval_required=manifest.requires_approval,
                 access_mode=manifest.access_mode,
+                approval_expiry_seconds=manifest.approval_expiry_seconds,
             )
             for manifest in self.smart_actions.list()
         ]

@@ -50,7 +50,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   SMS through the common smart-action contract. Approved local notes are
   tenant-scoped; external delivery supports configured SMTP/webhook adapters
   only when both write and outbound-call flags are enabled.
-- Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
+- Approval request payload preview before connector execution, with approve, reject, draft revision, approver identity capture, and a bounded 24-hour expiry that terminates linked pending work and blocks late execution.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete, and
   audit trail. Cron, interval, and one-time triggers use the existing UTC
   APScheduler path and persist their agent/entity target. Scheduled jobs can

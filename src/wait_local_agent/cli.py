@@ -626,7 +626,8 @@ def list_approval_requests() -> None:
     for approval in _store().list_approval_requests():
         typer.echo(
             f"{approval.id} {approval.status} {approval.subject_id} "
-            f"{approval.action_type} {redact_text(approval.comment)}"
+            f"{approval.action_type} expires={approval.expires_at or '-'} "
+            f"{redact_text(approval.comment)}"
         )
 
 

@@ -472,6 +472,26 @@ def test_service_guards_registry_and_unauthorized_paths(settings) -> None:
 
     with pytest.raises(ValueError, match="lowercase"):
         duplicate.register(BadAction())
+    invalid_expiry = SmartActionManifest(
+        action_id="needs-approval",
+        title="Needs approval",
+        description="",
+        kind="deterministic",
+        input_schema={},
+        output_schema={},
+        requires_approval=True,
+        estimated_minutes_saved=0,
+        approval_expiry_seconds=0,
+    )
+
+    class InvalidExpiryAction:
+        manifest = invalid_expiry
+
+        def run(self, context, payload):
+            return ActionResult(status="success")
+
+    with pytest.raises(ValueError, match="approval expiry"):
+        duplicate.register(InvalidExpiryAction())
     duplicate.clear()
     assert duplicate.list() == []
 
@@ -802,6 +822,32 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert isinstance(completed.output["recommendation"], dict)
     assert completed.output["recommendation"]["technician_id"] == "tech-a"
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_expired_smart_action_approval_rejects_without_execution(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "technician")
+    assert pending.approval_id is not None and pending.run_id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", pending.approval_id),
+        )
+
+    expired = store.get_approval_request(pending.approval_id)
+    result = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert expired is not None and expired.status == "expired"
+    assert result is not None
+    assert result.status == "rejected"
+    assert result.error_detail == "approval expired"
+    assert store.get_smart_action_run(pending.run_id).status == "rejected"  # type: ignore[union-attr]
 
 
 def test_approval_completion_requires_authorized_different_approver(settings) -> None:

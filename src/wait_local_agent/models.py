@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-ApprovalStatus = Literal["pending", "approved", "rejected"]
+ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
 ActionKind = Literal[
     "ticket.triage",
@@ -25,6 +25,8 @@ AgentRunStatus = Literal[
     "queued", "pending_approval", "completed", "failed", "rejected", "cancelled"
 ]
 AGENT_BACKFILL_MAX_CONCURRENCY = 4
+DEFAULT_APPROVAL_EXPIRY_SECONDS = 24 * 60 * 60
+MAX_APPROVAL_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,7 @@ class ApprovalRequest:
     execution_result_json: str = "{}"
     client_id: str | None = None
     approver_id: str | None = None
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True)

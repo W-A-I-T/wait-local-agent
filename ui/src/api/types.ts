@@ -55,6 +55,7 @@ export type ApprovalRequest = {
   comment: string;
   execution_status: string;
   execution_message: string;
+  expires_at?: string | null;
   payload?: {
     fields?: Record<string, string | number | boolean | null>;
     [key: string]: unknown;
@@ -134,6 +135,7 @@ export type AgentTool = {
   required_role: string;
   approval_required: boolean;
   access_mode: string;
+  approval_expiry_seconds?: number;
 };
 
 export type AgentRunDetail = {

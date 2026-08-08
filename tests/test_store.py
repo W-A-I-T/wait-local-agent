@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "client_id" in tickets_columns
     assert "client_id" in approval_columns
     assert "approver_id" in approval_columns
+    assert "expires_at" in approval_columns
     assert "client_id" in audit_columns
     assert "approver_id" in audit_columns
     assert "client_id" in event_history_columns
@@ -283,6 +285,97 @@ def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
         store.update_approval_request(approval.id or 0, "unknown")
     with pytest.raises(PermissionError, match="already completed"):
         store.update_approval_request(approval.id or 0, "rejected")
+
+
+def test_store_expires_pending_approval_and_blocks_mutation(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request(
+        "TCK-1",
+        "halopsa.add_note",
+        {"fields": {"note": "safe"}},
+        expires_in_seconds=60,
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+
+    expired = store.get_approval_request(approval.id or 0)
+
+    assert expired is not None
+    assert expired.status == "expired"
+    assert expired.expires_at == "2000-01-01T00:00:00+00:00"
+    with pytest.raises(PermissionError, match="expired"):
+        store.update_approval_request(approval.id or 0, "approved")
+    with pytest.raises(PermissionError, match="expired"):
+        store.update_approval_request_payload(approval.id or 0, {"fields": {"note": "changed"}})
+    assert any(
+        event.event_type == "approval_request.expired"
+        for event in store.list_audit_events()
+    )
+
+
+def test_store_treats_malformed_approval_expiry_as_expired(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("not-a-timestamp", approval.id),
+        )
+
+    expired = store.get_approval_request(approval.id or 0)
+
+    assert expired is not None and expired.status == "expired"
+
+
+def test_store_backfills_legacy_approval_deadlines(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    store = Store(db_path)
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = null, created_at = ? where id = ?",
+            ("2026-08-08T00:00:00", approval.id),
+        )
+
+    Store(db_path)
+
+    migrated = store.get_approval_request(approval.id or 0)
+    assert migrated is not None
+    assert migrated.expires_at == "2026-08-09T00:00:00+00:00"
+
+
+def test_store_backfills_malformed_legacy_approval_timestamp(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    store = Store(db_path)
+    approval = store.create_approval_request("TCK-1", "ticket.assign", {})
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = null, created_at = ? where id = ?",
+            ("not-a-timestamp", approval.id),
+        )
+
+    Store(db_path)
+
+    migrated = store.get_approval_request(approval.id or 0)
+    assert migrated is not None
+    assert migrated.expires_at is not None
+    assert datetime.fromisoformat(migrated.expires_at) > datetime.now(UTC)
+
+
+def test_store_rejects_invalid_approval_expiry_values(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    with pytest.raises(ValueError, match="approval expiry"):
+        store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds=0)
+    with pytest.raises(ValueError, match="approval expiry"):
+        store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds=31 * 24 * 60 * 60)
+    with pytest.raises(ValueError, match="approval expiry"):
+        store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds=True)
+    with pytest.raises(ValueError, match="approval expiry"):
+        store.create_approval_request("TCK-1", "ticket.assign", {}, expires_in_seconds="60")  # type: ignore[arg-type]
 
 
 def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:

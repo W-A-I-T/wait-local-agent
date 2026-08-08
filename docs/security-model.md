@@ -97,6 +97,13 @@ Every HaloPSA write follows this path:
 8. A succeeded approval cannot be executed again.
 ```
 
+Pending approval requests receive a bounded 24-hour deadline. Reading the queue
+or attempting a mutation expires overdue requests, records the expiration and a
+system actor in audit history, rejects any linked pending workflow or smart
+action run, and blocks edits, approval, and connector execution. Existing
+pending rows are assigned the same deadline during schema migration; expiration
+is intentionally not operator-disableable in this release.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

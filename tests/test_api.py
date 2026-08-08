@@ -844,6 +844,33 @@ def test_approval_detail_handles_invalid_payload_and_missing_write_health(settin
     assert response.json()["block_reason"] == "HaloPSA write health is unavailable."
 
 
+def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-1002",
+        "halopsa.add_note",
+        {"fields": {"note": "ok"}},
+        expires_in_seconds=60,
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+    client = TestClient(create_app(settings))
+
+    detail = client.get(f"/approval-requests/{approval.id}")
+    late_approval = client.post(
+        f"/approval-requests/{approval.id}",
+        json={"status": "approved", "comment": "too late"},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "expired"
+    assert detail.json()["expires_at"] == "2000-01-01T00:00:00+00:00"
+    assert late_approval.status_code == 403
+
+
 def test_update_approval_request_recovers_from_runtime_error(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request(
