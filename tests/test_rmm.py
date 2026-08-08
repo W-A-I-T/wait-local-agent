@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -17,6 +18,7 @@ from wait_local_agent.smart_actions import (
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
     RmmScriptExecuteAction,
+    RmmScriptExecutionLookupAction,
     RmmScriptPreviewAction,
 )
 from wait_local_agent.store import Store
@@ -39,6 +41,9 @@ class _Provider:
 
     def execute_script(self, script_id, device_id, arguments, *, client_id=None):
         return RmmScriptExecution(script_id, device_id, "queued", "queued", "exec-1")
+
+    def get_execution(self, execution_id, *, client_id=None):
+        return RmmScriptExecution("script-1", "device-1", "succeeded", "done", execution_id)
 
 
 def _context(settings, provider=None):
@@ -72,7 +77,7 @@ def test_rmm_alerts_and_script_catalog_are_bounded(settings) -> None:
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
     provider = _Provider()
-    context = _context(settings, provider)
+    context = _context(replace(settings, allow_write_actions=True), provider)
     payload: dict[str, object] = {
         "script_id": "script-1",
         "device_id": "device-1",
@@ -88,6 +93,21 @@ def test_rmm_script_preview_and_approved_execution(settings) -> None:
     assert pending.output["approval_required"] is True
     assert executed.status == "success"
     assert executed.output["execution_id"] == "exec-1"
+    tracked = RmmScriptExecutionLookupAction().run(
+        context, {"execution_id": "exec-1"}
+    )
+    assert tracked.status == "success"
+    assert tracked.output["status"] == "succeeded"
+
+
+def test_rmm_script_execution_requires_write_flag(settings) -> None:
+    payload = {"script_id": "script-1", "device_id": "device-1"}
+    result = RmmScriptExecuteAction().run(
+        _context(settings, _Provider()), {**payload, "_approval_completed": True}
+    )
+
+    assert result.status == "failed"
+    assert result.error_detail == "RMM script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
 
 
 @pytest.mark.parametrize(

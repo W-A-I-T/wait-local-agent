@@ -130,6 +130,51 @@ wait-local-agent connectors execute-halopsa 1
 
 The execution record stores sanitized metadata only: action type, ticket id, endpoint, status, HTTP status, remote id when present, and a concise result message.
 
+## NinjaOne RMM
+
+The public NinjaOne adapter implements the shared RMM contract for bounded
+tenant-scoped device and alert inventory, script metadata, script preview, and
+approval-aware script execution. It uses the documented OAuth bearer API and
+device-script operation; see the [NinjaOne Public API](https://app.ninjaone.com/apidocs/)
+and [public API operations](https://www.ninjaone.com/docs/application-programming-interface-api/public-api-operations/).
+
+Required settings:
+
+```text
+WAIT_NINJAONE_BASE_URL=https://app.ninjarmm.com/api/v2
+WAIT_NINJAONE_ACCESS_TOKEN=
+WAIT_NINJAONE_ORGANIZATION_MAP_JSON={"acme":42}
+WAIT_NINJAONE_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_NINJAONE_ORGANIZATION_MAP_JSON` is an explicit local map from the WAIT
+tenant/client ID to a positive NinjaOne organization ID. Every request
+requires a tenant ID, sends an organization filter where supported, and
+defensively rejects returned rows outside the mapped organization. The
+adapter does not accept credentials or provider organization IDs in smart
+action payloads. Script execution remains behind `WAIT_ALLOW_WRITE_ACTIONS`
+and the existing technician approval flow; previews do not make a write call.
+
+The RMM smart actions are available through the `/smart-actions` API and
+`smart-actions` CLI contract:
+
+- `rmm-device-lookup`, `rmm-alert-lookup`, and `rmm-script-catalog` are bounded reads.
+- `rmm-script-preview` validates a device and script without executing it.
+- `rmm-script-execute` requires approval and both safety flags.
+- `rmm-script-execution-lookup` returns only tenant-proven execution status.
+
+Use a vault-backed token in shared or production-like installs:
+
+```bash
+wait-local-agent secrets set WAIT_NINJAONE_ACCESS_TOKEN '<oauth-access-token>'
+```
+
+The adapter has mocked transport coverage for scope filtering, approval
+execution, response sanitization, blocked HTTP, malformed responses, timeouts,
+and unauthorized/error responses. Live NinjaOne credentials are not required
+for the test suite.
+
 ## Hudu
 
 ### Required settings
