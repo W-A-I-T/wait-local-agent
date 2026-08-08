@@ -21,6 +21,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadStateResult,
     M365GraphManagedDeviceRebootResult,
+    M365GraphManagedDeviceRemoteLockResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
     M365GraphSessionRevokeResult,
@@ -70,6 +71,7 @@ M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
 M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
 M365_DEVICE_SYNC_ACTION = "managed-devices.sync"
 M365_DEVICE_REBOOT_ACTION = "managed-devices.reboot"
+M365_DEVICE_REMOTE_LOCK_ACTION = "managed-devices.remote-lock"
 M365_MAILBOX_SETTINGS_UPDATE_ACTION = "users.mailbox-settings.update"
 M365_MAIL_MESSAGE_MOVE_ACTION = "mail-messages.move"
 M365_MAIL_MESSAGE_READ_STATE_ACTION = "mail-messages.read-state"
@@ -1050,6 +1052,26 @@ def draft_m365_managed_device_reboot(
     )
 
 
+def draft_m365_managed_device_remote_lock(
+    store: Store,
+    device_id: str,
+    *,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_DEVICE_REMOTE_LOCK_ACTION,
+        "device_id": device_id.strip(),
+    }
+    validate_m365_managed_device_remote_lock_payload(payload)
+    return store.create_approval_request(
+        f"m365-managed-device:{device_id.strip()}:remote-lock",
+        f"m365.{M365_DEVICE_REMOTE_LOCK_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def draft_m365_mailbox_settings_update(
     store: Store,
     *,
@@ -1168,6 +1190,7 @@ def execute_m365_approval_request(
         f"m365.{M365_DEVICE_RETIRE_ACTION}",
         f"m365.{M365_DEVICE_SYNC_ACTION}",
         f"m365.{M365_DEVICE_REBOOT_ACTION}",
+        f"m365.{M365_DEVICE_REMOTE_LOCK_ACTION}",
         f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
         f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
         f"m365.{M365_MAIL_MESSAGE_READ_STATE_ACTION}",
@@ -1193,6 +1216,7 @@ def execute_m365_approval_request(
         M365_DEVICE_RETIRE_ACTION,
         M365_DEVICE_SYNC_ACTION,
         M365_DEVICE_REBOOT_ACTION,
+        M365_DEVICE_REMOTE_LOCK_ACTION,
         M365_MAILBOX_SETTINGS_UPDATE_ACTION,
         M365_MAIL_MESSAGE_MOVE_ACTION,
         M365_MAIL_MESSAGE_READ_STATE_ACTION,
@@ -1208,6 +1232,7 @@ def execute_m365_approval_request(
         | M365GraphManagedDeviceRetireResult
         | M365GraphManagedDeviceSyncResult
         | M365GraphManagedDeviceRebootResult
+        | M365GraphManagedDeviceRemoteLockResult
         | M365GraphMailboxSettingsUpdateResult
         | M365GraphMailMessageMoveResult
         | M365GraphMailMessageReadStateResult
@@ -1296,6 +1321,13 @@ def execute_m365_approval_request(
     elif action_type == M365_DEVICE_REBOOT_ACTION:
         validate_m365_managed_device_reboot_payload(payload)
         result = client.reboot_managed_device(device_id=str(payload["device_id"]))
+        result_payload = {
+            "device_id": result.device_id,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_DEVICE_REMOTE_LOCK_ACTION:
+        validate_m365_managed_device_remote_lock_payload(payload)
+        result = client.remote_lock_managed_device(device_id=str(payload["device_id"]))
         result_payload = {
             "device_id": result.device_id,
             "status_code": result.status_code,
@@ -1525,6 +1557,21 @@ def validate_m365_managed_device_reboot_payload(payload: dict[str, object]) -> N
         raise ValueError("M365 managed-device reboot payload contains unsupported fields")
     if payload.get("connector") != "m365" or payload.get("action_type") != M365_DEVICE_REBOOT_ACTION:
         raise ValueError("M365 managed-device reboot payload is invalid")
+    device_id = payload.get("device_id")
+    if (
+        not isinstance(device_id, str)
+        or not device_id.strip()
+        or len(device_id) > 320
+        or any(ord(character) < 32 or character.isspace() for character in device_id)
+    ):
+        raise ValueError("M365 device_id is invalid")
+
+
+def validate_m365_managed_device_remote_lock_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "device_id"}:
+        raise ValueError("M365 managed-device remote-lock payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_DEVICE_REMOTE_LOCK_ACTION:
+        raise ValueError("M365 managed-device remote-lock payload is invalid")
     device_id = payload.get("device_id")
     if (
         not isinstance(device_id, str)
