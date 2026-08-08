@@ -25,6 +25,12 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_COMPANY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_API_VERSION", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -60,6 +66,13 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.connectwise_base_url == ""
+    assert settings.connectwise_company == ""
+    assert settings.connectwise_public_key == ""
+    assert settings.connectwise_private_key == ""
+    assert settings.connectwise_client_id == ""
+    assert settings.connectwise_api_version == "2022.1"
+    assert settings.connectwise_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -108,6 +121,26 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+
+
+def test_connectwise_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://cw.example.test")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY", "Acme")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client")
+    monkeypatch.setenv("WAIT_CONNECTWISE_API_VERSION", "2023.1")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.connectwise_base_url == "https://cw.example.test"
+    assert settings.connectwise_company == "Acme"
+    assert settings.connectwise_public_key == "public"
+    assert settings.connectwise_private_key == "private"
+    assert settings.connectwise_client_id == "client"
+    assert settings.connectwise_api_version == "2023.1"
+    assert settings.connectwise_page_size == 10
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

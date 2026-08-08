@@ -22,6 +22,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- ConnectWise PSA read-only ticket and company inventory through the common
+  guarded HTTP boundary; write operations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.

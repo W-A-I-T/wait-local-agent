@@ -23,6 +23,16 @@ class _FakeHuduClient:
         return ConnectorReadResult("ready", "Hudu read prerequisites are ready.")
 
 
+class _FakeConnectWiseClient:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "ConnectWise live reads are blocked.")
+        return ConnectorReadResult("ready", "ConnectWise PSA read prerequisites are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -116,3 +126,24 @@ def test_validate_hudu_cli_success_and_unreachable(monkeypatch, tmp_path) -> Non
     assert "PASS connector=hudu layer=connector" in success.output
     assert failed.exit_code == 1
     assert "layer=connectivity" in failed.output
+
+
+def test_validate_connectwise_cli_success_and_safety(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://cw.example.test")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY", "Acme")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client")
+    monkeypatch.setattr(cli_module, "ConnectWiseClient", _FakeConnectWiseClient)
+    runner = CliRunner()
+
+    blocked = runner.invoke(app, ["connectors", "validate", "connectwise"])
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    success = runner.invoke(app, ["connectors", "validate", "connectwise"])
+
+    assert blocked.exit_code == 1
+    assert "layer=safety" in blocked.output
+    assert success.exit_code == 0
+    assert "PASS connector=connectwise layer=connector" in success.output

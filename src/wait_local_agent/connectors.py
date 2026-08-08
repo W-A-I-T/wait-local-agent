@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 from wait_local_agent.config import Settings
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
 from wait_local_agent.models import (
@@ -49,6 +50,16 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     hudu_status: ConnectorStatusValue = "not_configured"
     if hudu_configured:
         hudu_status = "configured" if settings.allow_http_probing else "blocked"
+    connectwise_configured = bool(
+        settings.connectwise_base_url
+        and settings.connectwise_company
+        and settings.connectwise_public_key
+        and settings.connectwise_private_key
+        and settings.connectwise_client_id
+    )
+    connectwise_status: ConnectorStatusValue = "not_configured"
+    if connectwise_configured:
+        connectwise_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -79,6 +90,20 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else "Hudu credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if hudu_status == "blocked"
                 else "Set WAIT_HUDU_BASE_URL and WAIT_HUDU_API_KEY to enable documentation reads."
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
+            id="connectwise",
+            kind="psa",
+            name="ConnectWise PSA",
+            status=connectwise_status,
+            message=(
+                "ConnectWise PSA credentials are configured for read-only ticket and company lookup."
+                if connectwise_status == "configured"
+                else "ConnectWise PSA credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if connectwise_status == "blocked"
+                else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads."
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
@@ -123,6 +148,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_HUDU_BASE_URL", bool(settings.hudu_base_url), "hudu"),
         SecretRecord("WAIT_HUDU_API_KEY", bool(settings.hudu_api_key), "hudu"),
         SecretRecord("WAIT_HUDU_PAGE_SIZE", bool(settings.hudu_page_size), "hudu"),
+        SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_COMPANY", bool(settings.connectwise_company), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PRIVATE_KEY", bool(settings.connectwise_private_key), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_CLIENT_ID", bool(settings.connectwise_client_id), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_API_VERSION", bool(settings.connectwise_api_version), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PAGE_SIZE", bool(settings.connectwise_page_size), "connectwise"),
     ]
 
 
@@ -132,6 +164,7 @@ def validate_connector_credentials(
     *,
     halopsa_client: HaloPSAClient | None = None,
     hudu_client: HuduClient | None = None,
+    connectwise_client: ConnectWiseClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -169,6 +202,26 @@ def validate_connector_credentials(
                 f"Hudu credentials are incomplete: {', '.join(missing)}.",
             )
         result = (hudu_client or HuduClient(settings)).health()
+    elif connector == "connectwise":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_CONNECTWISE_BASE_URL": settings.connectwise_base_url,
+                "WAIT_CONNECTWISE_COMPANY": settings.connectwise_company,
+                "WAIT_CONNECTWISE_PUBLIC_KEY": settings.connectwise_public_key,
+                "WAIT_CONNECTWISE_PRIVATE_KEY": settings.connectwise_private_key,
+                "WAIT_CONNECTWISE_CLIENT_ID": settings.connectwise_client_id,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"ConnectWise PSA credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (connectwise_client or ConnectWiseClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)
