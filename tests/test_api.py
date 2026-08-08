@@ -1312,6 +1312,87 @@ def test_manual_workflow_run_emits_completion_event(settings) -> None:
     ) == 1
 
 
+def test_manual_workflow_completion_dispatch_failure_is_audited(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_dispatch(*_args, **_kwargs):
+        raise RuntimeError("api-key=secret-value")
+
+    monkeypatch.setattr(app_module.EventDispatcher, "dispatch", fail_dispatch)
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    failures = [
+        event for event in store.list_audit_events()
+        if event.event_type == "workflow.completion_dispatch_failed"
+    ]
+    assert len(failures) == 1
+    assert "secret-value" not in failures[0].detail
+
+
+def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(secure_settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/missing/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "workflow template not found"
+
+
+def test_manual_workflow_run_maps_runtime_ticket_lookup_failure(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_workflow(*_args, **_kwargs):
+        raise LookupError("ticket disappeared")
+
+    monkeypatch.setattr(app_module, "run_workflow_template", fail_workflow)
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "ticket not found"
+
+
 def test_workflow_completion_event_filter_is_available_through_api(settings) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
