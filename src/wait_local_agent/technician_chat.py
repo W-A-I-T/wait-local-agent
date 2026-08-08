@@ -7,10 +7,18 @@ from dataclasses import dataclass
 
 _TICKET_ID_PATTERN = re.compile(r"\bTCK-[A-Za-z0-9][A-Za-z0-9_.:-]{0,62}\b", re.IGNORECASE)
 _SAFE_TICKET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
+_SCRIPT_REQUEST_PATTERN = re.compile(
+    r"^(?:please\s+)?(?P<verb>preview|run|execute)\s+(?:the\s+)?(?:approved\s+)?script\s+"
+    r"(?P<script>[A-Za-z0-9][A-Za-z0-9_.:/,-]{0,199})\s+"
+    r"(?:on|for|at)\s+(?:device\s+)?"
+    r"(?P<device>[A-Za-z0-9][A-Za-z0-9_.:/,-]{0,199})$",
+    re.IGNORECASE,
+)
 _HELP_TEXT = (
     "Supported technician requests: summarize, triage, find similar tickets, "
     "show documentation, suggest a fix, check ticket quality, assess sentiment, "
-    "assess escalation, or suggest dispatch. Include a TCK-* ticket ID."
+    "assess escalation, suggest dispatch, preview a script, or run an approved script. "
+    "Ticket actions require a TCK-* ticket ID; script requests require explicit script and device IDs."
 )
 
 
@@ -33,6 +41,10 @@ def parse_technician_message(message: str, *, ticket_id: str | None = None) -> T
     normalized = " ".join(message.split()).strip()
     if normalized.casefold() in {"help", "?", "what can you do"}:
         return TechnicianChatCommand(None, {}, _HELP_TEXT)
+
+    script_command = _match_script_command(normalized)
+    if script_command is not None:
+        return script_command
 
     resolved_ticket_id = _resolve_ticket_id(normalized, ticket_id)
     if resolved_ticket_id is None:
@@ -84,6 +96,27 @@ def _match_action(message: str) -> tuple[str, str]:
             payload_reply = reply
             return action_id, payload_reply
     raise TechnicianChatParseError(_HELP_TEXT)
+
+
+def _match_script_command(message: str) -> TechnicianChatCommand | None:
+    match = _SCRIPT_REQUEST_PATTERN.fullmatch(message)
+    if match is None:
+        return None
+    verb = match.group("verb").casefold()
+    action_id = "rmm-script-preview" if verb == "preview" else "rmm-script-execute"
+    reply = (
+        "I prepared an RMM script preview."
+        if action_id == "rmm-script-preview"
+        else "I prepared an approval-gated RMM script execution."
+    )
+    return TechnicianChatCommand(
+        action_id,
+        {
+            "script_id": match.group("script"),
+            "device_id": match.group("device"),
+        },
+        reply,
+    )
 
 
 __all__ = ["TechnicianChatCommand", "TechnicianChatParseError", "parse_technician_message"]

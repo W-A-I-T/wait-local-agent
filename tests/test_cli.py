@@ -1515,6 +1515,15 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
         app,
         ["smart-actions", "invoke", "ticket-triage", "--payload", '{"ticket_id":"TCK-CMD"}'],
     )
+    script = runner.invoke(
+        app,
+        [
+            "technician-chat",
+            "run approved script script-1 on device device-1",
+            "--client-id",
+            "acme",
+        ],
+    )
     collector_preview = runner.invoke(
         app,
         ["smart-actions", "invoke", "collector-preview", "--payload", '{"module_id":"host-runtime"}'],
@@ -1533,6 +1542,7 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     assert "m365-live-context" in listed.output
     assert described.exit_code == 0 and '"action_id": "ticket-triage"' in described.output
     assert invoked.exit_code == 0 and json.loads(invoked.output)["status"] == "success"
+    assert script.exit_code == 0 and json.loads(script.output)["action_id"] == "rmm-script-execute"
     assert collector_preview.exit_code == 0 and json.loads(collector_preview.output)["status"] == "success"
     assert runs.exit_code == 0 and "ticket-triage success" in runs.output
     assert missing.exit_code != 0 and "smart action not found" in missing.output

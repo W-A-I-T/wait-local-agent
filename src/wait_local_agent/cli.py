@@ -655,6 +655,8 @@ def technician_chat(
             typer.echo(f"session_id={session.id}")
         typer.echo(command.reply)
         return
+    if command.action_id in {"rmm-script-preview", "rmm-script-execute"} and not client_id:
+        raise typer.BadParameter("RMM script requests require --client-id for tenant scoping")
     if settings is None:
         settings = load_settings()
         store = Store(settings.data_path)

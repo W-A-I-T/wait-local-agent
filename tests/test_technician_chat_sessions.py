@@ -263,6 +263,15 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
     assert help_response.status_code == 200
     assert help_response.json()["session_id"] == session_id
 
+    script = client.post(
+        f"/technician/chat/sessions/{session_id}/messages",
+        headers=_auth("tech-token"),
+        json={"message": "run approved script script-1 on device device-1"},
+    )
+    assert script.status_code == 200
+    assert script.json()["action_id"] == "rmm-script-execute"
+    assert script.json()["result"]["output"]["script_id"] == "script-1"
+
     invalid = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
         headers=_auth("tech-token"),

@@ -120,9 +120,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   output, evidence, and error detail; hidden reasoning is not persisted.
 - Technician-only bounded chat commands reuse the smart-action catalog. Persisted
   tenant- and principal-scoped chat sessions support bounded follow-up context,
-  redacted operational history, API routes, and CLI session options; free-form
-  planning, external Teams conversation delivery, and an end-user conversational
-  agent are not shipped.
+  redacted operational history, API routes, and CLI session options. Explicit
+  script/device requests can prepare an RMM preview or approval-gated execution
+  through the existing RMM action; free-form planning, external Teams
+  conversation delivery, and an end-user conversational agent are not shipped.
 - Optional end-user support can create and track requester-scoped local tickets
   and request technician escalation; live PSA sync and outbound delivery remain
   unavailable.
