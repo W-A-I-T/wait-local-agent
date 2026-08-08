@@ -88,6 +88,12 @@ nav a:hover {
   justify-content: flex-end;
 }
 
+.token-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .token-input input {
   border: 1px solid #dce5e1;
   border-radius: 8px;
