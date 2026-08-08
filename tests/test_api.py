@@ -31,6 +31,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolderReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
+    M365GraphManagedDeviceRetireResult,
     M365GraphReadResponse,
     M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
@@ -2837,6 +2838,72 @@ def test_m365_session_revocation_requires_admin_and_auto_executes_after_approval
     assert admin_approval.json()["execution_status"] == "succeeded"
     assert admin_approval.json()["output"]["status_code"] == 200
     assert calls == [{"user_id": "user-1"}]
+
+
+def test_m365_managed_device_retirement_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def retire_managed_device(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphManagedDeviceRetireResult(
+                "succeeded",
+                "device retired",
+                device_id=str(kwargs["device_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/managed-devices/retire-drafts",
+        headers=_auth("viewer-token"),
+        json={"device_id": "device-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/managed-devices/retire-drafts",
+        headers=_auth("admin-token"),
+        json={"device_id": "device-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.managed-devices.retire"
+    assert draft.json()["payload"]["device_id"] == "device-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"device_id": "device-1"}]
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
