@@ -34,6 +34,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   HTTP boundary; write operations remain unavailable.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
+- SharePoint read-only site and document metadata through Microsoft Graph; file
+  downloads and write operations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
@@ -88,7 +90,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
 - Additional connector families beyond HaloPSA and Hudu, including read-only
-  Confluence page access.
+  Confluence and SharePoint documentation access.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
@@ -134,6 +136,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |
 | Confluence connector | Read-only core surface built |
+| SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
 | M365 / Entra read-only | Collected-inventory identity lookup built; live connector phase future |
 | Scheduled / proactive workflows | Built |

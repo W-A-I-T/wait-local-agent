@@ -21,6 +21,7 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.servicenow import ServiceNowClient
+from wait_local_agent.sharepoint import SharePointClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
 
@@ -67,6 +68,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     confluence_status: ConnectorStatusValue = "not_configured"
     if confluence_configured:
         confluence_status = "configured" if settings.allow_http_probing else "blocked"
+    sharepoint_configured = bool(
+        settings.sharepoint_base_url and settings.sharepoint_access_token
+    )
+    sharepoint_status: ConnectorStatusValue = "not_configured"
+    if sharepoint_configured:
+        sharepoint_status = "configured" if settings.allow_http_probing else "blocked"
     connectwise_configured = bool(
         settings.connectwise_base_url
         and settings.connectwise_company
@@ -158,6 +165,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else (
                     "Set WAIT_CONFLUENCE_BASE_URL, WAIT_CONFLUENCE_EMAIL, and "
                     "WAIT_CONFLUENCE_API_TOKEN to enable Confluence reads."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
+            id="sharepoint",
+            kind="documentation",
+            name="SharePoint",
+            status=sharepoint_status,
+            message=(
+                "SharePoint credentials are configured for read-only site and document lookup."
+                if sharepoint_status == "configured"
+                else "SharePoint credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if sharepoint_status == "blocked"
+                else (
+                    "Set WAIT_SHAREPOINT_BASE_URL and WAIT_SHAREPOINT_ACCESS_TOKEN "
+                    "to enable SharePoint reads."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,
@@ -269,6 +293,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_CONFLUENCE_EMAIL", bool(settings.confluence_email), "confluence"),
         SecretRecord("WAIT_CONFLUENCE_API_TOKEN", bool(settings.confluence_api_token), "confluence"),
         SecretRecord("WAIT_CONFLUENCE_PAGE_SIZE", bool(settings.confluence_page_size), "confluence"),
+        SecretRecord("WAIT_SHAREPOINT_BASE_URL", bool(settings.sharepoint_base_url), "sharepoint"),
+        SecretRecord(
+            "WAIT_SHAREPOINT_ACCESS_TOKEN",
+            bool(settings.sharepoint_access_token),
+            "sharepoint",
+        ),
+        SecretRecord("WAIT_SHAREPOINT_PAGE_SIZE", bool(settings.sharepoint_page_size), "sharepoint"),
         SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_COMPANY", bool(settings.connectwise_company), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
@@ -307,6 +338,7 @@ def validate_connector_credentials(
     autotask_client: AutotaskClient | None = None,
     itglue_client: ItGlueClient | None = None,
     confluence_client: ConfluenceClient | None = None,
+    sharepoint_client: SharePointClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -379,6 +411,23 @@ def validate_connector_credentials(
                 f"Confluence credentials are incomplete: {', '.join(missing)}.",
             )
         result = (confluence_client or ConfluenceClient(settings)).health()
+    elif connector == "sharepoint":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SHAREPOINT_BASE_URL": settings.sharepoint_base_url,
+                "WAIT_SHAREPOINT_ACCESS_TOKEN": settings.sharepoint_access_token,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"SharePoint credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (sharepoint_client or SharePointClient(settings)).health()
     elif connector == "connectwise":
         missing = [
             key
