@@ -41,7 +41,17 @@ SUPPORTED_EVENT_TYPES = frozenset(
         "workflow.completed",
     }
 )
-EVENT_FILTER_FIELDS = frozenset({"event_type", "client_id", "priority", "status", "ticket_id"})
+EVENT_FILTER_FIELDS = frozenset(
+    {
+        "event_type",
+        "client_id",
+        "priority",
+        "status",
+        "ticket_id",
+        "workflow_template_id",
+        "workflow_run_id",
+    }
+)
 EXECUTION_WINDOW_TIME_FORMAT = "%H:%M"
 
 

@@ -9,6 +9,7 @@ import pytest
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
+from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.models import ScheduledJob
 from wait_local_agent.scheduler import (
     SchedulerManager,
@@ -88,6 +89,101 @@ def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_pat
         )["template_id"]
 
     asyncio.run(scenario())
+
+
+def test_scheduled_workflow_completion_triggers_tenant_scoped_event_agent(tmp_path: Path, settings) -> None:
+    db_path = tmp_path / "completion.db"
+    _seed_tickets(db_path)
+    store = Store(db_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    definition = service.create(
+        name="After triage",
+        description="Runs after a scheduled triage workflow completes.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={
+            "event_type": "workflow.completed",
+            "workflow_template_id": "ticket-triage",
+        },
+        enabled_tools=["ticket-summary"],
+        steps=[{"tool_id": "ticket-summary", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    manager = SchedulerManager(
+        store,
+        enabled=False,
+        agent_service=service,
+        event_dispatcher=EventDispatcher(store, service),
+    )
+    scheduled_job = manager.register(
+        "ticket-triage",
+        "0 9 * * *",
+        {"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+
+    asyncio.run(manager._build_job_callable(scheduled_job)())
+
+    deliveries = store.list_event_deliveries(client_id="acme")
+    assert len(deliveries) == 1
+    assert deliveries[0].event_type == "workflow.completed"
+    assert json.loads(deliveries[0].payload_json)["workflow_template_id"] == "ticket-triage"
+    runs = store.list_agent_runs(client_id="acme")
+    assert len(runs) == 1
+    assert runs[0].agent_id == definition.id
+    assert any(
+        event.event_type == "workflow.completion_dispatched"
+        for event in store.list_audit_events(client_id="acme")
+    )
+
+
+def test_scheduled_pending_workflow_does_not_emit_completion_event(tmp_path: Path, settings) -> None:
+    db_path = tmp_path / "pending-completion.db"
+    _seed_tickets(db_path)
+    store = Store(db_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    manager = SchedulerManager(
+        store,
+        enabled=False,
+        agent_service=service,
+        event_dispatcher=EventDispatcher(store, service),
+    )
+    scheduled_job = manager.register(
+        "documentation-assisted-response",
+        "0 9 * * *",
+        {"ticket_id": "TCK-1001"},
+    )
+
+    asyncio.run(manager._build_job_callable(scheduled_job)())
+
+    assert store.list_event_deliveries() == []
+
+
+def test_completion_dispatch_failure_is_audited_without_replaying_workflow(tmp_path: Path) -> None:
+    db_path = tmp_path / "completion-failure.db"
+    _seed_tickets(db_path)
+    store = Store(db_path)
+
+    class BrokenDispatcher:
+        def dispatch(self, **kwargs):
+            raise RuntimeError("provider access_token=super-secret")
+
+    manager = SchedulerManager(store, enabled=False, event_dispatcher=BrokenDispatcher())  # type: ignore[arg-type]
+    scheduled_job = manager.register(
+        "ticket-triage",
+        "0 9 * * *",
+        {"ticket_id": "TCK-1001"},
+    )
+
+    asyncio.run(manager._build_job_callable(scheduled_job)())
+
+    events = store.list_audit_events()
+    failure = next(event for event in events if event.event_type == "workflow.completion_dispatch_failed")
+    assert "super-secret" not in failure.detail
 
 
 def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Path) -> None:
