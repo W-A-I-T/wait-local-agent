@@ -53,9 +53,12 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Connector credential validation through `wait-local-agent connectors validate ...`
 - Outbound calls gated by `WAIT_ALLOW_HTTP_PROBING`
 - Live writes gated by `WAIT_ALLOW_WRITE_ACTIONS`
-- Communication uses a shared preview-only provider boundary for email, Teams,
-  Slack, and SMS. The public adapters return local drafts only; they do not
-  make outbound requests or imply delivery.
+- Communication uses a shared preview and delivery provider boundary for local
+  ticket notes, email, Teams, Slack, and SMS. Previews never make network
+  requests. Delivery requires a smart-action approval plus both
+  `WAIT_ALLOW_WRITE_ACTIONS=true` and `WAIT_ALLOW_HTTP_PROBING=true`; email
+  uses configured SMTP and the other external channels use bounded webhook
+  adapters. Provider response bodies are never returned or persisted.
 
 ## Workflow and Scheduler
 
@@ -100,10 +103,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device
   lookup without remote control, remediation, or credential-bearing payloads.
-- Communication drafts use the same smart-action contract, tenant scope,
-  redaction, and approval pause as other proposed actions. Channel-specific
-  preview adapters are deliberately non-sendable until a separately reviewed
-  connector execution path is added.
+- Communication drafts and delivery use the same smart-action contract, tenant
+  scope, redaction, and approval pause as other proposed actions. Local ticket
+  notes are persisted only for an existing tenant-scoped ticket; external
+  adapters require explicit configuration and remain unavailable on a fresh
+  install.
 - Agent runs are grouped in the existing execution observability tables with
   one redacted step record per tool. Authenticated event deliveries use the
   same runtime, deterministic filters, tenant scope, idempotency keys, and

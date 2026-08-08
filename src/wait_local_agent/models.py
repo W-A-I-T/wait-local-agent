@@ -36,6 +36,16 @@ class Ticket:
 
 
 @dataclass(frozen=True)
+class TicketNote:
+    id: int | None
+    ticket_id: str
+    client_id: str
+    author: str
+    body: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class SourceReference:
     title: str
     path: str

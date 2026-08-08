@@ -8,8 +8,11 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from wait_local_agent.communication import (
     CommunicationChannel,
+    CommunicationDeliveryError,
     CommunicationMessage,
     CommunicationProvider,
+    CommunicationSender,
+    ConfiguredCommunicationProvider,
     PreviewCommunicationProvider,
 )
 from wait_local_agent.config import Settings
@@ -101,6 +104,7 @@ class ActionContext:
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
+    communication_sender: CommunicationSender | None = None
 
 
 class HaloPSAReadProvider(Protocol):
@@ -128,7 +132,10 @@ class CommunicationPreviewAction:
             "type": "object",
             "required": ["channel", "recipient", "body"],
             "properties": {
-                "channel": {"type": "string", "enum": ["email", "teams", "slack", "sms"]},
+                "channel": {
+                    "type": "string",
+                    "enum": ["ticket_note", "email", "teams", "slack", "sms"],
+                },
                 "recipient": {"type": "string"},
                 "subject": {"type": "string"},
                 "body": {"type": "string"},
@@ -155,9 +162,11 @@ class CommunicationPreviewAction:
         recipient = payload.get("recipient")
         body = payload.get("body")
         subject = payload.get("subject", "")
-        if channel not in {"email", "teams", "slack", "sms"}:
-            return _failed("channel must be one of email, teams, slack, or sms")
-        if not isinstance(recipient, str) or not recipient.strip() or len(recipient) > 320:
+        if channel not in {"ticket_note", "email", "teams", "slack", "sms"}:
+            return _failed("channel must be one of ticket_note, email, teams, slack, or sms")
+        if channel != "ticket_note" and (
+            not isinstance(recipient, str) or not recipient.strip() or len(recipient) > 320
+        ):
             return _failed("recipient must be a non-empty string of at most 320 characters")
         if not isinstance(body, str) or not body.strip() or len(body) > 10_000:
             return _failed("body must be a non-empty string of at most 10000 characters")
@@ -171,6 +180,8 @@ class CommunicationPreviewAction:
                 return _failed("ticket_id must identify an existing ticket")
         elif context.client_id is None:
             return _failed("communication drafts require a tenant or ticket_id")
+        if channel == "ticket_note" and not isinstance(ticket_id, str):
+            return _failed("ticket_note requires ticket_id")
         if channel == "sms" and subject:
             return _failed("subject is not supported for sms")
         provider = context.communication_provider or PreviewCommunicationProvider()
@@ -178,10 +189,11 @@ class CommunicationPreviewAction:
             draft = provider.draft(
                 CommunicationMessage(
                     channel=cast("CommunicationChannel", channel),
-                    recipient=recipient.strip(),
+                    recipient=(recipient.strip() if isinstance(recipient, str) else f"ticket:{ticket_id}"),
                     subject=subject.strip(),
                     body=body.strip(),
                     client_id=context.client_id,
+                    ticket_id=ticket_id.strip() if isinstance(ticket_id, str) else None,
                 )
             )
         except ValueError as exc:
@@ -197,6 +209,103 @@ class CommunicationPreviewAction:
         if isinstance(ticket_id, str):
             evidence.append({"type": "ticket", "ticket_id": ticket_id.strip()})
         return ActionResult(status="success", output=output, evidence=evidence)
+
+
+class CommunicationSendAction:
+    manifest = SmartActionManifest(
+        action_id="communication-send",
+        title="Send communication",
+        description="Deliver an approved message through a configured communication adapter.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["channel", "body"],
+            "properties": {
+                "channel": {
+                    "type": "string",
+                    "enum": ["ticket_note", "email", "teams", "slack", "sms"],
+                },
+                "recipient": {"type": "string"},
+                "subject": {"type": "string"},
+                "body": {"type": "string"},
+                "ticket_id": {"type": "string"},
+            },
+        },
+        output_schema={
+            "channel": "string",
+            "recipient": "string",
+            "delivery_mode": "string",
+            "sendable": "boolean",
+            "message": "string",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=2,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        message_or_error = _communication_message(context, payload)
+        if isinstance(message_or_error, ActionResult):
+            return message_or_error
+        message = message_or_error
+        if not payload.get("_approval_completed"):
+            provider = context.communication_provider or PreviewCommunicationProvider()
+            try:
+                draft = provider.draft(message)
+            except Exception:
+                return _failed("communication preview failed")
+            output = asdict(draft)
+            output["approval_required"] = True
+            output["sendable"] = False
+            return ActionResult(
+                status="success",
+                output=output,
+                evidence=[{"type": "communication_preview", "channel": message.channel}],
+            )
+        if message.channel == "ticket_note":
+            if not context.settings.allow_write_actions:
+                return _failed("ticket-note delivery is blocked until WAIT_ALLOW_WRITE_ACTIONS=true")
+            if not message.ticket_id or not context.client_id:
+                return _failed("ticket-note delivery requires a tenant-scoped ticket")
+            try:
+                note = context.store.create_ticket_note(
+                    message.ticket_id,
+                    client_id=context.client_id,
+                    author=context.actor or "smart-action",
+                    body=message.body,
+                )
+            except ValueError as exc:
+                return _failed(str(exc))
+            if note is None:
+                return _failed("ticket not found")
+            return ActionResult(
+                status="success",
+                output={
+                    "channel": message.channel,
+                    "recipient": message.recipient,
+                    "delivery_mode": "local",
+                    "sendable": True,
+                    "message": "local ticket note created",
+                    "note_id": note.id,
+                },
+                evidence=[{"type": "ticket_note", "ticket_id": message.ticket_id}],
+            )
+        sender = context.communication_sender
+        if sender is None:
+            return _failed("communication delivery is not configured")
+        try:
+            delivery = sender.send(message)
+        except CommunicationDeliveryError as exc:
+            return _failed(redact_text(str(exc)))
+        except Exception:
+            return _failed("communication delivery failed")
+        return ActionResult(
+            status="success",
+            output=asdict(delivery),
+            evidence=[{"type": "communication_delivery", "channel": message.channel}],
+        )
 
 
 @dataclass(frozen=True)
@@ -994,6 +1103,7 @@ def _build_default_registry() -> SmartActionRegistry:
         HaloPSATicketLookupAction(),
         HuduDocumentationSearchAction(),
         CommunicationPreviewAction(),
+        CommunicationSendAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -1020,6 +1130,7 @@ class SmartActionService:
         halopsa_client: HaloPSAReadProvider | None = None,
         hudu_client: HuduReadProvider | None = None,
         communication_provider: CommunicationProvider | None = None,
+        communication_sender: CommunicationSender | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1028,7 +1139,15 @@ class SmartActionService:
         self.collector_service = collector_service
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
-        self.communication_provider = communication_provider
+        configured_communication = ConfiguredCommunicationProvider(settings)
+        self.communication_provider = communication_provider or configured_communication
+        self.communication_sender: CommunicationSender | None = communication_sender or (
+            configured_communication
+            if communication_provider is None
+            else communication_provider
+            if hasattr(communication_provider, "send")
+            else None  # type: ignore[assignment]
+        )
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
             if provider_configured is not None
@@ -1225,6 +1344,7 @@ class SmartActionService:
         if not isinstance(payload, dict):
             result = _failed("smart action approval payload is malformed")
         else:
+            payload = {**payload, "_approval_completed": True}
             try:
                 action = self.registry.get(action_id)
             except KeyError:
@@ -1323,6 +1443,7 @@ class SmartActionService:
             halopsa_client=self.halopsa_client,
             hudu_client=self.hudu_client,
             communication_provider=self.communication_provider,
+            communication_sender=self.communication_sender,
         )
 
     def _persist_result(
@@ -1424,6 +1545,45 @@ def _safe_run(action: SmartAction, context: ActionContext, payload: dict[str, ob
         return action.run(context, payload)
     except Exception as exc:
         return _failed(f"action failed: {exc}")
+
+
+def _communication_message(
+    context: ActionContext, payload: dict[str, object]
+) -> CommunicationMessage | ActionResult:
+    channel = payload.get("channel")
+    recipient = payload.get("recipient", "")
+    body = payload.get("body")
+    subject = payload.get("subject", "")
+    ticket_id = payload.get("ticket_id")
+    if channel not in {"ticket_note", "email", "teams", "slack", "sms"}:
+        return _failed("channel must be one of ticket_note, email, teams, slack, or sms")
+    if not isinstance(body, str) or not body.strip() or len(body) > 10_000:
+        return _failed("body must be a non-empty string of at most 10000 characters")
+    if not isinstance(subject, str) or len(subject) > 500:
+        return _failed("subject must be a string of at most 500 characters")
+    if channel != "ticket_note" and (
+        not isinstance(recipient, str) or not recipient.strip() or len(recipient) > 320
+    ):
+        return _failed("recipient must be a non-empty string of at most 320 characters")
+    if channel == "ticket_note" and not isinstance(ticket_id, str):
+        return _failed("ticket_note requires ticket_id")
+    if ticket_id is not None:
+        if not isinstance(ticket_id, str) or not ticket_id.strip():
+            return _failed("ticket_id must be a non-empty string when provided")
+        if _ticket_from_payload(context.store, payload, context.client_id) is None:
+            return _failed("ticket_id must identify an existing ticket")
+    elif context.client_id is None:
+        return _failed("communication delivery requires a tenant or ticket_id")
+    if channel == "sms" and subject:
+        return _failed("subject is not supported for sms")
+    return CommunicationMessage(
+        channel=cast("CommunicationChannel", channel),
+        recipient=(recipient.strip() if isinstance(recipient, str) else f"ticket:{ticket_id}"),
+        body=body.strip(),
+        subject=subject.strip(),
+        client_id=context.client_id,
+        ticket_id=ticket_id.strip() if isinstance(ticket_id, str) else None,
+    )
 
 
 def _ticket_from_payload(

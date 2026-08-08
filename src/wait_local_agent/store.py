@@ -34,6 +34,7 @@ from wait_local_agent.models import (
     SmartActionRun,
     TemplateGalleryEntry,
     Ticket,
+    TicketNote,
     WorkflowRun,
     WorkflowTemplate,
     utc_now,
@@ -83,6 +84,18 @@ class Store:
                 """
             )
             self._ensure_column(connection, "tickets", "requester_id", "text")
+            connection.execute(
+                """
+                create table if not exists ticket_notes (
+                    id integer primary key autoincrement,
+                    ticket_id text not null,
+                    client_id text not null,
+                    author text not null,
+                    body text not null,
+                    created_at text not null
+                )
+                """
+            )
             connection.execute(
                 """
                 create table if not exists approvals (
@@ -800,6 +813,65 @@ class Store:
         self, ticket_id: str, client_id: str | None = None
     ) -> Ticket | None:
         return self.get_ticket(ticket_id, client_id)
+
+    def create_ticket_note(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        author: str,
+        body: str,
+    ) -> TicketNote | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id:
+            raise ValueError("ticket notes require a client scope")
+        safe_author = _redact_text(author.strip())
+        safe_body = _redact_text(body.strip())
+        if not safe_author or not safe_body:
+            raise ValueError("ticket notes require an author and body")
+        if self.get_ticket(ticket_id, normalized_client_id) is None:
+            return None
+        created_at = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into ticket_notes (ticket_id, client_id, author, body, created_at)
+                values (?, ?, ?, ?, ?)
+                """,
+                (ticket_id, normalized_client_id, safe_author, safe_body, created_at),
+            )
+            note_id = cursor.lastrowid
+            self._add_audit_event(
+                connection,
+                "ticket.note.created",
+                ticket_id,
+                "Local ticket note created",
+                client_id=normalized_client_id,
+            )
+        return TicketNote(
+            id=note_id,
+            ticket_id=ticket_id,
+            client_id=normalized_client_id,
+            author=safe_author,
+            body=safe_body,
+            created_at=created_at,
+        )
+
+    def list_ticket_notes(self, ticket_id: str, *, client_id: str) -> list[TicketNote]:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id or self.get_ticket(ticket_id, normalized_client_id) is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, ticket_id, client_id, author, body, created_at
+                from ticket_notes
+                where ticket_id = ? and client_id = ?
+                order by id
+                """,
+                (ticket_id, normalized_client_id),
+            ).fetchall()
+        return [TicketNote(**dict(row)) for row in rows]
 
     def create_end_user_ticket(
         self,
