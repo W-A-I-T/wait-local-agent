@@ -28,6 +28,9 @@ describe("Templates", () => {
   };
 
   beforeEach(() => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:template") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    Object.defineProperty(HTMLAnchorElement.prototype, "click", { configurable: true, value: vi.fn() });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/workflows/templates") {
@@ -48,6 +51,18 @@ describe("Templates", () => {
       if (path === "/workflow-templates/gallery/gallery-acme" && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body));
         return Promise.resolve(new Response(JSON.stringify({ ...entry, ...body, version: 2 }), { status: 200 }));
+      }
+      if (path === "/workflow-templates/gallery/gallery-acme/export") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.workflow-template",
+          format_version: 1,
+          source_template_id: "ticket-triage",
+          name: entry.name,
+          description: entry.description,
+          provenance: entry.provenance,
+          instructions: entry.instructions,
+          enabled: entry.enabled
+        }), { status: 200 }));
       }
       if (path === "/workflow-templates/gallery/gallery-acme/revisions") {
         return Promise.resolve(new Response(JSON.stringify([
@@ -90,5 +105,7 @@ describe("Templates", () => {
       return element?.tagName === "STRONG" && /^Changes: v\d+ → v\d+$/.test(value);
     })).toBeInTheDocument();
     expect(screen.getByText("No changes.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    expect(await screen.findByText("Exported Acme triage.")).toBeInTheDocument();
   });
 });

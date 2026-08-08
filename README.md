@@ -90,9 +90,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
   into tenant-scoped editable records, enable or disable them, restore prior
-  versions, compare redacted revision diffs, and run them through the existing
-  approval path. The gallery never permits arbitrary code, tools, or write
-  permissions.
+  versions, compare redacted revision diffs, export versioned JSON artifacts,
+  import validated artifacts as disabled local copies, and run them through the
+  existing approval path. Imports validate the reviewed source template and
+  never carry local ids or tenant identity. The gallery never permits arbitrary
+  code, tools, or write permissions.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
   failures, pause/cancel state, and failed-item reruns.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
@@ -185,6 +187,8 @@ wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
 wait-local-agent workflows gallery
 wait-local-agent workflows gallery-add ticket-triage "local operator review"
+wait-local-agent workflows gallery-export <gallery-id> > template.json
+wait-local-agent workflows gallery-import template.json --client-id acme
 wait-local-agent agents list
 wait-local-agent approvals list
 wait-local-agent events list
@@ -631,6 +635,19 @@ Workflow templates are listed with:
 ```bash
 wait-local-agent workflows templates
 ```
+
+Gallery templates can be moved between local appliances as reviewed JSON
+artifacts:
+
+```bash
+wait-local-agent workflows gallery-export <gallery-id> > template.json
+wait-local-agent workflows gallery-import template.json --client-id acme
+```
+
+The API equivalents are `GET /workflow-templates/gallery/{id}/export` and
+`POST /workflow-templates/gallery/import`. Imports validate the source against
+the built-in reviewed catalog and arrive disabled until an operator reviews and
+enables them.
 
 Workflow runs and scheduled jobs are available over API routes, including:
 

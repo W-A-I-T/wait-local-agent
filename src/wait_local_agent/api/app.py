@@ -227,6 +227,17 @@ class TemplateGalleryCreateRequest(BaseModel):
     client_id: str | None = None
 
 
+class TemplateGalleryImportRequest(BaseModel):
+    format: Literal["wait-local-agent.workflow-template"]
+    format_version: Literal[1]
+    source_template_id: str
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+    provenance: str = Field(min_length=1, max_length=1000)
+    instructions: str = Field(default="", max_length=4000)
+    client_id: str | None = None
+
+
 class TemplateGalleryUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -2701,6 +2712,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(entry)
 
+    @app.get("/workflow-templates/gallery/{entry_id}/export")
+    def export_template_gallery_entry(entry_id: str, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        return _template_gallery_export_view(entry)
+
+    @app.post("/workflow-templates/gallery/import")
+    def import_template_gallery_entry(
+        payload: TemplateGalleryImportRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        template = get_workflow_template(payload.source_template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail="workflow template not found")
+        try:
+            entry = store.create_template_gallery_entry(
+                template,
+                provenance=payload.provenance,
+                client_id=scoped_client_id,
+                name=payload.name,
+                description=payload.description,
+                instructions=payload.instructions,
+                enabled=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _template_gallery_view(entry)
+
     @app.get("/workflow-templates/gallery/{entry_id}")
     def template_gallery_detail(entry_id: str, context: ViewerAccess) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, None)
@@ -3522,6 +3568,21 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
         "client_id": entry.client_id,
+    }
+
+
+def _template_gallery_export_view(entry) -> dict[str, object]:
+    """Return a portable artifact without local ids, timestamps, or tenant identity."""
+
+    return {
+        "format": "wait-local-agent.workflow-template",
+        "format_version": 1,
+        "source_template_id": entry.source_template_id,
+        "name": redact_text(entry.name),
+        "description": redact_text(entry.description),
+        "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
     }
 
 

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 import uvicorn
@@ -1618,6 +1618,70 @@ def add_workflow_gallery(
         f"id={entry.id} source={entry.source_template_id} version={entry.version} "
         f"enabled={entry.enabled} client_id={entry.client_id or '-'}"
     )
+
+
+@workflows_app.command("gallery-export")
+def export_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    entry = _store().get_template_gallery_entry(entry_id, client_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    typer.echo(json.dumps(_gallery_export_payload(entry), sort_keys=True, indent=2))
+
+
+@workflows_app.command("gallery-import")
+def import_workflow_gallery(
+    artifact_path: Path,
+    client_id: str | None = None,
+) -> None:
+    try:
+        if artifact_path.stat().st_size > 1_000_000:
+            raise ValueError("template artifact is too large")
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise typer.BadParameter(f"invalid template artifact: {exc}", param_hint="artifact_path") from exc
+    if (
+        not isinstance(artifact, dict)
+        or artifact.get("format") != "wait-local-agent.workflow-template"
+        or artifact.get("format_version") != 1
+    ):
+        raise typer.BadParameter("unsupported template artifact", param_hint="artifact_path")
+    source_template_id = artifact.get("source_template_id")
+    if not isinstance(source_template_id, str) or get_workflow_template(source_template_id) is None:
+        raise typer.BadParameter("workflow template source is unavailable", param_hint="artifact_path")
+    name = artifact.get("name")
+    description = artifact.get("description")
+    provenance = artifact.get("provenance")
+    instructions = artifact.get("instructions")
+    if not all(isinstance(value, str) for value in (name, description, provenance, instructions)):
+        raise typer.BadParameter("template artifact is missing editable fields", param_hint="artifact_path")
+    name = cast(str, name)
+    description = cast(str, description)
+    provenance = cast(str, provenance)
+    instructions = cast(str, instructions)
+    entry = _store().create_template_gallery_entry(
+        get_workflow_template(source_template_id),  # type: ignore[arg-type]
+        provenance=provenance,
+        client_id=client_id,
+        name=name,
+        description=description,
+        instructions=instructions,
+        enabled=False,
+    )
+    result = _gallery_export_payload(entry) | {"id": entry.id, "client_id": entry.client_id}
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+def _gallery_export_payload(entry) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.workflow-template",
+        "format_version": 1,
+        "source_template_id": entry.source_template_id,
+        "name": redact_text(entry.name),
+        "description": redact_text(entry.description),
+        "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
+    }
 
 
 @workflows_app.command("gallery-update")

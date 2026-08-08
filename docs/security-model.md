@@ -130,6 +130,14 @@ same authenticated tenant scope. Comparison responses redact run messages and
 contain only operational fields; they do not expose execution payloads or permit
 reruns, approval changes, or other mutations.
 
+Workflow-template exports are viewer-readable but omit local gallery ids,
+timestamps, and tenant identity. They apply the existing redaction policy to
+editable text. Imports require technician access, validate the artifact format
+and source template against the reviewed built-in catalog, apply the
+authenticated tenant scope, and create the copy disabled so an operator must
+review it before enabling execution. Imported artifacts cannot supply arbitrary
+tools, source metadata, or authorization scope.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

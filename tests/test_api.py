@@ -3864,6 +3864,74 @@ def test_execution_steps_are_redacted_at_serialization(settings) -> None:
     assert "legacy-secret" not in detail.text
 
 
+def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(settings) -> None:
+    client = TestClient(create_app(settings))
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "display_name": "Portable triage",
+            "provenance": "operator review",
+            "instructions": "Keep token=should-not-leak local.",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    entry_id = created.json()["id"]
+
+    exported = client.get(f"/workflow-templates/gallery/{entry_id}/export")
+    assert exported.status_code == 200
+    artifact = exported.json()
+    assert artifact["format"] == "wait-local-agent.workflow-template"
+    assert artifact["format_version"] == 1
+    assert "client_id" not in artifact
+    assert "should-not-leak" not in exported.text
+
+    imported = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "client_id": "beta"},
+    )
+    assert imported.status_code == 200
+    assert imported.json()["client_id"] == "beta"
+    assert imported.json()["enabled"] is False
+    assert imported.json()["name"] == "Portable triage"
+
+    invalid_source = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "source_template_id": "not-a-template"},
+    )
+    invalid_format = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "format_version": 2},
+    )
+    assert invalid_source.status_code == 404
+    assert invalid_format.status_code == 422
+    invalid_create = client.post(
+        "/workflow-templates/gallery",
+        json={"source_template_id": "ticket-triage", "provenance": "   ", "client_id": "acme"},
+    )
+    assert invalid_create.status_code == 422
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get(
+        f"/workflow-templates/gallery/{entry_id}/export",
+        headers=_auth("viewer-token"),
+    ).status_code == 404
+    assert secure_client.post(
+        "/workflow-templates/gallery/import",
+        headers=_auth("tech-token"),
+        json=artifact,
+    ).status_code == 403
+
+
 def _read_response(items):
     return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 

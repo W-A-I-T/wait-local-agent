@@ -22,6 +22,7 @@ export function Templates() {
   const [provenance, setProvenance] = useState("Reviewed by local operator");
   const [instructions, setInstructions] = useState("");
   const [clientId, setClientId] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
@@ -73,6 +74,42 @@ export function Templates() {
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to create local template.");
+    }
+  }
+
+  async function exportEntry(entry: TemplateGalleryEntry) {
+    try {
+      const artifact = await apiFetch<Record<string, unknown>>(`/workflow-templates/gallery/${encodeURIComponent(entry.id)}/export`);
+      const blob = new Blob([JSON.stringify(artifact, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "workflow-template"}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage(`Exported ${entry.name}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to export template.");
+    }
+  }
+
+  async function importEntry() {
+    if (!importFile) {
+      setMessage("Choose a template artifact first.");
+      return;
+    }
+    try {
+      const artifact = JSON.parse(await importFile.text()) as Record<string, unknown>;
+      await apiFetch<TemplateGalleryEntry>("/workflow-templates/gallery/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(artifact)
+      });
+      setImportFile(null);
+      setMessage("Template imported disabled. Review it before enabling.");
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to import template.");
     }
   }
 
@@ -181,7 +218,11 @@ export function Templates() {
             <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
           </div>
           <label>Operator instructions<textarea rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-          <button type="submit" disabled={!canWrite || !sourceTemplateId}>Create local template</button>
+        <button type="submit" disabled={!canWrite || !sourceTemplateId}>Create local template</button>
+        <div className="template-import-row">
+          <label>Import template artifact<input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>
+          <button type="button" disabled={!canWrite || !importFile} onClick={() => void importEntry()}>Import disabled</button>
+        </div>
         </form>
         {message ? <div className="notice">{message}</div> : null}
       </section>
@@ -200,6 +241,7 @@ export function Templates() {
               <label>Instructions<textarea rows={2} value={draft.instructions} onChange={(event) => setDrafts((current) => ({ ...current, [entry.id]: { ...draft, instructions: event.target.value } }))} /></label>
               <div className="template-actions">
                 <button type="button" disabled={!canWrite} onClick={() => void saveEntry(entry)}>Save changes</button>
+                <button type="button" onClick={() => void exportEntry(entry)}>Export</button>
                 <button type="button" disabled={!canWrite} onClick={() => void setEnabled(entry, !entry.enabled)}>{entry.enabled ? "Disable" : "Enable"}</button>
                 <button type="button" onClick={() => void showRevisions(entry)}>History</button>
               </div>

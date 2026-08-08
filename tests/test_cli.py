@@ -91,6 +91,55 @@ def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     assert "window=09:00-17:00 timezone=America/Vancouver" in result.output
 
 
+def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    template = cli_module.get_workflow_template("ticket-triage")
+    assert template is not None
+    entry = store.create_template_gallery_entry(
+        template,
+        provenance="operator review",
+        client_id="acme",
+        name="Portable triage",
+        description="Review local tickets.",
+        instructions="Keep the response internal.",
+    )
+    runner = CliRunner()
+
+    exported = runner.invoke(app, ["workflows", "gallery-export", entry.id, "--client-id", "acme"])
+    assert exported.exit_code == 0
+    artifact_path = tmp_path / "template.json"
+    artifact_path.write_text(exported.output, encoding="utf-8")
+
+    imported = runner.invoke(
+        app,
+        ["workflows", "gallery-import", str(artifact_path), "--client-id", "beta"],
+    )
+    assert imported.exit_code == 0
+    assert '"client_id": "beta"' in imported.output
+    assert '"enabled": false' in imported.output
+
+    artifact_path.write_text('{"format":"wrong","format_version":1}', encoding="utf-8")
+    invalid = runner.invoke(app, ["workflows", "gallery-import", str(artifact_path)])
+    assert invalid.exit_code != 0
+
+    missing_export = runner.invoke(app, ["workflows", "gallery-export", "missing"])
+    missing_file = runner.invoke(app, ["workflows", "gallery-import", str(tmp_path / "missing.json")])
+    artifact_path.write_text(
+        json.dumps({"format": "wait-local-agent.workflow-template", "format_version": 1}),
+        encoding="utf-8",
+    )
+    missing_fields = runner.invoke(app, ["workflows", "gallery-import", str(artifact_path)])
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b"x" * 1_000_001)
+    oversized_result = runner.invoke(app, ["workflows", "gallery-import", str(oversized)])
+    assert missing_export.exit_code != 0
+    assert missing_file.exit_code != 0
+    assert missing_fields.exit_code != 0
+    assert oversized_result.exit_code != 0
+
+
 def test_m365_group_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

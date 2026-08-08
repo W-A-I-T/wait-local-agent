@@ -1976,13 +1976,19 @@ class Store:
         client_id: str | None = None,
         name: str | None = None,
         instructions: str = "",
+        description: str | None = None,
+        enabled: bool = True,
     ) -> TemplateGalleryEntry:
         entry_id = f"gallery-{uuid.uuid4().hex}"
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         template_id = template.id
         safe_name = _gallery_text(name or template.name, field="name", limit=120)
-        safe_description = _gallery_text(template.description, field="description", limit=2000)
+        safe_description = _gallery_text(
+            description if description is not None else template.description,
+            field="description",
+            limit=2000,
+        )
         safe_instructions = _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
         safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
         with self._connect() as connection:
@@ -2006,7 +2012,7 @@ class Store:
                     _json_dumps_value(template.preview_fields),
                     safe_provenance,
                     safe_instructions,
-                    1,
+                    int(enabled),
                     1,
                     now,
                     now,
@@ -2021,7 +2027,7 @@ class Store:
                     name=safe_name,
                     description=safe_description,
                     instructions=safe_instructions,
-                    enabled=True,
+                    enabled=bool(enabled),
                 ),
                 now,
                 normalized_client_id,
