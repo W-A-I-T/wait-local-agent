@@ -58,7 +58,9 @@ from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_m365_user_creation,
     execute_halopsa_approval_request,
+    execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
@@ -148,6 +150,16 @@ class HaloDraftRequest(BaseModel):
         "update_ticket_fields",
     ]
     fields: dict[str, object]
+    client_id: str | None = None
+
+
+class M365UserDraftRequest(BaseModel):
+    user_principal_name: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=256)
+    mail_nickname: str = Field(min_length=1, max_length=64)
+    temporary_vault_name: str = Field(min_length=14, max_length=128)
+    account_enabled: bool = True
+    force_change_password_next_sign_in: bool = True
     client_id: str | None = None
 
 
@@ -1178,6 +1190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             existing_approval = store.get_approval_request(request_id)
             if existing_approval is None or not _approval_in_scope(context, existing_approval):
                 raise KeyError(request_id)
+            if existing_approval.action_type.startswith("m365.") and context.role < Role.ADMIN:
+                raise PermissionError("M365 approvals require admin authority")
             if existing_approval.action_type.startswith("smart_action:"):
                 smart_action_service.update_approval(
                     request_id,
@@ -2211,6 +2225,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _m365_managed_device_response("managed-devices.list", response)
 
+    @app.post("/connectors/m365/users/drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_user_draft(
+        payload: M365UserDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_user_creation(
+                store,
+                user_principal_name=payload.user_principal_name,
+                display_name=payload.display_name,
+                mail_nickname=payload.mail_nickname,
+                temporary_vault_name=payload.temporary_vault_name,
+                account_enabled=payload.account_enabled,
+                force_change_password_next_sign_in=payload.force_change_password_next_sign_in,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_m365_user_creation(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
+            return _approval_view(
+                execute_m365_approval_request(
+                    store,
+                    m365_client,
+                    SecretVault(active_settings.vault_path),
+                    request_id,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2802,6 +2864,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
+        if request.action_type == "m365.users.create":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
+            write_health = m365_client.write_health()
+            if write_health.status != "ready":
+                return False, write_health.message
+            return True, ""
         if not request.action_type.startswith("halopsa."):
             return False, "Only HaloPSA approvals have live execution in this release."
         if request.status != "approved":

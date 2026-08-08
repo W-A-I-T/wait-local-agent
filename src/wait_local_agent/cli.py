@@ -55,7 +55,9 @@ from wait_local_agent.config import load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_m365_user_creation,
     execute_halopsa_approval_request,
+    execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
@@ -644,6 +646,14 @@ def update_approval_request(
             )
         except (PermissionError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
+    elif existing.action_type.startswith("m365."):
+        context = _cli_access(load_settings(), token, Role.ADMIN)
+        approval = store.update_approval_request(
+            request_id,
+            status,
+            comment,
+            approver_id=context.approver_id,
+        )
     else:
         approval = store.update_approval_request(
             request_id,
@@ -654,6 +664,16 @@ def update_approval_request(
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
+        except RuntimeError:
+            approval = store.get_approval_request(request_id) or approval
+    if status == "approved" and approval.action_type == "m365.users.create":
+        try:
+            approval = execute_m365_approval_request(
+                store,
+                _m365_client(),
+                SecretVault(load_settings().vault_path),
+                request_id,
+            )
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
     typer.echo(
@@ -745,6 +765,35 @@ def draft_halopsa(
     )
 
 
+@connectors_app.command("draft-m365-user")
+def draft_m365_user(
+    user_principal_name: str,
+    display_name: str,
+    mail_nickname: str,
+    temporary_vault_name: str,
+    client_id: str | None = None,
+    account_enabled: bool = True,
+    force_change_password_next_sign_in: bool = True,
+) -> None:
+    try:
+        approval = draft_m365_user_creation(
+            _store(),
+            user_principal_name=user_principal_name,
+            display_name=display_name,
+            mail_nickname=mail_nickname,
+            temporary_vault_name=temporary_vault_name,
+            client_id=client_id,
+            account_enabled=account_enabled,
+            force_change_password_next_sign_in=force_change_password_next_sign_in,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
 @connectors_app.command("execute-halopsa")
 def execute_halopsa(request_id: int) -> None:
     try:
@@ -755,6 +804,26 @@ def execute_halopsa(request_id: int) -> None:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(
         f"{approval.id} {approval.action_type} ticket_id={approval.subject_id} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
+
+
+@connectors_app.command("execute-m365-user")
+def execute_m365_user(request_id: int) -> None:
+    try:
+        approval = execute_m365_approval_request(
+            _store(),
+            _m365_client(),
+            SecretVault(load_settings().vault_path),
+            request_id,
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"{approval.id} {approval.action_type} subject_id={approval.subject_id} "
         f"execution_status={approval.execution_status} "
         f"execution_message={approval.execution_message}"
     )

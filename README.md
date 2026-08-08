@@ -407,9 +407,9 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 
 ### Microsoft 365 identity, group, license, mailbox, and Intune context
 
-The live Microsoft Graph surface is intentionally limited to bounded,
-read-only user, group, tenant subscribed-license, mailbox-folder, and Intune
-managed-device context.
+The live Microsoft Graph surface is intentionally limited to bounded user,
+group, tenant subscribed-license, mailbox-folder, and Intune managed-device
+context plus one explicitly approval-gated user-creation operation.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -436,13 +436,19 @@ wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-managed-devices
 ```
 
-Only Graph GET requests are issued. License reads return tenant subscribed-SKU
+Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
 metadata and aggregate consumption/prepaid counts; per-user license details,
 and mailbox reads return selected root mail-folder metadata and aggregate item
 counts; messages, bodies, attachments, and hidden folders are not expanded.
-User creation, disable/offboarding, group membership changes, license
-assignments, mailbox mutations, and Intune device mutations remain absent until
-separately permissioned and approval-gated. Managed-device reads return
+User creation requires `WAIT_ALLOW_WRITE_ACTIONS=true`, an admin approval, and
+an encrypted-vault reference to the temporary password. Create a draft through
+`POST /connectors/m365/users/drafts`, approve it through the approval queue, and
+execute it through `POST /connectors/m365/approval-requests/{id}/execute` (or
+the matching `draft-m365-user` and `execute-m365-user` CLI commands). The
+password itself is never accepted in the approval payload or returned by the
+API. Disable/offboarding, group membership changes, license assignments,
+mailbox mutations, and Intune device mutations remain absent until separately
+permissioned and approval-gated. Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads
 return bounded group metadata only; members and owners are not expanded.

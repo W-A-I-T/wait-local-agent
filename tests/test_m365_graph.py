@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from wait_local_agent.m365_graph import (
     M365GraphReadError,
     M365GraphSubscribedSku,
     M365GraphUser,
+    M365GraphUserCreateResult,
     _api_base_url,
     _bounded_page_size,
     _group_list_params,
@@ -52,6 +55,198 @@ def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     missing = M365GraphClient(replace(settings, allow_http_probing=True)).health()
     assert missing.status == "not_configured"
     assert "WAIT_M365_ACCESS_TOKEN" in missing.message
+
+
+def test_m365_graph_user_creation_is_write_gated_and_never_returns_password(settings) -> None:
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1.0/users"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        payload = json.loads(request.content)
+        assert payload == {
+            "accountEnabled": True,
+            "displayName": "Adele Vance",
+            "mailNickname": "adele.vance",
+            "userPrincipalName": "adele.vance@example.test",
+            "passwordProfile": {
+                "forceChangePasswordNextSignIn": True,
+                "password": "Temporary-Password-123!",
+            },
+        }
+        return httpx.Response(
+            201,
+            json={
+                "id": "user-1",
+                "displayName": "Adele Vance",
+                "userPrincipalName": "adele.vance@example.test",
+                "accountEnabled": True,
+                "passwordProfile": {"password": "must-not-leak"},
+            },
+        )
+
+    response = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(handler),
+    ).create_user(
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_password="Temporary-Password-123!",
+        account_enabled=True,
+        force_change_password_next_sign_in=True,
+    )
+
+    assert response == M365GraphUserCreateResult(
+        "succeeded",
+        "Microsoft Graph user creation succeeded.",
+        remote_id="user-1",
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        account_enabled=True,
+        status_code=201,
+    )
+    assert "password" not in response.message.lower()
+
+
+def test_m365_graph_user_creation_blocks_when_write_flag_is_disabled(settings) -> None:
+    active_settings = _configured(settings)
+    response = M365GraphClient(active_settings).create_user(
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_password="Temporary-Password-123!",
+        account_enabled=True,
+        force_change_password_next_sign_in=True,
+    )
+    assert response.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in response.message
+
+
+def test_m365_graph_write_health_and_create_failure_paths(settings) -> None:
+    assert M365GraphClient(settings).write_health().status == "blocked"
+    missing = replace(settings, allow_http_probing=True, allow_write_actions=True)
+    assert M365GraphClient(missing).write_health().status == "not_configured"
+
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+
+    def forbidden(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": {"message": "secret must not leak"}})
+
+    forbidden_result = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(forbidden),
+    ).create_user(
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_password="Temporary-Password-123!",
+        account_enabled=True,
+        force_change_password_next_sign_in=True,
+    )
+    assert forbidden_result.status == "failed"
+    assert "access denied" in forbidden_result.message
+    assert "secret must not leak" not in forbidden_result.message
+
+    malformed = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(201, content=b"not-json")),
+    ).create_user(
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_password="Temporary-Password-123!",
+        account_enabled=True,
+        force_change_password_next_sign_in=True,
+    )
+    assert malformed.status == "failed"
+    assert "malformed JSON" in malformed.message
+
+    empty = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(201, json={})),
+    ).create_user(
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_password="Temporary-Password-123!",
+        account_enabled=True,
+        force_change_password_next_sign_in=True,
+    )
+    assert empty.status == "failed"
+    assert "no usable user identity" in empty.message
+
+    invalid_values = [
+        {"user_principal_name": "bad", "display_name": "Adele", "mail_nickname": "adele"},
+        {"user_principal_name": "a@b.test", "display_name": "", "mail_nickname": "adele"},
+        {"user_principal_name": "a@b.test", "display_name": "Adele", "mail_nickname": "bad+alias"},
+        {
+            "user_principal_name": "a@b.test",
+            "display_name": "Adele",
+            "mail_nickname": "adele",
+            "temporary_password": "short",
+        },
+    ]
+    for values in invalid_values:
+        kwargs = {
+            "user_principal_name": "a@b.test",
+            "display_name": "Adele",
+            "mail_nickname": "adele",
+            "temporary_password": "Temporary-Password-123!",
+            "account_enabled": True,
+            "force_change_password_next_sign_in": True,
+            **values,
+        }
+        result = M365GraphClient(active_settings).create_user(**cast(Any, kwargs))
+        assert result.status == "failed"
+
+    assert M365GraphClient(active_settings).list_subscribed_skus(cursor=" ").result.status == "failed"
+    assert M365GraphClient(active_settings).list_managed_devices(page_size=0).result.status == "failed"
+    for gated_settings in (
+        settings,
+        replace(settings, allow_http_probing=True, allow_write_actions=False),
+        replace(settings, allow_http_probing=True, allow_write_actions=True),
+    ):
+        try:
+            M365GraphClient(gated_settings)._post("users", {})
+        except M365GraphReadError:
+            pass
+
+    def connect_failure(request: httpx.Request) -> None:
+        raise httpx.ConnectError("connect failed", request=request)
+
+    with pytest.raises(M365GraphReadError, match="before receiving"):
+        M365GraphClient(
+            active_settings,
+            transport=httpx.MockTransport(cast(Any, connect_failure)),
+        )._post("users", {})
+
+    def generic_failure(request: httpx.Request) -> None:
+        raise httpx.ReadError("read failed", request=request)
+
+    with pytest.raises(M365GraphReadError, match="request failed"):
+        M365GraphClient(
+            active_settings,
+            transport=httpx.MockTransport(cast(Any, generic_failure)),
+        )._post("users", {})
+
+    invalid_flags = M365GraphClient(active_settings).create_user(
+            user_principal_name="a@b.test",
+            display_name="Adele",
+            mail_nickname="adele",
+            temporary_password="Temporary-Password-123!",
+            account_enabled=cast(Any, 1),
+            force_change_password_next_sign_in=True,
+        )
+    assert invalid_flags.status == "failed"
+    assert "flags" in invalid_flags.message
 
 
 def test_m365_graph_reads_use_bearer_auth_and_bounded_identity_filter(settings) -> None:

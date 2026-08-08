@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import cast
 
 from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
@@ -25,6 +26,7 @@ from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
+from wait_local_agent.vault import SecretVault, SecretVaultError
 
 HALOPSA_ACTION_TYPES = {
     "add_note",
@@ -32,6 +34,16 @@ HALOPSA_ACTION_TYPES = {
     "update_status",
     "assign_technician",
     "update_ticket_fields",
+}
+
+M365_USER_CREATE_ACTION = "users.create"
+M365_USER_CREATE_FIELDS = {
+    "account_enabled",
+    "display_name",
+    "force_change_next_sign_in",
+    "mail_nickname",
+    "temporary_vault_name",
+    "user_principal_name",
 }
 
 
@@ -624,6 +636,138 @@ def execute_halopsa_approval_request(
         message=result.message,
         result=sanitize_halopsa_write_result(result),
     )
+
+
+def draft_m365_user_creation(
+    store: Store,
+    *,
+    user_principal_name: str,
+    display_name: str,
+    mail_nickname: str,
+    temporary_vault_name: str,
+    account_enabled: bool = True,
+    force_change_password_next_sign_in: bool = True,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload = {
+        "connector": "m365",
+        "action_type": M365_USER_CREATE_ACTION,
+        "account_enabled": account_enabled,
+        "display_name": display_name,
+        "force_change_next_sign_in": force_change_password_next_sign_in,
+        "mail_nickname": mail_nickname,
+        "temporary_vault_name": temporary_vault_name,
+        "user_principal_name": user_principal_name,
+    }
+    validate_m365_user_creation_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_principal_name.strip()}",
+        f"m365.{M365_USER_CREATE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def execute_m365_approval_request(
+    store: Store,
+    client: M365GraphClient,
+    vault: SecretVault,
+    request_id: int,
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if approval.action_type != f"m365.{M365_USER_CREATE_ACTION}":
+        raise ValueError("approval request is not an M365 user creation action")
+    if approval.status != "approved":
+        raise PermissionError("M365 writes require approved approval requests")
+    if approval.execution_status == "succeeded":
+        raise RuntimeError("M365 approval request has already executed successfully")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    validate_m365_user_creation_payload(payload)
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_USER_CREATE_ACTION:
+        raise ValueError("approval payload does not match M365 user creation")
+    try:
+        temporary_password = vault.get(str(payload["temporary_vault_name"]))
+    except (SecretVaultError, ValueError) as exc:
+        raise RuntimeError("M365 temporary credential could not be read from the local vault") from exc
+    if not temporary_password:
+        raise RuntimeError("M365 temporary credential is missing from the local vault")
+    result = client.create_user(
+        user_principal_name=str(payload["user_principal_name"]),
+        display_name=str(payload["display_name"]),
+        mail_nickname=str(payload["mail_nickname"]),
+        temporary_password=temporary_password,
+        account_enabled=bool(payload["account_enabled"]),
+        force_change_password_next_sign_in=bool(payload["force_change_next_sign_in"]),
+    )
+    return store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result={
+            "connector": "m365",
+            "action_type": M365_USER_CREATE_ACTION,
+            "remote_id": result.remote_id,
+            "user_principal_name": result.user_principal_name,
+            "display_name": result.display_name,
+            "account_enabled": result.account_enabled,
+            "status_code": result.status_code,
+        },
+    )
+
+
+def validate_m365_user_creation_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", *M365_USER_CREATE_FIELDS}:
+        raise ValueError("M365 user creation payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_USER_CREATE_ACTION:
+        raise ValueError("M365 user creation payload is invalid")
+    user_principal_name = payload.get("user_principal_name")
+    display_name = payload.get("display_name")
+    mail_nickname = payload.get("mail_nickname")
+    temporary_vault_name = payload.get("temporary_vault_name")
+    if not all(
+        isinstance(value, str)
+        for value in (user_principal_name, display_name, mail_nickname, temporary_vault_name)
+    ):
+        raise ValueError("M365 user creation text fields are invalid")
+    user_principal_name = cast(str, user_principal_name)
+    display_name = cast(str, display_name)
+    mail_nickname = cast(str, mail_nickname)
+    temporary_vault_name = cast(str, temporary_vault_name)
+    if (
+        not user_principal_name.strip()
+        or user_principal_name.count("@") != 1
+        or len(user_principal_name) > 320
+        or any(ord(character) < 32 or character.isspace() for character in user_principal_name)
+    ):
+        raise ValueError("M365 user_principal_name is invalid")
+    if (
+        not display_name.strip()
+        or len(display_name) > 256
+        or any(ord(character) < 32 for character in display_name)
+    ):
+        raise ValueError("M365 display_name is invalid")
+    if not mail_nickname.strip() or len(mail_nickname) > 64 or any(
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+        for character in mail_nickname
+    ):
+        raise ValueError("M365 mail_nickname is invalid")
+    if (
+        not temporary_vault_name.startswith("WAIT_M365_TEMP_")
+        or len(temporary_vault_name) > 128
+        or any(
+            character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+            for character in temporary_vault_name
+        )
+    ):
+        raise ValueError("M365 temporary_vault_name must name a WAIT_M365_TEMP_ vault entry")
+    if not isinstance(payload.get("account_enabled"), bool) or not isinstance(
+        payload.get("force_change_next_sign_in"), bool
+    ):
+        raise ValueError("M365 user creation flags are invalid")
 
 
 def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:

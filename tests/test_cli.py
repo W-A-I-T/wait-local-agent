@@ -96,6 +96,30 @@ def test_m365_managed_device_command_is_available_and_safe_by_default(monkeypatc
     assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
 
 
+def test_m365_user_draft_command_persists_only_vault_reference(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "connectors",
+            "draft-m365-user",
+            "adele.vance@example.test",
+            "Adele Vance",
+            "adele.vance",
+            "WAIT_M365_TEMP_ADELE",
+        ],
+    )
+    shown = runner.invoke(app, ["approvals", "show", "1"])
+
+    assert result.exit_code == 0
+    assert "action_type=m365.users.create" in result.output
+    assert shown.exit_code == 0
+    assert "WAIT_M365_TEMP_ADELE" in shown.output
+    assert "password" not in shown.output.lower()
+
+
 def test_collectors_list_shows_exactly_fourteen_modules(
     monkeypatch, tmp_path, isolated_default_registry
 ) -> None:
