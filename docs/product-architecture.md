@@ -119,7 +119,7 @@ Includes:
 - ConnectWise PSA connector (read + approval-gated write)
 - Autotask PSA connector (read + approval-gated write)
 - NinjaOne RMM connector (read-only device inventory, alerts)
-- Datto RMM connector (read-only)
+- Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
 - QBR report generator (per-client PDF: ticket count, resolution rate, top categories, automation savings)

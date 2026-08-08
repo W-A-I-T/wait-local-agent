@@ -799,10 +799,10 @@ class RmmScriptExecuteAction:
         except Exception:
             return _failed("RMM script execution failed")
         return ActionResult(
-            status="success" if execution.status in {"queued", "succeeded"} else "failed",
+            status="success" if execution.status in {"queued", "completed", "succeeded"} else "failed",
             output={**asdict(execution), "approved": True},
             evidence=[{"type": "rmm_script_execution", "script_id": script_id, "device_id": device_id}],
-            error_detail="" if execution.status in {"queued", "succeeded"} else execution.message,
+            error_detail="" if execution.status in {"queued", "completed", "succeeded"} else execution.message,
         )
 
 
@@ -831,7 +831,7 @@ class RmmScriptExecutionLookupAction:
         except Exception:
             return _failed("RMM script execution lookup failed")
         return ActionResult(
-            status="success" if execution.status in {"queued", "succeeded", "failed"} else "failed",
+            status="success" if execution.status in {"queued", "completed", "succeeded", "failed"} else "failed",
             output=asdict(execution),
             evidence=[{"type": "rmm_script_execution", "execution_id": execution_id.strip()}],
             error_detail="" if execution.status != "blocked" else execution.message,

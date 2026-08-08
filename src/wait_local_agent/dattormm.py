@@ -1,17 +1,17 @@
-"""Bounded, read-only Datto RMM API v2 adapter for the shared RMM contract.
+"""Bounded Datto RMM API v2 adapter for the shared RMM contract.
 
 Datto RMM uses OAuth bearer tokens and account-wide API access. WAIT therefore
 requires an explicit local client-to-site map and uses a site-scoped endpoint
-for device and alert inventory. Component metadata is read-only; quick-job
-execution is intentionally unavailable until a separately reviewed write path
-is added.
+for device and alert inventory. Quick jobs use the documented device endpoint,
+remain tenant-scoped, and are reachable only through the existing approval and
+write-action gates.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -24,6 +24,7 @@ from wait_local_agent.rmm import (
     RmmScriptExecution,
     RmmScriptPreview,
 )
+from wait_local_agent.store import Store
 
 MAX_PAGE_SIZE = 250
 MAX_ARGUMENTS = 20
@@ -36,13 +37,20 @@ class DattoRmmError(Exception):
 
 
 class DattoRmmAdapter:
-    """Read-only Datto RMM adapter with explicit WAIT tenant scoping."""
+    """Datto RMM adapter with explicit WAIT tenant scoping and bounded writes."""
 
     adapter_id = "dattormm"
 
-    def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        store: Store | None = None,
+    ) -> None:
         self.settings = settings
         self.transport = transport
+        self.store = store
 
     def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
         site_uid = self._site_uid(client_id)
@@ -138,8 +146,11 @@ class DattoRmmAdapter:
             arguments=dict(arguments),
             status="preview",
             message=(
-                "Datto RMM device and component are validated; execution is disabled "
-                "in the read-only adapter"
+                "Datto RMM device and component are validated; execution requires "
+                "a completed technician approval"
+                if self.settings.allow_write_actions
+                else "Datto RMM device and component are validated; execution is blocked "
+                "until WAIT_ALLOW_WRITE_ACTIONS=true"
             ),
         )
 
@@ -153,11 +164,51 @@ class DattoRmmAdapter:
     ) -> RmmScriptExecution:
         _validate_script_request(script_id, device_id, arguments)
         self._site_uid(client_id)
+        if not self.settings.allow_write_actions:
+            return RmmScriptExecution(
+                script_id=script_id,
+                device_id=device_id,
+                status="blocked",
+                message="Datto RMM quick-job execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true",
+            )
+        # Validate both identifiers against the operator-controlled tenant map
+        # before making the write. The smart-action layer calls this only after
+        # a persisted approval has completed.
+        self.preview_script(script_id, device_id, arguments, client_id=client_id)
+        payload = {
+            "jobName": "WAIT approved quick job",
+            "jobComponent": {
+                "componentUid": script_id.strip(),
+                "variables": [
+                    {"name": key, "value": value}
+                    for key, value in sorted(arguments.items())
+                ],
+            },
+        }
+        response = self._request(
+            "PUT",
+            f"v2/device/{_path_segment(device_id)}/quickjob",
+            client_id=client_id,
+            json_body=payload,
+            include_page_size=False,
+        )
+        job_id = _first_text(response, "uid", "jobUid", "id")
+        if not job_id:
+            raise DattoRmmError("Datto RMM quick-job response was malformed")
+        if self.store is not None and client_id is not None:
+            self.store.record_rmm_execution_scope(
+                job_id,
+                self.adapter_id,
+                script_id.strip(),
+                device_id.strip(),
+                client_id,
+            )
         return RmmScriptExecution(
             script_id=script_id,
             device_id=device_id,
-            status="blocked",
-            message="Datto RMM quick-job execution is not enabled in the public read-only adapter",
+            status="queued",
+            message="Datto RMM quick job was queued",
+            execution_id=job_id,
         )
 
     def get_execution(
@@ -168,18 +219,62 @@ class DattoRmmAdapter:
     ) -> RmmScriptExecution:
         _validate_id(execution_id, "execution ID")
         self._site_uid(client_id)
+        scope = None
+        if self.store is not None and client_id is not None:
+            scope = self.store.get_rmm_execution_scope(
+                execution_id,
+                self.adapter_id,
+                client_id,
+            )
+            if scope is None:
+                raise DattoRmmError("Datto RMM execution is outside the tenant scope")
+        response = self._request(
+            "GET",
+            f"v2/job/{_path_segment(execution_id)}",
+            client_id=client_id,
+            include_page_size=False,
+        )
+        provider_status = _first_text(response, "status").casefold()
+        status_map = {
+            "active": "queued",
+            "queued": "queued",
+            "completed": "completed",
+            "succeeded": "succeeded",
+            "failed": "failed",
+        }
+        status_value = status_map.get(provider_status)
+        if status_value is None:
+            raise DattoRmmError("Datto RMM job response was malformed")
+        status = cast(
+            Literal["blocked", "queued", "completed", "succeeded", "failed"],
+            status_value,
+        )
         return RmmScriptExecution(
-            script_id="",
-            device_id="",
-            status="blocked",
-            message="Datto RMM execution lookup is not enabled in the public read-only adapter",
+            script_id=scope.script_id if scope is not None else "",
+            device_id=scope.device_id if scope is not None else "",
+            status=status,
+            message=(
+                "Datto RMM job is active"
+                if status == "queued"
+                else "Datto RMM job completed; the API does not expose component output"
+                if status == "completed"
+                else f"Datto RMM job status: {status}"
+            ),
             execution_id=execution_id,
         )
 
     def _get(self, endpoint: str, *, client_id: str | None) -> object:
         return self._request("GET", endpoint, client_id=client_id)
 
-    def _request(self, method: str, endpoint: str, *, client_id: str | None) -> object:
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        client_id: str | None,
+        json_body: object | None = None,
+        include_page_size: bool = True,
+    ) -> object:
         self._site_uid(client_id)
         if not self.settings.allow_http_probing:
             raise DattoRmmError(
@@ -197,15 +292,17 @@ class DattoRmmAdapter:
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
-                response = client.request(
-                    method,
-                    f"{base_url}/{safe_endpoint}",
-                    headers={
+                request_kwargs: dict[str, Any] = {
+                    "headers": {
                         "Accept": "application/json",
                         "Authorization": f"Bearer {self.settings.datto_rmm_access_token}",
                     },
-                    params={"max": self._page_size()},
-                )
+                }
+                if include_page_size:
+                    request_kwargs["params"] = {"max": self._page_size()}
+                if json_body is not None:
+                    request_kwargs["json"] = json_body
+                response = client.request(method, f"{base_url}/{safe_endpoint}", **request_kwargs)
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise DattoRmmError("Datto RMM request failed before receiving a response") from exc
         except httpx.HTTPError as exc:
@@ -257,7 +354,9 @@ def _rows(payload: object, *keys: str) -> list[Mapping[str, Any]]:
     return []
 
 
-def _first_text(row: Mapping[str, Any], *keys: str) -> str:
+def _first_text(row: object, *keys: str) -> str:
+    if not isinstance(row, Mapping):
+        return ""
     for key in keys:
         value = row.get(key)
         if isinstance(value, bool):

@@ -619,6 +619,16 @@ class ExecutionArtifact:
 
 
 @dataclass(frozen=True)
+class RmmExecutionScope:
+    execution_id: str
+    provider_id: str
+    script_id: str
+    device_id: str
+    client_id: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class AgentDefinition:
     id: str
     name: str

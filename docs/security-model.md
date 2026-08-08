@@ -27,8 +27,11 @@ client ID that resolves through operator-controlled
 `WAIT_DATTORMM_SITE_MAP_JSON`; provider site IDs and credentials are never
 request-supplied authorization inputs. Device and alert responses are checked
 against the mapped site when the provider returns a site identifier. The
-public adapter is read-only, so Datto quick-job execution and execution lookup
-remain blocked.
+Quick-job execution additionally requires `WAIT_ALLOW_WRITE_ACTIONS=true` and
+is only reachable from the approved RMM script smart action. The adapter
+validates the component and device against the mapped tenant before issuing
+the documented quick-job request; job status lookup is bounded to the returned
+job identifier and does not expose component output.
 
 ## API authentication
 

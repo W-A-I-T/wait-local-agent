@@ -177,7 +177,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         (
             "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
             if ninjaone_configured
-            else "Datto RMM is configured for tenant-scoped read-only inventory and component metadata."
+            else (
+                "Datto RMM is configured for tenant-scoped inventory, component "
+                "metadata, and approval-gated quick jobs."
+            )
         )
         if rmm_status == "configured"
         else (

@@ -650,8 +650,9 @@ in settings or the encrypted vault, never in action payloads. See
 
 ### Datto RMM
 
-The public Datto RMM adapter provides bounded, read-only device inventory,
-open-alert inventory, and component metadata through the shared RMM contract:
+The public Datto RMM adapter provides bounded device inventory, open-alert
+inventory, component metadata, approval-gated quick-job execution, and bounded
+job-status lookup through the shared RMM contract:
 
 ```text
 WAIT_DATTORMM_BASE_URL=https://your-datto-api-host/api
@@ -661,10 +662,11 @@ WAIT_DATTORMM_PAGE_SIZE=50
 ```
 
 The site map is operator-controlled and required for every request; returned
-rows with a conflicting site identifier are discarded. Datto component
-metadata and device/component validation are available, while quick-job
-execution and execution lookup remain explicitly blocked in this read-only
-adapter. Live calls require `WAIT_ALLOW_HTTP_PROBING=true`. See the
+rows with a conflicting site identifier are discarded. Datto component/device
+validation occurs before any quick-job write. Execution requires a completed
+technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`; live calls require
+`WAIT_ALLOW_HTTP_PROBING=true`. Datto's API reports job state but does not
+expose completed component output. See the
 [Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
 
 ## Scheduled Workflows and Tenancy Filters

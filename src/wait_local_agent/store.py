@@ -34,6 +34,7 @@ from wait_local_agent.models import (
     KnowledgeDocument,
     KnowledgeDocumentWrite,
     RestoreExercise,
+    RmmExecutionScope,
     ScheduledJob,
     SmartActionRun,
     TemplateGalleryEntry,
@@ -238,6 +239,19 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists rmm_execution_scopes (
+                    execution_id text not null,
+                    provider_id text not null,
+                    script_id text not null,
+                    device_id text not null,
+                    client_id text not null,
+                    created_at text not null,
+                    primary key (execution_id, provider_id, client_id)
                 )
                 """
             )
@@ -2960,6 +2974,63 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [SmartActionRun(**dict(row)) for row in rows]
+
+    def record_rmm_execution_scope(
+        self,
+        execution_id: str,
+        provider_id: str,
+        script_id: str,
+        device_id: str,
+        client_id: str,
+    ) -> RmmExecutionScope:
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            raise ValueError("RMM execution scope requires a tenant")
+        scope = RmmExecutionScope(
+            execution_id=execution_id,
+            provider_id=provider_id,
+            script_id=script_id,
+            device_id=device_id,
+            client_id=normalized_client_id,
+            created_at=utc_now(),
+        )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or replace into rmm_execution_scopes
+                  (execution_id, provider_id, script_id, device_id, client_id, created_at)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scope.execution_id,
+                    scope.provider_id,
+                    scope.script_id,
+                    scope.device_id,
+                    scope.client_id,
+                    scope.created_at,
+                ),
+            )
+        return scope
+
+    def get_rmm_execution_scope(
+        self,
+        execution_id: str,
+        provider_id: str,
+        client_id: str,
+    ) -> RmmExecutionScope | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select execution_id, provider_id, script_id, device_id, client_id, created_at
+                from rmm_execution_scopes
+                where execution_id = ? and provider_id = ? and client_id = ?
+                """,
+                (execution_id, provider_id, normalized_client_id),
+            ).fetchone()
+        return RmmExecutionScope(**dict(row)) if row else None
 
     def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
         with self._connect() as connection:

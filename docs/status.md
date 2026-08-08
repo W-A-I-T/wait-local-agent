@@ -36,9 +36,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - NinjaOne RMM device and alert inventory, script catalog and preview, plus
   approval-gated script execution through the bounded tenant-mapped adapter;
   responses and execution lookups remain scope-checked and sanitized.
-- Datto RMM read-only device and open-alert inventory plus component metadata
-  through the same bounded contract, with explicit client-to-site mapping;
-  quick-job execution and execution lookup remain unavailable by design.
+- Datto RMM device and open-alert inventory plus component metadata through the
+  same bounded contract, with explicit client-to-site mapping, approval-gated
+  quick-job execution, and bounded job-status lookup.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file

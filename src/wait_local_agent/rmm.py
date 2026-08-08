@@ -47,7 +47,7 @@ class RmmScriptPreview:
 class RmmScriptExecution:
     script_id: str
     device_id: str
-    status: Literal["blocked", "queued", "succeeded", "failed"]
+    status: Literal["blocked", "queued", "completed", "succeeded", "failed"]
     message: str
     execution_id: str = ""
 
@@ -184,7 +184,7 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
     if settings.datto_rmm_base_url or settings.datto_rmm_access_token:
         from wait_local_agent.dattormm import DattoRmmAdapter
 
-        return DattoRmmAdapter(settings)
+        return DattoRmmAdapter(settings, store=store)
     return LocalCollectorRmmAdapter(store)
 
 

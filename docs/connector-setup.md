@@ -179,10 +179,11 @@ for the test suite.
 
 The public Datto RMM adapter implements the shared RMM contract for bounded,
 tenant-scoped device and open-alert inventory plus component metadata. It uses
-the documented OAuth bearer API and requires a local client-to-site map. The
-adapter is intentionally read-only: component/device validation is available,
-but quick-job execution and execution lookup are blocked until a separately
-reviewed write contract exists. See the [Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
+the documented OAuth bearer API and requires a local client-to-site map.
+Component/device validation, approval-gated quick-job execution, and bounded
+job-status lookup are available through the shared RMM contract. Quick-job
+execution still requires a completed technician approval and
+`WAIT_ALLOW_WRITE_ACTIONS=true`. See the [Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
 
 Required settings:
 
@@ -199,7 +200,8 @@ site UID. Datto API responses are bounded to the configured page size and
 conflicting returned site identifiers are ignored. Credentials and provider
 site IDs never come from smart-action payloads. The adapter has mocked
 coverage for tenant mapping, scope filtering, bounded pagination parameters,
-safe errors, blocked HTTP, malformed responses, and blocked write paths.
+safe errors, blocked HTTP, malformed responses, and approval-gated quick-job
+and status paths.
 
 ## Hudu
 

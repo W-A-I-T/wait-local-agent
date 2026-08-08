@@ -144,7 +144,7 @@ def test_dattormm_preview_validates_device_and_component_without_writing(setting
     )
 
     assert preview.status == "preview"
-    assert "execution is disabled" in preview.message
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in preview.message
 
 
 def test_dattormm_preview_rejects_unknown_device_and_component(settings) -> None:
@@ -216,16 +216,155 @@ def test_dattormm_helpers_reject_unsafe_shapes_and_urls() -> None:
         _safe_endpoint("v2/site/site 42/devices")
 
 
-def test_dattormm_write_and_execution_lookup_are_explicitly_blocked(settings) -> None:
-    adapter = _adapter(settings, lambda request: httpx.Response(200, json=[]))
+def test_dattormm_write_requires_flag_and_execution_lookup_is_live(settings) -> None:
+    adapter = _adapter(settings, lambda request: httpx.Response(200, json={"status": "active"}))
 
     execution = adapter.execute_script("component-1", "device-1", {}, client_id="acme")
     lookup = adapter.get_execution("job-1", client_id="acme")
 
     assert execution.status == "blocked"
-    assert lookup.status == "blocked"
-    assert "not enabled" in execution.message
-    assert "not enabled" in lookup.message
+    assert lookup.status == "queued"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in execution.message
+    assert "active" in lookup.message
+
+
+def test_dattormm_approved_quick_job_is_tenant_validated_and_bounded(settings) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(200, json=[{"uid": "device-1", "siteUid": "site-42"}])
+        if request.url.path.endswith("/components"):
+            return httpx.Response(200, json=[{"uid": "component-1", "name": "Collect logs"}])
+        if request.url.path.endswith("/quickjob"):
+            assert request.method == "PUT"
+            assert str(request.url.params) == ""
+            assert json.loads(request.read()) == {
+                "jobName": "WAIT approved quick job",
+                "jobComponent": {
+                    "componentUid": "component-1",
+                    "variables": [
+                        {"name": "days", "value": "7"},
+                        {"name": "scope", "value": "logs"},
+                    ],
+                },
+            }
+            return httpx.Response(200, json={"uid": "job-99"})
+        raise AssertionError(request)
+
+    adapter = _adapter(settings, handler, allow_write_actions=True)
+    execution = adapter.execute_script(
+        "component-1",
+        "device-1",
+        {"scope": "logs", "days": "7"},
+        client_id="acme",
+    )
+
+    assert execution.status == "queued"
+    assert execution.execution_id == "job-99"
+    assert len(seen) == 3
+    assert all(request.headers["authorization"] == "Bearer datto-secret-token" for request in seen)
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected_status", "expected_message"),
+    [
+        ("active", "queued", "active"),
+        ("completed", "completed", "does not expose component output"),
+        ("failed", "failed", "failed"),
+    ],
+)
+def test_dattormm_execution_lookup_maps_documented_job_states(
+    settings, provider_status, expected_status, expected_message
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.method == "GET"
+        assert request.url.path.endswith("/v2/job/job-99")
+        assert str(request.url.params) == ""
+        return httpx.Response(200, json={"status": provider_status})
+
+    execution = _adapter(settings, handler).get_execution("job-99", client_id="acme")
+
+    assert execution.status == expected_status
+    assert expected_message in execution.message
+    assert len(seen) == 1
+
+
+def test_dattormm_rejects_malformed_quick_job_responses(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(200, json=[{"uid": "device-1", "siteUid": "site-42"}])
+        if request.url.path.endswith("/components"):
+            return httpx.Response(200, json=[{"uid": "component-1"}])
+        return httpx.Response(200, json={"status": "accepted"})
+
+    with pytest.raises(DattoRmmError, match="quick-job response was malformed"):
+        _adapter(settings, handler, allow_write_actions=True).execute_script(
+            "component-1", "device-1", {}, client_id="acme"
+        )
+
+    with pytest.raises(DattoRmmError, match="job response was malformed"):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(200, json={"status": "unknown"}),
+        ).get_execution("job-99", client_id="acme")
+
+
+def test_dattormm_status_lookup_requires_persisted_tenant_scope(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="requires a tenant"):
+        store.record_rmm_execution_scope("job-0", "dattormm", "component-1", "device-1", "")
+    assert store.get_rmm_execution_scope("job-0", "dattormm", "") is None
+
+    active_settings = replace(
+        settings,
+        allow_http_probing=True,
+        allow_write_actions=True,
+        datto_rmm_base_url="https://datto.example.test/api",
+        datto_rmm_access_token="datto-secret-token",
+        datto_rmm_site_map_json=json.dumps({"acme": "site-42"}),
+    )
+
+    def write_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(200, json=[{"uid": "device-1", "siteUid": "site-42"}])
+        if request.url.path.endswith("/components"):
+            return httpx.Response(200, json=[{"uid": "component-1"}])
+        return httpx.Response(200, json={"uid": "job-99"})
+
+    active = DattoRmmAdapter(
+        active_settings,
+        transport=httpx.MockTransport(write_handler),
+        store=store,
+    )
+    execution = active.execute_script("component-1", "device-1", {}, client_id="acme")
+    assert execution.execution_id == "job-99"
+
+    lookup = DattoRmmAdapter(
+        active.settings,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"status": "completed"})
+        ),
+        store=store,
+    ).get_execution("job-99", client_id="acme")
+    assert lookup.status == "completed"
+    assert lookup.script_id == "component-1"
+    assert lookup.device_id == "device-1"
+
+    with pytest.raises(DattoRmmError, match="outside the tenant scope"):
+        DattoRmmAdapter(
+            active.settings,
+            transport=httpx.MockTransport(
+                lambda request: (_ for _ in ()).throw(
+                    AssertionError("network should not be used")
+                )
+            ),
+            store=store,
+        ).get_execution("unknown-job", client_id="acme")
 
 
 @pytest.mark.parametrize("status", [401, 403, 500])
