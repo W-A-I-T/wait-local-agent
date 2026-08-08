@@ -113,7 +113,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   locale, date-format, and time-format fields; message contents and forwarding
   are not exposed. A separate approval-gated message-move action accepts only
   explicit mailbox, source-folder, message, and destination-folder IDs; it
-  does not expose message contents, send, or delete operations. Group membership changes
+  does not expose message contents, send, or delete operations. A separate
+  approval-gated message read-state action accepts only explicit mailbox,
+  source-folder, and message IDs plus a boolean read state. Group membership changes
   are a distinct strict-ID add/remove action using the same approval path.
 - The RMM boundary normalizes tenant-scoped `endpoint-agent` collector assets
   and exposes a shared contract for device lookup, alerts, script metadata,

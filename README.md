@@ -469,8 +469,8 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
 context plus explicitly approval-gated user lifecycle, direct user license,
-session revocation, managed-device retirement, and mailbox message move
-operations.
+session revocation, managed-device retirement, mailbox settings, message move,
+and message read-state operations.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -499,6 +499,7 @@ wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
 wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
 wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
+wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
 ```
 
 Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
@@ -508,7 +509,10 @@ message bodies, previews, attachments, and hidden folders are not expanded.
 Message moves are separately admin-approved through
 `POST /connectors/m365/mail-messages/move-drafts` or
 `draft-m365-mail-message-move`; only the destination folder ID is sent to
-Graph, and send, delete, and message-content operations remain unavailable.
+Graph. Read-state changes are separately admin-approved through
+`POST /connectors/m365/mail-messages/read-state-drafts` or
+`draft-m365-mail-message-read-state`; only the boolean `isRead` field is sent
+to Graph. Send, delete, and message-content operations remain unavailable.
 User creation requires `WAIT_ALLOW_WRITE_ACTIONS=true`, an admin approval, and
 an encrypted-vault reference to the temporary password. Create a draft through
 `POST /connectors/m365/users/drafts`, approve it through the approval queue, and

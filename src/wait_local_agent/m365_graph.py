@@ -223,6 +223,17 @@ class M365GraphMailMessageMoveResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphMailMessageReadStateResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    source_folder_id: str = ""
+    message_id: str = ""
+    is_read: bool | None = None
+    status_code: int | None = None
+
+
 class M365GraphReadProvider(Protocol):
     def list_users(
         self,
@@ -651,6 +662,41 @@ class M365GraphClient:
             status_code=status_code,
         )
 
+    def update_mail_message_read_state(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+        is_read: bool,
+    ) -> M365GraphMailMessageReadStateResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphMailMessageReadStateResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            safe_source_folder_id = _safe_mail_folder_id(source_folder_id)
+            safe_message_id = _safe_mail_folder_id(message_id)
+            if not isinstance(is_read, bool):
+                raise M365GraphReadError("Microsoft Graph message read state is invalid.")
+            endpoint = (
+                f"users/{quote(safe_identity, safe='')}/mailFolders/"
+                f"{quote(safe_source_folder_id, safe='')}/messages/"
+                f"{quote(safe_message_id, safe='')}"
+            )
+            _, status_code = self._patch(endpoint, {"isRead": is_read})
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageReadStateResult("failed", exc.message)
+        return M365GraphMailMessageReadStateResult(
+            "succeeded",
+            "Microsoft Graph mail message read-state update succeeded.",
+            user_identity=safe_identity,
+            source_folder_id=safe_source_folder_id,
+            message_id=safe_message_id,
+            is_read=is_read,
+            status_code=status_code,
+        )
+
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
         if blocked is not None:
@@ -1032,6 +1078,16 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[5])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_mail_message_item_endpoint = (
+        len(endpoint_parts) == 6
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "mailFolders"
+        and endpoint_parts[4] == "messages"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and _safe_encoded_segment(endpoint_parts[3])
+        and _safe_encoded_segment(endpoint_parts[5])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_user_endpoint = (
         len(endpoint_parts) == 2
         and endpoint_parts[0] == "users"
@@ -1094,6 +1150,7 @@ def _safe_endpoint(endpoint: str) -> str:
         not is_mail_folder_endpoint
         and not is_mail_message_endpoint
         and not is_mail_message_move_endpoint
+        and not is_mail_message_item_endpoint
         and not is_user_endpoint
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint

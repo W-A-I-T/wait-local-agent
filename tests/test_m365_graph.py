@@ -20,6 +20,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailMessage,
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadResponse,
+    M365GraphMailMessageReadStateResult,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
     M365GraphManagedDeviceRetireResult,
@@ -615,6 +616,52 @@ def test_m365_graph_mail_message_move_is_write_gated_and_allowlisted(settings) -
     ).status == "failed"
 
 
+def test_m365_graph_mail_message_read_state_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=True,
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["Content-Type"] == "application/json"
+        assert json.loads(request.content) == {"isRead": False}
+        return httpx.Response(200, json={})
+
+    updated = M365GraphClient(
+        active, transport=httpx.MockTransport(handler)
+    ).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=False,
+    )
+    assert updated == M365GraphMailMessageReadStateResult(
+        "succeeded",
+        "Microsoft Graph mail message read-state update succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        False,
+        200,
+    )
+    assert M365GraphClient(active).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
+        is_read=True,
+    ).status == "failed"
+
+
 def test_m365_graph_managed_device_reads_select_safe_intune_context(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1.0/deviceManagement/managedDevices"
@@ -931,6 +978,9 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert _safe_endpoint("users/user-1/assignLicense") == "users/user-1/assignLicense"
     assert _safe_endpoint("users/user-1/revokeSignInSessions") == (
         "users/user-1/revokeSignInSessions"
+    )
+    assert _safe_endpoint("users/user-1/mailFolders/inbox/messages/message-1") == (
+        "users/user-1/mailFolders/inbox/messages/message-1"
     )
 
 

@@ -396,6 +396,7 @@ wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
+wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
 ```
 
 The API mirrors these commands under `/connectors/m365/health` and
@@ -406,6 +407,10 @@ Message moves are exposed through
 `POST /connectors/m365/mail-messages/move-drafts` with
 `user_identity`, `source_folder_id`, `message_id`, and
 `destination_folder_id`.
+Read-state changes are exposed through
+`POST /connectors/m365/mail-messages/read-state-drafts` with
+`user_identity`, `source_folder_id`, `message_id`, and the boolean `is_read`.
+Both actions require administrator approval before execution.
 Approved user creation is exposed through `POST /connectors/m365/users/drafts`
 and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 `connectors draft-m365-user` and `connectors execute-m365-user`. Approved
