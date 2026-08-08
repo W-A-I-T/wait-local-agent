@@ -77,7 +77,11 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
-from wait_local_agent.m365_graph import M365GraphClient, M365GraphReadResponse
+from wait_local_agent.m365_graph import (
+    M365GraphClient,
+    M365GraphGroupReadResponse,
+    M365GraphReadResponse,
+)
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
     build_analytics_summary,
@@ -2112,6 +2116,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _m365_response("users.list", response)
 
+    @app.get("/connectors/m365/groups")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_groups(
+        request: Request,
+        _: ViewerAccess,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = m365_client.list_groups(
+            identity=identity,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        return _m365_group_response("groups.list", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2636,6 +2658,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_m365_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("m365.read", read_type, f"{status} count={count}")
+
+    def _m365_group_response(
+        read_type: str,
+        response: M365GraphGroupReadResponse,
+    ) -> dict[str, object]:
+        _audit_m365_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

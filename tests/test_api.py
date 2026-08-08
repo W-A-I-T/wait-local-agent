@@ -21,7 +21,12 @@ from wait_local_agent.itglue import (
     ItGlueOrganization,
     ItGlueReadResponse,
 )
-from wait_local_agent.m365_graph import M365GraphReadResponse, M365GraphUser
+from wait_local_agent.m365_graph import (
+    M365GraphGroup,
+    M365GraphGroupReadResponse,
+    M365GraphReadResponse,
+    M365GraphUser,
+)
 from wait_local_agent.models import (
     ConnectorReadResult,
     HaloReadResult,
@@ -2351,6 +2356,24 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "next-token",
             )
 
+        def list_groups(self, **kwargs):
+            return M365GraphGroupReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphGroup(
+                        "group-1",
+                        "Helpdesk",
+                        "helpdesk@example.test",
+                        "helpdesk",
+                        "Support team",
+                        True,
+                        False,
+                        ("Unified",),
+                    )
+                ],
+                "group-next-token",
+            )
+
     monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
     client = TestClient(create_app(settings))
 
@@ -2359,6 +2382,10 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/users",
         params={"identity": "adele@example.test", "cursor": "next", "page_size": 2},
     )
+    groups = client.get(
+        "/connectors/m365/groups",
+        params={"identity": "helpdesk@example.test", "cursor": "group-next", "page_size": 2},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -2366,14 +2393,17 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert health.json()["status"] == "ready"
     assert users.json()["items"][0]["user_principal_name"] == "adele@example.test"
     assert users.json()["next_cursor"] == "next-token"
+    assert groups.json()["items"][0]["mail_nickname"] == "helpdesk"
+    assert groups.json()["next_cursor"] == "group-next-token"
     assert any(connector["id"] == "m365" for connector in connectors.json())
     assert any(event["event_type"] == "m365.read" for event in audit.json())
 
 
 def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
-    response = TestClient(create_app(settings)).get("/connectors/m365/health")
-    assert response.status_code == 401
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/m365/health").status_code == 401
+    assert client.get("/connectors/m365/groups").status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

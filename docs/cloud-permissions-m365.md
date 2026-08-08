@@ -22,7 +22,7 @@ resolved at runtime and never persists in config, evidence, logs, or errors.
 Do not grant write permissions, `Directory.ReadWrite.All`, or role-management
 permissions.
 
-## Live identity lookup
+## Live identity and group lookup
 
 The optional live identity connector uses the same Graph read boundary but
 accepts an operator-supplied bearer token through settings or the local vault:
@@ -34,9 +34,13 @@ WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-It issues only `GET /users` requests, optionally with an equality filter for a
-user ID or user principal name. Microsoft documents `User.Read.All` for
-application user reads; delegated work/school flows may use
-`User.ReadBasic.All` or `User.Read.All` according to the requested properties.
-The token acquisition flow is deliberately outside WAIT, and this slice does
-not create, disable, modify, or license users.
+It issues only bounded `GET /users` and `GET /groups` requests. User reads can
+use an equality filter for a user ID or user principal name. Group reads can
+use an equality filter for a group ID, SMTP address, mail nickname, or exact
+display name; group members and owners are not expanded. Microsoft documents
+`User.Read.All` for application user reads and `User.ReadBasic.All` or
+`User.Read.All` for delegated work/school user reads. The Graph groups API
+documents group-read permissions for group metadata; grant only the permission
+required by the chosen flow. The token acquisition flow is deliberately
+outside WAIT, and this slice does not create, disable, modify, or license
+users or groups.

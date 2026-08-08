@@ -7,12 +7,16 @@ import pytest
 
 from wait_local_agent.m365_graph import (
     M365GraphClient,
+    M365GraphGroup,
+    M365GraphGroupReadResponse,
     M365GraphReadError,
     M365GraphUser,
     _api_base_url,
     _bounded_page_size,
+    _group_list_params,
     _list_params,
     _next_cursor,
+    _normalize_group,
     _normalize_user,
     _payload_rows,
     _safe_cursor,
@@ -33,6 +37,7 @@ def _configured(settings, *, allow_http_probing: bool = True):
 
 def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     assert M365GraphClient(settings).list_users().result.status == "blocked"
+    assert M365GraphClient(settings).list_groups().result.status == "blocked"
     assert M365GraphClient(settings).health().status == "blocked"
     missing = M365GraphClient(replace(settings, allow_http_probing=True)).health()
     assert missing.status == "not_configured"
@@ -108,6 +113,60 @@ def test_m365_graph_health_and_cursor_reads(settings) -> None:
     assert len(paths) == 2
 
 
+def test_m365_graph_group_reads_use_bounded_filter_and_normalization(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/groups"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == (
+            "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
+        )
+        assert request.url.params["$filter"] == (
+            "id eq 'helpdesk''s@example.test' or mail eq 'helpdesk''s@example.test' "
+            "or mailNickname eq 'helpdesk''s@example.test' or "
+            "displayName eq 'helpdesk''s@example.test'"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "group-1",
+                        "displayName": "Helpdesk",
+                        "mail": "helpdesk@example.test",
+                        "mailNickname": "helpdesk",
+                        "description": "Support team",
+                        "mailEnabled": True,
+                        "securityEnabled": False,
+                        "groupTypes": ["Unified", 7],
+                    }
+                ],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/groups?$skiptoken=group-next",
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_groups(identity="helpdesk's@example.test", page_size=2)
+
+    assert response == M365GraphGroupReadResponse(
+        result=response.result,
+        items=[
+            M365GraphGroup(
+                "group-1",
+                "Helpdesk",
+                "helpdesk@example.test",
+                "helpdesk",
+                "Support team",
+                True,
+                False,
+                ("Unified",),
+            )
+        ],
+        next_cursor="group-next",
+    )
+    assert response.result.status == "ready"
+
+
 def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     def denied(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="private body")
@@ -115,6 +174,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     result = M365GraphClient(_configured(settings), transport=httpx.MockTransport(denied)).list_users()
     assert "HTTP 403" in result.result.message
     assert "private body" not in result.result.message
+    group_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_groups()
+    assert "HTTP 403" in group_result.result.message
+    assert "private body" not in group_result.result.message
 
     def malformed(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not-json")
@@ -125,6 +189,8 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert "malformed JSON" in result.result.message
     assert M365GraphClient(_configured(settings)).list_users(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_users(identity="bad\nvalue").result.status == "failed"
+    assert M365GraphClient(_configured(settings)).list_groups(page_size=0).result.status == "failed"
+    assert M365GraphClient(_configured(settings)).list_groups(identity="bad\nvalue").result.status == "failed"
 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("private timeout")
@@ -157,6 +223,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
     ).list_users().result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
+    ).list_groups().result.status == "not_configured"
 
     for status_code, marker in (
         (401, "authentication failed"),
@@ -178,6 +251,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         "$select": "id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department",
         "$skiptoken": "next",
     }
+    assert _group_list_params(1000, "next") == {
+        "$top": 200,
+        "$select": (
+            "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
+        ),
+        "$skiptoken": "next",
+    }
     assert _next_cursor(
         {"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=next"}
     ) == "next"
@@ -190,6 +270,10 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     )
     assert _normalize_user({}) is None
     assert _normalize_user({"id": 7}) == M365GraphUser("7", "", "", "", None, "", "")
+    assert _normalize_group(
+        {"id": "group-1", "groupTypes": ["Unified", 7], "mailEnabled": "yes"}
+    ) == M365GraphGroup("group-1", "", "", "", "", None, None, ("Unified",))
+    assert _normalize_group({}) is None
     assert _payload_rows(None) == []
     assert _next_cursor(None) == ""
     with pytest.raises(M365GraphReadError):
@@ -214,3 +298,4 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ):
         with pytest.raises(M365GraphReadError):
             helper(value)
+    assert _safe_endpoint("groups") == "groups"
