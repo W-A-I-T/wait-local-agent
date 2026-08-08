@@ -99,6 +99,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   failures, pause/cancel state, and failed-item reruns. The React dashboard
   exposes dry-run preview, queueing, progress, controls, and failed-item
   reruns without creating a second execution engine.
+- The React dashboard exposes `/executions` history with run-kind/status
+  filters, redacted step detail, and generated artifact metadata using the
+  existing observability API.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
   redacted dry-run estimate without persisting or executing it.
 - Backfills default to sequential execution and may opt into up to four

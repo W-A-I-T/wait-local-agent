@@ -222,6 +222,41 @@ export type AgentBackfillPreview = {
   client_id?: string | null;
 };
 
+export type ExecutionRun = {
+  id: number;
+  run_kind: string;
+  source_run_id?: number | null;
+  actor: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  trigger_source: string;
+  client_id?: string | null;
+};
+
+export type ExecutionDetail = ExecutionRun & {
+  steps: Array<{
+    id: number;
+    ordinal: number;
+    kind: string;
+    name: string;
+    status: string;
+    started_at: string;
+    finished_at: string;
+    input?: unknown;
+    output?: unknown;
+    error_detail: string;
+  }>;
+  artifacts: Array<{
+    id: number;
+    step_ordinal?: number | null;
+    name: string;
+    media_type: string;
+    byte_size: number;
+    sha256: string;
+  }>;
+};
+
 export type AnalyticsSummary = {
   range: { from: string | null; to: string | null };
   client_id: string | null;

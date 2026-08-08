@@ -26,6 +26,7 @@ const navigation = [
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/agents", label: "Agents", icon: Bot },
   { to: "/backfills", label: "Backfills", icon: ListChecks },
+  { to: "/executions", label: "Executions", icon: Activity },
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },
