@@ -2923,13 +2923,13 @@ def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
         def list_documents(self, organization_id, **kwargs):
             return ItGlueReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
-                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "https://docs.test/9")],
+                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "https://docs.test/9", "token=secret")],
             )
 
         def get_document(self, document_id):
             return ItGlueReadResponse(
                 ConnectorReadResult("ready", "document ready", 1),
-                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "https://docs.test/9")],
+                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "https://docs.test/9", "token=secret")],
             )
 
         def list_folders(self, organization_id, **kwargs):
@@ -2956,7 +2956,9 @@ def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
     assert health.json()["status"] == "ready"
     assert organizations.json()["items"][0]["name"] == "Contoso"
     assert documents.json()["items"][0]["name"] == "Runbook"
+    assert documents.json()["items"][0]["content"] == "token=[redacted]"
     assert document.json()["items"][0]["id"] == "9"
+    assert document.json()["items"][0]["content"] == "token=[redacted]"
     assert folders.json()["items"][0]["name"] == "Ops"
     assert any(connector["id"] == "itglue" for connector in connectors.json())
     assert any(event["event_type"] == "itglue.read" for event in audit.json())

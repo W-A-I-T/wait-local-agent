@@ -1139,13 +1139,13 @@ def test_itglue_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
         def list_documents(self, organization_id, **kwargs):
             return ItGlueReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
-                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "")],
+                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "", "token=secret")],
             )
 
         def get_document(self, document_id):
             return ItGlueReadResponse(
                 ConnectorReadResult("ready", "ok", 1),
-                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "")],
+                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "", "token=secret")],
             )
 
         def list_folders(self, organization_id, **kwargs):
@@ -1168,6 +1168,7 @@ def test_itglue_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
     assert "ready count=0 ok" in health.output
     assert organizations.exit_code == 0 and "Contoso" in organizations.output
     assert documents.exit_code == 0 and "Runbook" in documents.output
+    assert "token=[redacted]" in documents.output
     assert document.exit_code == 0 and "Runbook" in document.output
     assert folders.exit_code == 0 and "Ops" in folders.output
 

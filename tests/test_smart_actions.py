@@ -286,7 +286,15 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         itglue_client=SimpleNamespace(
             list_documents=lambda organization_id, folder_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
-                items=[ItGlueDocument("doc-1", "VPN runbook", organization_id, "folder-1", "today", "https://itglue")],
+                items=[ItGlueDocument(
+                    "doc-1",
+                    "VPN runbook",
+                    organization_id,
+                    "folder-1",
+                    "today",
+                    "https://itglue",
+                    "MFA reset token=secret",
+                )],
             )
         ),
         confluence_client=SimpleNamespace(
@@ -378,6 +386,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         replace(connector_context, client_id="org-1"),
         {"query": "vpn", "organization_id": "org-1"},
     )
+    itglue_content = ItGlueDocumentationSearchAction().run(
+        replace(connector_context, client_id="org-1"),
+        {"query": "mfa", "organization_id": "org-1"},
+    )
     confluence = ConfluenceDocumentationSearchAction().run(
         replace(connector_context, client_id="space-1"),
         {"query": "vpn", "space_id": "space-1"},
@@ -466,6 +478,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
     assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert itglue.output["documents"][0]["name"] == "VPN runbook"  # type: ignore[index]
+    assert itglue_content.status == "success"
+    assert itglue_content.output["documents"][0]["content"] == "MFA reset token=[redacted]"  # type: ignore[index]
     confluence_pages = confluence.output["pages"]
     assert isinstance(confluence_pages, list)
     confluence_page = confluence_pages[0]

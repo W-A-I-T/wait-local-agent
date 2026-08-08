@@ -1434,7 +1434,10 @@ class ItGlueDocumentationSearchAction:
                 not getattr(item, "organization_id", "")
                 or getattr(item, "organization_id", "") == scoped_organization_id
             )
-            and query_value in str(getattr(item, "name", "")).casefold()
+            and (
+                query_value in str(getattr(item, "name", "")).casefold()
+                or query_value in str(getattr(item, "content", "")).casefold()
+            )
         ][:limit]
         return ActionResult(
             status="success",

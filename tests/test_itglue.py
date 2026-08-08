@@ -6,7 +6,9 @@ import httpx
 import pytest
 
 from wait_local_agent.itglue import (
+    MAX_DOCUMENT_CONTENT_LENGTH,
     ItGlueClient,
+    ItGlueDocument,
     ItGlueReadError,
     _api_base_url,
     _bounded_page_size,
@@ -81,7 +83,15 @@ def test_itglue_read_contract_uses_json_api_and_normalizes_resources(settings) -
                 },
             )
         if request.url.path == "/documents/9":
-            return httpx.Response(200, json={"data": {"id": "9", "attributes": {"title": "Runbook"}}})
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "9",
+                        "attributes": {"title": "Runbook", "content": "token=secret"},
+                    }
+                },
+            )
         if request.url.path.endswith("/relationships/document_folders"):
             return httpx.Response(
                 200,
@@ -97,7 +107,10 @@ def test_itglue_read_contract_uses_json_api_and_normalizes_resources(settings) -
     assert client.health().status == "ready"
     assert organizations.items[0].name == "Acme"
     assert documents.items[0].name == "Runbook"
-    assert document.items[0].name == "Runbook"
+    document_item = document.items[0]
+    assert isinstance(document_item, ItGlueDocument)
+    assert document_item.name == "Runbook"
+    assert document_item.content == "token=secret"
     assert folders.items[0].parent_id == "0"  # type: ignore[union-attr]
     assert paths.count("/organizations") == 2
 
@@ -168,3 +181,14 @@ def test_itglue_helpers_cover_json_shapes_and_bounds() -> None:
             pass
         else:
             raise AssertionError(f"unsafe value accepted: {value}")
+    bounded = _normalize_document(
+        {
+            "id": "9",
+            "attributes": {
+                "name": "Large",
+                "content": "x" * (MAX_DOCUMENT_CONTENT_LENGTH + 1),
+            },
+        }
+    )
+    assert bounded is not None
+    assert len(bounded.content) == MAX_DOCUMENT_CONTENT_LENGTH

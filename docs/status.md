@@ -24,7 +24,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Hudu read-only connector configuration surface for tenant-scoped documentation
   lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common
-  guarded HTTP boundary; write operations remain unavailable.
+  guarded HTTP boundary, including bounded document-detail content retrieval;
+  write operations remain unavailable.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
@@ -209,6 +210,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | --- | --- |
 | HaloPSA read + approval-gated write | Built |
 | Hudu read-only | Built, including bounded article content search |
+| IT Glue read-only | Built, including bounded document-detail content retrieval |
 | Confluence read-only | Built, including bounded page content search |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |

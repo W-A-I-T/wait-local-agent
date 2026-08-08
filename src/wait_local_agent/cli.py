@@ -2931,7 +2931,7 @@ def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
             },
             sort_keys=True,
             indent=2,
