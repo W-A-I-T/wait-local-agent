@@ -63,6 +63,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
@@ -162,6 +163,10 @@ def _autotask_client() -> AutotaskClient:
     return AutotaskClient(load_settings())
 
 
+def _itglue_client() -> ItGlueClient:
+    return ItGlueClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -219,6 +224,8 @@ def doctor() -> None:
         and settings.autotask_integration_code
     )
     typer.echo(f"autotask_configured={autotask_configured}")
+    itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
+    typer.echo(f"itglue_configured={itglue_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -646,7 +653,7 @@ def validate_connector(
         typer.Argument(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
-                "or autotask."
+                "autotask, or itglue."
             )
         ),
     ]
@@ -662,6 +669,7 @@ def validate_connector(
             syncro_client=_syncro_client(),
             servicenow_client=_servicenow_client(),
             autotask_client=_autotask_client(),
+            itglue_client=_itglue_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1020,6 +1028,78 @@ def autotask_company(company_id: str) -> None:
     _print_autotask_response(
         "companies.get",
         _autotask_client().get_company(company_id),
+    )
+
+
+@connectors_app.command("itglue-health")
+def itglue_health() -> None:
+    result = _itglue_client().health()
+    _audit_itglue_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("itglue-organizations")
+def itglue_organizations(page: int = 1, page_size: int | None = None) -> None:
+    _print_itglue_response(
+        "organizations.list",
+        _itglue_client().list_organizations(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().itglue_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("itglue-documents")
+def itglue_documents(
+    organization_id: str,
+    folder_id: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_itglue_response(
+        "documents.list",
+        _itglue_client().list_documents(
+            organization_id,
+            folder_id=folder_id,
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().itglue_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("itglue-document")
+def itglue_document(document_id: str) -> None:
+    _print_itglue_response(
+        "documents.get",
+        _itglue_client().get_document(document_id),
+    )
+
+
+@connectors_app.command("itglue-folders")
+def itglue_folders(
+    organization_id: str,
+    page: int = 1,
+    page_size: int | None = None,
+) -> None:
+    _print_itglue_response(
+        "folders.list",
+        _itglue_client().list_folders(
+            organization_id,
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().itglue_page_size
+            ),
+        ),
     )
 
 
@@ -1696,6 +1776,24 @@ def _print_autotask_response(read_type: str, response: AutotaskReadResponse) -> 
 
 def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("autotask.read", read_type, f"{status} count={count}")
+
+
+def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None:
+    _audit_itglue_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_itglue_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("itglue.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

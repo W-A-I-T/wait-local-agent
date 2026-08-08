@@ -22,6 +22,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- IT Glue read-only organization-scoped documentation lookup through the common
+  guarded HTTP boundary; write operations remain unavailable.
 - ConnectWise PSA read-only ticket and company inventory through the common
   guarded HTTP boundary; write operations remain unavailable.
 - Syncro read-only ticket and customer inventory through the common guarded
@@ -124,7 +126,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
-| IT Glue connector | Future paid pack or open-core interface |
+| IT Glue connector | Read-only core surface built |
 | ConnectWise PSA connector | Read-only core surface built |
 | Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |

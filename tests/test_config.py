@@ -87,6 +87,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.autotask_secret == ""
     assert settings.autotask_integration_code == ""
     assert settings.autotask_page_size == 50
+    assert settings.itglue_base_url == ""
+    assert settings.itglue_api_key == ""
+    assert settings.itglue_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -197,6 +200,18 @@ def test_autotask_env_values(monkeypatch) -> None:
     assert settings.autotask_secret == "secret"
     assert settings.autotask_integration_code == "integration-code"
     assert settings.autotask_page_size == 20
+
+
+def test_itglue_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://api.itglue.com")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "api-key")
+    monkeypatch.setenv("WAIT_ITGLUE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.itglue_base_url == "https://api.itglue.com"
+    assert settings.itglue_api_key == "api-key"
+    assert settings.itglue_page_size == 10
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:
