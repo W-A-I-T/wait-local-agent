@@ -32,6 +32,7 @@ from wait_local_agent.m365_graph import (
     M365GraphReadResponse,
     M365GraphSubscribedSku,
     M365GraphUser,
+    M365GraphUserCreateResult,
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
@@ -46,6 +47,7 @@ from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroReadResponse
+from wait_local_agent.vault import SecretVault
 
 
 def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default_registry) -> None:
@@ -2485,6 +2487,81 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     assert client.get("/connectors/m365/licenses").status_code == 401
     assert client.get("/connectors/m365/mail-folders").status_code == 401
     assert client.get("/connectors/m365/managed-devices").status_code == 401
+
+
+def test_m365_user_creation_requires_admin_approval_and_uses_vault_secret(settings, monkeypatch, tmp_path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def create_user(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphUserCreateResult(
+                "succeeded",
+                "created",
+                remote_id="user-1",
+                user_principal_name=str(kwargs["user_principal_name"]),
+                display_name=str(kwargs["display_name"]),
+                account_enabled=bool(kwargs["account_enabled"]),
+                status_code=201,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+        vault_path=tmp_path / "vault",
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    draft = client.post(
+        "/connectors/m365/users/drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_principal_name": "adele.vance@example.test",
+            "display_name": "Adele Vance",
+            "mail_nickname": "adele.vance",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+    executed = client.post(
+        f"/connectors/m365/approval-requests/{request_id}/execute",
+        headers=_auth("admin-token"),
+    )
+
+    assert draft.status_code == 200
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert executed.status_code == 200
+    assert executed.json()["execution_status"] == "succeeded"
+    assert calls[0]["temporary_password"] == "Temporary-Password-123!"
+    assert "Temporary-Password-123!" not in executed.text
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

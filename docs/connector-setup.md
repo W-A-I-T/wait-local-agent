@@ -262,6 +262,7 @@ WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
 WAIT_M365_ACCESS_TOKEN=
 WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
+WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved user creation
 ```
 
 The live connector accepts a delegated or application bearer token
@@ -270,14 +271,17 @@ outside the local agent and the token is never placed in URLs, query values, or
 action payloads. The connector issues only bounded `GET /users` and
 `GET /groups` requests plus selected-field `GET /subscribedSkus` and
 `GET /users/{id}/mailFolders` and `GET /deviceManagement/managedDevices`
-requests.
+requests. User creation is a separate `POST /users` action and is disabled
+unless the write flag is enabled and an admin approves the request. Store its
+temporary password under a vault name beginning with `WAIT_M365_TEMP_`; the
+approval payload stores only that name.
 User lookup accepts a user ID or user principal name; group lookup accepts a
 group ID, SMTP address, mail nickname, or exact display name. License context
 is tenant-level subscribed-SKU metadata with aggregate counts; per-user license
 details are not requested. Mailbox reads require an explicit user identity and
 return only root-folder metadata and aggregate item counts; messages and hidden
 folders are not requested. Group members and owners are not expanded. It does
-not create, disable, modify, or assign licenses to users or groups, and it does
+not disable, modify, or assign licenses to users or groups, and it does
 not mutate mailboxes or Intune devices. Managed-device reads require an active
 Intune tenant license and return selected inventory/compliance context only;
 serial numbers, IMEI values, remote-assistance URLs, and action results are not
@@ -311,6 +315,9 @@ The API mirrors these commands under `/connectors/m365/health` and
 `/connectors/m365/users`, `/connectors/m365/groups`,
 `/connectors/m365/licenses`, `/connectors/m365/mail-folders`, and
 `/connectors/m365/managed-devices`.
+Approved user creation is exposed through `POST /connectors/m365/users/drafts`
+and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
+`connectors draft-m365-user` and `connectors execute-m365-user`.
 
 ## ConnectWise PSA
 

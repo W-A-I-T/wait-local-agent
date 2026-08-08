@@ -1,6 +1,7 @@
 # Microsoft 365 cloud inventory permissions
 
-The Microsoft 365 adapter calls Microsoft Graph read endpoints only. For an
+The Microsoft 365 adapter calls bounded Microsoft Graph read endpoints and one
+approval-gated user-creation endpoint. For an
 application credential, grant administrator-consented application
 permissions:
 
@@ -22,8 +23,11 @@ above, and store a JSON object under a vault key, for example
 `client_secret`. Set `credential_ref` to that key. The client secret is
 resolved at runtime and never persists in config, evidence, logs, or errors.
 
-Do not grant write permissions, `Directory.ReadWrite.All`, or role-management
-permissions.
+Do not grant broad write permissions, `Directory.ReadWrite.All`, or
+role-management permissions. If approved user creation is enabled, grant only
+the least-privileged `User.Create` application permission (or delegated
+permission for a work or school account) in addition to the read permissions
+needed by the deployment.
 
 ## Live identity, group, license, mailbox, and Intune lookup
 
@@ -35,11 +39,21 @@ WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
 WAIT_M365_ACCESS_TOKEN=
 WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
+WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved user creation
 ```
+
+User creation uses `POST /users` and requires the least-privileged
+`User.Create` application permission (or the equivalent delegated permission
+with a work or school account). The request requires account state, display
+name, mail nickname, user principal name, and a password profile. WAIT stores
+only a vault-entry name in the approval request; the temporary password is
+resolved from the local vault immediately before the approved request and is
+never persisted or returned.
 
 It issues only bounded `GET /users` and `GET /groups` requests plus selected-
 field `GET /subscribedSkus`, `GET /users/{id}/mailFolders`, and
-`GET /deviceManagement/managedDevices` requests. User reads can
+`GET /deviceManagement/managedDevices` requests. The separate approved user
+creation route issues only `POST /users` with the fixed required fields. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return

@@ -98,7 +98,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Not ready yet
 
 - Live RMM, Hudu, IT Glue, Confluence, or SharePoint write synchronization;
-  Microsoft Graph broader-resource reads and all M365 writes remain unavailable.
+  Microsoft Graph broader-resource reads and M365 writes other than approved
+  user creation remain unavailable.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
 - Ungated side effects. HaloPSA writes require explicit flags, credentials, rate-limit budget, and approval; other live writes remain disabled.
@@ -140,7 +141,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
-| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/Intune managed-device lookup built; broader resources future |
+| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/Intune managed-device lookup and approved user creation built; broader resources future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

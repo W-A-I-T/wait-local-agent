@@ -6,17 +6,146 @@ import pytest
 
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
+    draft_m365_user_creation,
     execute_halopsa_approval_request,
+    execute_m365_approval_request,
     update_halopsa_approval_fields,
     validate_halopsa_action_fields,
+    validate_m365_user_creation_payload,
 )
 from wait_local_agent.models import HaloWriteResult
 from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVault
 
 
 class FakeHaloClient:
     def execute_write(self, request):
         return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+
+class FakeM365Client:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create_user(self, **kwargs):
+        self.calls.append(kwargs)
+        return type(
+            "Result",
+            (),
+            {
+                "status": "succeeded",
+                "message": "created",
+                "remote_id": "user-1",
+                "user_principal_name": kwargs["user_principal_name"],
+                "display_name": kwargs["display_name"],
+                "account_enabled": kwargs["account_enabled"],
+                "status_code": 201,
+            },
+        )()
+
+
+def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:
+    active_settings = settings.__class__(**{**settings.__dict__, "vault_path": tmp_path / "vault"})
+    store = Store(active_settings.data_path)
+    vault = SecretVault.initialize(active_settings.vault_path)
+    vault.set("WAIT_M365_TEMP_ADELE", "Temporary-Password-123!")
+
+    approval = draft_m365_user_creation(
+        store,
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_vault_name="WAIT_M365_TEMP_ADELE",
+    )
+    assert approval.id is not None
+    persisted = store.get_approval_request(approval.id)
+    assert persisted is not None
+    assert "Temporary-Password-123!" not in persisted.payload_json
+    assert "WAIT_M365_TEMP_ADELE" in persisted.payload_json
+
+    store.update_approval_request(approval.id, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store,
+        cast(Any, client),
+        vault,
+        approval.id,
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls[0]["temporary_password"] == "Temporary-Password-123!"
+    assert all(
+        "Temporary-Password-123!" not in str(event.detail)
+        for event in store.list_audit_events()
+    )
+    with pytest.raises(RuntimeError, match="already executed"):
+        execute_m365_approval_request(store, cast(Any, client), vault, approval.id)
+
+
+def test_m365_user_creation_rejects_unapproved_payload_fields(settings) -> None:
+    with pytest.raises(ValueError, match="unsupported fields"):
+        validate_m365_user_creation_payload(
+            {
+                "connector": "m365",
+                "action_type": "users.create",
+                "account_enabled": True,
+                "display_name": "Adele Vance",
+                "force_change_password_next_sign_in": True,
+                "mail_nickname": "adele.vance",
+                "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+                "user_principal_name": "adele.vance@example.test",
+                "raw_endpoint": "users",
+            }
+        )
+
+
+def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    pending = draft_m365_user_creation(
+        store,
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_vault_name="WAIT_M365_TEMP_ADELE",
+    )
+    with pytest.raises(PermissionError, match="approved"):
+        execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, pending.id or 0)
+
+    wrong = store.create_approval_request("subject", "m365.users.disable", {})
+    with pytest.raises(ValueError, match="not an M365"):
+        execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, wrong.id or 0)
+
+    store.update_approval_request(pending.id or 0, "approved")
+    with pytest.raises(RuntimeError, match="missing"):
+        execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, pending.id or 0)
+
+
+def test_m365_user_creation_payload_validation_rejects_each_sensitive_shape() -> None:
+    base = {
+        "connector": "m365",
+        "action_type": "users.create",
+        "account_enabled": True,
+        "display_name": "Adele Vance",
+        "force_change_next_sign_in": True,
+        "mail_nickname": "adele.vance",
+        "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        "user_principal_name": "adele.vance@example.test",
+    }
+    cases = [
+        {**base, "connector": "other"},
+        {**base, "display_name": "\n"},
+        {**base, "user_principal_name": "bad"},
+        {**base, "mail_nickname": "bad+alias"},
+        {**base, "temporary_vault_name": "OTHER_SECRET"},
+        {**base, "account_enabled": "true"},
+        {**base, "display_name": 7},
+        {**base, "account_enabled": "true"},
+        {**base, "force_change_next_sign_in": "true"},
+    ]
+    for payload in cases:
+        with pytest.raises(ValueError):
+            validate_m365_user_creation_payload(payload)
 
 
 def test_cloud_inventory_connectors_are_public_exports() -> None:
