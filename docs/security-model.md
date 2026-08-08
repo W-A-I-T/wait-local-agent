@@ -15,6 +15,13 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
 
+NinjaOne RMM calls use the same outbound HTTP gate. A tenant/client request is
+accepted only when its ID resolves through the operator-controlled
+`WAIT_NINJAONE_ORGANIZATION_MAP_JSON`; provider IDs and credentials are not
+request-supplied authorization inputs. Inventory and execution lookup apply
+returned-row scope checks. Script execution additionally requires
+`WAIT_ALLOW_WRITE_ACTIONS=true` and a completed technician approval.
+
 ## API authentication
 
 Current implementation:

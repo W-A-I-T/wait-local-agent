@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+from wait_local_agent.config import Settings
 from wait_local_agent.store import Store
 
 
@@ -83,6 +84,14 @@ class RmmInventoryProvider(Protocol):
     ) -> RmmScriptExecution:
         """Execute only through a provider-specific, already-approved path."""
 
+    def get_execution(
+        self,
+        execution_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptExecution:
+        """Return the bounded status for one provider execution."""
+
 
 class LocalCollectorRmmAdapter:
     """Normalize persisted endpoint-agent collector assets as RMM devices."""
@@ -151,6 +160,29 @@ class LocalCollectorRmmAdapter:
             message="RMM script execution requires a reviewed vendor adapter",
         )
 
+    def get_execution(
+        self,
+        execution_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptExecution:
+        return RmmScriptExecution(
+            script_id="",
+            device_id="",
+            status="blocked",
+            message="local collector RMM adapter has no execution provider",
+            execution_id=execution_id,
+        )
+
+
+def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventoryProvider:
+    """Select a configured vendor adapter without making network calls."""
+    if settings.ninjaone_base_url or settings.ninjaone_access_token:
+        from wait_local_agent.ninjaone import NinjaOneRmmAdapter
+
+        return NinjaOneRmmAdapter(settings)
+    return LocalCollectorRmmAdapter(store)
+
 
 __all__ = [
     "LocalCollectorRmmAdapter",
@@ -160,4 +192,5 @@ __all__ = [
     "RmmScript",
     "RmmScriptExecution",
     "RmmScriptPreview",
+    "rmm_provider_from_settings",
 ]

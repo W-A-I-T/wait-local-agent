@@ -30,6 +30,7 @@ from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.rmm import (
     LocalCollectorRmmAdapter,
     RmmInventoryProvider,
+    rmm_provider_from_settings,
 )
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
@@ -772,6 +773,8 @@ class RmmScriptExecuteAction:
                 evidence=[{"type": "rmm_script_preview", "script_id": script_id, "device_id": device_id}],
                 error_detail="" if preview.status == "preview" else preview.message,
             )
+        if not context.settings.allow_write_actions:
+            return _failed("RMM script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true")
         try:
             execution = provider.execute_script(
                 script_id, device_id, arguments, client_id=context.client_id
@@ -783,6 +786,38 @@ class RmmScriptExecuteAction:
             output={**asdict(execution), "approved": True},
             evidence=[{"type": "rmm_script_execution", "script_id": script_id, "device_id": device_id}],
             error_detail="" if execution.status in {"queued", "succeeded"} else execution.message,
+        )
+
+
+class RmmScriptExecutionLookupAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-script-execution-lookup",
+        title="RMM script execution lookup",
+        description="Track one approved RMM script execution through the provider adapter.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["execution_id"]},
+        output_schema={"execution_id": "string", "status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=2,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        execution_id = payload.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id.strip() or len(execution_id) > 100:
+            return _failed("execution_id must be a non-empty string of at most 100 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        try:
+            execution = provider.get_execution(execution_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("RMM script execution lookup failed")
+        return ActionResult(
+            status="success" if execution.status in {"queued", "succeeded", "failed"} else "failed",
+            output=asdict(execution),
+            evidence=[{"type": "rmm_script_execution", "execution_id": execution_id.strip()}],
+            error_detail="" if execution.status != "blocked" else execution.message,
         )
 
 
@@ -1248,6 +1283,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptCatalogAction(),
         RmmScriptPreviewAction(),
         RmmScriptExecuteAction(),
+        RmmScriptExecutionLookupAction(),
         HaloPSATicketLookupAction(),
         HuduDocumentationSearchAction(),
         CommunicationPreviewAction(),
@@ -1279,6 +1315,7 @@ class SmartActionService:
         hudu_client: HuduReadProvider | None = None,
         communication_provider: CommunicationProvider | None = None,
         communication_sender: CommunicationSender | None = None,
+        rmm_provider: RmmInventoryProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1287,6 +1324,7 @@ class SmartActionService:
         self.collector_service = collector_service
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
+        self.rmm_provider = rmm_provider or rmm_provider_from_settings(settings, store)
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -1592,6 +1630,7 @@ class SmartActionService:
             hudu_client=self.hudu_client,
             communication_provider=self.communication_provider,
             communication_sender=self.communication_sender,
+            rmm_provider=self.rmm_provider,
         )
 
     def _persist_result(
