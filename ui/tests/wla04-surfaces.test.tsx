@@ -40,7 +40,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
 
     render(<OnboardingWizard onDone={onDone} onDismiss={vi.fn()} />);
 
-    expect(screen.getByText("Choose your primary PSA provider")).toBeInTheDocument();
+    expect(screen.getByText("Choose your primary service connector")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByLabelText("API token")).toBeInTheDocument();
 
@@ -61,6 +61,28 @@ describe("wla-04 onboarding and parity surfaces", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/knowledge/ingest", expect.objectContaining({ method: "POST" }));
     expect(fetchMock).toHaveBeenCalledWith("/tickets/HALO-1/summary", expect.anything());
+  });
+
+  it("validates ConnectWise through its real health endpoint instead of blocking the flow", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/connectors/connectwise/health") {
+        return jsonResponse({ status: "blocked", message: "ConnectWise credentials are not configured." });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OnboardingWizard onDone={vi.fn()} onDismiss={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "connectwise" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/connectors/connectwise/health",
+      expect.objectContaining({ headers: expect.anything() })
+    ));
+    expect(await screen.findByText(/CONNECTWISE status is blocked/)).toBeInTheDocument();
   });
 
   it("renders the friendly Founder Pack install state for a 501 response", async () => {

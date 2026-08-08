@@ -29,7 +29,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   const [step, setStep] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
   const [psa, setPsa] = useState("halopsa");
-  const [credentials, setCredentials] = useState("demo");
+  const [credentials, setCredentials] = useState("");
   const [knowledgePath, setKnowledgePath] = useState("");
   const [ticketId, setTicketId] = useState("HALO-1");
   const [resultMessage, setResultMessage] = useState("Welcome — complete each setup step to unlock full operations.");
@@ -38,8 +38,16 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   async function validateConnector(): Promise<boolean> {
     try {
       setIsBusy(true);
-      const endpoint = psa === "halopsa" ? "/connectors/halopsa/health" : "/connectors/hudu/health";
-      const health = await apiFetch<{ status: string; message: string }>(endpoint);
+      const connectorHealthPaths: Record<string, string> = {
+        halopsa: "/connectors/halopsa/health",
+        hudu: "/connectors/hudu/health",
+        connectwise: "/connectors/connectwise/health",
+        "it-glue": "/connectors/itglue/health"
+      };
+      const endpoint = connectorHealthPaths[psa];
+      const health = await apiFetch<{ status: string; message: string }>(endpoint, {
+        headers: credentials.trim() ? { Authorization: `Bearer ${credentials.trim()}` } : undefined
+      });
       setResultMessage(`${psa.toUpperCase()} status is ${health.status}. ${health.message || "Ready."}`);
       return true;
     } catch (error) {
@@ -99,15 +107,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
     }
   }
 
-  function isConnectorSupported(value: string): boolean {
-    return value === "halopsa" || value === "hudu";
-  }
-
   async function handleNext() {
-    if (step === 0 && !isConnectorSupported(psa)) {
-      setResultMessage("That connector is coming soon. Choose HaloPSA or Hudu for now.");
-      return;
-    }
     if (step === 0) {
       setStep((current) => current + 1);
       return;
@@ -148,7 +148,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   return (
     <Wizard
       activeStep={step}
-      canContinue={psa !== "connectwise" && psa !== "it-glue"}
+      canContinue={Boolean(psa)}
       isBusy={isBusy}
       onBack={() => setStep((current) => Math.max(0, current - 1))}
       onNext={() => void handleNext()}
@@ -163,15 +163,15 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
       {step === 0 ? (
         <div className="grid">
           <label className="draft-form">
-            <strong>Choose your primary PSA provider</strong>
+            <strong>Choose your primary service connector</strong>
             <select value={psa} onChange={(event) => setPsa(event.target.value)}>
               <option value="halopsa">HaloPSA</option>
               <option value="hudu">Hudu</option>
-              <option value="connectwise">ConnectWise (coming soon)</option>
-              <option value="it-glue">IT Glue (coming soon)</option>
+              <option value="connectwise">ConnectWise PSA</option>
+              <option value="it-glue">IT Glue documentation</option>
             </select>
           </label>
-          <p className="screen-note">HaloPSA and Hudu connect automatically from this workspace. Other providers will be available soon.</p>
+          <p className="screen-note">Each connector is checked against its configured health endpoint. The final demo summary uses the local ticket store; connector-specific reads and approval-gated writes are available from Connectors and Tickets.</p>
         </div>
       ) : null}
 
@@ -181,6 +181,8 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
             <label>
               API token
               <input
+                type="password"
+                autoComplete="new-password"
                 placeholder="Paste API token"
                 value={credentials}
                 onChange={(event) => setCredentials(event.target.value)}
