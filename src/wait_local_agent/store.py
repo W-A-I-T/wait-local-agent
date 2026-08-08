@@ -2358,6 +2358,62 @@ class Store:
             raise RuntimeError("scheduled job was not persisted")
         return job
 
+    def update_scheduled_job_schedule(
+        self,
+        job_id: int,
+        *,
+        schedule_type: str,
+        cron: str,
+        interval_seconds: int | None,
+        run_at: str | None,
+    ) -> ScheduledJob:
+        now = utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute(
+                """
+                update scheduled_jobs
+                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, updated_at = ?
+                where id = ?
+                """,
+                (cron, schedule_type, interval_seconds, run_at, now, job_id),
+            )
+            client_id = str(row["client_id"]) if row["client_id"] is not None else None
+            detail = f"{schedule_type} schedule updated"
+            self._add_audit_event(
+                connection,
+                "scheduled_job.rescheduled",
+                str(job_id),
+                detail,
+                client_id=client_id,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.rescheduled",
+                str(job_id),
+                "rescheduled",
+                detail,
+                json.dumps(
+                    {
+                        "cron": cron,
+                        "schedule_type": schedule_type,
+                        "interval_seconds": interval_seconds,
+                        "run_at": run_at,
+                    },
+                    sort_keys=True,
+                ),
+                client_id,
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
     def delete_scheduled_job(self, job_id: int) -> ScheduledJob:
         with self._connect() as connection:
             row = connection.execute(
