@@ -276,6 +276,20 @@ def test_m365_license_command_is_available_and_safe_by_default(monkeypatch, tmp_
     assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
 
 
+def test_m365_user_license_detail_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["connectors", "m365-user-license-details", "user@example.test"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "blocked"' in result.output
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
+
+
 def test_m365_mail_folder_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

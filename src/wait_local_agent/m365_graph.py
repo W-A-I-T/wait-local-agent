@@ -23,6 +23,7 @@ MAX_PAGE_SIZE = 200
 MAX_CURSOR_LENGTH = 4096
 MAX_IDENTITY_LENGTH = 320
 MAX_LICENSE_ITEMS = 200
+MAX_LICENSE_DETAIL_ITEMS = 200
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,29 @@ class M365GraphSubscribedSku:
 class M365GraphLicenseReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphSubscribedSku]
+    next_cursor: str = ""
+
+
+@dataclass(frozen=True)
+class M365GraphServicePlan:
+    service_plan_id: str
+    service_plan_name: str
+    provisioning_status: str
+    applies_to: str
+
+
+@dataclass(frozen=True)
+class M365GraphLicenseDetail:
+    id: str
+    sku_id: str
+    sku_part_number: str
+    service_plans: tuple[M365GraphServicePlan, ...]
+
+
+@dataclass(frozen=True)
+class M365GraphLicenseDetailReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphLicenseDetail]
     next_cursor: str = ""
 
 
@@ -282,6 +306,15 @@ class M365GraphReadProvider(Protocol):
     def list_subscribed_skus(self, *, cursor: str | None = None) -> M365GraphLicenseReadResponse:
         ...
 
+    def list_license_details(
+        self,
+        *,
+        identity: str,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphLicenseDetailReadResponse:
+        ...
+
     def list_mail_folders(
         self,
         *,
@@ -389,6 +422,22 @@ class M365GraphClient:
         except M365GraphReadError as exc:
             return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_subscribed_skus(params)
+
+    def list_license_details(
+        self,
+        *,
+        identity: str,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphLicenseDetailReadResponse:
+        try:
+            endpoint = _license_details_endpoint(identity)
+            params = _license_detail_params(page_size, cursor)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("failed", exc.message), []
+            )
+        return self._request_license_details(endpoint, params)
 
     def list_mail_folders(
         self,
@@ -852,6 +901,33 @@ class M365GraphClient:
             _next_cursor(payload),
         )
 
+    def _request_license_details(
+        self,
+        endpoint: str,
+        params: dict[str, str | int],
+    ) -> M365GraphLicenseDetailReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphLicenseDetailReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphLicenseDetailReadResponse(missing, [])
+        try:
+            payload = self._get(endpoint, params=params)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseDetailReadResponse(ConnectorReadResult("failed", exc.message), [])
+        rows = _payload_rows(payload)[:MAX_LICENSE_DETAIL_ITEMS]
+        items = [
+            detail
+            for row in rows
+            if (detail := _normalize_license_detail(row)) is not None
+        ]
+        return M365GraphLicenseDetailReadResponse(
+            ConnectorReadResult("ready", "Microsoft Graph user license detail read succeeded.", len(items)),
+            items,
+            _next_cursor(payload),
+        )
+
     def _request_mail_folders(
         self,
         endpoint: str,
@@ -1199,6 +1275,13 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[1])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_user_license_details_endpoint = (
+        len(endpoint_parts) == 3
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "licenseDetails"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_user_session_revoke_endpoint = (
         len(endpoint_parts) == 3
         and endpoint_parts[0] == "users"
@@ -1266,6 +1349,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_mail_message_item_endpoint
         and not is_user_endpoint
         and not is_user_license_endpoint
+        and not is_user_license_details_endpoint
         and not is_user_session_revoke_endpoint
         and not is_managed_device_retire_endpoint
         and not is_managed_device_sync_endpoint
@@ -1526,6 +1610,20 @@ def _license_list_params(cursor: str | None) -> dict[str, str | int]:
     return params
 
 
+def _license_details_endpoint(identity: str) -> str:
+    return f"users/{quote(_safe_identity(identity), safe='')}/licenseDetails"
+
+
+def _license_detail_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$top": _bounded_page_size(page_size),
+        "$select": "id,skuId,skuPartNumber,servicePlans",
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
 def _payload_rows(payload: object) -> list[Mapping[str, object]]:
     if isinstance(payload, list):
         rows = payload
@@ -1599,6 +1697,35 @@ def _normalize_subscribed_sku(row: Mapping[str, object]) -> M365GraphSubscribedS
         prepaid_warning=_int_value(prepaid.get("warning")),
         prepaid_suspended=_int_value(prepaid.get("suspended")),
         prepaid_locked_out=_int_value(prepaid.get("lockedOut")),
+    )
+
+
+def _normalize_license_detail(row: Mapping[str, object]) -> M365GraphLicenseDetail | None:
+    detail_id = _string_value(row, "id")
+    if not detail_id:
+        return None
+    raw_plans = row.get("servicePlans")
+    service_plans: list[M365GraphServicePlan] = []
+    if isinstance(raw_plans, list):
+        for raw_plan in raw_plans:
+            if not isinstance(raw_plan, Mapping):
+                continue
+            plan_id = _string_value(raw_plan, "servicePlanId")
+            if not plan_id:
+                continue
+            service_plans.append(
+                M365GraphServicePlan(
+                    service_plan_id=plan_id,
+                    service_plan_name=_string_value(raw_plan, "servicePlanName"),
+                    provisioning_status=_string_value(raw_plan, "provisioningStatus"),
+                    applies_to=_string_value(raw_plan, "appliesTo"),
+                )
+            )
+    return M365GraphLicenseDetail(
+        id=detail_id,
+        sku_id=_string_value(row, "skuId"),
+        sku_part_number=_string_value(row, "skuPartNumber"),
+        service_plans=tuple(service_plans),
     )
 
 

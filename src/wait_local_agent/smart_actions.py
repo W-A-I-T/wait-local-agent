@@ -614,7 +614,10 @@ class M365LiveContextAction:
     manifest = SmartActionManifest(
         action_id="m365-live-context",
         title="Microsoft 365 live context",
-        description="Read a bounded Microsoft Graph user, group, license, mailbox-folder, or Intune device context.",
+        description=(
+            "Read a bounded Microsoft Graph user, group, tenant license, per-user "
+            "license detail, mailbox-folder, or Intune device context."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -623,7 +626,7 @@ class M365LiveContextAction:
                 "resource": {
                     "type": "string",
                     "enum": [
-                        "user", "group", "licenses", "mailbox_folders", "mail_messages",
+                        "user", "group", "licenses", "license_details", "mailbox_folders", "mail_messages",
                         "managed_devices",
                     ],
                 },
@@ -642,10 +645,19 @@ class M365LiveContextAction:
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
         resource = payload.get("resource")
-        resources = {"user", "group", "licenses", "mailbox_folders", "mail_messages", "managed_devices"}
+        resources = {
+            "user",
+            "group",
+            "licenses",
+            "license_details",
+            "mailbox_folders",
+            "mail_messages",
+            "managed_devices",
+        }
         if not isinstance(resource, str) or resource not in resources:
             return _failed(
-                "resource must be one of user, group, licenses, mailbox_folders, mail_messages, or managed_devices"
+                "resource must be one of user, group, licenses, license_details, "
+                "mailbox_folders, mail_messages, or managed_devices"
             )
         identity = payload.get("identity")
         if identity is not None and (
@@ -653,8 +665,14 @@ class M365LiveContextAction:
         ):
             return _failed("identity must be a non-empty string of at most 200 characters")
         normalized_identity = identity.strip() if isinstance(identity, str) else None
-        if resource in {"user", "group", "mailbox_folders", "mail_messages"} and normalized_identity is None:
-            return _failed("identity is required for user, group, mailbox_folders, and mail_messages resources")
+        if (
+            resource in {"user", "group", "license_details", "mailbox_folders", "mail_messages"}
+            and normalized_identity is None
+        ):
+            return _failed(
+                "identity is required for user, group, license_details, mailbox_folders, "
+                "and mail_messages resources"
+            )
         folder_id = payload.get("folder_id")
         if resource == "mail_messages" and (
             not isinstance(folder_id, str) or not folder_id.strip() or len(folder_id.strip()) > 320
@@ -674,6 +692,11 @@ class M365LiveContextAction:
                 response = provider.list_groups(identity=normalized_identity, page_size=limit)
             elif resource == "licenses":
                 response = provider.list_subscribed_skus()
+            elif resource == "license_details":
+                response = provider.list_license_details(
+                    identity=normalized_identity or "",
+                    page_size=limit,
+                )
             elif resource == "mailbox_folders":
                 response = provider.list_mail_folders(identity=normalized_identity, page_size=limit)
             elif resource == "mail_messages":

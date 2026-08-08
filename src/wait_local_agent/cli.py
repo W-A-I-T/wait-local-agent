@@ -87,6 +87,7 @@ from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupReadResponse,
+    M365GraphLicenseDetailReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessageReadResponse,
@@ -1837,6 +1838,22 @@ def m365_licenses(cursor: str | None = None) -> None:
     )
 
 
+@connectors_app.command("m365-user-license-details")
+def m365_user_license_details(
+    identity: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_m365_license_detail_response(
+        "users.license-details.list",
+        _m365_client().list_license_details(
+            identity=identity,
+            cursor=cursor,
+            page_size=page_size if page_size is not None else load_settings().m365_page_size,
+        ),
+    )
+
+
 @connectors_app.command("m365-mail-folders")
 def m365_mail_folders(
     identity: str | None = None,
@@ -3026,6 +3043,24 @@ def _print_m365_group_response(read_type: str, response: M365GraphGroupReadRespo
 
 
 def _print_m365_license_response(read_type: str, response: M365GraphLicenseReadResponse) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_m365_license_detail_response(
+    read_type: str,
+    response: M365GraphLicenseDetailReadResponse,
+) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
         json.dumps(

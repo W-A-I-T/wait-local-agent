@@ -13,6 +13,8 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
     M365GraphLicenseChangeResult,
+    M365GraphLicenseDetail,
+    M365GraphLicenseDetailReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
@@ -28,6 +30,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
     M365GraphReadError,
+    M365GraphServicePlan,
     M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
     M365GraphUser,
@@ -36,6 +39,8 @@ from wait_local_agent.m365_graph import (
     _api_base_url,
     _bounded_page_size,
     _group_list_params,
+    _license_detail_params,
+    _license_details_endpoint,
     _list_params,
     _mail_folder_endpoint,
     _mail_folder_params,
@@ -44,6 +49,7 @@ from wait_local_agent.m365_graph import (
     _managed_device_params,
     _next_cursor,
     _normalize_group,
+    _normalize_license_detail,
     _normalize_mail_folder,
     _normalize_mail_message,
     _normalize_managed_device,
@@ -70,6 +76,7 @@ def _configured(settings, *, allow_http_probing: bool = True):
 def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     assert M365GraphClient(settings).list_users().result.status == "blocked"
     assert M365GraphClient(settings).list_groups().result.status == "blocked"
+    assert M365GraphClient(settings).list_license_details(identity="user-1").result.status == "blocked"
     assert (
         M365GraphClient(settings)
         .update_mailbox_settings(user_identity="user-1", settings={"locale": "en-US"})
@@ -80,6 +87,10 @@ def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     missing = M365GraphClient(replace(settings, allow_http_probing=True)).health()
     assert missing.status == "not_configured"
     assert "WAIT_M365_ACCESS_TOKEN" in missing.message
+    missing_license_details = M365GraphClient(
+        replace(settings, allow_http_probing=True)
+    ).list_license_details(identity="user-1")
+    assert missing_license_details.result.status == "not_configured"
 
 
 def test_m365_graph_user_creation_is_write_gated_and_never_returns_password(settings) -> None:
@@ -454,6 +465,63 @@ def test_m365_graph_subscribed_sku_reads_select_license_context(settings) -> Non
     )
 
 
+def test_m365_graph_reads_per_user_license_details(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/users/alice@example.test/licenseDetails"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == "id,skuId,skuPartNumber,servicePlans"
+        assert request.url.params["$skiptoken"] == "detail-next"
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "detail-1",
+                        "skuId": "sku-guid",
+                        "skuPartNumber": "M365_BUSINESS_PREMIUM",
+                        "servicePlans": [
+                            {
+                                "servicePlanId": "plan-guid",
+                                "servicePlanName": "EXCHANGE_S_FOUNDATION",
+                                "provisioningStatus": "Success",
+                                "appliesTo": "User",
+                            },
+                            {"servicePlanName": "missing-id"},
+                            "malformed",
+                        ],
+                    }
+                ],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/alice@example.test/licenseDetails?$skiptoken=detail-next-2",
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_license_details(
+        identity="alice@example.test",
+        cursor="detail-next",
+        page_size=2,
+    )
+
+    assert response == M365GraphLicenseDetailReadResponse(
+        result=response.result,
+        items=[
+            M365GraphLicenseDetail(
+                "detail-1",
+                "sku-guid",
+                "M365_BUSINESS_PREMIUM",
+                (M365GraphServicePlan("plan-guid", "EXCHANGE_S_FOUNDATION", "Success", "User"),),
+            )
+        ],
+        next_cursor="detail-next-2",
+    )
+    assert _license_details_endpoint("alice@example.test").endswith("/licenseDetails")
+    assert _license_detail_params(2, "next")["$top"] == 2
+    assert _normalize_license_detail({"skuId": "missing-id"}) is None
+    assert _normalize_license_detail({"id": "detail-2"}) == M365GraphLicenseDetail(
+        "detail-2", "", "", ()
+    )
+
+
 def test_m365_graph_mail_folder_reads_use_user_path_and_metadata_only(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/mailFolders")
@@ -806,6 +874,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_subscribed_skus()
     assert "HTTP 403" in license_result.result.message
     assert "private body" not in license_result.result.message
+    license_detail_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_license_details(identity="user@example.test")
+    assert "HTTP 403" in license_detail_result.result.message
+    assert "private body" not in license_detail_result.result.message
     folder_result = M365GraphClient(
         _configured(settings), transport=httpx.MockTransport(denied)
     ).list_mail_folders(identity="user@example.test")
@@ -834,9 +907,15 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_mail_messages(identity="user@example.test", folder_id="inbox")
     assert "malformed JSON" in message_result.result.message
     assert M365GraphClient(_configured(settings)).list_users(page_size=0).result.status == "failed"
+    assert M365GraphClient(_configured(settings)).list_license_details(
+        identity="user@example.test", page_size=0
+    ).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_users(identity="bad\nvalue").result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(identity="bad\nvalue").result.status == "failed"
+    assert M365GraphClient(_configured(settings)).list_license_details(
+        identity="bad\nvalue"
+    ).result.status == "failed"
     assert (
         M365GraphClient(_configured(settings))
         .list_mail_messages(identity=None, folder_id="inbox")
