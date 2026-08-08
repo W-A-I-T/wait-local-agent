@@ -1,23 +1,45 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-ApprovalStatus = Literal["pending", "approved", "rejected"]
+ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
+ConnectWiseWriteStatus = Literal[
+    "not_started", "blocked", "not_configured", "succeeded", "failed"
+]
 ActionKind = Literal[
     "ticket.triage",
     "ticket.assign",
     "ticket.follow_up",
     "ticket.alert",
     "ticket.draft_response",
+    "ticket.quality",
+    "ticket.sentiment",
+    "ticket.escalation",
+    "ticket.similar",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 RiskLevel = Literal["low", "medium", "high"]
-AgentRunStatus = Literal["queued", "pending_approval", "completed", "failed", "rejected"]
+AgentRunStatus = Literal[
+    "queued",
+    "pending_approval",
+    "completed",
+    "failed",
+    "rejected",
+    "cancelled",
+]
+AGENT_BACKFILL_MAX_CONCURRENCY = 4
+DEFAULT_APPROVAL_EXPIRY_SECONDS = 24 * 60 * 60
+MAX_APPROVAL_EXPIRY_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_EVENT_MAX_RETRIES = 3
+DEFAULT_EVENT_RETRY_DELAY_SECONDS = 60
+MAX_EVENT_RETRY_DELAY_SECONDS = 60 * 60
+EVENT_RETRY_POLL_SECONDS = 30
+EVENT_RETRY_BATCH_SIZE = 10
 
 
 @dataclass(frozen=True)
@@ -29,6 +51,17 @@ class Ticket:
     priority: str
     status: str
     client_id: str | None = None
+    requester_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TicketNote:
+    id: int | None
+    ticket_id: str
+    client_id: str
+    author: str
+    body: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +111,7 @@ class ApprovalRequest:
     execution_result_json: str = "{}"
     client_id: str | None = None
     approver_id: str | None = None
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +127,28 @@ class EventHistoryEntry:
 
 
 @dataclass(frozen=True)
+class EventDelivery:
+    id: int | None
+    idempotency_key: str
+    event_type: str
+    entity_type: str
+    entity_id: str
+    payload_json: str
+    status: str
+    matched_agent_count: int
+    agent_ids_json: str
+    run_ids_json: str
+    error_detail: str
+    received_at: str
+    processed_at: str
+    client_id: str | None = None
+    agent_attempts_json: str = "{}"
+    retry_count: int = 0
+    max_retries: int = DEFAULT_EVENT_MAX_RETRIES
+    next_retry_at: str | None = None
+
+
+@dataclass(frozen=True)
 class ConnectorStatus:
     id: str
     kind: ConnectorKind
@@ -105,6 +161,16 @@ class ConnectorStatus:
 
 @dataclass(frozen=True)
 class HaloTicketDraft:
+    ticket_id: str
+    action_type: str
+    payload_json: str
+    approval_required: bool
+    status: ApprovalStatus
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ConnectWiseTicketDraft:
     ticket_id: str
     action_type: str
     payload_json: str
@@ -132,8 +198,27 @@ class HaloWriteRequest:
 
 
 @dataclass(frozen=True)
+class ConnectWiseWriteRequest:
+    ticket_id: str
+    action_type: str
+    fields: dict[str, object]
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
 class HaloWriteResult:
     status: HaloWriteStatus
+    message: str
+    action_type: str
+    ticket_id: str
+    endpoint: str = ""
+    status_code: int | None = None
+    remote_id: str = ""
+
+
+@dataclass(frozen=True)
+class ConnectWiseWriteResult:
+    status: ConnectWiseWriteStatus
     message: str
     action_type: str
     ticket_id: str
@@ -199,6 +284,7 @@ class HuduArticle:
     folder_id: str
     updated_at: str
     url: str
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -219,6 +305,37 @@ class WorkflowTemplate:
     approval_required: bool
     risk_level: RiskLevel = "low"
     preview_fields: tuple[str, ...] = ()
+    tool_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TemplateGalleryEntry:
+    id: str
+    source_template_id: str
+    name: str
+    trigger: str
+    description: str
+    action_type: str
+    approval_required: bool
+    risk_level: str
+    preview_fields_json: str
+    provenance: str
+    instructions: str
+    enabled: bool
+    version: int
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TemplateGalleryRevision:
+    id: int
+    gallery_id: str
+    version: int
+    definition_json: str
+    created_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +349,30 @@ class WorkflowRun:
     created_at: str
     updated_at: str
     client_id: str | None = None
+    template_version: int | None = None
+
+
+@dataclass(frozen=True)
+class TechnicianChatSession:
+    id: str
+    client_id: str
+    principal_id: str
+    status: str
+    ticket_id: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class TechnicianChatMessage:
+    id: int | None
+    session_id: str
+    role: Literal["user", "assistant"]
+    message: str
+    action_id: str | None
+    status: str
+    ticket_id: str | None
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -260,6 +401,13 @@ class ScheduledJob:
     updated_at: str
     client_id: str | None = None
     next_run_at: str | None = None
+    job_kind: str = "workflow"
+    agent_id: str | None = None
+    entity_id: str | None = None
+    schedule_type: str = "cron"
+    interval_seconds: int | None = None
+    run_at: str | None = None
+    timezone: str = "UTC"
 
 
 @dataclass(frozen=True)
@@ -467,6 +615,7 @@ class ExecutionRun:
     finished_at: str
     trigger_source: str
     client_id: str | None = None
+    metadata_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -499,6 +648,16 @@ class ExecutionArtifact:
 
 
 @dataclass(frozen=True)
+class RmmExecutionScope:
+    execution_id: str
+    provider_id: str
+    script_id: str
+    device_id: str
+    client_id: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class AgentDefinition:
     id: str
     name: str
@@ -515,6 +674,23 @@ class AgentDefinition:
     version: int
     created_at: str
     updated_at: str
+    run_once_per_entity: bool = True
+    depends_on_agent_ids: list[str] = field(default_factory=list)
+    execution_window_start: str | None = None
+    execution_window_end: str | None = None
+    execution_window_timezone: str = "UTC"
+    context_sources: list[str] = field(default_factory=list)
+    approval_expiry_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class AgentDefinitionRevision:
+    id: int | None
+    agent_id: str
+    version: int
+    definition_json: str
+    created_at: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -528,6 +704,28 @@ class AgentRun:
     state_json: str
     started_at: str
     finished_at: str
+    revision_version: int | None = None
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentBackfill:
+    id: int | None
+    agent_id: str
+    entity_ids_json: str
+    input_json: str
+    max_concurrency: int
+    status: str
+    next_index: int
+    processed_count: int
+    succeeded_count: int
+    failed_count: int
+    run_ids_json: str
+    failed_entity_ids_json: str
+    actor: str
+    error_detail: str
+    created_at: str
+    updated_at: str
     client_id: str | None = None
 
 

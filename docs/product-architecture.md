@@ -98,7 +98,7 @@ Everything in the current repo at `W-A-I-T/wait-local-agent`. Full feature list:
 | Approval lifecycle + payload preview | ✓ Built | `src/wait_local_agent/models.py` |
 | HaloPSA: read + draft-write + execution | ✓ Built | `src/wait_local_agent/halopsa.py` |
 | Hudu: read-only | ✓ Built | `src/wait_local_agent/hudu.py` |
-| 5 MSP workflow templates | ✓ Built | `src/wait_local_agent/workflows.py` |
+| 9 MSP workflow templates, including four tool-backed reviews | ✓ Built | `src/wait_local_agent/workflows.py` |
 | Docker Compose appliance | ✓ Built | `docker-compose.yml` |
 | React/Vite dashboard | ✓ Built | `ui/src/App.tsx` |
 | Backup/restore | ✓ Built | `src/wait_local_agent/backup.py` |
@@ -119,7 +119,7 @@ Includes:
 - ConnectWise PSA connector (read + approval-gated write)
 - Autotask PSA connector (read + approval-gated write)
 - NinjaOne RMM connector (read-only device inventory, alerts)
-- Datto RMM connector (read-only)
+- Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
 - QBR report generator (per-client PDF: ticket count, resolution rate, top categories, automation savings)
@@ -127,7 +127,7 @@ Includes:
 - Time-saved / ROI dashboard
 - Client/tenant boundary enforcement (`client_id` isolation on all queries)
 - White-label branding config (`WAIT_PRODUCT_NAME`, logo, color scheme)
-- Premium MSP workflow templates (15+ beyond the 5 in open core)
+- Premium MSP workflow templates (15+ beyond the 9 in open core)
 
 ### Layer C — WAIT Founder Pack ($49/month per workspace, paid proprietary)
 
@@ -222,9 +222,9 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Autotask | Phase 4 | ✓ | ✓ gated | MSP Pack |
 | NinjaOne RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
-| M365 / Entra | Phase 4 | ✓ read-only | — first | MSP Pack |
+| M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership/license/session actions | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
-| N-able | Phase 5 | ✓ | — | MSP Pack |
+| N-able N-central | Phase 4 | ✓ bounded metadata | — | Public core |
 | Kaseya VSA | Phase 5 | ✓ | — | MSP Pack |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |
@@ -319,7 +319,7 @@ All must be explicitly set `true` by the operator. Even then, writes require an 
 | Accidental cloud upload | Explicit user trigger + diff preview; no background sync ever |
 | Poisoned documentation | Path validation (`_validate_allowed_path`); no code execution from KB |
 | Bad model output | All model outputs are drafts; human approval required before execution |
-| Destructive M365/RMM action | Read-only first in all new connectors; writes only after Phase 4 + approval |
+| Destructive M365/RMM action | M365 writes are bounded and approval-gated; RMM remains read-only until separately reviewed |
 | Malicious local user | Immutable audit trail; Phase 2: approver identity logged in events |
 | Plaintext connector secrets | Phase 1: Fernet-encrypted vault replaces env-only secret storage |
 

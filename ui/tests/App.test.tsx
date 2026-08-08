@@ -36,6 +36,7 @@ const approvals = [
     execution_status: "not_started",
     execution_message: "",
     payload: { fields: { note: "Call customer", status: "In Progress" } },
+    expires_at: "2026-08-09T00:00:00+00:00",
     can_execute: false,
     block_reason: "",
     workflow_run_id: "run-1"
@@ -71,6 +72,7 @@ describe("App", () => {
     expect(screen.getAllByText("Hudu connector").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("heading", { name: "Payload Preview" }).length).toBeGreaterThan(0);
     expect(screen.getByText(/Workflow run run-1: running/)).toBeInTheDocument();
+    expect(screen.getByText("Approval deadline: 2026-08-09T00:00:00+00:00")).toBeInTheDocument();
   });
 
   it("creates drafts, edits payload fields, and approves from controls", async () => {

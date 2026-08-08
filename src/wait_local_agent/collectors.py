@@ -173,7 +173,13 @@ class CollectorService:
         )
         return result
 
-    def preview(self, module_id: str, config: dict[str, Any]) -> CollectorPreview:
+    def preview(
+        self,
+        module_id: str,
+        config: dict[str, Any],
+        *,
+        client_id: str | None = None,
+    ) -> CollectorPreview:
         module = self.registry.get(module_id)
         validation = module.validate_config(config)
         if not validation.passed:
@@ -183,6 +189,7 @@ class CollectorService:
             "collector.previewed",
             module_id,
             f"{preview.source_name} assets={preview.estimated_assets}",
+            client_id=client_id,
         )
         return preview
 

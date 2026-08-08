@@ -19,7 +19,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -40,6 +40,18 @@ ESTIMATED_MINUTES_SAVED_DERIVATION = (
     "Sum of the per-action estimated_minutes_saved declared in smart-action "
     "manifests for successful smart-action executions in the range. This is "
     "derived from manifest estimates, not measured wall-clock time."
+)
+
+APPROVAL_RATE_DERIVATION = (
+    "Approved approval requests divided by decided approval requests in the "
+    "requested date range; pending requests are reported separately."
+)
+
+TICKET_METRICS_DERIVATION = (
+    "Distinct tickets referenced by workflow/agent source records or explicit "
+    "ticket_id fields in redacted execution-step inputs. Resolved means the "
+    "current ticket status is resolved or closed; historical resolution time "
+    "is not inferred."
 )
 
 
@@ -86,6 +98,7 @@ class ExecutionRecorder:
         status: str,
         trigger_source: str,
         client_id: str | None = None,
+        metadata: dict[str, object] | None = None,
         steps: tuple[StepRecord, ...] = (),
         artifacts: tuple[ArtifactRecord, ...] = (),
     ) -> int | None:
@@ -107,6 +120,7 @@ class ExecutionRecorder:
                     status=status,
                     trigger_source=trigger_source,
                     client_id=client_id,
+                    metadata=metadata,
                     steps=steps,
                     artifacts=artifacts,
                 )
@@ -137,6 +151,7 @@ class ExecutionRecorder:
         status: str,
         trigger_source: str,
         client_id: str | None,
+        metadata: dict[str, object] | None,
         steps: tuple[StepRecord, ...],
         artifacts: tuple[ArtifactRecord, ...],
     ) -> int:
@@ -159,6 +174,7 @@ class ExecutionRecorder:
                 now,
                 trigger_source,
                 client_id=client_id,
+                metadata=metadata,
             )
             ordinal = 0
         if run.id is None:
@@ -442,6 +458,55 @@ def build_analytics_summary(
         started_from, started_to, client_id
     )
     minutes = sum(estimates.get(action_id, 0) * count for action_id, count in success_counts)
+    activity_breakdown = [
+        {
+            "run_kind": run_kind,
+            "trigger_source": trigger_source,
+            "status": status,
+            "count": count,
+        }
+        for run_kind, trigger_source, status, count in store.execution_activity_counts(
+            started_from, started_to, client_id
+        )
+    ]
+    approval_status_counts = dict(
+        store.approval_activity_counts(started_from, started_to, client_id)
+    )
+    approved = approval_status_counts.get("approved", 0)
+    rejected = approval_status_counts.get("rejected", 0)
+    decided = approved + rejected
+    ticket_activity = store.execution_ticket_activity(started_from, started_to, client_id)
+    resolved_tickets = sum(
+        1 for _, status in ticket_activity if status.strip().lower() in {"resolved", "closed"}
+    )
+    workflow_buckets: dict[tuple[str, str], dict[str, object]] = {}
+    for run_kind, workflow_id, status, count in store.execution_workflow_activity(
+        started_from, started_to, client_id
+    ):
+        workflow_bucket = workflow_buckets.setdefault(
+            (run_kind, workflow_id),
+            {"run_kind": run_kind, "workflow_id": workflow_id, "total": 0, "statuses": {}},
+        )
+        workflow_bucket["total"] = cast(int, workflow_bucket["total"]) + count
+        statuses = cast(dict[str, int], workflow_bucket["statuses"])
+        statuses[status] = statuses.get(status, 0) + count
+    activity_by_workflow: list[dict[str, object]] = []
+    for workflow_bucket in workflow_buckets.values():
+        statuses = cast(dict[str, int], workflow_bucket.pop("statuses"))
+        succeeded_for_bucket = sum(
+            count for status, count in statuses.items() if status in EXECUTION_SUCCESS_STATUSES
+        )
+        activity_by_workflow.append(
+            {
+                **workflow_bucket,
+                "succeeded": succeeded_for_bucket,
+                "status_counts": [
+                    {"status": status, "count": count}
+                    for status, count in sorted(statuses.items())
+                ],
+            }
+        )
+    activity_by_workflow.sort(key=lambda item: (str(item["run_kind"]), str(item["workflow_id"])))
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": client_id,
@@ -452,6 +517,23 @@ def build_analytics_summary(
             "rate": (succeeded / total) if total else 0.0,
         },
         "failures_by_status": failures_by_status,
+        "activity_breakdown": activity_breakdown,
+        "approval_rate": {
+            "requested": sum(approval_status_counts.values()),
+            "decided": decided,
+            "approved": approved,
+            "rejected": rejected,
+            "pending": approval_status_counts.get("pending", 0),
+            "rate": (approved / decided) if decided else 0.0,
+            "derivation": APPROVAL_RATE_DERIVATION,
+        },
+        "ticket_metrics": {
+            "touched": len(ticket_activity),
+            "resolved": resolved_tickets,
+            "resolution_rate": (resolved_tickets / len(ticket_activity)) if ticket_activity else 0.0,
+            "derivation": TICKET_METRICS_DERIVATION,
+        },
+        "activity_by_workflow": activity_by_workflow,
         "estimated_minutes_saved": {
             "minutes": minutes,
             "estimate": True,

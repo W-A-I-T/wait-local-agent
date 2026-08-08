@@ -12,21 +12,55 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import AgentDefinition, AgentRun, utc_now
+from wait_local_agent.models import (
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    AgentDefinition,
+    AgentRun,
+    utc_now,
+)
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
-SUPPORTED_AGENT_TRIGGER = "manual"
+MAX_AGENT_RETRIES = 3
+SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled", "event"})
 SUPPORTED_ENTITY_TYPE = "ticket"
+SUPPORTED_EVENT_TYPES = frozenset(
+    {
+        "ticket.created",
+        "ticket.updated",
+        "ticket.priority_changed",
+        "ticket.status_changed",
+        "ticket.closed",
+        "time_entry.added",
+        "workflow.completed",
+    }
+)
+EVENT_FILTER_FIELDS = frozenset(
+    {
+        "event_type",
+        "client_id",
+        "priority",
+        "status",
+        "ticket_id",
+        "workflow_template_id",
+        "workflow_run_id",
+    }
+)
+SUPPORTED_CONTEXT_SOURCES = frozenset({"ticket", "client", "knowledge"})
+MAX_CONTEXT_SOURCES = 3
+EXECUTION_WINDOW_TIME_FORMAT = "%H:%M"
 
 
 @dataclass(frozen=True)
@@ -40,6 +74,7 @@ class ToolDefinition:
     required_role: str
     approval_required: bool
     access_mode: str
+    approval_expiry_seconds: int
 
 
 @dataclass(frozen=True)
@@ -51,6 +86,8 @@ class AgentExecutionResult:
     steps: list[dict[str, object]]
     approval_id: int | None = None
     error_detail: str = ""
+    final_result: dict[str, object] = field(default_factory=dict)
+    revision_version: int | None = None
 
 
 class AgentDefinitionError(ValueError):
@@ -80,6 +117,7 @@ class AgentService:
                 required_role=manifest.required_role,
                 approval_required=manifest.requires_approval,
                 access_mode=manifest.access_mode,
+                approval_expiry_seconds=manifest.approval_expiry_seconds,
             )
             for manifest in self.smart_actions.list()
         ]
@@ -104,7 +142,15 @@ class AgentService:
         max_steps: int,
         execution_timeout_seconds: float,
         client_id: str | None,
+        run_once_per_entity: bool = True,
+        depends_on_agent_ids: list[str] | None = None,
+        execution_window_start: str | None = None,
+        execution_window_end: str | None = None,
+        execution_window_timezone: str = "UTC",
+        context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
+        agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
             name=name,
             description=description,
@@ -115,10 +161,23 @@ class AgentService:
             steps=steps,
             max_steps=max_steps,
             execution_timeout_seconds=execution_timeout_seconds,
+            depends_on_agent_ids=depends_on_agent_ids or [],
+            agent_id=agent_id,
+            client_id=client_id,
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_window_timezone=execution_window_timezone,
+            context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
+        )
+        window_start, window_end, window_timezone = _normalized_execution_window(
+            execution_window_start,
+            execution_window_end,
+            execution_window_timezone,
         )
         now = utc_now()
         definition = AgentDefinition(
-            id=f"agent-{uuid.uuid4().hex}",
+            id=agent_id,
             name=name.strip(),
             description=description.strip(),
             enabled=enabled,
@@ -133,6 +192,13 @@ class AgentService:
             version=1,
             created_at=now,
             updated_at=now,
+            run_once_per_entity=run_once_per_entity,
+            depends_on_agent_ids=list(depends_on_agent_ids or []),
+            execution_window_start=window_start,
+            execution_window_end=window_end,
+            execution_window_timezone=window_timezone,
+            context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.create_agent_definition(definition)
 
@@ -150,6 +216,13 @@ class AgentService:
         steps: list[dict[str, object]],
         max_steps: int,
         execution_timeout_seconds: float,
+        run_once_per_entity: bool = True,
+        depends_on_agent_ids: list[str] | None = None,
+        execution_window_start: str | None = None,
+        execution_window_end: str | None = None,
+        execution_window_timezone: str = "UTC",
+        context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -161,6 +234,19 @@ class AgentService:
             steps=steps,
             max_steps=max_steps,
             execution_timeout_seconds=execution_timeout_seconds,
+            depends_on_agent_ids=depends_on_agent_ids or [],
+            agent_id=existing.id,
+            client_id=existing.client_id,
+            execution_window_start=execution_window_start,
+            execution_window_end=execution_window_end,
+            execution_window_timezone=execution_window_timezone,
+            context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
+        )
+        window_start, window_end, window_timezone = _normalized_execution_window(
+            execution_window_start,
+            execution_window_end,
+            execution_window_timezone,
         )
         updated = AgentDefinition(
             id=existing.id,
@@ -178,6 +264,13 @@ class AgentService:
             version=existing.version + 1,
             created_at=existing.created_at,
             updated_at=utc_now(),
+            run_once_per_entity=run_once_per_entity,
+            depends_on_agent_ids=list(depends_on_agent_ids or []),
+            execution_window_start=window_start,
+            execution_window_end=window_end,
+            execution_window_timezone=window_timezone,
+            context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.update_agent_definition(updated)
 
@@ -188,20 +281,29 @@ class AgentService:
         entity_id: str,
         actor: str,
         input_payload: dict[str, object],
+        retry_count: int = 0,
+        retry_of_run_id: int | None = None,
     ) -> AgentExecutionResult:
         if not definition.enabled:
             raise AgentDefinitionError("agent is disabled")
+        if not self.execution_window_open(definition):
+            raise AgentDefinitionError("agent execution window is closed")
         if definition.entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("agent entity_type is not supported")
         client_id = _normalize_client_id(definition.client_id)
         if self.store.get_ticket(entity_id, client_id=client_id) is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
+        execution_context = self._build_context(definition, entity_id)
         state: dict[str, object] = {
             "entity_id": entity_id,
             "input": redact_value(input_payload),
+            "context": execution_context,
             "steps": [],
             "pending_approval_step": None,
+            "retry_count": retry_count,
         }
+        if retry_of_run_id is not None:
+            state["retry_of_run_id"] = retry_of_run_id
         run = self.store.create_agent_run(
             definition.id,
             entity_id,
@@ -209,9 +311,62 @@ class AgentService:
             "queued",
             0,
             state,
+            revision_version=definition.version,
             client_id=client_id,
         )
         return self._continue(definition, run, actor, start_step=0, state=state)
+
+    @staticmethod
+    def execution_window_open(
+        definition: AgentDefinition,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        if definition.execution_window_start is None:
+            return True
+        try:
+            timezone = ZoneInfo(definition.execution_window_timezone)
+            start = _window_minutes(definition.execution_window_start)
+            end = _window_minutes(cast(str, definition.execution_window_end))
+        except (TypeError, ValueError, ZoneInfoNotFoundError) as exc:
+            raise AgentDefinitionError("agent execution window is invalid") from exc
+        current = now or datetime.now(timezone)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone)
+        else:
+            current = current.astimezone(timezone)
+        current_minutes = current.hour * 60 + current.minute
+        if start < end:
+            return start <= current_minutes < end
+        return current_minutes >= start or current_minutes < end
+
+    def retry(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+    ) -> AgentExecutionResult:
+        """Retry a failed or cancelled run with a small persisted attempt cap."""
+        if run.status not in {"failed", "cancelled"}:
+            raise AgentDefinitionError("only failed or cancelled runs can be retried")
+        if run.revision_version is not None and run.revision_version != definition.version:
+            raise AgentDefinitionError("agent definition changed; retry requires the run's revision")
+        state = _state_object(run.state_json)
+        retry_count = state.get("retry_count", 0)
+        if not isinstance(retry_count, int) or retry_count < 0:
+            raise AgentDefinitionError("agent retry state is malformed")
+        if retry_count >= MAX_AGENT_RETRIES:
+            raise AgentDefinitionError(f"agent retry limit of {MAX_AGENT_RETRIES} has been reached")
+        input_payload = _state_object(state.get("input"))
+        return self.run(
+            definition,
+            entity_id=run.entity_id,
+            actor=actor,
+            input_payload=input_payload,
+            retry_count=retry_count + 1,
+            retry_of_run_id=run.id,
+        )
 
     def resume(
         self,
@@ -223,6 +378,7 @@ class AgentService:
     ) -> AgentExecutionResult:
         if run.status != "pending_approval":
             return self._result(run)
+        definition = self._definition_for_run(definition, run)
         if approver == run.actor:
             raise PermissionError("approver cannot approve the requesting actor's run")
         state = _state_object(run.state_json)
@@ -252,6 +408,7 @@ class AgentService:
         if action_result is None:
             raise AgentDefinitionError("agent approval could not be completed")
         self._apply_result(pending_step, action_result)
+        state["final_result"] = _final_result_from_action(pending_step["tool_id"], action_result)
         state["pending_approval_step"] = None
         if action_result.status != "success":
             return self._finish(
@@ -268,6 +425,101 @@ class AgentService:
             run.actor,
             start_step=run.current_step + 1,
             state=state,
+        )
+
+    def cancel(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+        approver_role: Role,
+    ) -> AgentExecutionResult:
+        if run.status == "cancelled":
+            return self._result(run)
+        if run.status not in {"queued", "pending_approval"}:
+            raise AgentDefinitionError("only queued or approval-paused runs can be cancelled")
+        definition = self._definition_for_run(definition, run)
+        state = _state_object(run.state_json)
+        pending_index = state.get("pending_approval_step")
+        if isinstance(pending_index, int):
+            steps = _state_steps(state)
+            if 0 <= pending_index < len(steps):
+                approval_id = steps[pending_index].get("approval_id")
+                if isinstance(approval_id, int):
+                    approval = self.store.get_approval_request(approval_id)
+                    if approval is not None and approval.status == "pending":
+                        self.smart_actions.update_approval(
+                            approval_id,
+                            "rejected",
+                            comment="Agent run cancelled",
+                            approver=actor if actor != run.actor else "system:cancellation",
+                            approver_role=approver_role,
+                        )
+                steps[pending_index]["status"] = "cancelled"
+                steps[pending_index]["error_detail"] = "agent run cancelled"
+                state["steps"] = steps
+        state["pending_approval_step"] = None
+        state["error_detail"] = "agent run cancelled"
+        return self._finish(
+            definition,
+            run,
+            "cancelled",
+            run.current_step,
+            state,
+            actor=actor,
+        )
+
+    def _definition_for_run(self, definition: AgentDefinition, run: AgentRun) -> AgentDefinition:
+        if run.revision_version is None or run.revision_version == definition.version:
+            return definition
+        revision = self.store.get_agent_definition_revision(
+            run.agent_id,
+            run.revision_version,
+            run.client_id,
+        )
+        if revision is None and definition.client_id == run.client_id:
+            revision = self.store.get_agent_definition_revision(
+                run.agent_id,
+                run.revision_version,
+                None,
+            )
+        if revision is None:
+            raise AgentDefinitionError("agent run definition revision is no longer available")
+        try:
+            payload = json.loads(revision.definition_json)
+        except json.JSONDecodeError as exc:
+            raise AgentDefinitionError("agent run definition revision is malformed") from exc
+        if not isinstance(payload, dict):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        filters = payload.get("filters", {})
+        enabled_tools = payload.get("enabled_tools", [])
+        steps = payload.get("steps", [])
+        dependencies = payload.get("depends_on_agent_ids", [])
+        if not isinstance(filters, dict) or not isinstance(enabled_tools, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        if not isinstance(steps, list) or not isinstance(dependencies, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        return AgentDefinition(
+            id=definition.id,
+            name=str(payload.get("name", definition.name)),
+            description=str(payload.get("description", definition.description)),
+            enabled=bool(payload.get("enabled", definition.enabled)),
+            trigger=str(payload.get("trigger", definition.trigger)),
+            entity_type=str(payload.get("entity_type", definition.entity_type)),
+            filters=cast(dict[str, object], filters),
+            enabled_tools=cast(list[str], enabled_tools),
+            steps=cast(list[dict[str, object]], steps),
+            max_steps=int(payload.get("max_steps", definition.max_steps)),
+            execution_timeout_seconds=float(
+                payload.get("execution_timeout_seconds", definition.execution_timeout_seconds)
+            ),
+            client_id=run.client_id,
+            version=run.revision_version,
+            created_at=definition.created_at,
+            updated_at=revision.created_at,
+            run_once_per_entity=bool(payload.get("run_once_per_entity", definition.run_once_per_entity)),
+            depends_on_agent_ids=cast(list[str], dependencies),
         )
 
     def _continue(
@@ -307,6 +559,8 @@ class AgentService:
             payload = dict(input_payload)
             payload.update(configured_payload)
             payload.setdefault("ticket_id", run.entity_id)
+            if state.get("context"):
+                payload["_agent_context"] = state["context"]
             if tool_id not in definition.enabled_tools:
                 return self._finish(
                     definition,
@@ -322,6 +576,7 @@ class AgentService:
                     payload,
                     actor,
                     client_id=definition.client_id,
+                    approval_expiry_seconds=definition.approval_expiry_seconds,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -331,6 +586,7 @@ class AgentService:
                 "input": redact_value(payload),
             }
             self._apply_result(step, action_result)
+            state["final_result"] = _final_result_from_action(tool_id, action_result)
             steps.append(step)
             state["steps"] = steps
             if action_result.status == "pending_approval":
@@ -356,6 +612,57 @@ class AgentService:
             actor=actor,
         )
 
+    def _build_context(self, definition: AgentDefinition, entity_id: str) -> dict[str, object]:
+        if not definition.context_sources:
+            return {}
+        ticket = self.store.get_ticket(entity_id, client_id=definition.client_id)
+        if ticket is None:
+            raise AgentDefinitionError("ticket was not found in the agent scope")
+        context: dict[str, object] = {}
+        if "ticket" in definition.context_sources:
+            context["ticket"] = {
+                "id": ticket.id,
+                "client": _bounded_context_text(ticket.client, 200),
+                "subject": _bounded_context_text(ticket.subject, 500),
+                "body": _bounded_context_text(ticket.body, 4000),
+                "priority": _bounded_context_text(ticket.priority, 40),
+                "status": _bounded_context_text(ticket.status, 40),
+                "requester_id": _bounded_context_text(ticket.requester_id or "", 200),
+            }
+        if "client" in definition.context_sources:
+            context["client"] = {
+                "id": _normalize_client_id(ticket.client_id),
+                "name": _bounded_context_text(ticket.client, 200),
+            }
+        if "knowledge" in definition.context_sources:
+            knowledge_status = "ready"
+            try:
+                sources = retrieve_sources(
+                    ticket,
+                    self.settings.allowed_doc_root,
+                    self.store,
+                    self.settings,
+                    client_id=ticket.client_id,
+                )
+            except Exception:
+                sources = []
+                knowledge_status = "unavailable"
+            context["knowledge"] = {
+                "status": knowledge_status,
+                "sources": [
+                    {
+                        "title": _bounded_context_text(source.title, 200),
+                        "path": _bounded_context_text(source.path, 500),
+                        "excerpt": _bounded_context_text(source.excerpt, 1000),
+                        "document_id": source.document_id,
+                        "chunk_id": source.chunk_id,
+                    }
+                    for source in sources[:3]
+                ],
+                "count": min(len(sources), 3),
+            }
+        return cast(dict[str, object], redact_value(context))
+
     def _finish(
         self,
         definition: AgentDefinition,
@@ -366,8 +673,10 @@ class AgentService:
         *,
         actor: str,
     ) -> AgentExecutionResult:
-        final = self.store.update_agent_run(run.id or 0, status, current_step, state)
-        steps = _state_steps(state)
+        final_state = cast(dict[str, object], redact_value(state))
+        final_state["final_result"] = _normalized_final_result(final_state, status)
+        final = self.store.update_agent_run(run.id or 0, status, current_step, final_state)
+        steps = _state_steps(final_state)
         recorder_steps = tuple(
             StepRecord(
                 kind="agent.tool",
@@ -403,6 +712,9 @@ class AgentService:
     def _result(run: AgentRun) -> AgentExecutionResult:
         state = _state_object(run.state_json)
         steps = _state_steps(state)
+        final_result = state.get("final_result")
+        if not isinstance(final_result, dict):
+            final_result = _final_result_from_step(steps[-1]) if steps else {}
         approval_id = None
         pending_value = state.get("pending_approval_step")
         if isinstance(pending_value, int):
@@ -417,6 +729,8 @@ class AgentService:
             steps=steps,
             approval_id=approval_id,
             error_detail=str(state.get("error_detail", "")),
+            final_result=cast(dict[str, object], redact_value(final_result)),
+            revision_version=run.revision_version,
         )
 
     def _validate_definition(
@@ -431,19 +745,30 @@ class AgentService:
         steps: list[dict[str, object]],
         max_steps: int,
         execution_timeout_seconds: float,
+        depends_on_agent_ids: list[str],
+        agent_id: str | None,
+        client_id: str | None,
+        execution_window_start: str | None,
+        execution_window_end: str | None,
+        execution_window_timezone: str,
+        context_sources: list[str],
+        approval_expiry_seconds: int | None,
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
         if len(description) > 4000:
             raise AgentDefinitionError("description is too long")
-        if trigger != SUPPORTED_AGENT_TRIGGER:
-            raise AgentDefinitionError("only manual agents are supported in this slice")
+        if trigger not in SUPPORTED_AGENT_TRIGGERS:
+            raise AgentDefinitionError("only manual, scheduled, or event agents are supported")
         if entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("only ticket agents are supported in this slice")
         if not isinstance(filters, dict):
             raise AgentDefinitionError("filters must be an object")
-        if filters:
-            raise AgentDefinitionError("filters are reserved until event triggers are supported")
+        if trigger == "event":
+            _validate_event_filters(filters)
+        elif filters:
+            raise AgentDefinitionError("filters are reserved for event-triggered agents")
+        self._validate_dependencies(agent_id, depends_on_agent_ids, client_id)
         if not enabled_tools or len(enabled_tools) > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"enabled_tools must contain 1-{MAX_AGENT_STEPS} tools")
         if len(set(enabled_tools)) != len(enabled_tools):
@@ -460,6 +785,22 @@ class AgentService:
             raise AgentDefinitionError(
                 f"execution_timeout_seconds must be between 0 and {MAX_AGENT_TIMEOUT_SECONDS:g}"
             )
+        _normalized_execution_window(
+            execution_window_start,
+            execution_window_end,
+            execution_window_timezone,
+        )
+        _validate_context_sources(context_sources)
+        if approval_expiry_seconds is not None and (
+            isinstance(approval_expiry_seconds, bool)
+            or not isinstance(approval_expiry_seconds, int)
+            or approval_expiry_seconds < 1
+            or approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise AgentDefinitionError(
+                "approval_expiry_seconds must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
         for step in steps:
             if set(step) - {"tool_id", "payload"}:
                 raise AgentDefinitionError("agent steps may only contain tool_id and payload")
@@ -468,6 +809,98 @@ class AgentService:
                 raise AgentDefinitionError("every step tool_id must be an enabled tool")
             if not isinstance(step.get("payload", {}), dict):
                 raise AgentDefinitionError("agent step payload must be an object")
+
+    def _validate_dependencies(
+        self,
+        agent_id: str | None,
+        dependency_ids: list[str],
+        client_id: str | None,
+    ) -> None:
+        if len(dependency_ids) > MAX_AGENT_STEPS:
+            raise AgentDefinitionError(f"depends_on_agent_ids must contain 0-{MAX_AGENT_STEPS} agents")
+        if any(not isinstance(dependency_id, str) or not dependency_id.strip() for dependency_id in dependency_ids):
+            raise AgentDefinitionError("depends_on_agent_ids must contain non-empty strings")
+        if len(set(dependency_ids)) != len(dependency_ids):
+            raise AgentDefinitionError("depends_on_agent_ids must not contain duplicates")
+        normalized_client_id = _normalize_client_id(client_id)
+        graph = {
+            definition.id: definition.depends_on_agent_ids
+            for definition in self.store.list_agent_definitions()
+        }
+        if agent_id is not None:
+            graph[agent_id] = list(dependency_ids)
+        for dependency_id in dependency_ids:
+            if dependency_id == agent_id:
+                raise AgentDefinitionError("an agent cannot depend on itself")
+            dependency = self.get(dependency_id)
+            if dependency is None:
+                raise AgentDefinitionError(f"dependency agent not found: {dependency_id}")
+            if dependency.client_id is not None and dependency.client_id != normalized_client_id:
+                raise AgentDefinitionError("dependency agent is outside the tenant scope")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> None:
+            if node in visiting:
+                raise AgentDefinitionError("agent dependency cycle detected")
+            if node in visited:
+                return
+            visiting.add(node)
+            for dependency_id in graph.get(node, []):
+                visit(dependency_id)
+            visiting.remove(node)
+            visited.add(node)
+
+        if agent_id is not None:
+            visit(agent_id)
+
+
+def _normalized_execution_window(
+    start: str | None,
+    end: str | None,
+    timezone_name: str,
+) -> tuple[str | None, str | None, str]:
+    if (start is None) != (end is None):
+        raise AgentDefinitionError(
+            "execution_window_start and execution_window_end must be provided together"
+        )
+    if not isinstance(timezone_name, str) or not timezone_name.strip():
+        raise AgentDefinitionError("execution_window_timezone must be a valid IANA timezone")
+    try:
+        ZoneInfo(timezone_name.strip())
+    except ZoneInfoNotFoundError as exc:
+        raise AgentDefinitionError("execution_window_timezone must be a valid IANA timezone") from exc
+    if start is None and end is None:
+        return None, None, timezone_name.strip()
+    normalized_start = _normalized_window_value(start, "execution_window_start")
+    normalized_end = _normalized_window_value(end, "execution_window_end")
+    if normalized_start == normalized_end:
+        raise AgentDefinitionError("execution window start and end must differ")
+    return normalized_start, normalized_end, timezone_name.strip()
+
+
+def _normalized_window_value(value: str | None, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise AgentDefinitionError(f"{field_name} must use HH:MM format")
+    stripped = value.strip()
+    if (
+        len(stripped) != 5
+        or stripped[2] != ":"
+        or not stripped[:2].isdigit()
+        or not stripped[3:].isdigit()
+    ):
+        raise AgentDefinitionError(f"{field_name} must use HH:MM format")
+    try:
+        parsed = datetime.strptime(stripped, EXECUTION_WINDOW_TIME_FORMAT)
+    except ValueError as exc:
+        raise AgentDefinitionError(f"{field_name} must use HH:MM format") from exc
+    return parsed.strftime(EXECUTION_WINDOW_TIME_FORMAT)
+
+
+def _window_minutes(value: str) -> int:
+    parsed = datetime.strptime(value, EXECUTION_WINDOW_TIME_FORMAT)
+    return parsed.hour * 60 + parsed.minute
 
 
 def _state_object(value: object) -> dict[str, object]:
@@ -482,8 +915,83 @@ def _state_object(value: object) -> dict[str, object]:
     return {}
 
 
+def _validate_event_filters(filters: dict[str, object]) -> None:
+    unknown = sorted(set(filters) - EVENT_FILTER_FIELDS)
+    if unknown:
+        raise AgentDefinitionError(f"unsupported event filter fields: {', '.join(unknown)}")
+    event_type = filters.get("event_type")
+    if not isinstance(event_type, str) or event_type not in SUPPORTED_EVENT_TYPES:
+        raise AgentDefinitionError("event filters require a supported event_type")
+    for filter_name, value in filters.items():
+        if filter_name == "event_type":
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise AgentDefinitionError(f"event filter {filter_name} must be a non-empty string")
+
+
+def _validate_context_sources(context_sources: list[str]) -> None:
+    if not isinstance(context_sources, list) or len(context_sources) > MAX_CONTEXT_SOURCES:
+        raise AgentDefinitionError(
+            f"context_sources must contain 0-{MAX_CONTEXT_SOURCES} sources"
+        )
+    if any(not isinstance(source, str) or not source.strip() for source in context_sources):
+        raise AgentDefinitionError("context_sources must contain non-empty strings")
+    if len(set(context_sources)) != len(context_sources):
+        raise AgentDefinitionError("context_sources must not contain duplicates")
+    unknown = sorted(set(context_sources) - SUPPORTED_CONTEXT_SOURCES)
+    if unknown:
+        raise AgentDefinitionError(f"unsupported context sources: {', '.join(unknown)}")
+
+
+def _bounded_context_text(value: str, limit: int) -> str:
+    return value[:limit]
+
+
 def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:
     steps = state.get("steps", [])
     if not isinstance(steps, list):
         return []
     return [cast(dict[str, object], item) for item in steps if isinstance(item, dict)]
+
+
+def _final_result_from_action(tool_id: object, result: ActionResult) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "status": result.status,
+                "tool_id": tool_id,
+                "output": result.output,
+                "evidence": result.evidence,
+                "error_detail": result.error_detail,
+            }
+        ),
+    )
+
+
+def _final_result_from_step(step: dict[str, object]) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "status": step.get("status", "failed"),
+                "tool_id": step.get("tool_id", "unknown"),
+                "output": step.get("output", {}),
+                "evidence": step.get("evidence", []),
+                "error_detail": step.get("error_detail", ""),
+            }
+        ),
+    )
+
+
+def _normalized_final_result(state: dict[str, object], status: str) -> dict[str, object]:
+    current = state.get("final_result")
+    final_result = _final_result_from_step(current) if isinstance(current, dict) else {}
+    if not final_result:
+        final_result = {"status": status, "output": {}, "evidence": [], "error_detail": ""}
+    if status in {"failed", "rejected", "cancelled"}:
+        final_result["status"] = status
+        error_detail = state.get("error_detail", "")
+        if error_detail:
+            final_result["error_detail"] = redact_value(str(error_detail))
+    return cast(dict[str, object], redact_value(final_result))

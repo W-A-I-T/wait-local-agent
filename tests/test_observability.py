@@ -289,6 +289,7 @@ def test_step_payloads_are_redacted_before_persistence(settings) -> None:
         actor="tech",
         status="success",
         trigger_source="test",
+        metadata={"provider": "deterministic", "api_key": "should-not-leak"},
         steps=(
             StepRecord(
                 kind="smart_action.invoke",
@@ -301,6 +302,10 @@ def test_step_payloads_are_redacted_before_persistence(settings) -> None:
     )
 
     assert run_id is not None
+    run = store.get_execution_run(run_id)
+    assert run is not None
+    assert "should-not-leak" not in run.metadata_json
+    assert "deterministic" in run.metadata_json
     steps = store.list_execution_steps(run_id)
     assert "super-secret-value" not in steps[0].input_json
     assert "abc123" not in steps[0].output_json

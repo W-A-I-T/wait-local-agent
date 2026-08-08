@@ -25,6 +25,21 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_QDRANT_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HUDU_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_COMPANY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WAIT_CONNECTWISE_API_VERSION", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SYNCRO_API_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_EMAIL", raising=False)
+    monkeypatch.delenv("WAIT_CONFLUENCE_API_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_SHAREPOINT_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_SHAREPOINT_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_M365_GRAPH_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_M365_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -60,6 +75,38 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.hudu_base_url == ""
     assert settings.hudu_api_key == ""
     assert settings.hudu_page_size == 25
+    assert settings.connectwise_base_url == ""
+    assert settings.connectwise_company == ""
+    assert settings.connectwise_public_key == ""
+    assert settings.connectwise_private_key == ""
+    assert settings.connectwise_client_id == ""
+    assert settings.connectwise_api_version == "2022.1"
+    assert settings.connectwise_page_size == 25
+    assert settings.syncro_base_url == ""
+    assert settings.syncro_api_token == ""
+    assert settings.servicenow_base_url == ""
+    assert settings.servicenow_username == ""
+    assert settings.servicenow_password == ""
+    assert settings.servicenow_api_version == ""
+    assert settings.servicenow_page_size == 25
+    assert settings.autotask_base_url == ""
+    assert settings.autotask_username == ""
+    assert settings.autotask_secret == ""
+    assert settings.autotask_integration_code == ""
+    assert settings.autotask_page_size == 50
+    assert settings.itglue_base_url == ""
+    assert settings.itglue_api_key == ""
+    assert settings.itglue_page_size == 25
+    assert settings.confluence_base_url == ""
+    assert settings.confluence_email == ""
+    assert settings.confluence_api_token == ""
+    assert settings.confluence_page_size == 25
+    assert settings.sharepoint_base_url == ""
+    assert settings.sharepoint_access_token == ""
+    assert settings.sharepoint_page_size == 25
+    assert settings.m365_graph_base_url == ""
+    assert settings.m365_access_token == ""
+    assert settings.m365_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -108,6 +155,118 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.hudu_base_url == "https://hudu.example.test"
     assert settings.hudu_api_key == "api-key"
     assert settings.hudu_page_size == 10
+
+
+def test_connectwise_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://cw.example.test")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY", "Acme")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client")
+    monkeypatch.setenv("WAIT_CONNECTWISE_API_VERSION", "2023.1")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.connectwise_base_url == "https://cw.example.test"
+    assert settings.connectwise_company == "Acme"
+    assert settings.connectwise_public_key == "public"
+    assert settings.connectwise_private_key == "private"
+    assert settings.connectwise_client_id == "client"
+    assert settings.connectwise_api_version == "2023.1"
+    assert settings.connectwise_page_size == 10
+
+
+def test_syncro_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SYNCRO_BASE_URL", "https://acme.syncromsp.com")
+    monkeypatch.setenv("WAIT_SYNCRO_API_TOKEN", "syncro-token")
+
+    settings = load_settings()
+
+    assert settings.syncro_base_url == "https://acme.syncromsp.com"
+    assert settings.syncro_api_token == "syncro-token"
+
+
+def test_confluence_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_CONFLUENCE_BASE_URL", "https://acme.atlassian.net")
+    monkeypatch.setenv("WAIT_CONFLUENCE_EMAIL", "agent@example.test")
+    monkeypatch.setenv("WAIT_CONFLUENCE_API_TOKEN", "api-token")
+    monkeypatch.setenv("WAIT_CONFLUENCE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.confluence_base_url == "https://acme.atlassian.net"
+    assert settings.confluence_email == "agent@example.test"
+    assert settings.confluence_api_token == "api-token"
+    assert settings.confluence_page_size == 10
+
+
+def test_sharepoint_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SHAREPOINT_BASE_URL", "https://graph.microsoft.com/v1.0")
+    monkeypatch.setenv("WAIT_SHAREPOINT_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_SHAREPOINT_PAGE_SIZE", "50")
+
+    settings = load_settings()
+
+    assert settings.sharepoint_base_url == "https://graph.microsoft.com/v1.0"
+    assert settings.sharepoint_access_token == "access-token"
+    assert settings.sharepoint_page_size == 50
+
+
+def test_m365_graph_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_M365_GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
+    monkeypatch.setenv("WAIT_M365_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_M365_PAGE_SIZE", "50")
+
+    settings = load_settings()
+
+    assert settings.m365_graph_base_url == "https://graph.microsoft.com/v1.0"
+    assert settings.m365_access_token == "access-token"
+    assert settings.m365_page_size == 50
+
+
+def test_servicenow_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SERVICENOW_BASE_URL", "https://service-now.example.test")
+    monkeypatch.setenv("WAIT_SERVICENOW_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_SERVICENOW_PASSWORD", "password")
+    monkeypatch.setenv("WAIT_SERVICENOW_API_VERSION", "v1")
+    monkeypatch.setenv("WAIT_SERVICENOW_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.servicenow_base_url == "https://service-now.example.test"
+    assert settings.servicenow_username == "api-user"
+    assert settings.servicenow_password == "password"
+    assert settings.servicenow_api_version == "v1"
+    assert settings.servicenow_page_size == 10
+
+
+def test_autotask_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
+    monkeypatch.setenv("WAIT_AUTOTASK_PAGE_SIZE", "20")
+
+    settings = load_settings()
+
+    assert settings.autotask_base_url == "https://webservices1.autotask.net"
+    assert settings.autotask_username == "api-user"
+    assert settings.autotask_secret == "secret"
+    assert settings.autotask_integration_code == "integration-code"
+    assert settings.autotask_page_size == 20
+
+
+def test_itglue_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ITGLUE_BASE_URL", "https://api.itglue.com")
+    monkeypatch.setenv("WAIT_ITGLUE_API_KEY", "api-key")
+    monkeypatch.setenv("WAIT_ITGLUE_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.itglue_base_url == "https://api.itglue.com"
+    assert settings.itglue_api_key == "api-key"
+    assert settings.itglue_page_size == 10
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

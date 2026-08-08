@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -46,6 +47,11 @@ def test_analytics_summary_returns_all_metric_groups(settings) -> None:
     assert summary["failures_by_status"] == [
         {"status": "failed", "count": 1},
         {"status": "pending_approval", "count": 1},
+    ]
+    assert summary["activity_breakdown"] == [
+        {"run_kind": "workflow", "trigger_source": "api", "status": "completed", "count": 1},
+        {"run_kind": "workflow", "trigger_source": "api", "status": "failed", "count": 1},
+        {"run_kind": "workflow", "trigger_source": "scheduler", "status": "pending_approval", "count": 1},
     ]
 
 
@@ -110,3 +116,103 @@ def test_analytics_summary_empty_range_is_zeroed(settings) -> None:
     assert summary["failures_by_status"] == []
     assert summary["estimated_minutes_saved"]["minutes"] == 0
     assert summary["estimated_minutes_saved"]["estimate"] is True
+    assert summary["activity_breakdown"] == []
+
+
+def test_analytics_summary_reports_approvals_tickets_and_workflow_views(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    ticket_file = tmp_path / "tickets.json"
+    ticket_file.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "TCK-OPEN",
+                    "client": "Acme",
+                    "subject": "Open ticket",
+                    "body": "Needs work",
+                    "priority": "normal",
+                    "status": "open",
+                    "client_id": "acme",
+                },
+                {
+                    "id": "TCK-RESOLVED",
+                    "client": "Acme",
+                    "subject": "Resolved ticket",
+                    "body": "Fixed",
+                    "priority": "normal",
+                    "status": "resolved",
+                    "client_id": "acme",
+                },
+                {
+                    "id": "TCK-BETA",
+                    "client": "Beta",
+                    "subject": "Other tenant",
+                    "body": "Private",
+                    "priority": "normal",
+                    "status": "closed",
+                    "client_id": "beta",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store.ingest_ticket_file(ticket_file)
+
+    workflow = store.create_workflow_run(
+        "ticket-triage", "TCK-OPEN", "completed", "done", client_id="acme"
+    )
+    store.create_execution_run(
+        "workflow", workflow.id, "tech", "completed", "2026-08-08T09:00:00+00:00",
+        "2026-08-08T09:01:00+00:00", "api", client_id="acme",
+    )
+    agent = store.create_agent_run(
+        "ticket-agent", "TCK-RESOLVED", "tech", "completed", 1, {}, client_id="acme"
+    )
+    store.create_execution_run(
+        "agent", agent.id, "tech", "completed", "2026-08-08T09:02:00+00:00",
+        "2026-08-08T09:03:00+00:00", "event", client_id="acme",
+    )
+    beta_workflow = store.create_workflow_run(
+        "beta-template", "TCK-BETA", "completed", "done", client_id="beta"
+    )
+    store.create_execution_run(
+        "workflow", beta_workflow.id, "tech", "completed", "2026-08-08T09:04:00+00:00",
+        "2026-08-08T09:05:00+00:00", "api", client_id="beta",
+    )
+
+    approved = store.create_approval_request("TCK-OPEN", "test.write", {}, client_id="acme")
+    rejected = store.create_approval_request("TCK-RESOLVED", "test.write", {}, client_id="acme")
+    store.create_approval_request("TCK-OPEN", "test.write", {}, client_id="acme")
+    store.update_approval_request(approved.id or 0, "approved", approver_id="admin")
+    store.update_approval_request(rejected.id or 0, "rejected", approver_id="admin")
+
+    summary = cast(dict[str, Any], build_analytics_summary(store, {}, client_id="acme"))
+
+    assert summary["approval_rate"] == {
+        "requested": 3,
+        "decided": 2,
+        "approved": 1,
+        "rejected": 1,
+        "pending": 1,
+        "rate": 0.5,
+        "derivation": summary["approval_rate"]["derivation"],
+    }
+    assert summary["ticket_metrics"]["touched"] == 2
+    assert summary["ticket_metrics"]["resolved"] == 1
+    assert summary["ticket_metrics"]["resolution_rate"] == 0.5
+    assert summary["activity_by_workflow"] == [
+        {
+            "run_kind": "agent",
+            "workflow_id": "ticket-agent",
+            "total": 1,
+            "succeeded": 1,
+            "status_counts": [{"status": "completed", "count": 1}],
+        },
+        {
+            "run_kind": "workflow",
+            "workflow_id": "ticket-triage",
+            "total": 1,
+            "succeeded": 1,
+            "status_counts": [{"status": "completed", "count": 1}],
+        },
+    ]

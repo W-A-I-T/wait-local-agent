@@ -88,7 +88,7 @@ Scope: `W-A-I-T/wait-local-agent` (public, Apache-2.0 open core) and `W-A-I-T/wa
 | IT Glue connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | ConnectWise connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | Autotask connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
-| RMM connectors (NinjaOne/Datto/N-able/Kaseya) | No | Yes | Paid, read-only stubs first | `packs/msp/` (UNVERIFIED) |
+| RMM connectors (NinjaOne/Datto/N-central/Kaseya) | Partial | Yes | Bounded NinjaOne, Datto, and N-central surfaces are public; broader provider coverage remains pack scope | `src/wait_local_agent/{ninjaone,dattormm,ncentral}.py`; `packs/msp/` (UNVERIFIED) |
 | M365/Entra read-only connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | QBR reports | No | Yes | Paid report provider | `packs/msp/reports/qbr.py` (UNVERIFIED) |
 | Automation opportunity / ROI report | No | Yes | Paid report provider | `packs/msp/reports/` (UNVERIFIED) |

@@ -18,6 +18,8 @@ type HuduSnapshot = {
 export function Connectors() {
   const { connectors, haloConnector, huduConnector, writeHealth, loading } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
+  const [connectwiseHealth, setConnectwiseHealth] = useState<HealthState | null>(null);
+  const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
   const [huduHealth, setHuduHealth] = useState<HealthState | null>(null);
   const [huduData, setHuduData] = useState<HuduSnapshot>({ companies: [], articles: [] });
 
@@ -25,6 +27,8 @@ export function Connectors() {
     const results = await Promise.allSettled([
       apiFetch<HealthState>("/connectors/halopsa/health"),
       apiFetch<HealthState>("/connectors/halopsa/write-health"),
+      apiFetch<HealthState>("/connectors/connectwise/health"),
+      apiFetch<HealthState>("/connectors/connectwise/write-health"),
       apiFetch<HealthState>("/connectors/hudu/health"),
       apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/companies"),
       apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/articles")
@@ -34,9 +38,15 @@ export function Connectors() {
       setHalopsaHealth(results[0].value);
     }
     if (results[2].status === "fulfilled") {
-      setHuduHealth(results[2].value);
+      setConnectwiseHealth(results[2].value);
     }
-    const companiesResult = results[3];
+    if (results[3].status === "fulfilled") {
+      setConnectwiseWriteHealth(results[3].value);
+    }
+    if (results[4].status === "fulfilled") {
+      setHuduHealth(results[4].value);
+    }
+    const companiesResult = results[5];
     if (companiesResult.status === "fulfilled") {
       setHuduData((current) => ({
         ...current,
@@ -45,7 +55,7 @@ export function Connectors() {
           : []
       }));
     }
-    const articlesResult = results[4];
+    const articlesResult = results[6];
     if (articlesResult.status === "fulfilled") {
       setHuduData((current) => ({
         ...current,
@@ -95,6 +105,17 @@ export function Connectors() {
           <span>HTTP probing: {haloConnector?.http_probing_enabled ? "enabled" : "disabled"}</span>
           <span>Write actions: {haloConnector?.write_actions_enabled ? "enabled" : "disabled"}</span>
           <span>Health: {halopsaHealth ? `${halopsaHealth.status} · ${halopsaHealth.message}` : "unknown"}</span>
+        </div>
+        <div className="connector-summary secondary">
+          <div>
+            <strong>ConnectWise PSA</strong>
+            <span>{connectwiseHealth ? `${connectwiseHealth.status} · ${connectwiseHealth.message}` : "Health unknown."}</span>
+          </div>
+          <em>{connectwiseWriteHealth?.status || "unknown"}</em>
+        </div>
+        <div className="flag-grid">
+          <span>Ticket updates: {connectwiseWriteHealth?.status === "ready" ? "ready after approval" : "gated"}</span>
+          <span>Write health: {connectwiseWriteHealth ? connectwiseWriteHealth.message : "unknown"}</span>
         </div>
         <div className="connector-summary secondary">
           <div>

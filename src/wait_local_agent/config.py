@@ -68,6 +68,32 @@ class Settings:
     admin_token: str = ""
     tech_token: str = ""
     viewer_token: str = ""
+    end_user_token: str = ""
+    end_user_client_id: str = ""
+    end_user_user_id: str = ""
+    end_user_support_enabled: bool = False
+    communication_email_host: str = ""
+    communication_email_port: int = 587
+    communication_email_username: str = ""
+    communication_email_password: str = ""
+    communication_email_from: str = ""
+    communication_email_tls: bool = True
+    communication_teams_webhook_url: str = ""
+    communication_slack_webhook_url: str = ""
+    communication_sms_webhook_url: str = ""
+    communication_sms_auth_token: str = ""
+    ninjaone_base_url: str = ""
+    ninjaone_access_token: str = ""
+    ninjaone_organization_map_json: str = ""
+    ninjaone_page_size: int = 50
+    datto_rmm_base_url: str = ""
+    datto_rmm_access_token: str = ""
+    datto_rmm_site_map_json: str = ""
+    datto_rmm_page_size: int = 50
+    ncentral_base_url: str = ""
+    ncentral_access_token: str = ""
+    ncentral_org_unit_map_json: str = ""
+    ncentral_page_size: int = 50
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -96,6 +122,38 @@ class Settings:
     hudu_base_url: str = ""
     hudu_api_key: str = ""
     hudu_page_size: int = 25
+    itglue_base_url: str = ""
+    itglue_api_key: str = ""
+    itglue_page_size: int = 25
+    confluence_base_url: str = ""
+    confluence_email: str = ""
+    confluence_api_token: str = ""
+    confluence_page_size: int = 25
+    sharepoint_base_url: str = ""
+    sharepoint_access_token: str = ""
+    sharepoint_page_size: int = 25
+    m365_graph_base_url: str = ""
+    m365_access_token: str = ""
+    m365_page_size: int = 25
+    connectwise_base_url: str = ""
+    connectwise_company: str = ""
+    connectwise_public_key: str = ""
+    connectwise_private_key: str = ""
+    connectwise_client_id: str = ""
+    connectwise_api_version: str = "2022.1"
+    connectwise_page_size: int = 25
+    syncro_base_url: str = ""
+    syncro_api_token: str = ""
+    servicenow_base_url: str = ""
+    servicenow_username: str = ""
+    servicenow_password: str = ""
+    servicenow_api_version: str = ""
+    servicenow_page_size: int = 25
+    autotask_base_url: str = ""
+    autotask_username: str = ""
+    autotask_secret: str = ""
+    autotask_integration_code: str = ""
+    autotask_page_size: int = 50
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
@@ -120,6 +178,99 @@ def load_settings() -> Settings:
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
         viewer_token=os.getenv("WAIT_VIEWER_TOKEN", ""),
+        end_user_token=os.getenv("WAIT_END_USER_TOKEN", ""),
+        end_user_client_id=os.getenv("WAIT_END_USER_CLIENT_ID", "").strip(),
+        end_user_user_id=os.getenv("WAIT_END_USER_USER_ID", "").strip(),
+        end_user_support_enabled=_bool_env("WAIT_END_USER_SUPPORT_ENABLED"),
+        communication_email_host=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_HOST",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_HOST", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_port=_int_env("WAIT_COMMUNICATION_EMAIL_PORT", 587),
+        communication_email_username=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_USERNAME",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_password=_secret_value(
+            "WAIT_COMMUNICATION_EMAIL_PASSWORD",
+            os.getenv("WAIT_COMMUNICATION_EMAIL_PASSWORD", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_email_from=os.getenv("WAIT_COMMUNICATION_EMAIL_FROM", "").strip(),
+        communication_email_tls=_bool_env("WAIT_COMMUNICATION_EMAIL_TLS", True),
+        communication_teams_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_TEAMS_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_TEAMS_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_slack_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_SLACK_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_SLACK_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_sms_webhook_url=_secret_value(
+            "WAIT_COMMUNICATION_SMS_WEBHOOK_URL",
+            os.getenv("WAIT_COMMUNICATION_SMS_WEBHOOK_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        communication_sms_auth_token=_secret_value(
+            "WAIT_COMMUNICATION_SMS_AUTH_TOKEN",
+            os.getenv("WAIT_COMMUNICATION_SMS_AUTH_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_base_url=_secret_value(
+            "WAIT_NINJAONE_BASE_URL",
+            os.getenv("WAIT_NINJAONE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_access_token=_secret_value(
+            "WAIT_NINJAONE_ACCESS_TOKEN",
+            os.getenv("WAIT_NINJAONE_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ninjaone_organization_map_json=os.getenv(
+            "WAIT_NINJAONE_ORGANIZATION_MAP_JSON", ""
+        ),
+        ninjaone_page_size=_int_env("WAIT_NINJAONE_PAGE_SIZE", 50),
+        datto_rmm_base_url=_secret_value(
+            "WAIT_DATTORMM_BASE_URL",
+            os.getenv("WAIT_DATTORMM_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        datto_rmm_access_token=_secret_value(
+            "WAIT_DATTORMM_ACCESS_TOKEN",
+            os.getenv("WAIT_DATTORMM_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        datto_rmm_site_map_json=os.getenv("WAIT_DATTORMM_SITE_MAP_JSON", ""),
+        datto_rmm_page_size=_int_env("WAIT_DATTORMM_PAGE_SIZE", 50),
+        ncentral_base_url=_secret_value(
+            "WAIT_NCENTRAL_BASE_URL",
+            os.getenv("WAIT_NCENTRAL_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ncentral_access_token=_secret_value(
+            "WAIT_NCENTRAL_ACCESS_TOKEN",
+            os.getenv("WAIT_NCENTRAL_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ncentral_org_unit_map_json=os.getenv("WAIT_NCENTRAL_ORG_UNIT_MAP_JSON", ""),
+        ncentral_page_size=_int_env("WAIT_NCENTRAL_PAGE_SIZE", 50),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
@@ -187,6 +338,153 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         hudu_page_size=_int_env("WAIT_HUDU_PAGE_SIZE", 25),
+        itglue_base_url=_secret_value(
+            "WAIT_ITGLUE_BASE_URL",
+            os.getenv("WAIT_ITGLUE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_api_key=_secret_value(
+            "WAIT_ITGLUE_API_KEY",
+            os.getenv("WAIT_ITGLUE_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        itglue_page_size=_int_env("WAIT_ITGLUE_PAGE_SIZE", 25),
+        confluence_base_url=_secret_value(
+            "WAIT_CONFLUENCE_BASE_URL",
+            os.getenv("WAIT_CONFLUENCE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_email=_secret_value(
+            "WAIT_CONFLUENCE_EMAIL",
+            os.getenv("WAIT_CONFLUENCE_EMAIL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_api_token=_secret_value(
+            "WAIT_CONFLUENCE_API_TOKEN",
+            os.getenv("WAIT_CONFLUENCE_API_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        confluence_page_size=_int_env("WAIT_CONFLUENCE_PAGE_SIZE", 25),
+        sharepoint_base_url=_secret_value(
+            "WAIT_SHAREPOINT_BASE_URL",
+            os.getenv("WAIT_SHAREPOINT_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        sharepoint_access_token=_secret_value(
+            "WAIT_SHAREPOINT_ACCESS_TOKEN",
+            os.getenv("WAIT_SHAREPOINT_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        sharepoint_page_size=_int_env("WAIT_SHAREPOINT_PAGE_SIZE", 25),
+        m365_graph_base_url=_secret_value(
+            "WAIT_M365_GRAPH_BASE_URL",
+            os.getenv("WAIT_M365_GRAPH_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        m365_access_token=_secret_value(
+            "WAIT_M365_ACCESS_TOKEN",
+            os.getenv("WAIT_M365_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        m365_page_size=_int_env("WAIT_M365_PAGE_SIZE", 25),
+        connectwise_base_url=_secret_value(
+            "WAIT_CONNECTWISE_BASE_URL",
+            os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_company=_secret_value(
+            "WAIT_CONNECTWISE_COMPANY",
+            os.getenv("WAIT_CONNECTWISE_COMPANY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_public_key=_secret_value(
+            "WAIT_CONNECTWISE_PUBLIC_KEY",
+            os.getenv("WAIT_CONNECTWISE_PUBLIC_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_private_key=_secret_value(
+            "WAIT_CONNECTWISE_PRIVATE_KEY",
+            os.getenv("WAIT_CONNECTWISE_PRIVATE_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_client_id=_secret_value(
+            "WAIT_CONNECTWISE_CLIENT_ID",
+            os.getenv("WAIT_CONNECTWISE_CLIENT_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_api_version=os.getenv("WAIT_CONNECTWISE_API_VERSION", "2022.1"),
+        connectwise_page_size=_int_env("WAIT_CONNECTWISE_PAGE_SIZE", 25),
+        syncro_base_url=_secret_value(
+            "WAIT_SYNCRO_BASE_URL",
+            os.getenv("WAIT_SYNCRO_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        syncro_api_token=_secret_value(
+            "WAIT_SYNCRO_API_TOKEN",
+            os.getenv("WAIT_SYNCRO_API_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_base_url=_secret_value(
+            "WAIT_SERVICENOW_BASE_URL",
+            os.getenv("WAIT_SERVICENOW_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_username=_secret_value(
+            "WAIT_SERVICENOW_USERNAME",
+            os.getenv("WAIT_SERVICENOW_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_password=_secret_value(
+            "WAIT_SERVICENOW_PASSWORD",
+            os.getenv("WAIT_SERVICENOW_PASSWORD", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        servicenow_api_version=os.getenv("WAIT_SERVICENOW_API_VERSION", "").strip(),
+        servicenow_page_size=_int_env("WAIT_SERVICENOW_PAGE_SIZE", 25),
+        autotask_base_url=_secret_value(
+            "WAIT_AUTOTASK_BASE_URL",
+            os.getenv("WAIT_AUTOTASK_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_username=_secret_value(
+            "WAIT_AUTOTASK_USERNAME",
+            os.getenv("WAIT_AUTOTASK_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_secret=_secret_value(
+            "WAIT_AUTOTASK_SECRET",
+            os.getenv("WAIT_AUTOTASK_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_integration_code=_secret_value(
+            "WAIT_AUTOTASK_INTEGRATION_CODE",
+            os.getenv("WAIT_AUTOTASK_INTEGRATION_CODE", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_page_size=_int_env("WAIT_AUTOTASK_PAGE_SIZE", 50),
         license_key=_secret_value(
             "license_key",
             os.getenv("WAIT_LICENSE_KEY", ""),

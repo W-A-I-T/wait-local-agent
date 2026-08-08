@@ -322,7 +322,7 @@ class AutotaskConnector:
     async def draft_note(self, ticket_id, note_text, is_internal: bool) -> ApprovalRequest: ...
 ```
 
-### Task 4.3 — M365 / Entra Read-Only Connector (private repo)
+### Task 4.3 — M365 / Entra bounded connector (public core)
 
 ```python
 class M365Connector:
@@ -333,12 +333,18 @@ class M365Connector:
     async def get_user_mfa_status(self, user_id: str): ...
     async def list_groups(self): ...
     async def list_applications(self): ...
-    # Read-only in Phase 4
+    # Reads plus separately approval-gated user lifecycle and group membership actions
 ```
 
-Config: `WAIT_M365_TENANT_ID`, `WAIT_M365_CLIENT_ID`, `WAIT_M365_CLIENT_SECRET`.
+The shipped public-core adapter uses an operator-supplied delegated or
+application bearer token through `WAIT_M365_GRAPH_BASE_URL` and
+`WAIT_M365_ACCESS_TOKEN`. Write paths additionally require the explicit HTTP
+and write safety flags and an admin approval. Current write coverage is user
+creation, user disable/offboarding, strict-ID group membership add/remove, and
+strict-ID direct user license add/remove, and approved session revocation;
+mailbox and Intune mutations remain future slices.
 
-Docs: `docs/connectors/m365-setup.md` — MSAL app registration guide.
+Docs: `docs/cloud-permissions-m365.md` and `docs/connector-setup.md`.
 
 ### Task 4.4 — NinjaOne RMM Read-Only Connector (private repo)
 
@@ -503,7 +509,8 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 3. HMAC-signed offline license key system (validates without WAIT Sync)
 4. Feature gating: `pack_enabled("msp")` check before executing any paid feature
 5. White-label branding: `WAIT_PRODUCT_NAME`, `WAIT_BRAND_LOGO_URL`
-6. N-able RMM connector (read-only)
+6. Broader N-central remediation and additional RMM connectors; the bounded
+   read-only N-central metadata adapter is already shipped in public core
 7. Kaseya VSA connector (read-only)
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 
