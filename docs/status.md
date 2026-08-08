@@ -32,11 +32,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
-- Scheduled workflow and ticket-agent registration, pause, resume, delete, and
-  audit trail. Cron, interval, and one-time triggers use the existing UTC
-  APScheduler path and persist their agent/entity target. Scheduled jobs can
-  also be rescheduled through a tenant-scoped API route; pause, resume,
-  reschedule, and delete all enforce the authenticated tenant boundary.
+- Scheduled workflow and ticket-agent registration, pause, resume, delete,
+  tenant-scoped reschedule, and audit trail. Cron, interval, and one-time
+  triggers use the existing UTC APScheduler path and persist their
+  agent/entity target; all schedule mutations enforce the authenticated tenant
+  boundary.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is
@@ -48,7 +48,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   unrestricted agent execution are not shipped. Immutable revision history,
   explainable redacted diffs, and restore-as-new-version are available under
   `/agents/{id}/revisions`; each new run records the definition version it
-  used; event
+  used and exposes its redacted snapshot in run detail. Approval-paused runs
+  support cancellation, while terminal failed/rejected/cancelled runs support
+  bounded retry; event
   agents also support same-tenant dependency chains with cycle prevention. A
   provenance-bearing tenant-scoped template gallery can run reviewed core
   workflows through the existing approval path. Persisted sequential agent
