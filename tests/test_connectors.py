@@ -8,6 +8,7 @@ from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_managed_device_retirement,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
@@ -17,6 +18,7 @@ from wait_local_agent.connectors import (
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
+    validate_m365_managed_device_retirement_payload,
     validate_m365_session_revocation_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
@@ -24,6 +26,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
+    M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
 )
@@ -86,6 +89,15 @@ class FakeM365Client:
             operation=str(kwargs["operation"]),
             sku_ids=tuple(kwargs["sku_ids"]),
             status_code=200,
+        )
+
+    def retire_managed_device(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphManagedDeviceRetireResult(
+            "succeeded",
+            "device retired",
+            device_id=str(kwargs["device_id"]),
+            status_code=204,
         )
 
     def revoke_user_sessions(self, **kwargs):
@@ -363,6 +375,47 @@ def test_m365_session_revocation_payload_rejects_extra_or_unsafe_fields() -> Non
     ):
         with pytest.raises(ValueError):
             validate_m365_session_revocation_payload(payload)
+
+
+def test_m365_managed_device_retirement_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_managed_device_retirement(
+        store, device_id="device-1", client_id="tenant-a"
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.client_id == "tenant-a"
+    assert persisted.payload_json == (
+        '{"action_type":"managed-devices.retire","connector":"m365",'
+        '"device_id":"device-1"}'
+    )
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store, cast(Any, client), vault, approval.id or 0
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [{"device_id": "device-1"}]
+    assert "password" not in executed.execution_result_json.lower()
+
+
+def test_m365_managed_device_retirement_payload_rejects_extra_or_unsafe_fields() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "managed-devices.retire",
+        "device_id": "device-1",
+    }
+    validate_m365_managed_device_retirement_payload(valid)
+    for payload in (
+        {**valid, "raw_endpoint": "deviceManagement/managedDevices/device-1/retire"},
+        {**valid, "device_id": "device 1"},
+        {**valid, "action_type": "managed-devices.wipe"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_managed_device_retirement_payload(payload)
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:

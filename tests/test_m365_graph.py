@@ -18,6 +18,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolderReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
+    M365GraphManagedDeviceRetireResult,
     M365GraphReadError,
     M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
@@ -1095,6 +1096,48 @@ def test_m365_graph_session_revocation_is_write_gated_and_sanitized(settings) ->
             )
         ),
     ).revoke_user_sessions(user_id="user-1")
+
+    assert blocked.status == "blocked"
+    assert invalid.status == "failed"
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
+
+
+def test_m365_graph_managed_device_retirement_posts_no_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1.0/deviceManagement/managedDevices/device-1/retire"
+        assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    ).retire_managed_device(device_id="device-1")
+
+    assert response == M365GraphManagedDeviceRetireResult(
+        "succeeded",
+        "Microsoft Graph Intune managed-device retirement succeeded.",
+        device_id="device-1",
+        status_code=204,
+    )
+
+
+def test_m365_graph_managed_device_retirement_is_write_gated_and_sanitized(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).retire_managed_device(device_id="device-1")
+    invalid = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).retire_managed_device(device_id="device\n1")
+    forbidden = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403, json={"error": {"message": "secret must not leak"}}
+            )
+        ),
+    ).retire_managed_device(device_id="device-1")
 
     assert blocked.status == "blocked"
     assert invalid.status == "failed"

@@ -412,8 +412,8 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
-context plus explicitly approval-gated user lifecycle and direct user license
-operations.
+context plus explicitly approval-gated user lifecycle, direct user license,
+session revocation, and managed-device retirement operations.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -438,6 +438,7 @@ wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-managed-devices
+wait-local-agent connectors draft-m365-managed-device-retirement device-1
 ```
 
 Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
@@ -454,8 +455,11 @@ API. Approved disable/offboarding is exposed through
 `POST /connectors/m365/users/disable-drafts`, the same approval queue, and
 `draft-m365-user-disable` / `execute-m365` CLI commands. It issues only
 `PATCH /users/{id | userPrincipalName}` with `accountEnabled=false`; it does
-not revoke sign-in sessions, remove group memberships or licenses, delete
-mailbox data, or mutate Intune devices. Approved group membership changes are
+not remove group memberships or licenses or delete mailbox data. Approved
+Intune managed-device retirement is exposed through
+`POST /connectors/m365/managed-devices/retire-drafts` and the
+`draft-m365-managed-device-retirement` CLI command; it is approval-gated and
+does not expose wipe or delete. Approved group membership changes are
 exposed through `POST /connectors/m365/groups/membership-drafts` with an
 explicit `add` or `remove` operation using immutable group and user IDs. The
 matching CLI command is `draft-m365-group-membership`; execution uses the
@@ -464,8 +468,8 @@ changes are exposed through `POST /connectors/m365/users/license-drafts` or
 `draft-m365-license-change`; only explicit add/remove operations using immutable
 user IDs and SKU GUIDs are supported. Approved session revocation is exposed
 through `POST /connectors/m365/users/session-revocation-drafts` or
-`draft-m365-session-revocation`; mailbox and Intune mutations remain separate
-future actions.
+`draft-m365-session-revocation`; mailbox settings and other Intune mutations
+remain separate future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads

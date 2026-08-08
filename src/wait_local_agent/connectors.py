@@ -16,6 +16,7 @@ from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
+    M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
@@ -51,6 +52,7 @@ M365_GROUP_MEMBERSHIP_REMOVE_ACTION = "groups.members.remove"
 M365_LICENSE_ADD_ACTION = "users.licenses.add"
 M365_LICENSE_REMOVE_ACTION = "users.licenses.remove"
 M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
+M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -779,6 +781,26 @@ def draft_m365_session_revocation(
     )
 
 
+def draft_m365_managed_device_retirement(
+    store: Store,
+    *,
+    device_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_DEVICE_RETIRE_ACTION,
+        "device_id": device_id,
+    }
+    validate_m365_managed_device_retirement_payload(payload)
+    return store.create_approval_request(
+        f"m365-managed-device:{device_id.strip()}:retire",
+        f"m365.{M365_DEVICE_RETIRE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -796,6 +818,7 @@ def execute_m365_approval_request(
         f"m365.{M365_LICENSE_ADD_ACTION}",
         f"m365.{M365_LICENSE_REMOVE_ACTION}",
         f"m365.{M365_SESSION_REVOKE_ACTION}",
+        f"m365.{M365_DEVICE_RETIRE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -814,6 +837,7 @@ def execute_m365_approval_request(
         M365_LICENSE_ADD_ACTION,
         M365_LICENSE_REMOVE_ACTION,
         M365_SESSION_REVOKE_ACTION,
+        M365_DEVICE_RETIRE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -822,6 +846,7 @@ def execute_m365_approval_request(
         | M365GraphGroupMembershipResult
         | M365GraphLicenseChangeResult
         | M365GraphSessionRevokeResult
+        | M365GraphManagedDeviceRetireResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -882,11 +907,18 @@ def execute_m365_approval_request(
             "sku_ids": list(result.sku_ids),
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_SESSION_REVOKE_ACTION:
         validate_m365_session_revocation_payload(payload)
         result = client.revoke_user_sessions(user_id=str(payload["user_id"]))
         result_payload = {
             "user_id": result.user_id,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_managed_device_retirement_payload(payload)
+        result = client.retire_managed_device(device_id=str(payload["device_id"]))
+        result_payload = {
+            "device_id": result.device_id,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -1023,6 +1055,21 @@ def validate_m365_session_revocation_payload(payload: dict[str, object]) -> None
         or any(ord(character) < 32 or character.isspace() for character in user_id)
     ):
         raise ValueError("M365 user_id is invalid")
+
+
+def validate_m365_managed_device_retirement_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "device_id"}:
+        raise ValueError("M365 managed-device retirement payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_DEVICE_RETIRE_ACTION:
+        raise ValueError("M365 managed-device retirement payload is invalid")
+    device_id = payload.get("device_id")
+    if (
+        not isinstance(device_id, str)
+        or not device_id.strip()
+        or len(device_id) > 320
+        or any(ord(character) < 32 or character.isspace() for character in device_id)
+    ):
+        raise ValueError("M365 device_id is invalid")
 
 
 def _canonical_uuid(value: object, field: str) -> str:

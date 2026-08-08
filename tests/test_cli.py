@@ -239,6 +239,23 @@ def test_m365_session_revocation_draft_command_is_available(monkeypatch, tmp_pat
     assert "password" not in shown.output.lower()
 
 
+def test_m365_managed_device_retirement_draft_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["connectors", "draft-m365-managed-device-retirement", "device-1"],
+    )
+    shown = runner.invoke(app, ["approvals", "show", "1"])
+
+    assert result.exit_code == 0
+    assert "action_type=m365.managed-devices.retire" in result.output
+    assert shown.exit_code == 0
+    assert "device-1" in shown.output
+    assert "password" not in shown.output.lower()
+
+
 def test_collectors_list_shows_exactly_fourteen_modules(
     monkeypatch, tmp_path, isolated_default_registry
 ) -> None:

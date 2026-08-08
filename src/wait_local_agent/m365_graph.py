@@ -175,6 +175,14 @@ class M365GraphSessionRevokeResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphManagedDeviceRetireResult:
+    status: str
+    message: str
+    device_id: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
@@ -299,7 +307,7 @@ class M365GraphClient:
             return ConnectorReadResult("not_configured", missing.message)
         return ConnectorReadResult(
             "ready",
-            "Microsoft Graph approved user lifecycle and group-membership prerequisites are ready.",
+            "Microsoft Graph approved user lifecycle, group-membership, and managed-device prerequisites are ready.",
         )
 
     def create_user(
@@ -456,6 +464,23 @@ class M365GraphClient:
             "succeeded",
             "Microsoft Graph user session revocation succeeded.",
             user_id=safe_user_id,
+            status_code=status_code,
+        )
+
+    def retire_managed_device(self, *, device_id: str) -> M365GraphManagedDeviceRetireResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphManagedDeviceRetireResult("blocked", health.message)
+        try:
+            safe_device_id = _safe_directory_object_id(device_id, "device_id")
+            endpoint = f"deviceManagement/managedDevices/{quote(safe_device_id, safe='')}/retire"
+            _, status_code = self._post(endpoint, None)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceRetireResult("failed", exc.message)
+        return M365GraphManagedDeviceRetireResult(
+            "succeeded",
+            "Microsoft Graph Intune managed-device retirement succeeded.",
+            device_id=safe_device_id,
             status_code=status_code,
         )
 
@@ -811,6 +836,14 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[1])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_managed_device_retire_endpoint = (
+        len(endpoint_parts) == 4
+        and endpoint_parts[0] == "deviceManagement"
+        and endpoint_parts[1] == "managedDevices"
+        and endpoint_parts[3] == "retire"
+        and _safe_encoded_segment(endpoint_parts[2])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_group_members_add_endpoint = (
         len(endpoint_parts) == 4
         and endpoint_parts[0] == "groups"
@@ -838,6 +871,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_user_endpoint
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint
+        and not is_managed_device_retire_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint
     ):
@@ -1203,6 +1237,7 @@ __all__ = [
     "M365GraphGroupMembershipResult",
     "M365GraphGroupReadResponse",
     "M365GraphLicenseChangeResult",
+    "M365GraphManagedDeviceRetireResult",
     "M365GraphSessionRevokeResult",
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",
