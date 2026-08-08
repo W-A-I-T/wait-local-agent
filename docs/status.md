@@ -57,7 +57,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   context lookup with externally supplied delegated or application bearer
   credentials, plus admin-approved user creation, disable/offboarding, and
   strict-ID group membership add/remove, direct user license add/remove, and
-  approved session revocation, Intune managed-device sync/reboot/retirement, and
+  approved session revocation, Intune managed-device sync/reboot/retirement/
+  remote-lock, and
   allowlisted mailbox-settings updates;
   broader resource reads and other mutations remain unavailable.
 - Preview-first communication for local ticket notes, email, Teams, Slack, and
@@ -229,7 +230,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
-| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/mailbox-settings/message-move/read-state/delete changes built; broader resources and mutations future |
+| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

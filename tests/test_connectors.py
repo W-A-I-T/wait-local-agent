@@ -14,6 +14,7 @@ from wait_local_agent.connectors import (
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_reboot,
+    draft_m365_managed_device_remote_lock,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
     draft_m365_session_revocation,
@@ -33,6 +34,7 @@ from wait_local_agent.connectors import (
     validate_m365_mail_message_read_state_payload,
     validate_m365_mailbox_settings_update_payload,
     validate_m365_managed_device_reboot_payload,
+    validate_m365_managed_device_remote_lock_payload,
     validate_m365_managed_device_retirement_payload,
     validate_m365_managed_device_sync_payload,
     validate_m365_session_revocation_payload,
@@ -47,6 +49,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadStateResult,
     M365GraphManagedDeviceRebootResult,
+    M365GraphManagedDeviceRemoteLockResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
     M365GraphSessionRevokeResult,
@@ -149,6 +152,15 @@ class FakeM365Client:
         return M365GraphManagedDeviceRebootResult(
             "succeeded",
             "device rebooted",
+            device_id=str(kwargs["device_id"]),
+            status_code=204,
+        )
+
+    def remote_lock_managed_device(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphManagedDeviceRemoteLockResult(
+            "succeeded",
+            "device locked",
             device_id=str(kwargs["device_id"]),
             status_code=204,
         )
@@ -604,6 +616,50 @@ def test_m365_managed_device_reboot_payload_rejects_extra_or_unsafe_fields() -> 
     ):
         with pytest.raises(ValueError):
             validate_m365_managed_device_reboot_payload(payload)
+
+
+def test_m365_managed_device_remote_lock_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_managed_device_remote_lock(
+        store, device_id="device-1", client_id="tenant-a"
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.payload_json == (
+        '{"action_type":"managed-devices.remote-lock","connector":"m365",'
+        '"device_id":"device-1"}'
+    )
+    valid = {
+        "connector": "m365",
+        "action_type": "managed-devices.remote-lock",
+        "device_id": "device-1",
+    }
+    validate_m365_managed_device_remote_lock_payload(valid)
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store, cast(Any, client), vault, approval.id or 0
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [{"device_id": "device-1"}]
+
+
+def test_m365_managed_device_remote_lock_payload_rejects_extra_or_unsafe_fields() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "managed-devices.remote-lock",
+        "device_id": "device-1",
+    }
+    for payload in (
+        {**valid, "raw_endpoint": "deviceManagement/managedDevices/device-1/remoteLock"},
+        {**valid, "device_id": "device 1"},
+        {**valid, "action_type": "managed-devices.wipe"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_managed_device_remote_lock_payload(payload)
 
 
 def test_m365_mailbox_settings_update_approval_is_strict_and_executes(settings, tmp_path) -> None:

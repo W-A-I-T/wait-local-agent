@@ -244,6 +244,14 @@ class M365GraphManagedDeviceRebootResult:
 
 
 @dataclass(frozen=True)
+class M365GraphManagedDeviceRemoteLockResult:
+    status: str
+    message: str
+    device_id: str = ""
+    status_code: int | None = None
+
+
+@dataclass(frozen=True)
 class M365GraphMailboxSettingsUpdateResult:
     status: str
     message: str
@@ -715,6 +723,30 @@ class M365GraphClient:
         return M365GraphManagedDeviceRebootResult(
             "succeeded",
             "Microsoft Graph Intune managed-device reboot succeeded.",
+            device_id=safe_device_id,
+            status_code=status_code,
+        )
+
+    def remote_lock_managed_device(
+        self,
+        *,
+        device_id: str,
+    ) -> M365GraphManagedDeviceRemoteLockResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphManagedDeviceRemoteLockResult("blocked", health.message)
+        try:
+            safe_device_id = _safe_directory_object_id(device_id, "device_id")
+            endpoint = (
+                "deviceManagement/managedDevices/"
+                f"{quote(safe_device_id, safe='')}/remoteLock"
+            )
+            _, status_code = self._post(endpoint, None)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceRemoteLockResult("failed", exc.message)
+        return M365GraphManagedDeviceRemoteLockResult(
+            "succeeded",
+            "Microsoft Graph Intune managed-device remote lock succeeded.",
             device_id=safe_device_id,
             status_code=status_code,
         )
@@ -1313,6 +1345,14 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[2])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_managed_device_remote_lock_endpoint = (
+        len(endpoint_parts) == 4
+        and endpoint_parts[0] == "deviceManagement"
+        and endpoint_parts[1] == "managedDevices"
+        and endpoint_parts[3] == "remoteLock"
+        and _safe_encoded_segment(endpoint_parts[2])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_mailbox_settings_endpoint = (
         len(endpoint_parts) == 3
         and endpoint_parts[0] == "users"
@@ -1354,6 +1394,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_managed_device_retire_endpoint
         and not is_managed_device_sync_endpoint
         and not is_managed_device_reboot_endpoint
+        and not is_managed_device_remote_lock_endpoint
         and not is_mailbox_settings_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint
@@ -1835,6 +1876,7 @@ __all__ = [
     "M365GraphGroupReadResponse",
     "M365GraphLicenseChangeResult",
     "M365GraphManagedDeviceRetireResult",
+    "M365GraphManagedDeviceRemoteLockResult",
     "M365GraphMailboxSettingsUpdateResult",
     "M365GraphSessionRevokeResult",
     "M365GraphLicenseReadResponse",

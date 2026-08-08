@@ -68,6 +68,7 @@ from wait_local_agent.connectors import (
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_reboot,
+    draft_m365_managed_device_remote_lock,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
     draft_m365_session_revocation,
@@ -231,6 +232,11 @@ class M365ManagedDeviceSyncDraftRequest(BaseModel):
 
 
 class M365ManagedDeviceRebootDraftRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
+class M365ManagedDeviceRemoteLockDraftRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
@@ -2961,6 +2967,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             approval = draft_m365_managed_device_reboot(
+                store,
+                device_id=payload.device_id,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/managed-devices/remote-lock-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_managed_device_remote_lock_draft(
+        payload: M365ManagedDeviceRemoteLockDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_managed_device_remote_lock(
                 store,
                 device_id=payload.device_id,
                 client_id=payload.client_id,

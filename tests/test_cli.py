@@ -493,6 +493,18 @@ def test_m365_managed_device_reboot_draft_command_is_available(monkeypatch, tmp_
     assert "password" not in shown.output.lower()
 
 
+def test_m365_managed_device_remote_lock_draft_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    result = CliRunner().invoke(
+        app,
+        ["connectors", "draft-m365-managed-device-remote-lock", "device-1"],
+    )
+
+    assert result.exit_code == 0
+    assert "action_type=m365.managed-devices.remote-lock" in result.output
+    assert "status=pending" in result.output
+
+
 def test_m365_mailbox_settings_draft_command_is_available(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()
