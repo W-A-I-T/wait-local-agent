@@ -73,6 +73,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
+from wait_local_agent.models import AgentDefinition
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
     build_analytics_summary,
@@ -205,6 +206,13 @@ class ScheduledJobCreateRequest(BaseModel):
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
     params: dict[str, object] = Field(default_factory=dict)
+
+
+class ScheduledJobRescheduleRequest(BaseModel):
+    cron: str = ""
+    schedule_type: Literal["cron", "interval", "once"] = "cron"
+    interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
+    run_at: str | None = None
 
 
 class CollectorConfigRequest(BaseModel):
@@ -827,6 +835,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="agent not found")
         return _agent_backfill_view(_process_backfill(reset, definition, context, scoped_client_id))
 
+    def _definition_for_agent_run(run) -> AgentDefinition | None:
+        definition = agent_service.get(run.agent_id, run.client_id)
+        if definition is None:
+            definition = agent_service.get(run.agent_id)
+        if definition is None:
+            return None
+        if definition.client_id is not None and definition.client_id != run.client_id:
+            return None
+        if definition.client_id is None and run.client_id is not None:
+            return replace(definition, client_id=run.client_id)
+        return definition
+
     @app.get("/agent-runs")
     def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
@@ -842,7 +862,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         run = store.get_agent_run(run_id, scoped_client_id)
         if run is None:
             raise HTTPException(status_code=404, detail="agent run not found")
-        return _agent_run_view(run)
+        view = _agent_run_view(run)
+        definition = _definition_for_agent_run(run)
+        if definition is not None and run.revision_version is not None:
+            revision = store.get_agent_definition_revision(
+                run.agent_id,
+                run.revision_version,
+                definition.client_id,
+            )
+            if revision is None and definition.client_id == run.client_id:
+                revision = store.get_agent_definition_revision(
+                    run.agent_id,
+                    run.revision_version,
+                    None,
+                )
+            if revision is not None:
+                view["definition_revision"] = _agent_revision_view(revision)
+        return view
 
     @app.post("/agent-runs/{run_id}/resume")
     def resume_agent(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
@@ -852,7 +888,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         run = store.get_agent_run(run_id, scoped_client_id)
         if run is None:
             raise HTTPException(status_code=404, detail="agent run not found")
-        definition = agent_service.get(run.agent_id, run.client_id)
+        definition = _definition_for_agent_run(run)
         if definition is None:
             raise HTTPException(status_code=404, detail="agent definition not found")
         try:
@@ -865,6 +901,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
+
+    @app.post("/agent-runs/{run_id}/cancel")
+    def cancel_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        run = store.get_agent_run(run_id, scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        definition = _definition_for_agent_run(run)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent definition not found")
+        try:
+            result = agent_service.cancel(
+                definition,
+                run,
+                actor=context.approver_id or "api",
+                approver_role=context.role,
+            )
+        except (AgentDefinitionError, PermissionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return asdict(result)
+
+    @app.post("/agent-runs/{run_id}/retry")
+    def retry_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        run = store.get_agent_run(run_id, scoped_client_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        definition = _definition_for_agent_run(run)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent definition not found")
+        try:
+            result = agent_service.retry(
+                definition,
+                run,
+                actor=context.approver_id or "api",
+            )
+        except (AgentDefinitionError, PermissionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"retry_of_run_id": run.id, **asdict(result)}
 
     @app.post("/automation/events")
     @limiter.limit(active_settings.rate_limit_general)
@@ -1744,6 +1823,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _scheduled_job_view(scheduler.remove(job_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+
+    @app.post("/scheduled-jobs/{job_id}/reschedule")
+    def reschedule_scheduled_job(
+        job_id: int,
+        request: ScheduledJobRescheduleRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return _scheduled_job_view(
+                scheduler.reschedule(
+                    job_id,
+                    schedule_type=request.schedule_type,
+                    cron=request.cron,
+                    interval_seconds=request.interval_seconds,
+                    run_at=request.run_at,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scheduled job not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/workflows/templates/{template_id}/runs")
     def run_workflow(
