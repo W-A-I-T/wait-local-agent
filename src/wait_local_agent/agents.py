@@ -64,6 +64,7 @@ class AgentExecutionResult:
     steps: list[dict[str, object]]
     approval_id: int | None = None
     error_detail: str = ""
+    revision_version: int | None = None
 
 
 class AgentDefinitionError(ValueError):
@@ -285,6 +286,7 @@ class AgentService:
     ) -> AgentExecutionResult:
         if run.status != "pending_approval":
             return self._result(run)
+        definition = self._definition_for_run(definition, run)
         if approver == run.actor:
             raise PermissionError("approver cannot approve the requesting actor's run")
         state = _state_object(run.state_json)
@@ -338,28 +340,32 @@ class AgentService:
         run: AgentRun,
         *,
         actor: str,
+        approver_role: Role,
     ) -> AgentExecutionResult:
-        """Cancel an active run and revoke any pending smart-action approval."""
         if run.status == "cancelled":
             return self._result(run)
         if run.status not in {"queued", "pending_approval"}:
-            raise AgentDefinitionError("only queued or pending-approval runs can be cancelled")
+            raise AgentDefinitionError("only queued or approval-paused runs can be cancelled")
+        definition = self._definition_for_run(definition, run)
         state = _state_object(run.state_json)
-        steps = _state_steps(state)
         pending_index = state.get("pending_approval_step")
-        if isinstance(pending_index, int) and 0 <= pending_index < len(steps):
-            approval_id = steps[pending_index].get("approval_id")
-            if isinstance(approval_id, int):
-                approval = self.store.get_approval_request(approval_id)
-                if approval is not None and approval.status == "pending":
-                    cancellation_actor = actor if actor != run.actor else "system:cancellation"
-                    self.smart_actions.update_approval(
-                        approval_id,
-                        "rejected",
-                        comment="Agent run cancelled",
-                        approver=cancellation_actor,
-                        approver_role=Role.ADMIN,
-                    )
+        if isinstance(pending_index, int):
+            steps = _state_steps(state)
+            if 0 <= pending_index < len(steps):
+                approval_id = steps[pending_index].get("approval_id")
+                if isinstance(approval_id, int):
+                    approval = self.store.get_approval_request(approval_id)
+                    if approval is not None and approval.status == "pending":
+                        self.smart_actions.update_approval(
+                            approval_id,
+                            "rejected",
+                            comment="Agent run cancelled",
+                            approver=actor if actor != run.actor else "system:cancellation",
+                            approver_role=approver_role,
+                        )
+                steps[pending_index]["status"] = "cancelled"
+                steps[pending_index]["error_detail"] = "agent run cancelled"
+                state["steps"] = steps
         state["pending_approval_step"] = None
         state["error_detail"] = "agent run cancelled"
         return self._finish(
@@ -369,6 +375,58 @@ class AgentService:
             run.current_step,
             state,
             actor=actor,
+        )
+
+    def _definition_for_run(self, definition: AgentDefinition, run: AgentRun) -> AgentDefinition:
+        if run.revision_version is None or run.revision_version == definition.version:
+            return definition
+        revision = self.store.get_agent_definition_revision(
+            run.agent_id,
+            run.revision_version,
+            run.client_id,
+        )
+        if revision is None and definition.client_id == run.client_id:
+            revision = self.store.get_agent_definition_revision(
+                run.agent_id,
+                run.revision_version,
+                None,
+            )
+        if revision is None:
+            raise AgentDefinitionError("agent run definition revision is no longer available")
+        try:
+            payload = json.loads(revision.definition_json)
+        except json.JSONDecodeError as exc:
+            raise AgentDefinitionError("agent run definition revision is malformed") from exc
+        if not isinstance(payload, dict):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        filters = payload.get("filters", {})
+        enabled_tools = payload.get("enabled_tools", [])
+        steps = payload.get("steps", [])
+        dependencies = payload.get("depends_on_agent_ids", [])
+        if not isinstance(filters, dict) or not isinstance(enabled_tools, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        if not isinstance(steps, list) or not isinstance(dependencies, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        return AgentDefinition(
+            id=definition.id,
+            name=str(payload.get("name", definition.name)),
+            description=str(payload.get("description", definition.description)),
+            enabled=bool(payload.get("enabled", definition.enabled)),
+            trigger=str(payload.get("trigger", definition.trigger)),
+            entity_type=str(payload.get("entity_type", definition.entity_type)),
+            filters=cast(dict[str, object], filters),
+            enabled_tools=cast(list[str], enabled_tools),
+            steps=cast(list[dict[str, object]], steps),
+            max_steps=int(payload.get("max_steps", definition.max_steps)),
+            execution_timeout_seconds=float(
+                payload.get("execution_timeout_seconds", definition.execution_timeout_seconds)
+            ),
+            client_id=run.client_id,
+            version=run.revision_version,
+            created_at=definition.created_at,
+            updated_at=revision.created_at,
+            run_once_per_entity=bool(payload.get("run_once_per_entity", definition.run_once_per_entity)),
+            depends_on_agent_ids=cast(list[str], dependencies),
         )
 
     def _continue(
@@ -518,6 +576,7 @@ class AgentService:
             steps=steps,
             approval_id=approval_id,
             error_detail=str(state.get("error_detail", "")),
+            revision_version=run.revision_version,
         )
 
     def _validate_definition(
