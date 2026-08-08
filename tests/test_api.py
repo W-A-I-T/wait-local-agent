@@ -33,6 +33,7 @@ from wait_local_agent.m365_graph import (
     M365GraphSubscribedSku,
     M365GraphUser,
     M365GraphUserCreateResult,
+    M365GraphUserDisableResult,
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
@@ -2550,18 +2551,76 @@ def test_m365_user_creation_requires_admin_approval_and_uses_vault_secret(settin
         headers=_auth("admin-token"),
         json={"status": "approved"},
     )
-    executed = client.post(
-        f"/connectors/m365/approval-requests/{request_id}/execute",
-        headers=_auth("admin-token"),
-    )
-
     assert draft.status_code == 200
     assert technician_approval.status_code == 403
     assert admin_approval.status_code == 200
-    assert executed.status_code == 200
-    assert executed.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["execution_status"] == "succeeded"
     assert calls[0]["temporary_password"] == "Temporary-Password-123!"
-    assert "Temporary-Password-123!" not in executed.text
+    assert "Temporary-Password-123!" not in admin_approval.text
+
+
+def test_m365_user_disable_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def disable_user(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphUserDisableResult(
+                "succeeded",
+                "disabled",
+                user_identity=str(kwargs["user_identity"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    draft = client.post(
+        "/connectors/m365/users/disable-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_identity": "adele.vance@example.test",
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.users.disable"
+    assert draft.json()["payload"]["user_identity"] == "adele.vance@example.test"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"user_identity": "adele.vance@example.test"}]
+    assert "password" not in admin_approval.text.lower()
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

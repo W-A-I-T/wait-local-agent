@@ -11,7 +11,11 @@ from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
 from wait_local_agent.itglue import ItGlueClient
-from wait_local_agent.m365_graph import M365GraphClient
+from wait_local_agent.m365_graph import (
+    M365GraphClient,
+    M365GraphUserCreateResult,
+    M365GraphUserDisableResult,
+)
 from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
@@ -37,6 +41,7 @@ HALOPSA_ACTION_TYPES = {
 }
 
 M365_USER_CREATE_ACTION = "users.create"
+M365_USER_DISABLE_ACTION = "users.disable"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -649,7 +654,7 @@ def draft_m365_user_creation(
     force_change_password_next_sign_in: bool = True,
     client_id: str | None = None,
 ) -> ApprovalRequest:
-    payload = {
+    payload: dict[str, object] = {
         "connector": "m365",
         "action_type": M365_USER_CREATE_ACTION,
         "account_enabled": account_enabled,
@@ -668,6 +673,26 @@ def draft_m365_user_creation(
     )
 
 
+def draft_m365_user_disable(
+    store: Store,
+    *,
+    user_identity: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_USER_DISABLE_ACTION,
+        "user_identity": user_identity,
+    }
+    validate_m365_user_disable_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}",
+        f"m365.{M365_USER_DISABLE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -677,8 +702,11 @@ def execute_m365_approval_request(
     approval = store.get_approval_request(request_id)
     if approval is None:
         raise KeyError(request_id)
-    if approval.action_type != f"m365.{M365_USER_CREATE_ACTION}":
-        raise ValueError("approval request is not an M365 user creation action")
+    if approval.action_type not in {
+        f"m365.{M365_USER_CREATE_ACTION}",
+        f"m365.{M365_USER_DISABLE_ACTION}",
+    }:
+        raise ValueError("approval request is not a supported M365 user action")
     if approval.status != "approved":
         raise PermissionError("M365 writes require approved approval requests")
     if approval.execution_status == "succeeded":
@@ -686,35 +714,52 @@ def execute_m365_approval_request(
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
         raise ValueError("approval payload is malformed")
-    validate_m365_user_creation_payload(payload)
-    if payload.get("connector") != "m365" or payload.get("action_type") != M365_USER_CREATE_ACTION:
-        raise ValueError("approval payload does not match M365 user creation")
-    try:
-        temporary_password = vault.get(str(payload["temporary_vault_name"]))
-    except (SecretVaultError, ValueError) as exc:
-        raise RuntimeError("M365 temporary credential could not be read from the local vault") from exc
-    if not temporary_password:
-        raise RuntimeError("M365 temporary credential is missing from the local vault")
-    result = client.create_user(
-        user_principal_name=str(payload["user_principal_name"]),
-        display_name=str(payload["display_name"]),
-        mail_nickname=str(payload["mail_nickname"]),
-        temporary_password=temporary_password,
-        account_enabled=bool(payload["account_enabled"]),
-        force_change_password_next_sign_in=bool(payload["force_change_next_sign_in"]),
-    )
+    action_type = str(payload.get("action_type"))
+    if payload.get("connector") != "m365" or action_type not in {
+        M365_USER_CREATE_ACTION,
+        M365_USER_DISABLE_ACTION,
+    }:
+        raise ValueError("approval payload does not match M365 user action")
+    result: M365GraphUserCreateResult | M365GraphUserDisableResult
+    result_payload: dict[str, object]
+    if action_type == M365_USER_CREATE_ACTION:
+        validate_m365_user_creation_payload(payload)
+        try:
+            temporary_password = vault.get(str(payload["temporary_vault_name"]))
+        except (SecretVaultError, ValueError) as exc:
+            raise RuntimeError("M365 temporary credential could not be read from the local vault") from exc
+        if not temporary_password:
+            raise RuntimeError("M365 temporary credential is missing from the local vault")
+        result = client.create_user(
+            user_principal_name=str(payload["user_principal_name"]),
+            display_name=str(payload["display_name"]),
+            mail_nickname=str(payload["mail_nickname"]),
+            temporary_password=temporary_password,
+            account_enabled=bool(payload["account_enabled"]),
+            force_change_password_next_sign_in=bool(payload["force_change_next_sign_in"]),
+        )
+        result_payload = {
+            "remote_id": result.remote_id,
+            "user_principal_name": result.user_principal_name,
+            "display_name": result.display_name,
+            "account_enabled": result.account_enabled,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_user_disable_payload(payload)
+        result = client.disable_user(user_identity=str(payload["user_identity"]))
+        result_payload = {
+            "user_identity": result.user_identity,
+            "status_code": result.status_code,
+        }
     return store.record_approval_execution(
         request_id,
         status=result.status,
         message=result.message,
         result={
             "connector": "m365",
-            "action_type": M365_USER_CREATE_ACTION,
-            "remote_id": result.remote_id,
-            "user_principal_name": result.user_principal_name,
-            "display_name": result.display_name,
-            "account_enabled": result.account_enabled,
-            "status_code": result.status_code,
+            "action_type": action_type,
+            **result_payload,
         },
     )
 
@@ -768,6 +813,21 @@ def validate_m365_user_creation_payload(payload: dict[str, object]) -> None:
         payload.get("force_change_next_sign_in"), bool
     ):
         raise ValueError("M365 user creation flags are invalid")
+
+
+def validate_m365_user_disable_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "user_identity"}:
+        raise ValueError("M365 user disable payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_USER_DISABLE_ACTION:
+        raise ValueError("M365 user disable payload is invalid")
+    user_identity = payload.get("user_identity")
+    if (
+        not isinstance(user_identity, str)
+        or not user_identity.strip()
+        or len(user_identity) > 320
+        or any(ord(character) < 32 or character.isspace() for character in user_identity)
+    ):
+        raise ValueError("M365 user_identity is invalid")
 
 
 def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:

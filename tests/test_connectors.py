@@ -7,12 +7,15 @@ import pytest
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_m365_user_creation,
+    draft_m365_user_disable,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     update_halopsa_approval_fields,
     validate_halopsa_action_fields,
     validate_m365_user_creation_payload,
+    validate_m365_user_disable_payload,
 )
+from wait_local_agent.m365_graph import M365GraphUserDisableResult
 from wait_local_agent.models import HaloWriteResult
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
@@ -42,6 +45,15 @@ class FakeM365Client:
                 "status_code": 201,
             },
         )()
+
+    def disable_user(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphUserDisableResult(
+            "succeeded",
+            "disabled",
+            user_identity=str(kwargs["user_identity"]),
+            status_code=204,
+        )
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:
@@ -99,6 +111,55 @@ def test_m365_user_creation_rejects_unapproved_payload_fields(settings) -> None:
         )
 
 
+def test_m365_user_disable_approval_has_no_secret_fields_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_user_disable(
+        store,
+        user_identity="adele.vance@example.test",
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.client_id == "tenant-a"
+    assert persisted.payload_json == (
+        '{"action_type":"users.disable","connector":"m365",'
+        '"user_identity":"adele.vance@example.test"}'
+    )
+    assert "password" not in persisted.payload_json.lower()
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store,
+        cast(Any, client),
+        vault,
+        approval.id or 0,
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [{"user_identity": "adele.vance@example.test"}]
+    assert "password" not in executed.execution_result_json.lower()
+
+
+def test_m365_user_disable_payload_validation_rejects_extra_or_unsafe_fields() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "users.disable",
+        "user_identity": "adele.vance@example.test",
+    }
+    validate_m365_user_disable_payload(valid)
+    cases: tuple[dict[str, object], ...] = (
+        {**valid, "account_enabled": False},
+        {**valid, "user_identity": "bad\nvalue"},
+        {**valid, "user_identity": "adele vance@example.test"},
+        {**valid, "action_type": "users.create"},
+    )
+    for payload in cases:
+        with pytest.raises(ValueError):
+            validate_m365_user_disable_payload(payload)
+
+
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:
     store = Store(settings.data_path)
     vault = SecretVault.initialize(tmp_path / "vault")
@@ -112,13 +173,56 @@ def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(se
     with pytest.raises(PermissionError, match="approved"):
         execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, pending.id or 0)
 
-    wrong = store.create_approval_request("subject", "m365.users.disable", {})
-    with pytest.raises(ValueError, match="not an M365"):
+    wrong = store.create_approval_request("subject", "m365.users.delete", {})
+    with pytest.raises(ValueError, match="supported M365"):
         execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, wrong.id or 0)
 
     store.update_approval_request(pending.id or 0, "approved")
     with pytest.raises(RuntimeError, match="missing"):
         execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, pending.id or 0)
+
+
+def test_m365_user_execution_rejects_missing_and_malformed_approval_records(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    with pytest.raises(KeyError):
+        execute_m365_approval_request(store, cast(Any, FakeM365Client()), vault, 9999)
+
+    malformed = store.create_approval_request(
+        "subject",
+        "m365.users.disable",
+        cast(Any, []),
+    )
+    store.update_approval_request(malformed.id or 0, "approved")
+    with pytest.raises(ValueError, match="malformed"):
+        execute_m365_approval_request(
+            store, cast(Any, FakeM365Client()), vault, malformed.id or 0
+        )
+
+    mismatched = store.create_approval_request(
+        "subject",
+        "m365.users.disable",
+        {"connector": "m365", "action_type": "users.delete"},
+    )
+    store.update_approval_request(mismatched.id or 0, "approved")
+    with pytest.raises(ValueError, match="does not match"):
+        execute_m365_approval_request(
+            store, cast(Any, FakeM365Client()), vault, mismatched.id or 0
+        )
+
+    corrupt = draft_m365_user_creation(
+        store,
+        user_principal_name="adele.vance@example.test",
+        display_name="Adele Vance",
+        mail_nickname="adele.vance",
+        temporary_vault_name="WAIT_M365_TEMP_ADELE",
+    )
+    store.update_approval_request(corrupt.id or 0, "approved")
+    vault.secrets_path.write_bytes(b"not-encrypted")
+    with pytest.raises(RuntimeError, match="could not be read"):
+        execute_m365_approval_request(
+            store, cast(Any, FakeM365Client()), vault, corrupt.id or 0
+        )
 
 
 def test_m365_user_creation_payload_validation_rejects_each_sensitive_shape() -> None:

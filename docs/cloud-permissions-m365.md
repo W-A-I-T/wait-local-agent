@@ -1,7 +1,7 @@
 # Microsoft 365 cloud inventory permissions
 
-The Microsoft 365 adapter calls bounded Microsoft Graph read endpoints and one
-approval-gated user-creation endpoint. For an
+The Microsoft 365 adapter calls bounded Microsoft Graph read endpoints and
+approval-gated user lifecycle endpoints. For an
 application credential, grant administrator-consented application
 permissions:
 
@@ -13,6 +13,7 @@ permissions:
 | Subscribed license SKUs | `LicenseAssignment.Read.All` |
 | Mail-folder metadata | `Mail.ReadBasic.All` |
 | Intune managed devices | `DeviceManagementManagedDevices.Read.All` |
+| Approved user disable/offboarding | `User.EnableDisableAccount.All` and `User.Read.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -28,6 +29,9 @@ role-management permissions. If approved user creation is enabled, grant only
 the least-privileged `User.Create` application permission (or delegated
 permission for a work or school account) in addition to the read permissions
 needed by the deployment.
+For approved disable/offboarding, grant only the least-privileged application
+combination `User.EnableDisableAccount.All` and `User.Read.All` described by
+Microsoft Graph; do not grant `Directory.ReadWrite.All`.
 
 ## Live identity, group, license, mailbox, and Intune lookup
 
@@ -39,7 +43,7 @@ WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
 WAIT_M365_ACCESS_TOKEN=
 WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
-WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved user creation
+WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved M365 lifecycle writes
 ```
 
 User creation uses `POST /users` and requires the least-privileged
@@ -50,10 +54,14 @@ only a vault-entry name in the approval request; the temporary password is
 resolved from the local vault immediately before the approved request and is
 never persisted or returned.
 
-It issues only bounded `GET /users` and `GET /groups` requests plus selected-
+Its read surface issues only bounded `GET /users` and `GET /groups` requests plus selected-
 field `GET /subscribedSkus`, `GET /users/{id}/mailFolders`, and
 `GET /deviceManagement/managedDevices` requests. The separate approved user
-creation route issues only `POST /users` with the fixed required fields. User reads can
+creation route issues only `POST /users` with the fixed required fields. The
+approved disable/offboarding route issues only `PATCH /users/{id |
+userPrincipalName}` with `{"accountEnabled": false}`. It does not revoke
+sign-in sessions, remove licenses or group memberships, mutate mailbox data,
+or act on Intune devices. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return
@@ -76,6 +84,8 @@ Intune managed-device API uses `DeviceManagementManagedDevices.Read.All` for
 application or delegated access. The
 per-user `licenseDetails` API is not used because application permissions are
 not supported there. Grant only the permission required by the chosen flow.
-The token acquisition flow is deliberately outside WAIT, and this slice does
-not create, disable, modify, or assign licenses to users or groups, and does
-not mutate mailboxes or Intune devices.
+The token acquisition flow is deliberately outside WAIT. Microsoft documents
+the [user update](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0)
+endpoint and the [Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)
+for these lifecycle permissions. Session revocation is a separate
+`revokeSignInSessions` action and is intentionally not part of this slice.
