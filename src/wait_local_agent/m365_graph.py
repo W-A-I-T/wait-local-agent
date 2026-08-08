@@ -1,8 +1,8 @@
-"""Read-only Microsoft Graph identity lookup through a guarded HTTP boundary.
+"""Read-only Microsoft Graph identity and group reads through a guarded boundary.
 
 The live connector is intentionally narrower than the cloud inventory adapter:
-it looks up user identity context only, accepts a bearer token supplied by the
-operator's settings/vault boundary, and never creates or mutates Graph data.
+it looks up bounded user and group context, accepts a bearer token supplied by
+the operator's settings/vault boundary, and never creates or mutates Graph data.
 """
 
 from __future__ import annotations
@@ -34,9 +34,28 @@ class M365GraphUser:
 
 
 @dataclass(frozen=True)
+class M365GraphGroup:
+    id: str
+    display_name: str
+    mail: str
+    mail_nickname: str
+    description: str
+    mail_enabled: bool | None
+    security_enabled: bool | None
+    group_types: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class M365GraphReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphUser]
+    next_cursor: str = ""
+
+
+@dataclass(frozen=True)
+class M365GraphGroupReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphGroup]
     next_cursor: str = ""
 
 
@@ -49,7 +68,7 @@ class M365GraphReadError(Exception):
 
 
 class M365GraphClient:
-    """Bounded, read-only Microsoft Graph user lookup client."""
+    """Bounded, read-only Microsoft Graph user and group lookup client."""
 
     def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
@@ -64,7 +83,7 @@ class M365GraphClient:
             return missing
         response = self.list_users(page_size=1)
         if response.result.status == "ready":
-            return ConnectorReadResult("ready", "Microsoft Graph identity read prerequisites are ready.")
+            return ConnectorReadResult("ready", "Microsoft Graph identity and group read prerequisites are ready.")
         return response.result
 
     def list_users(
@@ -86,6 +105,26 @@ class M365GraphClient:
             return M365GraphReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_users(params)
 
+    def list_groups(
+        self,
+        *,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphGroupReadResponse:
+        try:
+            params = _group_list_params(page_size, cursor)
+            if identity is not None:
+                safe_identity = _safe_identity(identity)
+                escaped = safe_identity.replace("'", "''")
+                params["$filter"] = (
+                    f"id eq '{escaped}' or mail eq '{escaped}' or "
+                    f"mailNickname eq '{escaped}' or displayName eq '{escaped}'"
+                )
+        except M365GraphReadError as exc:
+            return M365GraphGroupReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return self._request_groups(params)
+
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
         if blocked is not None:
@@ -99,7 +138,25 @@ class M365GraphClient:
             return M365GraphReadResponse(ConnectorReadResult("failed", exc.message), [])
         items = [user for row in _payload_rows(payload) if (user := _normalize_user(row)) is not None]
         return M365GraphReadResponse(
-            ConnectorReadResult("ready", "Microsoft Graph identity read succeeded.", len(items)),
+            ConnectorReadResult("ready", "Microsoft Graph user identity read succeeded.", len(items)),
+            items,
+            _next_cursor(payload),
+        )
+
+    def _request_groups(self, params: dict[str, str | int]) -> M365GraphGroupReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphGroupReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphGroupReadResponse(missing, [])
+        try:
+            payload = self._get("groups", params=params)
+        except M365GraphReadError as exc:
+            return M365GraphGroupReadResponse(ConnectorReadResult("failed", exc.message), [])
+        items = [group for row in _payload_rows(payload) if (group := _normalize_group(row)) is not None]
+        return M365GraphGroupReadResponse(
+            ConnectorReadResult("ready", "Microsoft Graph group read succeeded.", len(items)),
             items,
             _next_cursor(payload),
         )
@@ -159,7 +216,7 @@ class M365GraphClient:
             return None
         return ConnectorReadResult(
             "not_configured",
-            f"Microsoft Graph identity credentials are incomplete: {', '.join(missing)}.",
+            f"Microsoft Graph live read credentials are incomplete: {', '.join(missing)}.",
         )
 
     def _blocked_response(self) -> M365GraphReadResponse | None:
@@ -185,7 +242,7 @@ def _api_base_url(base_url: str) -> str:
 
 
 def _safe_endpoint(endpoint: str) -> str:
-    if endpoint != "users":
+    if endpoint not in {"users", "groups"}:
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
 
@@ -226,6 +283,18 @@ def _list_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
     return params
 
 
+def _group_list_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$top": _bounded_page_size(page_size),
+        "$select": (
+            "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
+        ),
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
 def _payload_rows(payload: object) -> list[Mapping[str, object]]:
     if isinstance(payload, list):
         rows = payload
@@ -255,6 +324,30 @@ def _normalize_user(row: Mapping[str, object]) -> M365GraphUser | None:
         account_enabled=account_enabled if isinstance(account_enabled, bool) else None,
         job_title=_string_value(row, "jobTitle"),
         department=_string_value(row, "department"),
+    )
+
+
+def _normalize_group(row: Mapping[str, object]) -> M365GraphGroup | None:
+    group_id = _string_value(row, "id")
+    if not group_id:
+        return None
+    group_types = row.get("groupTypes")
+    normalized_group_types = (
+        tuple(value for value in group_types if isinstance(value, str))
+        if isinstance(group_types, list)
+        else ()
+    )
+    mail_enabled = row.get("mailEnabled")
+    security_enabled = row.get("securityEnabled")
+    return M365GraphGroup(
+        id=group_id,
+        display_name=_string_value(row, "displayName"),
+        mail=_string_value(row, "mail"),
+        mail_nickname=_string_value(row, "mailNickname"),
+        description=_string_value(row, "description"),
+        mail_enabled=mail_enabled if isinstance(mail_enabled, bool) else None,
+        security_enabled=security_enabled if isinstance(security_enabled, bool) else None,
+        group_types=normalized_group_types,
     )
 
 
@@ -292,6 +385,8 @@ def _http_error_message(status_code: int, endpoint: str) -> str:
 
 __all__ = [
     "M365GraphClient",
+    "M365GraphGroup",
+    "M365GraphGroupReadResponse",
     "M365GraphReadError",
     "M365GraphReadResponse",
     "M365GraphUser",

@@ -256,13 +256,13 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="Microsoft 365 / Entra",
             status=m365_status,
             message=(
-                "Microsoft Graph is configured for read-only user identity lookup."
+                "Microsoft Graph is configured for read-only user and group context lookup."
                 if m365_status == "configured"
                 else "Microsoft Graph credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if m365_status == "blocked"
                 else (
                     "Set WAIT_M365_GRAPH_BASE_URL and WAIT_M365_ACCESS_TOKEN to enable "
-                    "live identity reads."
+                    "live identity and group reads."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,

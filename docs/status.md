@@ -36,9 +36,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file
   downloads and write operations remain unavailable.
-- Microsoft Graph read-only user identity lookup with externally supplied
-  delegated or application bearer credentials; mutations and broader resource
-  reads remain unavailable.
+- Microsoft Graph read-only user and group context lookup with externally
+  supplied delegated or application bearer credentials; mutations and broader
+  resource reads remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
@@ -142,7 +142,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
-| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user lookup built; broader resources future |
+| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user/group lookup built; broader resources future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
