@@ -86,6 +86,12 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.autotask_secret == ""
     assert settings.autotask_integration_code == ""
     assert settings.autotask_page_size == 50
+    assert settings.connectwise_base_url == ""
+    assert settings.connectwise_company_id == ""
+    assert settings.connectwise_public_key == ""
+    assert settings.connectwise_private_key == ""
+    assert settings.connectwise_client_id == ""
+    assert settings.connectwise_page_size == 50
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -145,6 +151,12 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "api-secret")
     monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
     monkeypatch.setenv("WAIT_AUTOTASK_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://connectwise.example.test/api")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY_ID", "Acme+MSP")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PAGE_SIZE", "20")
 
     settings = load_settings()
 
@@ -168,6 +180,12 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.autotask_secret == "api-secret"
     assert settings.autotask_integration_code == "integration-code"
     assert settings.autotask_page_size == 20
+    assert settings.connectwise_base_url == "https://connectwise.example.test/api"
+    assert settings.connectwise_company_id == "Acme+MSP"
+    assert settings.connectwise_public_key == "public-key"
+    assert settings.connectwise_private_key == "private-key"
+    assert settings.connectwise_client_id == "client-id"
+    assert settings.connectwise_page_size == 20
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

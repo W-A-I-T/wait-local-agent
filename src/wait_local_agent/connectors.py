@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from wait_local_agent.autotask import AutotaskClient, PsaClient
 from wait_local_agent.config import Settings
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
 from wait_local_agent.itglue import ItGlueClient
@@ -73,6 +74,16 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     autotask_status: ConnectorStatusValue = "not_configured"
     if autotask_configured:
         autotask_status = "configured" if settings.allow_http_probing else "blocked"
+    connectwise_configured = bool(
+        settings.connectwise_base_url
+        and settings.connectwise_company_id
+        and settings.connectwise_public_key
+        and settings.connectwise_private_key
+        and settings.connectwise_client_id
+    )
+    connectwise_status: ConnectorStatusValue = "not_configured"
+    if connectwise_configured:
+        connectwise_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -161,6 +172,22 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
+        ConnectorStatus(
+            id="connectwise",
+            kind="psa",
+            name="ConnectWise PSA",
+            status=connectwise_status,
+            message=(
+                "ConnectWise read-only ticket and company inventory is configured."
+                if connectwise_status == "configured"
+                else (
+                    "ConnectWise credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if connectwise_status == "blocked"
+                    else "Set WAIT_CONNECTWISE_* values to enable read-only PSA inventory."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
     ]
 
 
@@ -205,6 +232,12 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "autotask",
         ),
         SecretRecord("WAIT_AUTOTASK_PAGE_SIZE", bool(settings.autotask_page_size), "autotask"),
+        SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_COMPANY_ID", bool(settings.connectwise_company_id), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PRIVATE_KEY", bool(settings.connectwise_private_key), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_CLIENT_ID", bool(settings.connectwise_client_id), "connectwise"),
+        SecretRecord("WAIT_CONNECTWISE_PAGE_SIZE", bool(settings.connectwise_page_size), "connectwise"),
     ]
 
 
@@ -217,6 +250,7 @@ def validate_connector_credentials(
     itglue_client: ItGlueClient | None = None,
     ninjaone_client: RmmClient | None = None,
     autotask_client: PsaClient | None = None,
+    connectwise_client: PsaClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -308,6 +342,26 @@ def validate_connector_credentials(
                 f"Autotask credentials are incomplete: {', '.join(missing)}.",
             )
         result = (autotask_client or AutotaskClient(settings)).health()
+    elif connector == "connectwise":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_CONNECTWISE_BASE_URL": settings.connectwise_base_url,
+                "WAIT_CONNECTWISE_COMPANY_ID": settings.connectwise_company_id,
+                "WAIT_CONNECTWISE_PUBLIC_KEY": settings.connectwise_public_key,
+                "WAIT_CONNECTWISE_PRIVATE_KEY": settings.connectwise_private_key,
+                "WAIT_CONNECTWISE_CLIENT_ID": settings.connectwise_client_id,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"ConnectWise credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (connectwise_client or ConnectWiseClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

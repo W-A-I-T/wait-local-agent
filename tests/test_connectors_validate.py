@@ -190,6 +190,31 @@ def test_validate_autotask_cli_requires_credentials_and_accepts_ready(monkeypatc
     assert "PASS connector=autotask layer=connector" in ready.output
 
 
+def test_validate_connectwise_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ConnectWise read prerequisites are ready.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "connectwise"])
+    assert missing.exit_code == 1
+    assert "WAIT_CONNECTWISE_BASE_URL" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_CONNECTWISE_BASE_URL", "https://connectwise.example.test/api")
+    monkeypatch.setenv("WAIT_CONNECTWISE_COMPANY_ID", "Acme+MSP")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WAIT_CONNECTWISE_CLIENT_ID", "client-id")
+    monkeypatch.setattr(cli_module, "ConnectWiseClient", FakeConnectWiseClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "connectwise"])
+    assert ready.exit_code == 0
+    assert "PASS connector=connectwise layer=connector" in ready.output
+
+
 def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
     result = ConnectorReadResult("ready", "fake NinjaOne response", 1)
 
@@ -256,6 +281,35 @@ def test_autotask_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> 
         ["connectors", "autotask-companies"],
     ]
     results = [runner.invoke(app, command) for command in commands]
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)
+
+
+def test_connectwise_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake ConnectWise response", 1)
+
+    class FakeConnectWiseClient:
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_connectwise_client", lambda: FakeConnectWiseClient())
+    commands = [
+        ["connectors", "connectwise-health"],
+        ["connectors", "connectwise-tickets"],
+        ["connectors", "connectwise-ticket", "ticket-1"],
+        ["connectors", "connectwise-companies"],
+    ]
+    results = [CliRunner().invoke(app, command) for command in commands]
     assert all(item.exit_code == 0 for item in results)
     assert all("ready count=1" in item.output for item in results)
 

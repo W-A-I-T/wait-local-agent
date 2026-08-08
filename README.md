@@ -24,10 +24,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
 - IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
-- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, and `ninjaone`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, and `connectwise`.
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
+- Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
 - Preview-only `build-message` drafts cover ticket notes, email, Teams, Slack, and
   SMS-shaped messages; no outbound transport is enabled.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
@@ -356,6 +357,20 @@ The public Autotask adapter is read-only and requires explicit HTTP probing.
 Configure the API-only user, secret, integration code, and zone base URL, then
 use the `autotask` connector validation and read commands. No Autotask mutation
 endpoint is exposed.
+
+### ConnectWise PSA
+
+The public ConnectWise adapter is read-only and requires explicit HTTP probing.
+Configure the API base URL, company identifier, public/private API keys, and
+application client ID, then use the `connectwise` validation and read commands.
+No ConnectWise mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate connectwise
+wait-local-agent connectors connectwise-health
+wait-local-agent connectors connectwise-tickets
+wait-local-agent connectors connectwise-companies
+```
 
 ## Scheduled Workflows and Tenancy Filters
 

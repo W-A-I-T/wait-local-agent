@@ -60,6 +60,7 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -157,6 +158,10 @@ def _autotask_client() -> AutotaskClient:
     return AutotaskClient(load_settings())
 
 
+def _connectwise_client() -> ConnectWiseClient:
+    return ConnectWiseClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -214,6 +219,14 @@ def doctor() -> None:
         and settings.autotask_integration_code
     )
     typer.echo(f"autotask_configured={autotask_configured}")
+    connectwise_configured = bool(
+        settings.connectwise_base_url
+        and settings.connectwise_company_id
+        and settings.connectwise_public_key
+        and settings.connectwise_private_key
+        and settings.connectwise_client_id
+    )
+    typer.echo(f"connectwise_configured={connectwise_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -631,7 +644,12 @@ def list_secrets() -> None:
 
 
 @connectors_app.command("validate")
-def validate_connector(connector: Annotated[str, typer.Argument(help="Connector id: halopsa or hudu.")]) -> None:
+def validate_connector(
+    connector: Annotated[
+        str,
+        typer.Argument(help="Connector id, such as halopsa, hudu, autotask, or connectwise."),
+    ]
+) -> None:
     settings = load_settings()
     try:
         result = validate_connector_credentials(
@@ -642,6 +660,7 @@ def validate_connector(connector: Annotated[str, typer.Argument(help="Connector 
             itglue_client=_itglue_client(),
             ninjaone_client=_ninjaone_client(),
             autotask_client=_autotask_client(),
+            connectwise_client=_connectwise_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -894,6 +913,34 @@ def autotask_companies(page: int = 1, page_size: int = 50) -> None:
     _print_autotask_response(
         "companies.list",
         _autotask_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("connectwise-health")
+def connectwise_health() -> None:
+    result = _connectwise_client().health()
+    _audit_connectwise_cli_read("connectwise.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("connectwise-tickets")
+def connectwise_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_connectwise_response(
+        "tickets.list",
+        _connectwise_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("connectwise-ticket")
+def connectwise_ticket(ticket_id: str) -> None:
+    _print_connectwise_response("tickets.get", _connectwise_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("connectwise-companies")
+def connectwise_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_connectwise_response(
+        "companies.list",
+        _connectwise_client().list_companies(page=page, page_size=page_size),
     )
 
 
@@ -1527,6 +1574,13 @@ def _print_autotask_response(read_type: str, response: PsaReadResponse) -> None:
         typer.echo(item)
 
 
+def _print_connectwise_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_connectwise_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
@@ -1545,6 +1599,10 @@ def _audit_rmm_cli_read(read_type: str, status: str, count: int) -> None:
 
 def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("autotask.read", read_type, f"{status} count={count}")
+
+
+def _audit_connectwise_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("connectwise.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

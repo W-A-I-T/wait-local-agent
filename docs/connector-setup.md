@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, and Autotask HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, and ConnectWise HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -240,4 +240,20 @@ wait-local-agent secrets set WAIT_AUTOTASK_USERNAME
 wait-local-agent secrets set WAIT_AUTOTASK_SECRET
 wait-local-agent secrets set WAIT_AUTOTASK_INTEGRATION_CODE
 WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate autotask
+```
+
+## ConnectWise PSA
+
+The public ConnectWise adapter is read-only and requires explicit HTTP
+probing. Configure the API base URL, company identifier, public/private API
+keys, and application client ID. The adapter only reads service tickets and
+companies; it does not call ConnectWise mutation endpoints.
+
+```bash
+wait-local-agent secrets set WAIT_CONNECTWISE_BASE_URL
+wait-local-agent secrets set WAIT_CONNECTWISE_COMPANY_ID
+wait-local-agent secrets set WAIT_CONNECTWISE_PUBLIC_KEY
+wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY
+wait-local-agent secrets set WAIT_CONNECTWISE_CLIENT_ID
+WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate connectwise
 ```

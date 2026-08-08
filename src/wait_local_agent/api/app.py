@@ -62,6 +62,7 @@ from wait_local_agent.connectors import (
     list_secret_records,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
@@ -296,6 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     itglue_client = ItGlueClient(active_settings)
     ninjaone_client = NinjaOneClient(active_settings)
     autotask_client = AutotaskClient(active_settings)
+    connectwise_client = ConnectWiseClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1861,6 +1863,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             autotask_client.list_companies(page=page, page_size=page_size),
         )
 
+    @app.get("/connectors/connectwise/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = connectwise_client.health()
+        store.add_audit_event("connectwise.read", "connectwise.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/connectwise/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _connectwise_response(
+            "tickets.list",
+            connectwise_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/connectwise/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _connectwise_response("tickets.get", connectwise_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/connectwise/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _connectwise_response(
+            "companies.list",
+            connectwise_client.list_companies(page=page, page_size=page_size),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2325,6 +2365,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _autotask_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
         store.add_audit_event(
             "autotask.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _connectwise_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "connectwise.read",
             read_type,
             f"{response.result.status} count={response.result.count}",
         )

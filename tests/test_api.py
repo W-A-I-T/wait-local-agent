@@ -1642,6 +1642,42 @@ def test_autotask_api_read_surfaces_are_blocked_and_ready_without_writes(setting
     )
 
 
+def test_connectwise_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/connectwise/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake ConnectWise response", 1)
+
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "company-1"}])
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/connectwise/health").json()["status"] == "ready"
+    assert client.get("/connectors/connectwise/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/connectwise/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/connectwise/companies").json()["items"] == [{"id": "company-1"}]
+    assert any(
+        event["event_type"] == "connectwise.read"
+        for event in client.get("/audit").json()
+    )
+
+
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
     configured_settings = settings.__class__(
         **{
@@ -1668,6 +1704,11 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
             "halopsa_client_id": "client-id",
             "halopsa_client_secret": "secret",
             "halopsa_tenant": "tenant",
+            "connectwise_base_url": "https://connectwise.example.test/api",
+            "connectwise_company_id": "Acme+MSP",
+            "connectwise_public_key": "public-key",
+            "connectwise_private_key": "private-key",
+            "connectwise_client_id": "client-id",
         }
     )
     enabled_settings = blocked_settings.__class__(
@@ -1682,6 +1723,10 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
 
     assert blocked.json()[0]["status"] == "blocked"
     assert enabled.json()[0]["status"] == "configured"
+    blocked_connectwise = next(item for item in blocked.json() if item["id"] == "connectwise")
+    enabled_connectwise = next(item for item in enabled.json() if item["id"] == "connectwise")
+    assert blocked_connectwise["status"] == "blocked"
+    assert enabled_connectwise["status"] == "configured"
 
 
 def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> None:

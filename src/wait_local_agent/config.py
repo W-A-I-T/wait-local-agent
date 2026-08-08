@@ -109,6 +109,12 @@ class Settings:
     autotask_secret: str = ""
     autotask_integration_code: str = ""
     autotask_page_size: int = 50
+    connectwise_base_url: str = ""
+    connectwise_company_id: str = ""
+    connectwise_public_key: str = ""
+    connectwise_private_key: str = ""
+    connectwise_client_id: str = ""
+    connectwise_page_size: int = 50
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
@@ -258,6 +264,37 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         autotask_page_size=_int_env("WAIT_AUTOTASK_PAGE_SIZE", 50),
+        connectwise_base_url=_secret_value(
+            "WAIT_CONNECTWISE_BASE_URL",
+            os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_company_id=_secret_value(
+            "WAIT_CONNECTWISE_COMPANY_ID",
+            os.getenv("WAIT_CONNECTWISE_COMPANY_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_public_key=_secret_value(
+            "WAIT_CONNECTWISE_PUBLIC_KEY",
+            os.getenv("WAIT_CONNECTWISE_PUBLIC_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_private_key=_secret_value(
+            "WAIT_CONNECTWISE_PRIVATE_KEY",
+            os.getenv("WAIT_CONNECTWISE_PRIVATE_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_client_id=_secret_value(
+            "WAIT_CONNECTWISE_CLIENT_ID",
+            os.getenv("WAIT_CONNECTWISE_CLIENT_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        connectwise_page_size=_int_env("WAIT_CONNECTWISE_PAGE_SIZE", 50),
         license_key=_secret_value(
             "license_key",
             os.getenv("WAIT_LICENSE_KEY", ""),
