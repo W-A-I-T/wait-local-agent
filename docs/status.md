@@ -72,7 +72,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   provenance-bearing tenant-scoped template gallery can run reviewed core
   workflows through the existing approval path. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
-  reruns under `/agent-backfills`, plus a non-persisting dry-run estimate.
+  reruns under `/agent-backfills`, plus a non-persisting dry-run estimate and
+  bounded parallel execution with a sequential default.
   Agent run responses and persisted run state
   include a redacted operational final result with the last tool's status,
   output, evidence, and error detail; hidden reasoning is not persisted.

@@ -1371,6 +1371,7 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
             "agent_id": agent_id,
             "entity_ids": ["TCK-1001", "TCK-1002"],
             "input": {"api_token": "backfill-secret"},
+            "max_concurrency": 2,
             "client_id": "acme",
         },
     )
@@ -1378,7 +1379,8 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     assert preview.json()["dry_run"] is True
     assert preview.json()["entity_count"] == 2
     assert preview.json()["estimated_runs"] == 2
-    assert preview.json()["execution_mode"] == "sequential"
+    assert preview.json()["max_concurrency"] == 2
+    assert preview.json()["execution_mode"] == "bounded_parallel"
     assert preview.json()["will_persist"] is False
     assert preview.json()["input"]["api_token"] == "[redacted]"
     assert store.list_agent_backfills() == []
@@ -1389,6 +1391,7 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
             "agent_id": agent_id,
             "entity_ids": ["TCK-1001", "TCK-1002"],
             "input": {"api_token": "backfill-secret"},
+            "max_concurrency": 2,
             "client_id": "acme",
         },
     )
@@ -1405,6 +1408,7 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     resumed = client.post(f"/agent-backfills/{backfill_id}/run")
     assert resumed.status_code == 200
     assert resumed.json()["status"] == "completed"
+    assert resumed.json()["max_concurrency"] == 2
     assert resumed.json()["succeeded_count"] == 2
     assert client.post(f"/agent-backfills/{backfill_id}/run").status_code == 409
     assert client.post(f"/agent-backfills/{backfill_id}/rerun-failed").status_code == 409
