@@ -3286,6 +3286,9 @@ def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> No
     assert listed.json() == []
     assert detail.status_code == 404
     assert analytics.json()["success_rate"]["total"] == 0
+    assert analytics.json()["approval_rate"]["requested"] == 0
+    assert analytics.json()["ticket_metrics"]["touched"] == 0
+    assert analytics.json()["activity_by_workflow"] == []
     assert analytics.json()["estimated_minutes_saved"]["estimate"] is True
 
 
@@ -3312,6 +3315,20 @@ def test_analytics_summary_api_returns_metric_groups(settings) -> None:
     assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
     assert len(summary["executions_over_time"]) == 1
     assert summary["activity_breakdown"]
+    assert summary["ticket_metrics"]["touched"] == 1
+    assert summary["ticket_metrics"]["resolved"] == 0
+    assert summary["activity_by_workflow"] == [
+        {
+            "run_kind": "smart_action",
+            "workflow_id": "ticket-triage",
+            "total": 2,
+            "succeeded": 1,
+            "status_counts": [
+                {"status": "failed", "count": 1},
+                {"status": "success", "count": 1},
+            ],
+        }
+    ]
     time_saved = summary["estimated_minutes_saved"]
     assert time_saved["estimate"] is True
     assert time_saved["minutes"] == 4

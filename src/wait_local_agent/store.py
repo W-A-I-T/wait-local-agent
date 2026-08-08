@@ -4067,6 +4067,213 @@ class Store:
             for row in rows
         ]
 
+    def approval_activity_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, int]]:
+        """Return approval request counts by current decision status."""
+        clauses, params = _approval_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select status, count(*) as count
+                from approval_requests
+                {clauses}
+                group by status
+                order by status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [(str(row["status"]), int(row["count"])) for row in rows]
+
+    def execution_ticket_activity(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """Return distinct tickets referenced by scoped execution records.
+
+        Workflow and agent source rows provide normalized ticket/entity IDs.
+        Smart-action payloads are inspected only from redacted execution-step
+        inputs, and only the explicit ``ticket_id`` field is retained. The
+        current ticket status is returned so callers can label resolved tickets
+        without claiming when resolution occurred.
+        """
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        smart_prefix = " where" if not clauses else f"{clauses} and"
+        source_rows: list[sqlite3.Row]
+        with self._connect() as connection:
+            source_rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                    union all
+                    select 'agent', id, status, started_at, client_id, 'source' from agent_runs
+                ), all_runs as (
+                    select er.id as execution_run_id, er.run_kind, er.source_run_id,
+                           er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select null as execution_run_id, sr.run_kind, sr.source_run_id,
+                           sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       w.ticket_id as ticket_id
+                from all_runs er
+                join workflow_runs w
+                  on er.run_kind = 'workflow'
+                 and w.id = er.source_run_id
+                 and w.client_id is er.client_id
+                {clauses}
+                union all
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       a.entity_id as ticket_id
+                from all_runs er
+                join agent_runs a
+                  on er.run_kind = 'agent'
+                 and a.id = er.source_run_id
+                 and a.client_id is er.client_id
+                {clauses}
+                union all
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       null as ticket_id
+                from all_runs er
+                {smart_prefix} er.run_kind = 'smart_action'
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params + params + params,
+            ).fetchall()
+            execution_ids = [
+                int(row["execution_run_id"])
+                for row in source_rows
+                if row["run_kind"] == "smart_action" and row["execution_run_id"] is not None
+            ]
+            if execution_ids:
+                placeholders = ", ".join("?" for _ in execution_ids)
+                step_rows = connection.execute(
+                    f"""
+                    select es.input_json, er.client_id
+                    from execution_steps es
+                    join execution_runs er on er.id = es.execution_run_id
+                    where es.execution_run_id in ({placeholders})
+                    """,  # nosec B608: placeholders are generated from integer IDs
+                    execution_ids,
+                ).fetchall()
+            else:
+                step_rows = []
+
+            candidates: set[tuple[str, str | None]] = {
+                (str(row["ticket_id"]), str(row["client_id"]) if row["client_id"] is not None else None)
+                for row in source_rows
+                if row["ticket_id"] is not None and str(row["ticket_id"]).strip()
+            }
+            for row in step_rows:
+                for ticket_id in _ticket_ids_from_json(str(row["input_json"])):
+                    candidates.add(
+                        (
+                            ticket_id,
+                            str(row["client_id"]) if row["client_id"] is not None else None,
+                        )
+                    )
+
+            if not candidates:
+                return []
+            resolved: set[tuple[str, str]] = set()
+            for ticket_id, candidate_client_id in candidates:
+                if candidate_client_id is None:
+                    ticket_row = connection.execute(
+                        "select id, status from tickets where id = ?",
+                        (ticket_id,),
+                    ).fetchone()
+                else:
+                    ticket_row = connection.execute(
+                        """
+                        select id, status from tickets
+                        where id = ? and client_id = ?
+                        """,
+                        (ticket_id, candidate_client_id),
+                    ).fetchone()
+                if ticket_row is not None:
+                    resolved.add((str(ticket_row["id"]), str(ticket_row["status"])))
+        return sorted(resolved)
+
+    def execution_workflow_activity(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str, str, int]]:
+        """Return execution counts grouped by workflow/action identifier."""
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                    union all
+                    select 'agent', id, status, started_at, client_id, 'source' from agent_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.run_kind,
+                       case er.run_kind
+                         when 'workflow' then w.template_id
+                         when 'smart_action' then sa.action_id
+                         when 'agent' then a.agent_id
+                         else 'unattributed'
+                       end as workflow_id,
+                       er.status,
+                       count(*) as count
+                from all_runs er
+                left join workflow_runs w
+                  on er.run_kind = 'workflow'
+                 and w.id = er.source_run_id
+                 and w.client_id is er.client_id
+                left join smart_action_runs sa
+                  on er.run_kind = 'smart_action'
+                 and sa.id = er.source_run_id
+                 and sa.client_id is er.client_id
+                left join agent_runs a
+                  on er.run_kind = 'agent'
+                 and a.id = er.source_run_id
+                 and a.client_id is er.client_id
+                {clauses}
+                group by er.run_kind, workflow_id, er.status
+                order by er.run_kind, workflow_id, er.status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [
+            (
+                str(row["run_kind"]),
+                str(row["workflow_id"] or "unattributed"),
+                str(row["status"]),
+                int(row["count"]),
+            )
+            for row in rows
+        ]
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None
@@ -4528,6 +4735,49 @@ def _execution_range_filters(
         params.append(started_to)
     where = f" where {' and '.join(clauses)}" if clauses else ""
     return where, params
+
+
+def _approval_range_filters(
+    started_from: str | None,
+    started_to: str | None,
+    client_id: str | None,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    normalized_client_id = _normalize_client_id(client_id)
+    if normalized_client_id is not None:
+        clauses.append("client_id = ?")
+        params.append(normalized_client_id)
+    if started_from:
+        clauses.append("date(created_at) >= date(?)")
+        params.append(started_from)
+    if started_to:
+        clauses.append("date(created_at) <= date(?)")
+        params.append(started_to)
+    return (f"where {' and '.join(clauses)}" if clauses else ""), params
+
+
+def _ticket_ids_from_json(payload: str) -> set[str]:
+    try:
+        value = json.loads(payload)
+    except json.JSONDecodeError:
+        return set()
+
+    ticket_ids: set[str] = set()
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            candidate = node.get("ticket_id")
+            if isinstance(candidate, str) and candidate.strip():
+                ticket_ids.add(candidate.strip())
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return ticket_ids
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

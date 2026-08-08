@@ -97,7 +97,9 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.models import AGENT_BACKFILL_MAX_CONCURRENCY
 from wait_local_agent.observability import (
+    APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
+    TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
 from wait_local_agent.providers import provider_from_settings
@@ -3488,6 +3490,22 @@ def _empty_analytics_summary(
         "executions_over_time": [],
         "success_rate": {"total": 0, "succeeded": 0, "rate": 0.0},
         "failures_by_status": [],
+        "approval_rate": {
+            "requested": 0,
+            "decided": 0,
+            "approved": 0,
+            "rejected": 0,
+            "pending": 0,
+            "rate": 0.0,
+            "derivation": APPROVAL_RATE_DERIVATION,
+        },
+        "ticket_metrics": {
+            "touched": 0,
+            "resolved": 0,
+            "resolution_rate": 0.0,
+            "derivation": TICKET_METRICS_DERIVATION,
+        },
+        "activity_by_workflow": [],
         "estimated_minutes_saved": {
             "minutes": 0,
             "estimate": True,

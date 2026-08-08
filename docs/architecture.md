@@ -131,6 +131,12 @@ only the tenant-scoped ticket, run ID, template/agent ID, and status, uses a
 deterministic idempotency key, and records dispatch failures without changing
 the already-completed workflow outcome.
 
+Analytics reads the same tenant-scoped execution and approval records. It
+reports approval decisions, distinct tickets referenced by normalized sources
+or explicit redacted step-input `ticket_id` fields, current `resolved`/`closed`
+ticket counts, and grouped workflow/agent/smart-action activity. It does not
+infer historical resolution timestamps or measured time saved.
+
 ## Template gallery
 
 The local gallery stores provenance-bearing copies of the fixed core workflow

@@ -67,6 +67,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Successful scheduled workflows and scheduled agents emit an idempotent,
   tenant-scoped `workflow.completed` event. Event agents can filter it by
   `workflow_template_id` or `workflow_run_id` to continue a bounded chain.
+- `GET /analytics/summary` and `wait-local-agent analytics summary` include
+  tenant-scoped approval decisions, distinct tickets referenced by executions,
+  current `resolved`/`closed` ticket counts, and grouped activity by workflow,
+  agent, or smart action. These are explainable aggregates, not historical
+  lifecycle or wall-clock measurements.
 - A provenance-bearing local template gallery can copy reviewed core workflows
   into tenant-scoped records and run them through the existing approval path.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
