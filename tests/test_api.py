@@ -1263,6 +1263,55 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
     assert missing_delivery.status_code == 404
 
 
+def test_manual_workflow_run_emits_completion_event(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Workflow completion triage",
+            "trigger": "event",
+            "filters": {
+                "event_type": "workflow.completed",
+                "workflow_template_id": "ticket-triage",
+            },
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+        },
+    )
+    assert agent.status_code == 200
+
+    run = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+
+    deliveries = client.get("/automation/event-deliveries")
+    assert deliveries.status_code == 200
+    completion = [
+        delivery for delivery in deliveries.json() if delivery["event_type"] == "workflow.completed"
+    ]
+    assert len(completion) == 1
+    assert completion[0]["status"] == "completed"
+    assert completion[0]["run_ids"]
+
+    pending = client.post(
+        "/workflows/templates/assign-technician/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+    assert pending.status_code == 200
+    assert pending.json()["status"] == "pending_approval"
+    assert len(
+        [delivery for delivery in client.get("/automation/event-deliveries").json()
+         if delivery["event_type"] == "workflow.completed"]
+    ) == 1
+
+
 def test_workflow_completion_event_filter_is_available_through_api(settings) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

@@ -95,7 +95,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
-from wait_local_agent.models import AGENT_BACKFILL_MAX_CONCURRENCY
+from wait_local_agent.models import AGENT_BACKFILL_MAX_CONCURRENCY, WorkflowRun
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
@@ -2670,16 +2670,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
-        return asdict(
-            run_workflow_template(
-                store,
-                entry.source_template_id,
-                request.ticket_id,
-                client_id=scoped_client_id,
-                actor=context.approver_id or "api",
-                trigger_source="template_gallery",
-            )
+        run = run_workflow_template(
+            store,
+            entry.source_template_id,
+            request.ticket_id,
+            client_id=scoped_client_id,
+            actor=context.approver_id or "api",
+            trigger_source="template_gallery",
         )
+        _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
+        return asdict(run)
 
     @app.get("/scheduled-jobs")
     def scheduled_jobs(
@@ -2831,17 +2831,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: WorkflowRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
         try:
-            return asdict(
-                run_workflow_template(
-                    store,
-                    template_id,
-                    request.ticket_id,
-                    client_id=request.client_id,
-                    actor=context.approver_id or "api",
-                    trigger_source="api",
-                )
+            run = run_workflow_template(
+                store,
+                template_id,
+                request.ticket_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "api",
+                trigger_source="api",
             )
+            _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
+            return asdict(run)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="workflow template not found") from exc
         except LookupError as exc:
@@ -3479,6 +3484,45 @@ def _safe_json_value(payload_json: str) -> object:
         return json.loads(payload_json)
     except json.JSONDecodeError:
         return None
+
+
+def _dispatch_workflow_completion_event(
+    event_dispatcher: EventDispatcher,
+    run: WorkflowRun,
+    actor: str,
+) -> None:
+    """Continue completed API workflow runs without changing their outcome."""
+    if run.status != "completed" or run.id is None or not run.ticket_id.strip():
+        return
+    payload: dict[str, object] = {
+        "workflow_run_id": str(run.id),
+        "workflow_template_id": run.template_id,
+        "status": run.status,
+    }
+    try:
+        event_dispatcher.dispatch(
+            event_type="workflow.completed",
+            entity_type="ticket",
+            entity_id=run.ticket_id,
+            payload=payload,
+            idempotency_key=f"workflow-completed:{run.id}",
+            client_id=run.client_id,
+            actor=actor,
+        )
+        event_dispatcher.store.add_audit_event(
+            "workflow.completion_dispatched",
+            str(run.id),
+            "workflow.completed event dispatched",
+            client_id=run.client_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+        detail = redact_text(f"workflow.completed dispatch failed: {exc}")
+        event_dispatcher.store.add_audit_event(
+            "workflow.completion_dispatch_failed",
+            str(run.id),
+            detail,
+            client_id=run.client_id,
+        )
 
 
 def _empty_analytics_summary(
