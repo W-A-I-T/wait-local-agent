@@ -3479,6 +3479,7 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
         "retry_count": delivery.retry_count,
         "max_retries": delivery.max_retries,
+        "next_retry_at": delivery.next_retry_at,
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,
         "client_id": delivery.client_id,

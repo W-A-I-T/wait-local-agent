@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from wait_local_agent.agents import (
     SUPPORTED_EVENT_TYPES,
     AgentService,
 )
-from wait_local_agent.models import EventDelivery
+from wait_local_agent.models import (
+    DEFAULT_EVENT_RETRY_DELAY_SECONDS,
+    EVENT_RETRY_BATCH_SIZE,
+    MAX_EVENT_RETRY_DELAY_SECONDS,
+    EventDelivery,
+)
 from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.store import Store, _normalize_client_id
 
@@ -103,6 +109,24 @@ class EventDispatcher:
             actor=actor,
             retry_only=True,
         )
+
+    def retry_due(self, *, now: str | None = None) -> list[EventDispatchResult]:
+        """Retry a bounded batch of failed deliveries whose due time has arrived."""
+        results: list[EventDispatchResult] = []
+        for delivery_id in self.store.list_due_event_delivery_ids(
+            now=now,
+            limit=EVENT_RETRY_BATCH_SIZE,
+        ):
+            try:
+                results.append(self.retry(delivery_id, actor="event-retry-worker"))
+            except (KeyError, ValueError) as exc:
+                # Another worker or an operator may have claimed the row first.
+                self.store.add_audit_event(
+                    "event.retry_skipped",
+                    str(delivery_id),
+                    redact_text(f"automatic event retry skipped: {exc}"),
+                )
+        return results
 
     def _process_delivery(
         self,
@@ -244,6 +268,7 @@ class EventDispatcher:
             pending = [definition for definition, _unmet in next_pending]
 
         status = "failed" if errors else "completed"
+        next_retry_at = _next_retry_at(delivery.retry_count) if status == "failed" else ""
         delivery = self.store.update_event_delivery(
             delivery.id or 0,
             status=status,
@@ -252,6 +277,7 @@ class EventDispatcher:
             run_ids=run_ids,
             error_detail="; ".join(errors),
             agent_attempts=attempts,
+            next_retry_at=next_retry_at,
         )
         self.store.add_audit_event(
             "event.retried" if retry_only else "event.processed",
@@ -339,3 +365,11 @@ def _attempts_from_json(payload_json: str) -> dict[str, dict[str, object]]:
         for agent_id, attempt in value.items()
         if isinstance(agent_id, str) and isinstance(attempt, dict)
     }
+
+
+def _next_retry_at(retry_count: int) -> str:
+    delay = min(
+        DEFAULT_EVENT_RETRY_DELAY_SECONDS * (2**max(retry_count, 0)),
+        MAX_EVENT_RETRY_DELAY_SECONDS,
+    )
+    return (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()

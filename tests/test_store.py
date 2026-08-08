@@ -56,6 +56,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "agent_attempts_json" in _columns(connection, "event_deliveries")
     assert "retry_count" in _columns(connection, "event_deliveries")
     assert "max_retries" in _columns(connection, "event_deliveries")
+    assert "next_retry_at" in _columns(connection, "event_deliveries")
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
@@ -114,6 +115,17 @@ def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Pat
     )
     assert updated.status == "failed"
     assert updated.matched_agent_count == 1
+    due = store.update_event_delivery(
+        delivery.id,
+        status="failed",
+        matched_agent_count=1,
+        agent_ids=["agent-1"],
+        run_ids=[7],
+        next_retry_at="2000-01-01T00:00:00+00:00",
+    )
+    assert due.next_retry_at == "2000-01-01T00:00:00+00:00"
+    assert store.list_due_event_delivery_ids(now="2000-01-02T00:00:00+00:00") == [delivery.id]
+    assert store.list_due_event_delivery_ids(now="2000-01-02T00:00:00+00:00", client_id="beta") == []
     assert store.get_event_delivery(delivery.id, client_id="beta") is None
     assert store.get_event_delivery(delivery.id, client_id="acme") is not None
     assert [item.id for item in store.list_event_deliveries(client_id="acme")] == [delivery.id]

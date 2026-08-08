@@ -54,6 +54,28 @@ def test_scheduler_manager_registers_and_reloads_persisted_jobs(tmp_path: Path) 
     asyncio.run(scenario())
 
 
+def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings) -> None:
+    db_path = tmp_path / "retry-worker.db"
+    _seed_tickets(db_path)
+
+    async def scenario() -> None:
+        store = Store(db_path)
+        dispatcher = EventDispatcher(
+            store,
+            AgentService(store, settings, SmartActionService(store, settings)),
+        )
+        manager = SchedulerManager(store, enabled=True, event_dispatcher=dispatcher)
+        manager.start()
+
+        assert manager._scheduler is not None  # noqa: SLF001
+        retry_job = manager._scheduler.get_job(manager._retry_job_identity())  # noqa: SLF001
+        assert retry_job is not None
+        manager._retry_due_event_deliveries()  # noqa: SLF001
+        manager.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     _seed_tickets(db_path)

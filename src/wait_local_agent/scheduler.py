@@ -12,7 +12,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
-from wait_local_agent.models import ScheduledJob
+from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
 from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -52,6 +52,15 @@ class SchedulerManager:
             return
         self._scheduler = AsyncIOScheduler(timezone=UTC)
         self._scheduler.start()
+        if self._event_dispatcher is not None:
+            self._scheduler.add_job(
+                self._retry_due_event_deliveries,
+                trigger=IntervalTrigger(seconds=EVENT_RETRY_POLL_SECONDS, timezone=UTC),
+                id=self._retry_job_identity(),
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+            )
         for scheduled_job in self._store.list_scheduled_jobs():
             self._register_live_job(scheduled_job)
 
@@ -326,6 +335,11 @@ class SchedulerManager:
 
         return run_job
 
+    def _retry_due_event_deliveries(self) -> None:
+        if self._event_dispatcher is None:
+            return
+        self._event_dispatcher.retry_due()
+
     def _with_runtime_state(self, scheduled_job: ScheduledJob) -> ScheduledJob:
         if scheduled_job.id is None or self._scheduler is None:
             return scheduled_job
@@ -338,6 +352,10 @@ class SchedulerManager:
     @staticmethod
     def _job_identity(job_id: int) -> str:
         return f"scheduled-job:{job_id}"
+
+    @staticmethod
+    def _retry_job_identity() -> str:
+        return "event-delivery-retry-worker"
 
 
 def validate_cron_expression(cron: str, timezone: str = "UTC") -> None:

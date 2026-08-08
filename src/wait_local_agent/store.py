@@ -204,7 +204,8 @@ class Store:
                     client_id text,
                     agent_attempts_json text not null default '{}',
                     retry_count integer not null default 0,
-                    max_retries integer not null default 3
+                    max_retries integer not null default 3,
+                    next_retry_at text not null default ''
                 )
                 """
             )
@@ -437,6 +438,12 @@ class Store:
                 "event_deliveries",
                 "max_retries",
                 f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "next_retry_at",
+                "text not null default ''",
             )
             self._ensure_column(
                 connection,
@@ -1582,8 +1589,8 @@ class Store:
                   (idempotency_key, event_type, entity_type, entity_id, payload_json,
                    status, matched_agent_count, agent_ids_json, run_ids_json,
                    error_detail, received_at, processed_at, client_id,
-                   agent_attempts_json, retry_count, max_retries)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   agent_attempts_json, retry_count, max_retries, next_retry_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idempotency_key,
@@ -1602,6 +1609,7 @@ class Store:
                     "{}",
                     0,
                     DEFAULT_EVENT_MAX_RETRIES,
+                    "",
                 ),
             )
             created = cursor.rowcount == 1
@@ -1641,6 +1649,7 @@ class Store:
         error_detail: str = "",
         agent_attempts: dict[str, dict[str, object]] | None = None,
         retry_count: int | None = None,
+        next_retry_at: str | None = None,
     ) -> EventDelivery:
         processed_at = utc_now()
         safe_error = _redact_text(error_detail)
@@ -1651,7 +1660,8 @@ class Store:
                 set status = ?, matched_agent_count = ?, agent_ids_json = ?,
                     run_ids_json = ?, error_detail = ?, processed_at = ?,
                     agent_attempts_json = coalesce(?, agent_attempts_json),
-                    retry_count = coalesce(?, retry_count)
+                    retry_count = coalesce(?, retry_count),
+                    next_retry_at = coalesce(?, next_retry_at)
                 where id = ?
                 """,
                 (
@@ -1663,6 +1673,7 @@ class Store:
                     processed_at,
                     _json_dumps_value(agent_attempts) if agent_attempts is not None else None,
                     retry_count,
+                    next_retry_at,
                     delivery_id,
                 ),
             )
@@ -1686,7 +1697,7 @@ class Store:
                     """
                     update event_deliveries
                     set status = 'retrying', retry_count = retry_count + 1,
-                        error_detail = ''
+                        error_detail = '', next_retry_at = ''
                     where id = ? and client_id = ?
                       and status = 'failed'
                       and retry_count < max_retries
@@ -1706,7 +1717,7 @@ class Store:
                     """
                     update event_deliveries
                     set status = 'retrying', retry_count = retry_count + 1,
-                        error_detail = ''
+                        error_detail = '', next_retry_at = ''
                     where id = ?
                       and status = 'failed'
                       and retry_count < max_retries
@@ -1785,6 +1796,36 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [_event_delivery_from_row(row) for row in rows]
+
+    def list_due_event_delivery_ids(
+        self,
+        *,
+        now: str | None = None,
+        limit: int = 10,
+        client_id: str | None = None,
+    ) -> list[int]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError("event delivery retry limit must be between 1 and 100")
+        due_at = now or utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        clauses = [
+            "status = 'failed'",
+            "retry_count < max_retries",
+            "next_retry_at != ''",
+            "next_retry_at <= ?",
+        ]
+        params: list[object] = [due_at]
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select id from event_deliveries where {' and '.join(clauses)} "
+                "order by next_retry_at, id limit ?",  # nosec B608: static predicates only
+                params,
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     def has_event_agent_run(
         self,
@@ -5089,6 +5130,7 @@ def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
     payload["retry_count"] = int(payload.get("retry_count") or 0)
     payload["max_retries"] = int(payload.get("max_retries") or DEFAULT_EVENT_MAX_RETRIES)
+    payload["next_retry_at"] = _optional_text(payload.get("next_retry_at"))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     payload["error_detail"] = _redact_text(str(payload["error_detail"]))

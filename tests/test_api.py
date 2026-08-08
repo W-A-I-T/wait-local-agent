@@ -1110,7 +1110,8 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert created.json()["params"]["ticket_id"] == "TCK-1001"
         assert created.json()["timezone"] == "America/Vancouver"
         assert app.state.scheduler._scheduler is not None
-        assert len(app.state.scheduler._scheduler.get_jobs()) == 1
+        job_ids = {job.id for job in app.state.scheduler._scheduler.get_jobs()}
+        assert job_ids == {"event-delivery-retry-worker", f"scheduled-job:{job_id}"}
         assert listed.status_code == 200
         assert listed.json()[0]["id"] == job_id
 
@@ -1174,7 +1175,9 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert client.delete(
             f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")
         ).status_code == 200
-        assert len(app.state.scheduler._scheduler.get_jobs()) == 0
+        assert [job.id for job in app.state.scheduler._scheduler.get_jobs()] == [
+            "event-delivery-retry-worker"
+        ]
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 
 
@@ -1357,6 +1360,7 @@ def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> No
     assert retried.status_code == 200
     assert retried.json()["delivery"]["status"] == "completed"
     assert retried.json()["delivery"]["retry_count"] == 1
+    assert retried.json()["delivery"]["next_retry_at"] is None
     assert "do-not-echo" not in retried.text
 
 

@@ -116,7 +116,9 @@ Event-delivery retries require technician access and the original tenant scope.
 They are capped at three attempts and target only failed or dependency-blocked
 agents recorded for that delivery. Successful agent attempts are not replayed;
 retry payloads remain internal and delivery views use the existing redaction
-policy.
+policy. Automatic retries run locally in bounded batches, use a 60-second
+initial delay with exponential backoff capped at one hour, and expose only the
+redacted `next_retry_at` timestamp.
 
 Workflow-template revision comparisons require viewer access and resolve both
 revisions through the same tenant-scoped gallery entry. Comparison responses

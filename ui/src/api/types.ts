@@ -73,6 +73,19 @@ export type EventHistory = {
   message: string;
 };
 
+export type EventDelivery = {
+  id: number;
+  idempotency_key: string;
+  event_type: string;
+  entity_type: string;
+  entity_id: string;
+  status: string;
+  retry_count: number;
+  max_retries: number;
+  next_retry_at?: string | null;
+  client_id?: string | null;
+};
+
 export type WorkflowTemplate = {
   id: string;
   name: string;

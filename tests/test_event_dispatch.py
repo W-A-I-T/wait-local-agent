@@ -419,6 +419,52 @@ def test_event_dispatch_retries_only_failed_agents_with_a_bounded_count(settings
         )
 
 
+def test_event_dispatcher_automatically_retries_due_delivery(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service, definition = _event_agent(settings, store)
+
+    class FailOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("provider secret=automatic-retry")
+            return service.run(*args, **kwargs)
+
+    dispatcher = EventDispatcher(store, FailOnce())  # type: ignore[arg-type]
+    failed = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="automatic-retry-event",
+        client_id="acme",
+    )
+
+    assert failed.delivery.status == "failed"
+    assert failed.delivery.next_retry_at is not None
+    store.update_event_delivery(
+        failed.delivery.id or 0,
+        status="failed",
+        matched_agent_count=1,
+        agent_ids=[definition.id],
+        run_ids=[],
+        error_detail=failed.delivery.error_detail,
+        agent_attempts={definition.id: {"status": "failed", "error": "", "run_ids": []}},
+        next_retry_at="2000-01-01T00:00:00+00:00",
+    )
+
+    results = dispatcher.retry_due(now="2000-01-02T00:00:00+00:00")
+
+    assert len(results) == 1
+    assert results[0].delivery.status == "completed"
+    assert results[0].delivery.retry_count == 1
+    assert results[0].delivery.next_retry_at is None
+
+
 def test_event_dispatch_retry_records_ineligible_agent(settings) -> None:
     store = Store(settings.data_path)
     _seed(store)
