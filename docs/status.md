@@ -205,7 +205,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Open-core boundary | Documented; `packs/` ignored |
 | Launch assets | Added baseline docs, issue templates, install helper, demo data, and CHANGELOG |
 
-**Remaining commercial hardening after the public 1.0.0 repo release:**
+**Remaining commercial hardening after the public 1.1.1 repo release:**
 
 - [ ] Full per-connector tenant isolation for every future connector family.
 - [ ] Hosted WAIT Sync relay and encrypted off-device backup.
