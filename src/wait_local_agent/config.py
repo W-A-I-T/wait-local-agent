@@ -68,6 +68,10 @@ class Settings:
     admin_token: str = ""
     tech_token: str = ""
     viewer_token: str = ""
+    end_user_token: str = ""
+    end_user_client_id: str = ""
+    end_user_user_id: str = ""
+    end_user_support_enabled: bool = False
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -152,6 +156,10 @@ def load_settings() -> Settings:
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
         viewer_token=os.getenv("WAIT_VIEWER_TOKEN", ""),
+        end_user_token=os.getenv("WAIT_END_USER_TOKEN", ""),
+        end_user_client_id=os.getenv("WAIT_END_USER_CLIENT_ID", "").strip(),
+        end_user_user_id=os.getenv("WAIT_END_USER_USER_ID", "").strip(),
+        end_user_support_enabled=_bool_env("WAIT_END_USER_SUPPORT_ENABLED"),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,

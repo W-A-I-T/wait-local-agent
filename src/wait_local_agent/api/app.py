@@ -100,7 +100,7 @@ from wait_local_agent.observability import (
     build_analytics_summary,
 )
 from wait_local_agent.providers import provider_from_settings
-from wait_local_agent.rbac import AuthContext, Role, require_role
+from wait_local_agent.rbac import AuthContext, Role, require_end_user, require_role
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
     build_restore_evidence_report,
@@ -130,6 +130,7 @@ from wait_local_agent.workflows import (
 ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
+EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
 
 
 class ApprovalRequest(BaseModel):
@@ -228,6 +229,11 @@ class TechnicianChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     ticket_id: str | None = Field(default=None, max_length=100)
     client_id: str | None = None
+
+
+class EndUserTicketCreateRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=10_000)
 
 
 class AgentStepRequest(BaseModel):
@@ -1248,6 +1254,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "action_id": command.action_id,
             "result": asdict(result),
         }
+
+    @app.post("/end-user/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_create_ticket(
+        payload: EndUserTicketCreateRequest,
+        request: Request,
+        context: EndUserAccess,
+    ) -> dict[str, object]:
+        if not context.client_id or not context.principal_id:
+            raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
+        ticket = store.create_end_user_ticket(
+            client_id=context.client_id,
+            requester_id=context.principal_id,
+            subject=payload.subject,
+            body=payload.body,
+        )
+        return _end_user_ticket_view(ticket)
+
+    @app.get("/end-user/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_ticket_status(
+        ticket_id: str,
+        request: Request,
+        context: EndUserAccess,
+    ) -> dict[str, object]:
+        if not context.client_id or not context.principal_id or not _safe_end_user_ticket_id(ticket_id):
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        ticket = store.get_end_user_ticket(
+            ticket_id,
+            client_id=context.client_id,
+            requester_id=context.principal_id,
+        )
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        return _end_user_ticket_view(ticket)
+
+    @app.post("/end-user/tickets/{ticket_id}/escalate")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_escalate_ticket(
+        ticket_id: str,
+        request: Request,
+        context: EndUserAccess,
+    ) -> dict[str, object]:
+        if not context.client_id or not context.principal_id:
+            raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
+        if not _safe_end_user_ticket_id(ticket_id):
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        ticket = store.escalate_end_user_ticket(
+            ticket_id,
+            client_id=context.client_id,
+            requester_id=context.principal_id,
+        )
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        return _end_user_ticket_view(ticket)
 
     @app.get("/tickets/{ticket_id}/summary")
     def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
@@ -3324,6 +3385,24 @@ def _agent_backfill_view(backfill) -> dict[str, object]:
         "updated_at": backfill.updated_at,
         "client_id": backfill.client_id,
     }
+
+
+def _end_user_ticket_view(ticket) -> dict[str, object]:
+    return {
+        "ticket_id": ticket.id,
+        "subject": redact_text(ticket.subject),
+        "status": ticket.status,
+        "priority": ticket.priority,
+        "client_id": ticket.client_id,
+    }
+
+
+def _safe_end_user_ticket_id(ticket_id: str) -> bool:
+    return bool(
+        ticket_id
+        and len(ticket_id) <= 100
+        and not any(ord(character) < 32 or character.isspace() for character in ticket_id)
+    )
 
 
 def _execution_run_view(run) -> dict[str, object]:
