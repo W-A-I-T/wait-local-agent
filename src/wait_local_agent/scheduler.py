@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,8 +12,12 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import ScheduledJob
+from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
+
+if TYPE_CHECKING:
+    from wait_local_agent.event_dispatch import EventDispatcher
 
 
 class SchedulerManager:
@@ -23,10 +27,12 @@ class SchedulerManager:
         *,
         enabled: bool = True,
         agent_service: AgentService | None = None,
+        event_dispatcher: EventDispatcher | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
         self._agent_service = agent_service
+        self._event_dispatcher = event_dispatcher
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
 
@@ -165,6 +171,14 @@ class SchedulerManager:
             f"{scheduled_job.template_id} created workflow run {run.id}",
             client_id=client_id,
         )
+        self._dispatch_completion(
+            run_id=run.id,
+            ticket_id=run.ticket_id,
+            template_id=run.template_id,
+            status=run.status,
+            client_id=run.client_id,
+            actor="scheduler",
+        )
 
     async def _run_agent_job(
         self,
@@ -226,6 +240,57 @@ class SchedulerManager:
             f"agent {scheduled_job.agent_id} created agent run {result.run_id} ({result.status})",
             client_id=client_id,
         )
+        if result.status == "completed":
+            self._dispatch_completion(
+                run_id=result.run_id,
+                ticket_id=scheduled_job.entity_id,
+                template_id=scheduled_job.agent_id,
+                status=result.status,
+                client_id=client_id,
+                actor="scheduler",
+            )
+
+    def _dispatch_completion(
+        self,
+        *,
+        run_id: int | None = None,
+        ticket_id: str | None = None,
+        template_id: str | None = None,
+        status: str,
+        client_id: str | None = None,
+        actor: str,
+    ) -> None:
+        if self._event_dispatcher is None or status != "completed":
+            return
+        if not isinstance(run_id, int) or not isinstance(ticket_id, str) or not isinstance(template_id, str):
+            return
+        try:
+            result = self._event_dispatcher.dispatch(
+                event_type="workflow.completed",
+                entity_type="ticket",
+                entity_id=ticket_id,
+                payload={
+                    "workflow_run_id": str(run_id),
+                    "workflow_template_id": template_id,
+                    "status": "completed",
+                },
+                idempotency_key=f"workflow-completed:{run_id}",
+                client_id=client_id,
+                actor=actor,
+            )
+            self._store.add_audit_event(
+                "workflow.completion_dispatched",
+                str(run_id),
+                f"workflow completion dispatched to {len(result.matched_agent_ids)} agent(s)",
+                client_id=client_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - completion must not undo a finished run
+            self._store.add_audit_event(
+                "workflow.completion_dispatch_failed",
+                str(run_id),
+                redact_text(f"workflow completion dispatch failed: {exc}"),
+                client_id=client_id,
+            )
 
     def _register_live_job(self, scheduled_job: ScheduledJob) -> None:
         if self._scheduler is None or scheduled_job.id is None:

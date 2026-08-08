@@ -1263,6 +1263,50 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
     assert missing_delivery.status_code == 404
 
 
+def test_workflow_completion_event_filter_is_available_through_api(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "After triage",
+            "trigger": "event",
+            "filters": {
+                "event_type": "workflow.completed",
+                "workflow_template_id": "ticket-triage",
+            },
+            "enabled_tools": ["ticket-summary"],
+            "steps": [{"tool_id": "ticket-summary", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+
+    event = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-workflow-completion-1"},
+        json={
+            "event_type": "workflow.completed",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {
+                "workflow_run_id": "17",
+                "workflow_template_id": "ticket-triage",
+                "status": "completed",
+            },
+        },
+    )
+
+    assert event.status_code == 200
+    assert event.json()["delivery"]["event_type"] == "workflow.completed"
+    assert event.json()["run_ids"]
+
+
 def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

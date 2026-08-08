@@ -73,6 +73,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   `/agents/{id}/revisions`; each new run records the definition version it
   used; event
   agents also support same-tenant dependency chains with cycle prevention. A
+  scheduled workflow or scheduled agent completion emits a deterministic,
+  tenant-scoped `workflow.completed` event that can trigger matching event
+  agents with idempotency and audit history. A
   provenance-bearing tenant-scoped template gallery can run reviewed core
   workflows through the existing approval path. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
