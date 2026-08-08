@@ -40,8 +40,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   deterministic sentiment/escalation checks, collector previews, a
   technician-gated Microsoft 365 identity lookup over collected read-only
   inventory plus a separate bounded live Graph user/group/license/mailbox-read connector, and a
-  bounded read-only RMM device lookup over collected
-  endpoint-agent inventory, plus tenant-scoped HaloPSA ticket and Hudu
+  bounded RMM device/alert/script lookup and script preview over the shared
+  provider contract; the local adapter blocks execution until a reviewed
+  vendor adapter is installed. This is alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
