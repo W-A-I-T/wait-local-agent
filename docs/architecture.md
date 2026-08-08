@@ -234,6 +234,19 @@ not implied by enabling it.
   30 seconds; it claims at most ten due failures per pass and applies the same
   three-attempt cap used by the technician retry route.
 
+## Bounded agents
+
+- Agent definitions persist a short, explicit sequence of existing smart
+  actions in SQLite.
+- The first public agent mode is manual and ticket-scoped. Definitions allow
+  only registered tools, cap runs at eight steps and 120 seconds, and retain
+  the configured client scope.
+- Each tool call delegates to `SmartActionService`, so existing approval,
+  redaction, tenancy, and provider behavior is reused rather than duplicated.
+- Agent runs are grouped in the existing execution observability tables with
+  one redacted step record per tool. Event triggers, schedules, dependencies,
+  backfills, and conversational agents remain future extensions.
+
 ## Secrets, Backup, and Audit
 
 - Secret backends: plain env vars or local Fernet vault
