@@ -51,6 +51,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   APScheduler path and persist their agent/entity target. Scheduled jobs can
   also be rescheduled through a tenant-scoped API route; pause, resume,
   reschedule, and delete all enforce the authenticated tenant boundary.
+  Agent definitions may additionally declare a validated local execution
+  window with an IANA timezone, including overnight ranges; closed scheduled
+  windows are skipped without creating a run and are recorded in the audit
+  trail.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is

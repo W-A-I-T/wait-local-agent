@@ -12,6 +12,7 @@ import typer
 import uvicorn
 from fastapi import HTTPException
 
+from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.founder import (
     FOUNDER_INSTALL_HINT,
@@ -124,6 +125,7 @@ collector_bundle_app = typer.Typer(help="Collector evidence bundle commands.")
 smart_actions_app = typer.Typer(help="Smart action commands.")
 executions_app = typer.Typer(help="Execution observability commands.")
 analytics_app = typer.Typer(help="Execution analytics commands.")
+agents_app = typer.Typer(help="Bounded agent definition commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -145,6 +147,7 @@ app.add_typer(collectors_app, name="collectors")
 app.add_typer(smart_actions_app, name="smart-actions")
 app.add_typer(executions_app, name="executions")
 app.add_typer(analytics_app, name="analytics")
+app.add_typer(agents_app, name="agents")
 
 
 def _store() -> Store:
@@ -1498,6 +1501,24 @@ def list_workflows() -> None:
 def run_workflow(template_id: str, ticket_id: str) -> None:
     run = run_workflow_template(_store(), template_id, ticket_id, actor="cli", trigger_source="cli")
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
+
+
+@agents_app.command("list")
+def list_agents() -> None:
+    settings = load_settings()
+    store = _store()
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    for definition in service.list_definitions(client_id=settings.client_id):
+        window = (
+            f" window={definition.execution_window_start}-{definition.execution_window_end}"
+            f" timezone={definition.execution_window_timezone}"
+            if definition.execution_window_start and definition.execution_window_end
+            else " window=always"
+        )
+        typer.echo(
+            f"{definition.id} {definition.name} trigger={definition.trigger} "
+            f"enabled={definition.enabled} version={definition.version}{window}"
+        )
 
 
 @knowledge_app.command("ingest")

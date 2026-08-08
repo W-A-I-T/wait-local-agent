@@ -314,9 +314,12 @@ export type ScheduledJobRequestBody = {
 export type AgentDefinition = {
   id: string;
   name: string;
-  trigger: "manual" | "scheduled";
+  trigger: "manual" | "scheduled" | "event";
   enabled: boolean;
   client_id: string | null;
+  execution_window_start?: string | null;
+  execution_window_end?: string | null;
+  execution_window_timezone?: string;
 };
 
 export type ProviderSettings = {

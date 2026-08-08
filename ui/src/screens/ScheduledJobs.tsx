@@ -16,6 +16,7 @@ export function ScheduledJobs() {
   const [paramsText, setParamsText] = useState("{\n  \"ticket_id\": \"HALO-1\"\n}");
   const [selectedJob, setSelectedJob] = useState<ScheduledJob | null>(null);
   const [message, setMessage] = useState("");
+  const selectedAgent = agents.find((agent) => agent.id === agentId);
 
   const refresh = useCallback(async () => {
     try {
@@ -140,6 +141,13 @@ export function ScheduledJobs() {
                   Entity ID
                   <input value={entityId} onChange={(event) => setEntityId(event.target.value)} />
                 </label>
+                {selectedAgent ? (
+                  <div className="notice">
+                    {selectedAgent.execution_window_start && selectedAgent.execution_window_end
+                      ? `Agent window: ${selectedAgent.execution_window_start}–${selectedAgent.execution_window_end} (${selectedAgent.execution_window_timezone ?? "UTC"}).`
+                      : "Agent window: runs any time."}
+                  </div>
+                ) : null}
               </>
             )}
             <label>

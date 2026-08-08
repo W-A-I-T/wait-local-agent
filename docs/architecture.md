@@ -65,6 +65,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
 - Pause, resume, tenant-scoped reschedule, delete, and audit tracking for
   scheduled jobs
+- Agent definitions may gate execution with validated `HH:MM` windows in an
+  IANA timezone; overnight windows are supported and closed scheduled jobs are
+  audited without creating a run.
 
 ## Bounded agents
 
@@ -73,7 +76,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The first public agent mode is ticket-scoped. Definitions allow only
   registered tools, cap runs at eight steps and 120 seconds, and retain the
   configured client scope. Manual runs and persisted five-field cron schedules
-  are supported.
+  are supported. Optional execution windows are persisted with revisions and
+  evaluated before direct or scheduled runs.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Existing HaloPSA ticket reads and Hudu article reads are also exposed through

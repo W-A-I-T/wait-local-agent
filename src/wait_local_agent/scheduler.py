@@ -189,6 +189,14 @@ class SchedulerManager:
             input_payload = params.get("input", {})
             if not isinstance(input_payload, dict):
                 raise ValueError("scheduled agent input must be an object")
+            if not self._agent_service.execution_window_open(definition):
+                self._store.add_audit_event(
+                    "scheduled_job.window_closed",
+                    str(scheduled_job.id),
+                    f"agent {scheduled_job.agent_id} execution window is closed",
+                    client_id=client_id,
+                )
+                return
         except Exception as exc:
             self._store.add_audit_event(
                 "scheduled_job.trigger_failed",
