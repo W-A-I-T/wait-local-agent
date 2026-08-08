@@ -56,6 +56,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-summary",
         "suggest-resolution",
         "find-similar-tickets",
+        "knowledge-search",
+        "ticket-quality",
         "dispatch-suggestion",
     }
     assert tools["ticket-triage"].access_mode == "read"

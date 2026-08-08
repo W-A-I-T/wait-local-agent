@@ -14,10 +14,12 @@ from wait_local_agent.smart_actions import (
     ActionResult,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
+    KnowledgeSearchAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
     SuggestResolutionAction,
+    TicketQualityAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -142,15 +144,28 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
+    knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
+    quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
     dispatch = DispatchSuggestionAction().run(
         context,
         {"ticket_id": "TCK-1001", "technicians": [{"id": "tech", "workload": 1}]},
     )
 
-    assert triage.status == summary.status == resolution.status == similar.status == dispatch.status == "success"
+    assert (
+        triage.status
+        == summary.status
+        == resolution.status
+        == knowledge.status
+        == quality.status
+        == similar.status
+        == dispatch.status
+        == "success"
+    )
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
     assert resolution.output["citations"]
+    assert knowledge.output["ticket_id"] == "TCK-1001"
+    assert quality.output["passed"] is True
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
 
@@ -158,6 +173,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        KnowledgeSearchAction(),
+        TicketQualityAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),
     )
@@ -218,6 +235,25 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
     assert _source_citation(SourceReference("Title", "path", "excerpt")) == {
         "type": "knowledge", "title": "Title", "path": "path", "excerpt": "excerpt"
     }
+
+
+def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
+            ("TCK-BAD", "", "", "", "urgent", "waiting"),
+        )
+    result = TicketQualityAction().run(_action_context(store, settings), {"ticket_id": "TCK-BAD"})
+    assert result.status == "success"
+    assert result.output["issues"] == [
+        "missing_client",
+        "missing_subject",
+        "missing_body",
+        "unknown_priority",
+        "unknown_status",
+    ]
+    assert result.output["quality_score"] == 0
 
 
 def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
@@ -352,7 +388,9 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     assert [manifest.action_id for manifest in service.list()] == [
         "dispatch-suggestion",
         "find-similar-tickets",
+        "knowledge-search",
         "suggest-resolution",
+        "ticket-quality",
         "ticket-summary",
         "ticket-triage",
     ]
