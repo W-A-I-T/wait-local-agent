@@ -1654,6 +1654,12 @@ def test_ninjaone_api_script_request_requires_approval_and_records_execution(set
     assert approved.json()["execution_status"] == "succeeded"
     assert approved.json()["output"]["remote_id"] == "job-17"
     assert "Path" not in approved.json()["execution_result_json"]
+    repeated = client.post(
+        f"/connectors/ninjaone/approval-requests/{approval_id}/execute",
+        json={},
+    )
+    assert repeated.status_code == 400
+    assert "already executed" in repeated.json()["detail"]
 
 
 def test_ninjaone_api_script_request_rejects_secret_like_variables(settings) -> None:

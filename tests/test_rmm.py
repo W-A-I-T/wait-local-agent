@@ -173,6 +173,52 @@ def test_ninjaone_script_execution_rejects_unsafe_or_unbounded_inputs(settings) 
     assert "serializable" in client.execute_script("17", "4", {"value": object()}).message
 
 
+def test_ninjaone_script_execution_maps_gate_http_and_response_failures(settings) -> None:
+    http_blocked = NinjaOneClient(
+        _configured(settings, allow_http_probing=False, allow_write_actions=True)
+    ).execute_script("17", "4")
+    assert http_blocked.status == "blocked"
+    assert "WAIT_ALLOW_HTTP_PROBING" in http_blocked.message
+
+    def token(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        return httpx.Response(503, text="private body")
+
+    failed = NinjaOneClient(
+        _configured(settings, allow_write_actions=True),
+        transport=httpx.MockTransport(token),
+    ).execute_script("17", "4")
+    assert failed.status == "failed"
+    assert "HTTP 503" in failed.message
+    assert "private body" not in failed.message
+
+    def malformed(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        return httpx.Response(202, text="accepted")
+
+    malformed_result = NinjaOneClient(
+        _configured(settings, allow_write_actions=True),
+        transport=httpx.MockTransport(malformed),
+    ).execute_script("17", "4")
+    assert malformed_result.status == "succeeded"
+    assert malformed_result.remote_id == ""
+
+    def read_error(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "token"})
+        raise httpx.ReadError("read failed")
+
+    assert (
+        NinjaOneClient(
+            _configured(settings, allow_write_actions=True),
+            transport=httpx.MockTransport(read_error),
+        ).execute_script("17", "4").message
+        == "NinjaOne script request failed."
+    )
+
+
 def test_ninjaone_sanitizes_http_and_json_failures(settings) -> None:
     def unauthorized(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ws/oauth/token":
