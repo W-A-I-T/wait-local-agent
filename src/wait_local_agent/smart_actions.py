@@ -92,6 +92,23 @@ class ActionContext:
     provider_available: bool = False
     collector_service: CollectorPreviewProvider | None = None
     rmm_provider: RmmInventoryProvider | None = None
+    halopsa_client: HaloPSAReadProvider | None = None
+    hudu_client: HuduReadProvider | None = None
+
+
+class HaloPSAReadProvider(Protocol):
+    def get_ticket(self, ticket_id: str) -> object:
+        """Read one PSA ticket through the existing guarded client."""
+
+
+class HuduReadProvider(Protocol):
+    def list_articles(
+        self,
+        company_id: str | None = None,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> object:
+        """Read documentation articles through the existing guarded client."""
 
 
 @dataclass(frozen=True)
@@ -428,6 +445,163 @@ class RmmDeviceLookupAction:
         )
 
 
+class HaloPSATicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="halopsa-ticket-lookup",
+        title="HaloPSA ticket lookup",
+        description="Read one tenant-scoped ticket through the existing HaloPSA connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket in the tenant scope")
+        from wait_local_agent.halopsa import HaloPSAClient
+
+        provider = context.halopsa_client or HaloPSAClient(context.settings)
+        try:
+            response = provider.get_ticket(ticket.id)
+        except Exception:
+            return _failed("HaloPSA ticket lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "HaloPSA read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("HaloPSA returned malformed ticket data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": status, "ticket": {}},
+                error_detail=message,
+            )
+        normalized = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items[:1]
+            if hasattr(item, "__dataclass_fields__")
+            and (
+                context.client_id is None
+                or not getattr(item, "client_id", "")
+                or getattr(item, "client_id", "") == context.client_id
+            )
+        ]
+        if not normalized:
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": "empty", "ticket": {}},
+                error_detail="HaloPSA returned no matching ticket",
+            )
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "connector_status": status,
+                "ticket": normalized[0],
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "halopsa",
+                    "operation": "tickets.get",
+                    "ticket_id": ticket.id,
+                }
+            ],
+        )
+
+
+class HuduDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="hudu-documentation-search",
+        title="Hudu documentation search",
+        description="Search tenant-scoped Hudu article metadata through the existing read-only connector.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "company_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "company_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"articles": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        company_id = payload.get("company_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(company_id, str) or not company_id.strip() or len(company_id.strip()) > 120:
+            return _failed("company_id must be a non-empty string of at most 120 characters")
+        if context.client_id is not None and company_id.strip() != context.client_id:
+            return _failed("company_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.hudu import HuduClient
+
+        provider = context.hudu_client or HuduClient(context.settings)
+        try:
+            response = provider.list_articles(company_id=company_id.strip(), page=1, page_size=limit)
+        except Exception:
+            return _failed("Hudu documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Hudu read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Hudu returned malformed article data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"company_id": company_id.strip(), "connector_status": status, "articles": []},
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        articles = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and (
+                context.client_id is None
+                or not getattr(item, "company_id", "")
+                or getattr(item, "company_id", "") == context.client_id
+            )
+            and query_value in str(getattr(item, "name", "")).casefold()
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "company_id": company_id.strip(),
+                "connector_status": status,
+                "articles": articles,
+                "count": len(articles),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "hudu",
+                    "operation": "articles.list",
+                    "company_id": company_id.strip(),
+                }
+            ],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -729,6 +903,8 @@ def _build_default_registry() -> SmartActionRegistry:
         KnowledgeSearchAction(),
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
+        HaloPSATicketLookupAction(),
+        HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -752,12 +928,16 @@ class SmartActionService:
         registry: SmartActionRegistry | None = None,
         provider_configured: bool | None = None,
         collector_service: CollectorPreviewProvider | None = None,
+        halopsa_client: HaloPSAReadProvider | None = None,
+        hudu_client: HuduReadProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.provider = provider or provider_from_settings(settings)
         self.registry = registry or default_registry
         self.collector_service = collector_service
+        self.halopsa_client = halopsa_client
+        self.hudu_client = hudu_client
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
             if provider_configured is not None
@@ -1049,6 +1229,8 @@ class SmartActionService:
             client_id=client_id,
             provider_available=self.provider_configured,
             collector_service=self.collector_service,
+            halopsa_client=self.halopsa_client,
+            hudu_client=self.hudu_client,
         )
 
     def _persist_result(
