@@ -1780,6 +1780,14 @@ def sharepoint_document(site_id: str, item_id: str) -> None:
     )
 
 
+@connectors_app.command("sharepoint-document-content")
+def sharepoint_document_content(site_id: str, item_id: str) -> None:
+    _print_sharepoint_response(
+        "documents.content",
+        _sharepoint_client().get_document_content(site_id, item_id),
+    )
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -2968,7 +2976,7 @@ def _print_sharepoint_response(read_type: str, response: SharePointReadResponse)
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
                 "next_cursor": response.next_cursor,
             },
             sort_keys=True,

@@ -1,14 +1,15 @@
-"""Read-only SharePoint document metadata adapter through Microsoft Graph.
+"""Read-only SharePoint document adapter through Microsoft Graph.
 
-The adapter deliberately exposes site metadata and bounded drive-item metadata.
-It does not download file contents or issue mutations. Callers supply a
-delegated or application bearer token through the settings/vault boundary.
+The adapter exposes site metadata, bounded drive-item metadata, and explicitly
+requested bounded text-file content. It does not issue mutations. Callers
+supply a delegated or application bearer token through the settings/vault
+boundary.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,6 +22,20 @@ DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 200
 MAX_CURSOR_LENGTH = 4096
 MAX_SEGMENT_LENGTH = 256
+MAX_CONTENT_LENGTH = 20_000
+TEXT_FILE_SUFFIXES = frozenset({
+    ".csv",
+    ".html",
+    ".htm",
+    ".json",
+    ".log",
+    ".md",
+    ".markdown",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+})
 
 
 @dataclass(frozen=True)
@@ -41,6 +56,8 @@ class SharePointDocument:
     updated_at: str
     web_url: str
     is_folder: bool
+    is_file: bool = False
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,6 +79,9 @@ class SharePointClientProtocol(Protocol):
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> SharePointReadResponse:
+        ...
+
+    def get_document_content(self, site_id: str, item_id: str) -> SharePointReadResponse:
         ...
 
 
@@ -142,6 +162,27 @@ class SharePointClient:
             lambda row: _normalize_document(row, site_id),
         )
 
+    def get_document_content(self, site_id: str, item_id: str) -> SharePointReadResponse:
+        metadata = self.get_document(site_id, item_id)
+        if metadata.result.status != "ready" or not metadata.items:
+            return metadata
+        item = metadata.items[0]
+        if not isinstance(item, SharePointDocument) or item.is_folder or not item.is_file:
+            return SharePointReadResponse(
+                ConnectorReadResult("failed", "SharePoint item is not a downloadable file."), []
+            )
+        try:
+            content = self._get_content(
+                f"sites/{_safe_segment(site_id)}/drive/items/{_safe_segment(item_id)}/content",
+                filename=item.name,
+            )
+        except SharePointReadError as exc:
+            return SharePointReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return SharePointReadResponse(
+            ConnectorReadResult("ready", "SharePoint text document content retrieved.", 1),
+            [replace(item, content=content)],
+        )
+
     def _request_items(
         self,
         endpoint: str,
@@ -195,6 +236,53 @@ class SharePointClient:
             return response.json()
         except ValueError as exc:
             raise SharePointReadError(f"SharePoint GET {safe_endpoint} returned malformed JSON.") from exc
+
+    def _get_content(self, endpoint: str, *, filename: str) -> str:
+        if not self.settings.allow_http_probing:
+            raise SharePointReadError(
+                "SharePoint live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            raise SharePointReadError(missing.message)
+        try:
+            safe_endpoint = _safe_endpoint(endpoint)
+            with httpx.Client(
+                timeout=self.settings.connector_timeout_seconds,
+                transport=self.transport,
+                follow_redirects=True,
+            ) as client:
+                with client.stream(
+                    "GET",
+                    f"{_api_base_url(self.settings.sharepoint_base_url)}/{safe_endpoint}",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.sharepoint_access_token}",
+                        "Accept": "text/plain, text/*;q=0.9, application/json;q=0.8",
+                        "Range": f"bytes=0-{MAX_CONTENT_LENGTH}",
+                    },
+                ) as response:
+                    if response.status_code >= 400:
+                        raise SharePointReadError(_http_error_message(response.status_code, safe_endpoint))
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+                    if not _is_text_document(filename, content_type):
+                        raise SharePointReadError("SharePoint content is not a supported text document.")
+                    chunks: list[bytes] = []
+                    size = 0
+                    for chunk in response.iter_bytes():
+                        remaining = MAX_CONTENT_LENGTH + 1 - size
+                        if remaining <= 0:
+                            break
+                        chunks.append(chunk[:remaining])
+                        size += min(len(chunk), remaining)
+                        if size > MAX_CONTENT_LENGTH:
+                            break
+                    return b"".join(chunks).decode("utf-8", errors="replace")[:MAX_CONTENT_LENGTH]
+        except SharePointReadError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise SharePointReadError("SharePoint request failed before receiving a response.") from exc
+        except httpx.HTTPError as exc:
+            raise SharePointReadError("SharePoint request failed.") from exc
 
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
@@ -332,7 +420,18 @@ def _normalize_document(row: Mapping[str, object], site_id: str) -> SharePointDo
         updated_at=_string_value(row, "lastModifiedDateTime"),
         web_url=_string_value(row, "webUrl"),
         is_folder=is_folder,
+        is_file=isinstance(row.get("file"), dict),
     )
+
+
+def _is_text_document(filename: str, content_type: str) -> bool:
+    if content_type.startswith("text/") or content_type in {
+        "application/json",
+        "application/xml",
+        "application/javascript",
+    }:
+        return True
+    return filename.casefold().endswith(tuple(TEXT_FILE_SUFFIXES))
 
 
 def _string_value(value: object, key: str) -> str:

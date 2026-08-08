@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from wait_local_agent.sharepoint import (
+    MAX_CONTENT_LENGTH,
     SharePointClient,
     SharePointDocument,
     SharePointReadError,
@@ -20,6 +21,7 @@ from wait_local_agent.sharepoint import (
     _safe_cursor,
     _safe_endpoint,
     _safe_segment,
+    _string_value,
 )
 
 SITE_ID = "contoso.sharepoint.com,site-id,web-id"
@@ -140,9 +142,16 @@ def test_sharepoint_sanitizes_failures_and_bounds_inputs(settings) -> None:
     missing = SharePointClient(replace(settings, allow_http_probing=True))
     with pytest.raises(SharePointReadError, match="WAIT_SHAREPOINT_BASE_URL"):
         missing._get("sites")
+    assert missing.list_sites().result.status == "not_configured"
+    assert missing.list_documents(SITE_ID).result.status == "not_configured"
     blocked = SharePointClient(_configured(settings, allow_http_probing=False))
     with pytest.raises(SharePointReadError, match="WAIT_ALLOW_HTTP_PROBING=true"):
         blocked._get("sites")
+    assert blocked.get_document_content(SITE_ID, "file-1").result.status == "blocked"
+    with pytest.raises(SharePointReadError, match="WAIT_ALLOW_HTTP_PROBING=true"):
+        blocked._get_content("sites/file-1/content", filename="file.txt")
+    with pytest.raises(SharePointReadError, match="WAIT_SHAREPOINT_BASE_URL"):
+        missing._get_content("sites/file-1/content", filename="file.txt")
 
 
 def test_sharepoint_http_and_normalization_edges(settings) -> None:
@@ -211,7 +220,61 @@ def test_sharepoint_http_and_normalization_edges(settings) -> None:
         (_safe_segment, ".."),
         (_safe_cursor, "bad\nvalue"),
         (_safe_endpoint, "//host"),
+        (_safe_endpoint, ""),
         (_safe_endpoint, "sites/$bad"),
     ):
         with pytest.raises(SharePointReadError):
             helper(value)
+    assert _next_cursor([]) == ""
+    assert _string_value(None, "id") == ""
+
+
+def test_sharepoint_text_document_content_is_bounded_and_rejects_binary(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/content"):
+            if request.url.path.endswith("file-1/content"):
+                assert request.headers["Range"] == f"bytes=0-{MAX_CONTENT_LENGTH}"
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/plain"},
+                    content=("token=secret " + "x" * (MAX_CONTENT_LENGTH + 100)).encode(),
+                )
+            if request.url.path.endswith("file-3/content"):
+                return httpx.Response(404)
+            return httpx.Response(200, headers={"content-type": "application/octet-stream"}, content=b"binary")
+        file_id = (
+            "file-1"
+            if request.url.path.endswith("file-1")
+            else "file-2"
+            if request.url.path.endswith("file-2")
+            else "file-3"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "id": file_id,
+                "name": "MFA.txt" if file_id == "file-1" else "MFA.bin",
+                "file": {"mimeType": "text/plain"},
+            },
+        )
+
+    client = SharePointClient(_configured(settings), transport=httpx.MockTransport(handler))
+    content = client.get_document_content(SITE_ID, "file-1")
+    assert content.result.status == "ready"
+    assert len(content.items[0].content) == MAX_CONTENT_LENGTH  # type: ignore[union-attr]
+    assert content.items[0].content.startswith("token=secret")  # type: ignore[union-attr]
+
+    binary = client.get_document_content(SITE_ID, "file-2")
+    assert binary.result.status == "failed"
+    assert "supported text document" in binary.result.message
+
+    failed = client.get_document_content(SITE_ID, "file-3")
+    assert failed.result.status == "failed"
+    assert "HTTP 404" in failed.result.message
+
+    non_file = SharePointClient(
+        _configured(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"id": "folder-1", "name": "Folder"})),
+    ).get_document_content(SITE_ID, "folder-1")
+    assert non_file.result.status == "failed"
+    assert "not a downloadable file" in non_file.result.message

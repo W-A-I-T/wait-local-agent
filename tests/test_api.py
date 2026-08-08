@@ -3050,6 +3050,15 @@ def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> No
                 [SharePointDocument(item_id, "MFA.md", site_id, "root", 42, "today", "/mfa", False)],
             )
 
+        def get_document_content(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "content ready", 1),
+                [SharePointDocument(
+                    item_id, "MFA.md", site_id, "root", 42, "today", "/mfa", False, True,
+                    "token=secret",
+                )],
+            )
+
     monkeypatch.setattr(app_module, "SharePointClient", FakeSharePointClient)
     client = TestClient(create_app(settings))
 
@@ -3058,6 +3067,7 @@ def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> No
     site = client.get("/connectors/sharepoint/sites/site-1")
     documents = client.get("/connectors/sharepoint/sites/site-1/documents")
     document = client.get("/connectors/sharepoint/sites/site-1/documents/file-1")
+    content = client.get("/connectors/sharepoint/sites/site-1/documents/file-1/content")
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -3067,6 +3077,7 @@ def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> No
     assert site.json()["items"][0]["id"] == "site-1"
     assert documents.json()["items"][0]["name"] == "MFA.md"
     assert document.json()["items"][0]["id"] == "file-1"
+    assert content.json()["items"][0]["content"] == "token=[redacted]"
     assert any(connector["id"] == "sharepoint" for connector in connectors.json())
     assert any(event["event_type"] == "sharepoint.read" for event in audit.json())
 

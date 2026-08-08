@@ -2657,6 +2657,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = sharepoint_client.get_document(site_id, item_id)
         return _sharepoint_response("documents.get", response)
 
+    @app.get("/connectors/sharepoint/sites/{site_id}/documents/{item_id}/content")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def sharepoint_document_content(
+        site_id: str,
+        item_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = sharepoint_client.get_document_content(site_id, item_id)
+        return _sharepoint_response("documents.content", response)
+
     @app.get("/connectors/m365/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -3675,7 +3686,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_sharepoint_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
-            "items": [asdict(item) for item in response.items],
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
             "next_cursor": response.next_cursor,
         }
 

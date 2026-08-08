@@ -46,6 +46,7 @@ from wait_local_agent.smart_actions import (
     M365LiveContextAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
+    SharePointDocumentationContentAction,
     SharePointDocumentationSearchAction,
     SmartActionManifest,
     SmartActionRegistry,
@@ -317,7 +318,14 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                         "https://sharepoint", False,
                     )
                 ],
-            )
+            ),
+            get_document_content=lambda site_id, item_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[SharePointDocument(
+                    item_id, "VPN runbook", site_id, "root", 10, "today",
+                    "https://sharepoint", False, True, "MFA reset token=secret",
+                )],
+            ),
         ),
         m365_client=SimpleNamespace(
             list_users=lambda identity, page_size: M365GraphReadResponse(
@@ -402,6 +410,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         replace(connector_context, client_id="site-1"),
         {"query": "vpn", "site_id": "site-1"},
     )
+    sharepoint_content = SharePointDocumentationContentAction().run(
+        replace(connector_context, client_id="site-1"),
+        {"site_id": "site-1", "item_id": "doc-1"},
+    )
     m365_user = M365LiveContextAction().run(
         connector_context, {"resource": "user", "identity": "alice@example.test"}
     )
@@ -451,6 +463,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == itglue.status
         == confluence.status
         == sharepoint.status
+        == sharepoint_content.status
         == m365_user.status
         == m365_group.status
         == m365_license.status
@@ -492,6 +505,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert isinstance(sharepoint_documents, list)
     assert isinstance(sharepoint_documents[0], dict)
     assert sharepoint_documents[0]["name"] == "VPN runbook"
+    assert sharepoint_content.output["document"]["content"] == "MFA reset token=[redacted]"  # type: ignore[index]
     assert m365_user.output["count"] == 1
     assert m365_group.output["count"] == 1
     assert m365_license.output["count"] == 1
@@ -826,6 +840,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execution-lookup",
         "rmm-script-preview",
         "servicenow-incident-lookup",
+        "sharepoint-document-content",
         "sharepoint-documentation-search",
         "suggest-resolution",
         "syncro-ticket-lookup",

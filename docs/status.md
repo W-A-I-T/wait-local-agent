@@ -28,6 +28,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   write operations remain unavailable.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
+- SharePoint read-only site and drive-item metadata plus explicitly requested,
+  tenant-scoped text-document content retrieval bounded to 20,000 characters;
+  binary/office extraction and list-wide content search remain unavailable.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
   ticket status, assignment, and field updates through the common guarded HTTP
   boundary.
@@ -220,7 +223,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |
 | Confluence connector | Read-only core surface built |
-| SharePoint connector | Read-only metadata surface built |
+| SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/mailbox-settings/message-move/read-state/delete changes built; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |

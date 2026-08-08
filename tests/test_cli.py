@@ -33,6 +33,7 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.servicenow import ServiceNowReadResponse
+from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroReadResponse
@@ -1202,6 +1203,35 @@ def test_confluence_cli_commands_redact_page_content(monkeypatch, tmp_path) -> N
     assert "token=[redacted]" in pages.output
     assert page.exit_code == 0
     assert "token=[redacted]" in page.output
+
+
+def test_sharepoint_cli_document_content_is_bounded_and_redacted(monkeypatch, tmp_path) -> None:
+    class FakeSharePointClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def get_document(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [SharePointDocument(item_id, "Runbook.txt", site_id, "root", 10, "today", "/runbook", False, True)],
+            )
+
+        def get_document_content(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [SharePointDocument(
+                    item_id, "Runbook.txt", site_id, "root", 10, "today", "/runbook", False, True,
+                    "token=secret",
+                )],
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "SharePointClient", FakeSharePointClient)
+    result = CliRunner().invoke(app, ["connectors", "sharepoint-document-content", "site-1", "file-1"])
+
+    assert result.exit_code == 0
+    assert "token=secret" not in result.output
+    assert "token=[redacted]" in result.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

@@ -81,8 +81,9 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "connectwise-ticket-lookup",
         "confluence-documentation-search",
         "syncro-ticket-lookup",
-        "servicenow-incident-lookup",
-        "sharepoint-documentation-search",
+            "servicenow-incident-lookup",
+            "sharepoint-document-content",
+            "sharepoint-documentation-search",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True

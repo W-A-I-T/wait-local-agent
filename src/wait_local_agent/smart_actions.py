@@ -1658,6 +1658,103 @@ class SharePointDocumentationSearchAction:
         )
 
 
+class SharePointDocumentationContentAction:
+    manifest = SmartActionManifest(
+        action_id="sharepoint-document-content",
+        title="SharePoint document content",
+        description="Retrieve one tenant-scoped SharePoint text document with a bounded content length.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["site_id", "item_id"],
+            "properties": {
+                "site_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            },
+        },
+        output_schema={"document": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        site_id = payload.get("site_id")
+        item_id = payload.get("item_id")
+        if not isinstance(site_id, str) or not site_id.strip() or len(site_id.strip()) > 256:
+            return _failed("site_id must be a non-empty string of at most 256 characters")
+        if not isinstance(item_id, str) or not item_id.strip() or len(item_id.strip()) > 256:
+            return _failed("item_id must be a non-empty string of at most 256 characters")
+        scoped_site_id = site_id.strip()
+        scoped_item_id = item_id.strip()
+        if context.client_id is not None and scoped_site_id != context.client_id:
+            return _failed("site_id is outside the tenant scope")
+        from wait_local_agent.sharepoint import SharePointClient
+
+        provider = context.sharepoint_client or SharePointClient(context.settings)
+        try:
+            response = provider.get_document_content(scoped_site_id, scoped_item_id)
+        except Exception:
+            return _failed("SharePoint document content lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "SharePoint read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("SharePoint returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "site_id": scoped_site_id,
+                    "item_id": scoped_item_id,
+                    "connector_status": status,
+                    "document": {},
+                },
+                error_detail=message,
+            )
+        documents = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "name": str(getattr(item, "name", "")),
+                "site_id": str(getattr(item, "site_id", "")),
+                "parent_id": str(getattr(item, "parent_id", "")),
+                "size": getattr(item, "size", 0),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "web_url": str(getattr(item, "web_url", "")),
+                "is_folder": bool(getattr(item, "is_folder", False)),
+                "is_file": bool(getattr(item, "is_file", False)),
+                "content": str(getattr(item, "content", "")),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "site_id", "")) == scoped_site_id
+            and str(getattr(item, "id", "")) == scoped_item_id
+        ]
+        if not documents:
+            return _failed("SharePoint returned no matching document")
+        return ActionResult(
+            status="success",
+            output={
+                "site_id": scoped_site_id,
+                "item_id": scoped_item_id,
+                "connector_status": status,
+                "document": cast(dict[str, object], redact_value(documents[0])),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "sharepoint",
+                    "operation": "drive.items.content.get",
+                    "site_id": scoped_site_id,
+                    "item_id": scoped_item_id,
+                }
+            ],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -1973,6 +2070,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),
         SharePointDocumentationSearchAction(),
+        SharePointDocumentationContentAction(),
         M365LiveContextAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
