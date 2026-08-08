@@ -9,7 +9,9 @@ from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroup,
     M365GraphGroupReadResponse,
+    M365GraphLicenseReadResponse,
     M365GraphReadError,
+    M365GraphSubscribedSku,
     M365GraphUser,
     _api_base_url,
     _bounded_page_size,
@@ -167,6 +169,63 @@ def test_m365_graph_group_reads_use_bounded_filter_and_normalization(settings) -
     assert response.result.status == "ready"
 
 
+def test_m365_graph_subscribed_sku_reads_select_license_context(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/subscribedSkus"
+        assert request.url.params["$select"] == (
+            "id,skuId,skuPartNumber,capabilityStatus,consumedUnits,appliesTo,prepaidUnits"
+        )
+        assert request.url.params.get("$top") is None
+        assert request.url.params["$skiptoken"] == "license-next"
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "sku-1",
+                        "skuId": "sku-guid",
+                        "skuPartNumber": "M365_BUSINESS_PREMIUM",
+                        "capabilityStatus": "Enabled",
+                        "consumedUnits": 7,
+                        "appliesTo": "User",
+                        "prepaidUnits": {
+                            "enabled": 25,
+                            "warning": 2,
+                            "suspended": 1,
+                            "lockedOut": 0,
+                        },
+                        "servicePlans": [{"servicePlanName": "ignored"}],
+                    }
+                ],
+                "@odata.nextLink": (
+                    "https://graph.microsoft.com/v1.0/subscribedSkus?$skiptoken=license-next-2"
+                ),
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_subscribed_skus(cursor="license-next")
+
+    assert response == M365GraphLicenseReadResponse(
+        result=response.result,
+        items=[
+            M365GraphSubscribedSku(
+                "sku-1",
+                "sku-guid",
+                "M365_BUSINESS_PREMIUM",
+                "Enabled",
+                "User",
+                7,
+                25,
+                2,
+                1,
+                0,
+            )
+        ],
+        next_cursor="license-next-2",
+    )
+
+
 def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     def denied(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="private body")
@@ -179,6 +238,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_groups()
     assert "HTTP 403" in group_result.result.message
     assert "private body" not in group_result.result.message
+    license_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_subscribed_skus()
+    assert "HTTP 403" in license_result.result.message
+    assert "private body" not in license_result.result.message
 
     def malformed(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not-json")
@@ -230,6 +294,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
     ).list_groups().result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
+    ).list_subscribed_skus().result.status == "not_configured"
 
     for status_code, marker in (
         (401, "authentication failed"),
@@ -299,3 +370,4 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         with pytest.raises(M365GraphReadError):
             helper(value)
     assert _safe_endpoint("groups") == "groups"
+    assert _safe_endpoint("subscribedSkus") == "subscribedSkus"

@@ -403,11 +403,11 @@ delegated or application bearer token stays in settings/vault; only bounded
 Graph GET requests are issued, file content is not downloaded, and live network
 access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
 
-### Microsoft 365 identity and group context
+### Microsoft 365 identity, group, and license context
 
-The live Microsoft Graph identity surface is intentionally limited to bounded,
-read-only user and group context. Configure an externally acquired delegated or
-application bearer token:
+The live Microsoft Graph surface is intentionally limited to bounded,
+read-only user, group, and tenant subscribed-license context. Configure an
+externally acquired delegated or application bearer token:
 
 ```text
 WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
@@ -426,12 +426,15 @@ wait-local-agent connectors m365-users
 wait-local-agent connectors m365-users --identity user@example.com
 wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
+wait-local-agent connectors m365-licenses
 ```
 
-Only Graph GET requests are issued. User creation, disable/offboarding, group
-membership changes, license changes, mailbox operations, and Intune actions
-remain absent until separately permissioned and approval-gated. Group reads
-return bounded group metadata only; members and owners are not expanded.
+Only Graph GET requests are issued. License reads return tenant subscribed-SKU
+metadata and aggregate consumption/prepaid counts; per-user license details,
+user creation, disable/offboarding, group membership changes, license
+assignments, mailbox operations, and Intune actions remain absent until
+separately permissioned and approval-gated. Group reads return bounded group
+metadata only; members and owners are not expanded.
 
 ### ConnectWise PSA
 

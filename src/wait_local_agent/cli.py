@@ -69,6 +69,7 @@ from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupReadResponse,
+    M365GraphLicenseReadResponse,
     M365GraphReadResponse,
 )
 from wait_local_agent.observability import build_analytics_summary
@@ -1268,6 +1269,14 @@ def m365_groups(
     )
 
 
+@connectors_app.command("m365-licenses")
+def m365_licenses(cursor: str | None = None) -> None:
+    _print_m365_license_response(
+        "licenses.list",
+        _m365_client().list_subscribed_skus(cursor=cursor),
+    )
+
+
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
@@ -2019,6 +2028,21 @@ def _audit_m365_cli_read(read_type: str, status: str, count: int) -> None:
 
 
 def _print_m365_group_response(read_type: str, response: M365GraphGroupReadResponse) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_m365_license_response(read_type: str, response: M365GraphLicenseReadResponse) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
         json.dumps(

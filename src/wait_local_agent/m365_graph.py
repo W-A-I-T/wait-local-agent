@@ -1,7 +1,7 @@
-"""Read-only Microsoft Graph identity and group reads through a guarded boundary.
+"""Read-only Microsoft Graph identity, group, and license reads through a guarded boundary.
 
 The live connector is intentionally narrower than the cloud inventory adapter:
-it looks up bounded user and group context, accepts a bearer token supplied by
+it looks up bounded user, group, and tenant license context, accepts a bearer token supplied by
 the operator's settings/vault boundary, and never creates or mutates Graph data.
 """
 
@@ -20,6 +20,7 @@ DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 200
 MAX_CURSOR_LENGTH = 4096
 MAX_IDENTITY_LENGTH = 320
+MAX_LICENSE_ITEMS = 200
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,27 @@ class M365GraphGroupReadResponse:
     next_cursor: str = ""
 
 
+@dataclass(frozen=True)
+class M365GraphSubscribedSku:
+    id: str
+    sku_id: str
+    sku_part_number: str
+    capability_status: str
+    applies_to: str
+    consumed_units: int | None
+    prepaid_enabled: int | None
+    prepaid_warning: int | None
+    prepaid_suspended: int | None
+    prepaid_locked_out: int | None
+
+
+@dataclass(frozen=True)
+class M365GraphLicenseReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphSubscribedSku]
+    next_cursor: str = ""
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph read failure."""
 
@@ -68,7 +90,7 @@ class M365GraphReadError(Exception):
 
 
 class M365GraphClient:
-    """Bounded, read-only Microsoft Graph user and group lookup client."""
+    """Bounded, read-only Microsoft Graph context lookup client."""
 
     def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
@@ -125,6 +147,17 @@ class M365GraphClient:
             return M365GraphGroupReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_groups(params)
 
+    def list_subscribed_skus(
+        self,
+        *,
+        cursor: str | None = None,
+    ) -> M365GraphLicenseReadResponse:
+        try:
+            params = _license_list_params(cursor)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return self._request_subscribed_skus(params)
+
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
         if blocked is not None:
@@ -157,6 +190,28 @@ class M365GraphClient:
         items = [group for row in _payload_rows(payload) if (group := _normalize_group(row)) is not None]
         return M365GraphGroupReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph group read succeeded.", len(items)),
+            items,
+            _next_cursor(payload),
+        )
+
+    def _request_subscribed_skus(
+        self,
+        params: dict[str, str | int],
+    ) -> M365GraphLicenseReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphLicenseReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphLicenseReadResponse(missing, [])
+        try:
+            payload = self._get("subscribedSkus", params=params)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
+        rows = _payload_rows(payload)[:MAX_LICENSE_ITEMS]
+        items = [sku for row in rows if (sku := _normalize_subscribed_sku(row)) is not None]
+        return M365GraphLicenseReadResponse(
+            ConnectorReadResult("ready", "Microsoft Graph subscribed license read succeeded.", len(items)),
             items,
             _next_cursor(payload),
         )
@@ -242,7 +297,7 @@ def _api_base_url(base_url: str) -> str:
 
 
 def _safe_endpoint(endpoint: str) -> str:
-    if endpoint not in {"users", "groups"}:
+    if endpoint not in {"users", "groups", "subscribedSkus"}:
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
 
@@ -288,6 +343,17 @@ def _group_list_params(page_size: int, cursor: str | None) -> dict[str, str | in
         "$top": _bounded_page_size(page_size),
         "$select": (
             "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
+        ),
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
+def _license_list_params(cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$select": (
+            "id,skuId,skuPartNumber,capabilityStatus,consumedUnits,appliesTo,prepaidUnits"
         ),
     }
     if cursor is not None:
@@ -351,6 +417,26 @@ def _normalize_group(row: Mapping[str, object]) -> M365GraphGroup | None:
     )
 
 
+def _normalize_subscribed_sku(row: Mapping[str, object]) -> M365GraphSubscribedSku | None:
+    sku_id = _string_value(row, "id")
+    if not sku_id:
+        return None
+    prepaid_units = row.get("prepaidUnits")
+    prepaid = prepaid_units if isinstance(prepaid_units, Mapping) else {}
+    return M365GraphSubscribedSku(
+        id=sku_id,
+        sku_id=_string_value(row, "skuId"),
+        sku_part_number=_string_value(row, "skuPartNumber"),
+        capability_status=_string_value(row, "capabilityStatus"),
+        applies_to=_string_value(row, "appliesTo"),
+        consumed_units=_int_value(row.get("consumedUnits")),
+        prepaid_enabled=_int_value(prepaid.get("enabled")),
+        prepaid_warning=_int_value(prepaid.get("warning")),
+        prepaid_suspended=_int_value(prepaid.get("suspended")),
+        prepaid_locked_out=_int_value(prepaid.get("lockedOut")),
+    )
+
+
 def _string_value(row: Mapping[str, object], key: str) -> str:
     value = row.get(key)
     if isinstance(value, str):
@@ -358,6 +444,10 @@ def _string_value(row: Mapping[str, object], key: str) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     return ""
+
+
+def _int_value(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _next_cursor(payload: object) -> str:
@@ -387,7 +477,9 @@ __all__ = [
     "M365GraphClient",
     "M365GraphGroup",
     "M365GraphGroupReadResponse",
+    "M365GraphLicenseReadResponse",
     "M365GraphReadError",
     "M365GraphReadResponse",
+    "M365GraphSubscribedSku",
     "M365GraphUser",
 ]
