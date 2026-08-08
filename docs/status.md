@@ -39,7 +39,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Microsoft Graph bounded user, group, license, mailbox-folder, and Intune
   context lookup with externally supplied delegated or application bearer
   credentials, plus admin-approved user creation, disable/offboarding, and
-  strict-ID group membership add/remove;
+  strict-ID group membership add/remove and direct user license add/remove;
   broader resource reads and other mutations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
@@ -103,7 +103,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 - Live RMM, Hudu, IT Glue, Confluence, or SharePoint write synchronization;
   Microsoft Graph broader-resource reads and M365 writes other than approved
-  user creation, disable/offboarding, and group membership changes remain
+  user creation, disable/offboarding, group membership, and direct license changes remain
   unavailable.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
@@ -146,7 +146,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
-| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/Intune managed-device lookup and approved user creation/disable-offboarding/group membership changes built; broader resources and mutations future |
+| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license changes built; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

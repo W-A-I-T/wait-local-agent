@@ -15,6 +15,7 @@ permissions:
 | Intune managed devices | `DeviceManagementManagedDevices.Read.All` |
 | Approved user disable/offboarding | `User.EnableDisableAccount.All` and `User.Read.All` |
 | Approved group membership changes | `GroupMember.ReadWrite.All` |
+| Approved direct user license changes | `LicenseAssignment.ReadWrite.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -30,6 +31,9 @@ role-management permissions. If approved user creation is enabled, grant only
 the least-privileged `User.Create` application permission (or delegated
 permission for a work or school account) in addition to the read permissions
 needed by the deployment.
+For approved direct user license changes, grant only the least-privileged
+`LicenseAssignment.ReadWrite.All` application permission; do not grant
+`Directory.ReadWrite.All`.
 For approved disable/offboarding, grant only the least-privileged application
 combination `User.EnableDisableAccount.All` and `User.Read.All` described by
 Microsoft Graph; do not grant `Directory.ReadWrite.All`.
@@ -44,7 +48,7 @@ WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
 WAIT_M365_ACCESS_TOKEN=
 WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
-WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved M365 lifecycle writes
+WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved M365 writes
 ```
 
 User creation uses `POST /users` and requires the least-privileged
@@ -66,7 +70,11 @@ or act on Intune devices. The approved group membership route uses only
 `POST /groups/{id}/members/$ref` for add and
 `DELETE /groups/{id}/members/{id}/$ref` for remove, always retaining `/$ref`
 to prevent deleting the directory object. It accepts immutable group and user
-IDs only and requires `GroupMember.ReadWrite.All`. User reads can
+IDs only and requires `GroupMember.ReadWrite.All`. The approved direct user
+license route uses only `POST /users/{id | userPrincipalName}/assignLicense`,
+accepts immutable user IDs and canonical SKU GUIDs, and requires
+`LicenseAssignment.ReadWrite.All`; it supports only explicit add or remove
+operations. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return
@@ -92,5 +100,6 @@ not supported there. Grant only the permission required by the chosen flow.
 The token acquisition flow is deliberately outside WAIT. Microsoft documents
 the [user update](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0)
 endpoint and the [Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)
+and [user assignLicense](https://learn.microsoft.com/en-us/graph/api/user-assignlicense?view=graph-rest-1.0)
 for these lifecycle permissions. Session revocation is a separate
 `revokeSignInSessions` action and is intentionally not part of this slice.

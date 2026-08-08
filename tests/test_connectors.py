@@ -7,6 +7,7 @@ import pytest
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_m365_group_membership,
+    draft_m365_license_change,
     draft_m365_user_creation,
     draft_m365_user_disable,
     execute_halopsa_approval_request,
@@ -14,11 +15,13 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
+    validate_m365_license_change_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
 )
 from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
+    M365GraphLicenseChangeResult,
     M365GraphUserDisableResult,
 )
 from wait_local_agent.models import HaloWriteResult
@@ -69,6 +72,17 @@ class FakeM365Client:
             user_id=str(kwargs["user_id"]),
             operation=str(kwargs["operation"]),
             status_code=204,
+        )
+
+    def change_user_licenses(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphLicenseChangeResult(
+            "succeeded",
+            "licenses changed",
+            user_id=str(kwargs["user_id"]),
+            operation=str(kwargs["operation"]),
+            sku_ids=tuple(kwargs["sku_ids"]),
+            status_code=200,
         )
 
 
@@ -237,6 +251,65 @@ def test_m365_group_membership_payload_validation_rejects_unsafe_shapes(settings
             user_id="user-1",
             operation="replace",
         )
+
+
+def test_m365_license_change_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    sku_ids = [
+        "84a661c4-e949-4bd2-a560-ed7766fcaf2b",
+        "f30db892-07e9-47e9-837c-80727f46fd3d",
+    ]
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_license_change(
+        store,
+        user_id="user-1",
+        sku_ids=sku_ids,
+        operation="add",
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.client_id == "tenant-a"
+    assert persisted.payload_json == (
+        '{"action_type":"users.licenses.add","connector":"m365",'
+        '"sku_ids":["84a661c4-e949-4bd2-a560-ed7766fcaf2b",'
+        '"f30db892-07e9-47e9-837c-80727f46fd3d"],"user_id":"user-1"}'
+    )
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store, cast(Any, client), vault, approval.id or 0
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {"user_id": "user-1", "sku_ids": sku_ids, "operation": "add"}
+    ]
+    assert "password" not in executed.execution_result_json.lower()
+
+
+def test_m365_license_change_payload_rejects_unsafe_shapes() -> None:
+    sku_id = "84a661c4-e949-4bd2-a560-ed7766fcaf2b"
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "users.licenses.remove",
+        "user_id": "user-1",
+        "sku_ids": [sku_id],
+    }
+    validate_m365_license_change_payload(valid)
+    cases: tuple[dict[str, object], ...] = (
+        {**valid, "raw_endpoint": "users/user-1/assignLicense"},
+        {**valid, "sku_ids": ["not-a-guid"]},
+        {**valid, "sku_ids": [7]},
+        {**valid, "sku_ids": []},
+        {**valid, "sku_ids": [sku_id, sku_id]},
+        {**valid, "user_id": "user 1"},
+        {**valid, "action_type": "users.disable"},
+    )
+    for payload in cases:
+        with pytest.raises(ValueError):
+            validate_m365_license_change_payload(payload)
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:
