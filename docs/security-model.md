@@ -186,6 +186,8 @@ mailbox/folder/message IDs, sends no request body, and does not expose
 permanent deletion.
 Managed-device sync is separately approval-gated, uses only a strict device ID,
 sends no request body, and does not expose wipe or delete operations.
+Managed-device reboot follows the same approval, strict-ID, write-flag, and
+bodyless-request controls; wipe and delete operations remain unavailable.
 
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write

@@ -63,6 +63,7 @@ from wait_local_agent.connectors import (
     draft_m365_mail_message_move,
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
+    draft_m365_managed_device_reboot,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
     draft_m365_session_revocation,
@@ -968,6 +969,25 @@ def draft_m365_managed_device_sync_command(
 ) -> None:
     try:
         approval = draft_m365_managed_device_sync(
+            _store(),
+            device_id=device_id,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-managed-device-reboot")
+def draft_m365_managed_device_reboot_command(
+    device_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_managed_device_reboot(
             _store(),
             device_id=device_id,
             client_id=client_id,

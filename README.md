@@ -469,7 +469,7 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
 context plus explicitly approval-gated user lifecycle, direct user license,
-session revocation, managed-device sync and retirement, mailbox settings, message move,
+session revocation, managed-device sync, reboot, and retirement, mailbox settings, message move,
 message read-state, and message deletion operations.
 Configure an
 externally acquired delegated or application bearer token:
@@ -497,6 +497,7 @@ wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-managed-device-sync device-1
+wait-local-agent connectors draft-m365-managed-device-reboot device-1
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
 wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
 wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
@@ -536,7 +537,10 @@ Intune managed-device retirement is exposed through
 does not expose wipe or delete. Approved Intune managed-device sync is exposed
 through `POST /connectors/m365/managed-devices/sync-drafts` and the
 `draft-m365-managed-device-sync` CLI command; it is approval-gated and sends no
-request body. Approved mailbox-settings updates are exposed
+request body. Approved Intune managed-device reboot is exposed through
+`POST /connectors/m365/managed-devices/reboot-drafts` and the
+`draft-m365-managed-device-reboot` CLI command; it is approval-gated and sends
+no request body. Approved mailbox-settings updates are exposed
 through `POST /connectors/m365/users/mailbox-settings-drafts` or the
 `draft-m365-mailbox-settings` CLI command; only timezone, locale, date-format,
 and time-format fields are accepted. Approved group membership changes are

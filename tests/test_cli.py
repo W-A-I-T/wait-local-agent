@@ -349,6 +349,23 @@ def test_m365_managed_device_sync_draft_command_is_available(monkeypatch, tmp_pa
     assert "password" not in shown.output.lower()
 
 
+def test_m365_managed_device_reboot_draft_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["connectors", "draft-m365-managed-device-reboot", "device-1"],
+    )
+    shown = runner.invoke(app, ["approvals", "show", "1"])
+
+    assert result.exit_code == 0
+    assert "action_type=m365.managed-devices.reboot" in result.output
+    assert shown.exit_code == 0
+    assert "device-1" in shown.output
+    assert "password" not in shown.output.lower()
+
+
 def test_m365_mailbox_settings_draft_command_is_available(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()
