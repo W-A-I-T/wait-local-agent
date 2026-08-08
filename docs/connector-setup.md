@@ -253,7 +253,7 @@ wait-local-agent connectors sharepoint-document <site-id> <item-id>
 The API mirrors these commands under `/connectors/sharepoint/health`,
 `/connectors/sharepoint/sites`, and the site-scoped document routes.
 
-## Microsoft 365 identity, group, license, and mailbox context
+## Microsoft 365 identity, group, license, mailbox, and Intune context
 
 ### Required settings
 
@@ -269,7 +269,8 @@ obtained through the operator's Microsoft identity flow. Token acquisition is
 outside the local agent and the token is never placed in URLs, query values, or
 action payloads. The connector issues only bounded `GET /users` and
 `GET /groups` requests plus selected-field `GET /subscribedSkus` and
-`GET /users/{id}/mailFolders` requests.
+`GET /users/{id}/mailFolders` and `GET /deviceManagement/managedDevices`
+requests.
 User lookup accepts a user ID or user principal name; group lookup accepts a
 group ID, SMTP address, mail nickname, or exact display name. License context
 is tenant-level subscribed-SKU metadata with aggregate counts; per-user license
@@ -277,7 +278,10 @@ details are not requested. Mailbox reads require an explicit user identity and
 return only root-folder metadata and aggregate item counts; messages and hidden
 folders are not requested. Group members and owners are not expanded. It does
 not create, disable, modify, or assign licenses to users or groups, and it does
-not mutate mailboxes.
+not mutate mailboxes or Intune devices. Managed-device reads require an active
+Intune tenant license and return selected inventory/compliance context only;
+serial numbers, IMEI values, remote-assistance URLs, and action results are not
+requested.
 
 Microsoft documents `User.Read.All` for application user reads and
 `User.ReadBasic.All` or `User.Read.All` for delegated work/school reads; grant
@@ -285,7 +289,9 @@ only the permission required by the chosen flow. Group context uses the
 operator's approved group-read permission. Subscribed-SKU context uses
 `LicenseAssignment.Read.All` for application or delegated access. Per-user
 `licenseDetails` is intentionally not used because Microsoft does not support
-application permissions for that endpoint ([list users](https://learn.microsoft.com/en-us/graph/api/user-list?tabs=http&view=graph-rest-1.0), [list groups](https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0), [list subscribed SKUs](https://learn.microsoft.com/en-us/graph/api/subscribedsku-list?view=graph-rest-1.0), [list mail folders](https://learn.microsoft.com/en-us/graph/api/user-list-mailfolders?view=graph-rest-1.0), [permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)).
+application permissions for that endpoint. Intune managed-device reads use
+`DeviceManagementManagedDevices.Read.All` for application or delegated access;
+personal Microsoft accounts are not supported ([list users](https://learn.microsoft.com/en-us/graph/api/user-list?tabs=http&view=graph-rest-1.0), [list groups](https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0), [list subscribed SKUs](https://learn.microsoft.com/en-us/graph/api/subscribedsku-list?view=graph-rest-1.0), [list mail folders](https://learn.microsoft.com/en-us/graph/api/user-list-mailfolders?view=graph-rest-1.0), [list managed devices](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-list?view=graph-rest-1.0), [permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)).
 
 ### Validate and read
 
@@ -298,11 +304,13 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-managed-devices
 ```
 
 The API mirrors these commands under `/connectors/m365/health` and
 `/connectors/m365/users`, `/connectors/m365/groups`,
-`/connectors/m365/licenses`, and `/connectors/m365/mail-folders`.
+`/connectors/m365/licenses`, `/connectors/m365/mail-folders`, and
+`/connectors/m365/managed-devices`.
 
 ## ConnectWise PSA
 

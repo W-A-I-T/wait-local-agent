@@ -82,6 +82,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
+    M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
 from wait_local_agent.models import AgentDefinition
@@ -2194,6 +2195,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _m365_mail_folder_response("mail-folders.list", response)
 
+    @app.get("/connectors/m365/managed-devices")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_managed_devices(
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = m365_client.list_managed_devices(
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        return _m365_managed_device_response("managed-devices.list", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2744,6 +2761,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _m365_mail_folder_response(
         read_type: str,
         response: M365GraphMailFolderReadResponse,
+    ) -> dict[str, object]:
+        _audit_m365_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _m365_managed_device_response(
+        read_type: str,
+        response: M365GraphManagedDeviceReadResponse,
     ) -> dict[str, object]:
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {

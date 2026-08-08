@@ -256,13 +256,13 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="Microsoft 365 / Entra",
             status=m365_status,
             message=(
-                "Microsoft Graph is configured for read-only user, group, and license context lookup."
+                "Microsoft Graph is configured for read-only user, group, license, mailbox, and Intune context lookup."
                 if m365_status == "configured"
                 else "Microsoft Graph credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if m365_status == "blocked"
                 else (
                     "Set WAIT_M365_GRAPH_BASE_URL and WAIT_M365_ACCESS_TOKEN to enable "
-                    "live identity, group, license, and mailbox-folder reads."
+                    "live identity, group, license, mailbox-folder, and Intune managed-device reads."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,

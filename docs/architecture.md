@@ -82,7 +82,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   credentials in action payloads.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
-  can perform bounded live Graph user, group, subscribed-license, and mailbox-folder reads with operator-supplied credentials;
+  can perform bounded live Graph user, group, subscribed-license, mailbox-folder, and Intune managed-device reads with operator-supplied credentials;
   neither path accepts credentials through an action payload or exposes writes.
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device

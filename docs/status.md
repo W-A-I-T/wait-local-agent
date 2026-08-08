@@ -142,7 +142,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
-| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder lookup built; broader resources future |
+| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/Intune managed-device lookup built; broader resources future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
