@@ -190,6 +190,38 @@ export type AgentRunDetail = {
   client_id?: string | null;
 };
 
+export type AgentBackfill = {
+  id: number;
+  agent_id: string;
+  entity_ids: string[];
+  input: Record<string, unknown>;
+  max_concurrency: number;
+  status: string;
+  next_index: number;
+  processed_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  run_ids: number[];
+  failed_entity_ids: string[];
+  actor: string;
+  error_detail: string;
+  created_at: string;
+  updated_at: string;
+  client_id?: string | null;
+};
+
+export type AgentBackfillPreview = {
+  dry_run: true;
+  agent_id: string;
+  entity_count: number;
+  estimated_runs: number;
+  max_concurrency: number;
+  execution_mode: string;
+  will_persist: false;
+  input: Record<string, unknown>;
+  client_id?: string | null;
+};
+
 export type AnalyticsSummary = {
   range: { from: string | null; to: string | null };
   client_id: string | null;

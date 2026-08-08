@@ -98,7 +98,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`, plus a non-persisting dry-run estimate and
-  bounded parallel execution with a sequential default.
+  bounded parallel execution with a sequential default. The React dashboard
+  exposes the same preview, queue, progress, control, and failed-item rerun
+  paths without creating a second execution engine.
   Agent run responses and persisted run state
   include a redacted operational final result with the last tool's status,
   output, evidence, and error detail; hidden reasoning is not persisted.

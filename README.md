@@ -96,7 +96,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   never carry local ids or tenant identity. The gallery never permits arbitrary
   code, tools, or write permissions.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
-  failures, pause/cancel state, and failed-item reruns.
+  failures, pause/cancel state, and failed-item reruns. The React dashboard
+  exposes dry-run preview, queueing, progress, controls, and failed-item
+  reruns without creating a second execution engine.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
   redacted dry-run estimate without persisting or executing it.
 - Backfills default to sequential execution and may opt into up to four
