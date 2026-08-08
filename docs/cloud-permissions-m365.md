@@ -16,6 +16,7 @@ permissions:
 | Approved user disable/offboarding | `User.EnableDisableAccount.All` and `User.Read.All` |
 | Approved group membership changes | `GroupMember.ReadWrite.All` |
 | Approved direct user license changes | `LicenseAssignment.ReadWrite.All` |
+| Approved session revocation | `User.RevokeSessions.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -34,6 +35,8 @@ needed by the deployment.
 For approved direct user license changes, grant only the least-privileged
 `LicenseAssignment.ReadWrite.All` application permission; do not grant
 `Directory.ReadWrite.All`.
+For approved session revocation, grant only the least-privileged application
+permission `User.RevokeSessions.All`.
 For approved disable/offboarding, grant only the least-privileged application
 combination `User.EnableDisableAccount.All` and `User.Read.All` described by
 Microsoft Graph; do not grant `Directory.ReadWrite.All`.
@@ -74,7 +77,10 @@ IDs only and requires `GroupMember.ReadWrite.All`. The approved direct user
 license route uses only `POST /users/{id | userPrincipalName}/assignLicense`,
 accepts immutable user IDs and canonical SKU GUIDs, and requires
 `LicenseAssignment.ReadWrite.All`; it supports only explicit add or remove
-operations. User reads can
+operations. The separate approved session-revocation route uses only
+`POST /users/{id | userPrincipalName}/revokeSignInSessions` with no request
+body, accepts immutable user IDs, and requires `User.RevokeSessions.All`.
+User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return
@@ -100,6 +106,7 @@ not supported there. Grant only the permission required by the chosen flow.
 The token acquisition flow is deliberately outside WAIT. Microsoft documents
 the [user update](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0)
 endpoint and the [Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)
-and [user assignLicense](https://learn.microsoft.com/en-us/graph/api/user-assignlicense?view=graph-rest-1.0)
+and [user assignLicense](https://learn.microsoft.com/en-us/graph/api/user-assignlicense?view=graph-rest-1.0),
+and [revokeSignInSessions](https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions?view=graph-rest-1.0)
 for these lifecycle permissions. Session revocation is a separate
 `revokeSignInSessions` action and is intentionally not part of this slice.

@@ -16,6 +16,7 @@ from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
+    M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
 )
@@ -49,6 +50,7 @@ M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
 M365_GROUP_MEMBERSHIP_REMOVE_ACTION = "groups.members.remove"
 M365_LICENSE_ADD_ACTION = "users.licenses.add"
 M365_LICENSE_REMOVE_ACTION = "users.licenses.remove"
+M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -757,6 +759,26 @@ def draft_m365_license_change(
     )
 
 
+def draft_m365_session_revocation(
+    store: Store,
+    *,
+    user_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_SESSION_REVOKE_ACTION,
+        "user_id": user_id,
+    }
+    validate_m365_session_revocation_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_id.strip()}:sessions",
+        f"m365.{M365_SESSION_REVOKE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -773,6 +795,7 @@ def execute_m365_approval_request(
         f"m365.{M365_GROUP_MEMBERSHIP_REMOVE_ACTION}",
         f"m365.{M365_LICENSE_ADD_ACTION}",
         f"m365.{M365_LICENSE_REMOVE_ACTION}",
+        f"m365.{M365_SESSION_REVOKE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -790,6 +813,7 @@ def execute_m365_approval_request(
         M365_GROUP_MEMBERSHIP_REMOVE_ACTION,
         M365_LICENSE_ADD_ACTION,
         M365_LICENSE_REMOVE_ACTION,
+        M365_SESSION_REVOKE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -797,6 +821,7 @@ def execute_m365_approval_request(
         | M365GraphUserDisableResult
         | M365GraphGroupMembershipResult
         | M365GraphLicenseChangeResult
+        | M365GraphSessionRevokeResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -843,7 +868,7 @@ def execute_m365_approval_request(
             "operation": result.operation,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type in {M365_LICENSE_ADD_ACTION, M365_LICENSE_REMOVE_ACTION}:
         validate_m365_license_change_payload(payload)
         operation = "add" if action_type == M365_LICENSE_ADD_ACTION else "remove"
         result = client.change_user_licenses(
@@ -855,6 +880,13 @@ def execute_m365_approval_request(
             "user_id": result.user_id,
             "operation": result.operation,
             "sku_ids": list(result.sku_ids),
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_session_revocation_payload(payload)
+        result = client.revoke_user_sessions(user_id=str(payload["user_id"]))
+        result_payload = {
+            "user_id": result.user_id,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -976,6 +1008,21 @@ def validate_m365_license_change_payload(payload: dict[str, object]) -> None:
     canonical_ids = [_canonical_uuid(value, "sku_id") for value in sku_ids]
     if len(set(canonical_ids)) != len(canonical_ids):
         raise ValueError("M365 sku_ids must be unique")
+
+
+def validate_m365_session_revocation_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "user_id"}:
+        raise ValueError("M365 session revocation payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_SESSION_REVOKE_ACTION:
+        raise ValueError("M365 session revocation payload is invalid")
+    user_id = payload.get("user_id")
+    if (
+        not isinstance(user_id, str)
+        or not user_id.strip()
+        or len(user_id) > 320
+        or any(ord(character) < 32 or character.isspace() for character in user_id)
+    ):
+        raise ValueError("M365 user_id is invalid")
 
 
 def _canonical_uuid(value: object, field: str) -> str:

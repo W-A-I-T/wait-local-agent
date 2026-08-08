@@ -60,6 +60,7 @@ from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
     execute_halopsa_approval_request,
@@ -181,6 +182,11 @@ class M365LicenseChangeDraftRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=320)
     sku_ids: list[str] = Field(min_length=1, max_length=50)
     operation: Literal["add", "remove"]
+    client_id: str | None = None
+
+
+class M365SessionRevocationDraftRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -2298,6 +2304,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 user_id=payload.user_id,
                 sku_ids=payload.sku_ids,
                 operation=payload.operation,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/users/session-revocation-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_session_revocation_draft(
+        payload: M365SessionRevocationDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_session_revocation(
+                store,
+                user_id=payload.user_id,
                 client_id=payload.client_id,
             )
         except ValueError as exc:

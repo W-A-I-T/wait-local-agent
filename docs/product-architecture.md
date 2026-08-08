@@ -222,7 +222,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Autotask | Phase 4 | ✓ | ✓ gated | MSP Pack |
 | NinjaOne RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
-| M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership/license actions | Public core |
+| M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership/license/session actions | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able | Phase 5 | ✓ | — | MSP Pack |
 | Kaseya VSA | Phase 5 | ✓ | — | MSP Pack |
