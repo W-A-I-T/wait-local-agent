@@ -403,10 +403,11 @@ delegated or application bearer token stays in settings/vault; only bounded
 Graph GET requests are issued, file content is not downloaded, and live network
 access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
 
-### Microsoft 365 identity, group, license, and mailbox context
+### Microsoft 365 identity, group, license, mailbox, and Intune context
 
 The live Microsoft Graph surface is intentionally limited to bounded,
-read-only user, group, tenant subscribed-license, and mailbox-folder context.
+read-only user, group, tenant subscribed-license, mailbox-folder, and Intune
+managed-device context.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -430,6 +431,7 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-managed-devices
 ```
 
 Only Graph GET requests are issued. License reads return tenant subscribed-SKU
@@ -437,9 +439,11 @@ metadata and aggregate consumption/prepaid counts; per-user license details,
 and mailbox reads return selected root mail-folder metadata and aggregate item
 counts; messages, bodies, attachments, and hidden folders are not expanded.
 User creation, disable/offboarding, group membership changes, license
-assignments, mailbox mutations, and Intune actions remain absent until
-separately permissioned and approval-gated. Group reads return bounded group
-metadata only; members and owners are not expanded.
+assignments, mailbox mutations, and Intune device mutations remain absent until
+separately permissioned and approval-gated. Managed-device reads return
+selected inventory/compliance context only; serial numbers, IMEI values,
+remote-assistance URLs, and action results are not requested. Group reads
+return bounded group metadata only; members and owners are not expanded.
 
 ### ConnectWise PSA
 

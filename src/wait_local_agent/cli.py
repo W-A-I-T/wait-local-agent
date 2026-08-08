@@ -71,6 +71,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
+    M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
 from wait_local_agent.observability import build_analytics_summary
@@ -1294,6 +1295,20 @@ def m365_mail_folders(
     )
 
 
+@connectors_app.command("m365-managed-devices")
+def m365_managed_devices(
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_m365_managed_device_response(
+        "managed-devices.list",
+        _m365_client().list_managed_devices(
+            cursor=cursor,
+            page_size=page_size if page_size is not None else load_settings().m365_page_size,
+        ),
+    )
+
+
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
@@ -2077,6 +2092,24 @@ def _print_m365_license_response(read_type: str, response: M365GraphLicenseReadR
 def _print_m365_mail_folder_response(
     read_type: str,
     response: M365GraphMailFolderReadResponse,
+) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_m365_managed_device_response(
+    read_type: str,
+    response: M365GraphManagedDeviceReadResponse,
 ) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(

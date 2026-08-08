@@ -12,6 +12,8 @@ from wait_local_agent.m365_graph import (
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
     M365GraphReadError,
     M365GraphSubscribedSku,
     M365GraphUser,
@@ -21,6 +23,7 @@ from wait_local_agent.m365_graph import (
     _list_params,
     _mail_folder_endpoint,
     _mail_folder_params,
+    _managed_device_params,
     _next_cursor,
     _normalize_group,
     _normalize_mail_folder,
@@ -281,6 +284,83 @@ def test_m365_graph_mail_folder_reads_use_user_path_and_metadata_only(settings) 
     )
 
 
+def test_m365_graph_managed_device_reads_select_safe_intune_context(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/deviceManagement/managedDevices"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == (
+            "id,userId,deviceName,managedDeviceOwnerType,enrolledDateTime,"
+            "lastSyncDateTime,operatingSystem,complianceState,managementAgent,"
+            "osVersion,azureADRegistered,deviceRegistrationState,isEncrypted,"
+            "userPrincipalName,userDisplayName,model,manufacturer"
+        )
+        assert request.url.params["$skiptoken"] == "device-next"
+        assert "serialNumber" not in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "device-1",
+                        "userId": "user-1",
+                        "deviceName": "LAPTOP-1",
+                        "managedDeviceOwnerType": "company",
+                        "enrolledDateTime": "2026-08-01T10:00:00Z",
+                        "lastSyncDateTime": "2026-08-07T10:00:00Z",
+                        "operatingSystem": "Windows",
+                        "complianceState": "compliant",
+                        "managementAgent": "mdm",
+                        "osVersion": "11.0",
+                        "azureADRegistered": True,
+                        "deviceRegistrationState": "registered",
+                        "isEncrypted": True,
+                        "userPrincipalName": "user@example.test",
+                        "userDisplayName": "Adele Vance",
+                        "model": "Surface",
+                        "manufacturer": "Microsoft",
+                        "serialNumber": "sensitive-serial",
+                        "imei": "sensitive-imei",
+                        "remoteAssistanceSessionUrl": "https://sensitive.example.test",
+                    }
+                ],
+                "@odata.nextLink": (
+                    "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?"
+                    "$skiptoken=device-next-2"
+                ),
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_managed_devices(cursor="device-next", page_size=2)
+
+    assert response == M365GraphManagedDeviceReadResponse(
+        result=response.result,
+        items=[
+            M365GraphManagedDevice(
+                "device-1",
+                "user-1",
+                "LAPTOP-1",
+                "company",
+                "2026-08-01T10:00:00Z",
+                "2026-08-07T10:00:00Z",
+                "Windows",
+                "compliant",
+                "mdm",
+                "11.0",
+                True,
+                "registered",
+                True,
+                "user@example.test",
+                "Adele Vance",
+                "Surface",
+                "Microsoft",
+            )
+        ],
+        next_cursor="device-next-2",
+    )
+
+
 def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     def denied(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="private body")
@@ -303,6 +383,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_mail_folders(identity="user@example.test")
     assert "HTTP 403" in folder_result.result.message
     assert "private body" not in folder_result.result.message
+    device_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_managed_devices()
+    assert "HTTP 403" in device_result.result.message
+    assert "private body" not in device_result.result.message
 
     def malformed(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not-json")
@@ -368,6 +453,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
     ).list_mail_folders(identity="user@example.test").result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
+    ).list_managed_devices().result.status == "not_configured"
 
     for status_code, marker in (
         (401, "authentication failed"),
@@ -407,6 +499,16 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert _mail_folder_endpoint("alice+ops@example.test") == (
         "users/alice%2Bops%40example.test/mailFolders"
     )
+    assert _managed_device_params(1000, "next") == {
+        "$top": 200,
+        "$select": (
+            "id,userId,deviceName,managedDeviceOwnerType,enrolledDateTime,"
+            "lastSyncDateTime,operatingSystem,complianceState,managementAgent,"
+            "osVersion,azureADRegistered,deviceRegistrationState,isEncrypted,"
+            "userPrincipalName,userDisplayName,model,manufacturer"
+        ),
+        "$skiptoken": "next",
+    }
     assert _next_cursor(
         {"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=next"}
     ) == "next"
@@ -454,6 +556,9 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             helper(value)
     assert _safe_endpoint("groups") == "groups"
     assert _safe_endpoint("subscribedSkus") == "subscribedSkus"
+    assert _safe_endpoint("deviceManagement/managedDevices") == (
+        "deviceManagement/managedDevices"
+    )
     assert _safe_endpoint("users/user%40example.test/mailFolders") == (
         "users/user%40example.test/mailFolders"
     )

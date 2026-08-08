@@ -27,6 +27,8 @@ from wait_local_agent.m365_graph import (
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
     M365GraphSubscribedSku,
     M365GraphUser,
@@ -2405,6 +2407,33 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "folder-next-token",
             )
 
+        def list_managed_devices(self, **kwargs):
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphManagedDevice(
+                        "device-1",
+                        "user-1",
+                        "LAPTOP-1",
+                        "company",
+                        "2026-08-01T10:00:00Z",
+                        "2026-08-07T10:00:00Z",
+                        "Windows",
+                        "compliant",
+                        "mdm",
+                        "11.0",
+                        True,
+                        "registered",
+                        True,
+                        "user@example.test",
+                        "Adele Vance",
+                        "Surface",
+                        "Microsoft",
+                    )
+                ],
+                "device-next-token",
+            )
+
     monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
     client = TestClient(create_app(settings))
 
@@ -2425,6 +2454,10 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/mail-folders",
         params={"identity": "adele@example.test", "cursor": "folder-next", "page_size": 2},
     )
+    managed_devices = client.get(
+        "/connectors/m365/managed-devices",
+        params={"cursor": "device-next", "page_size": 2},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -2438,6 +2471,8 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert licenses.json()["next_cursor"] == "license-next-token"
     assert mail_folders.json()["items"][0]["display_name"] == "Inbox"
     assert mail_folders.json()["next_cursor"] == "folder-next-token"
+    assert managed_devices.json()["items"][0]["device_name"] == "LAPTOP-1"
+    assert managed_devices.json()["next_cursor"] == "device-next-token"
     assert any(connector["id"] == "m365" for connector in connectors.json())
     assert any(event["event_type"] == "m365.read" for event in audit.json())
 
@@ -2449,6 +2484,7 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     assert client.get("/connectors/m365/groups").status_code == 401
     assert client.get("/connectors/m365/licenses").status_code == 401
     assert client.get("/connectors/m365/mail-folders").status_code == 401
+    assert client.get("/connectors/m365/managed-devices").status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

@@ -11,6 +11,7 @@ permissions:
 | Groups | `Group.Read.All` |
 | Subscribed license SKUs | `LicenseAssignment.Read.All` |
 | Mail-folder metadata | `Mail.ReadBasic.All` |
+| Intune managed devices | `DeviceManagementManagedDevices.Read.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -24,7 +25,7 @@ resolved at runtime and never persists in config, evidence, logs, or errors.
 Do not grant write permissions, `Directory.ReadWrite.All`, or role-management
 permissions.
 
-## Live identity, group, license, and mailbox lookup
+## Live identity, group, license, mailbox, and Intune lookup
 
 The optional live identity connector uses the same Graph read boundary but
 accepts an operator-supplied bearer token through settings or the local vault:
@@ -37,7 +38,8 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 It issues only bounded `GET /users` and `GET /groups` requests plus selected-
-field `GET /subscribedSkus` and `GET /users/{id}/mailFolders` requests. User reads can
+field `GET /subscribedSkus`, `GET /users/{id}/mailFolders`, and
+`GET /deviceManagement/managedDevices` requests. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return
@@ -45,6 +47,10 @@ tenant subscribed-SKU metadata and aggregate counts, not per-user assignments.
 Mailbox reads require an explicit user ID or user principal name and return
 selected root mail-folder metadata and aggregate counts; messages, bodies,
 attachments, and hidden folders are not requested.
+Intune reads use selected inventory and compliance fields; serial numbers, IMEI
+values, remote-assistance URLs, and action results are not requested. Microsoft
+requires an active Intune tenant license for this API and does not support the
+permission for personal Microsoft accounts.
 Microsoft documents
 `User.Read.All` for application user reads and `User.ReadBasic.All` or
 `User.Read.All` for delegated work/school user reads. The Graph groups API
@@ -52,8 +58,10 @@ documents group-read permissions for group metadata. The subscribed-SKU API
 uses `LicenseAssignment.Read.All` for application or delegated access. Mailbox
 folder reads use `Mail.ReadBasic.All` for application access or
 `Mail.ReadBasic` for delegated access. The
+Intune managed-device API uses `DeviceManagementManagedDevices.Read.All` for
+application or delegated access. The
 per-user `licenseDetails` API is not used because application permissions are
 not supported there. Grant only the permission required by the chosen flow.
 The token acquisition flow is deliberately outside WAIT, and this slice does
 not create, disable, modify, or assign licenses to users or groups, and does
-not mutate mailboxes.
+not mutate mailboxes or Intune devices.

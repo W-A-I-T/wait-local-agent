@@ -1,7 +1,7 @@
-"""Read-only Microsoft Graph identity, group, license, and mailbox reads through a guarded boundary.
+"""Read-only Microsoft Graph identity, group, license, mailbox, and Intune reads through a guarded boundary.
 
 The live connector is intentionally narrower than the cloud inventory adapter:
-it looks up bounded user, group, tenant license, and mailbox context, accepts a bearer token supplied by
+it looks up bounded user, group, tenant license, mailbox, and Intune device context, accepts a bearer token supplied by
 the operator's settings/vault boundary, and never creates or mutates Graph data.
 """
 
@@ -99,6 +99,34 @@ class M365GraphMailFolderReadResponse:
     next_cursor: str = ""
 
 
+@dataclass(frozen=True)
+class M365GraphManagedDevice:
+    id: str
+    user_id: str
+    device_name: str
+    owner_type: str
+    enrolled_date_time: str
+    last_sync_date_time: str
+    operating_system: str
+    compliance_state: str
+    management_agent: str
+    os_version: str
+    azure_ad_registered: bool | None
+    device_registration_state: str
+    is_encrypted: bool | None
+    user_principal_name: str
+    user_display_name: str
+    model: str
+    manufacturer: str
+
+
+@dataclass(frozen=True)
+class M365GraphManagedDeviceReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphManagedDevice]
+    next_cursor: str = ""
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph read failure."""
 
@@ -125,7 +153,7 @@ class M365GraphClient:
         if response.result.status == "ready":
             return ConnectorReadResult(
                 "ready",
-                "Microsoft Graph identity, group, license, and mailbox read prerequisites are ready.",
+                "Microsoft Graph identity, group, license, mailbox, and Intune read prerequisites are ready.",
             )
         return response.result
 
@@ -194,6 +222,18 @@ class M365GraphClient:
         except M365GraphReadError as exc:
             return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_mail_folders(endpoint, params)
+
+    def list_managed_devices(
+        self,
+        *,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphManagedDeviceReadResponse:
+        try:
+            params = _managed_device_params(page_size, cursor)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return self._request_managed_devices(params)
 
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
@@ -275,6 +315,31 @@ class M365GraphClient:
         ]
         return M365GraphMailFolderReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph mailbox folder read succeeded.", len(items)),
+            items,
+            _next_cursor(payload),
+        )
+
+    def _request_managed_devices(
+        self,
+        params: dict[str, str | int],
+    ) -> M365GraphManagedDeviceReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphManagedDeviceReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphManagedDeviceReadResponse(missing, [])
+        try:
+            payload = self._get("deviceManagement/managedDevices", params=params)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceReadResponse(ConnectorReadResult("failed", exc.message), [])
+        items = [
+            device
+            for row in _payload_rows(payload)
+            if (device := _normalize_managed_device(row)) is not None
+        ]
+        return M365GraphManagedDeviceReadResponse(
+            ConnectorReadResult("ready", "Microsoft Graph Intune managed-device read succeeded.", len(items)),
             items,
             _next_cursor(payload),
         )
@@ -369,7 +434,12 @@ def _safe_endpoint(endpoint: str) -> str:
         and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
         and not any(ord(character) < 32 for character in endpoint)
     )
-    if endpoint not in {"users", "groups", "subscribedSkus"} and not is_mail_folder_endpoint:
+    if endpoint not in {
+        "users",
+        "groups",
+        "subscribedSkus",
+        "deviceManagement/managedDevices",
+    } and not is_mail_folder_endpoint:
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
 
@@ -432,6 +502,21 @@ def _mail_folder_params(page_size: int, cursor: str | None) -> dict[str, str | i
         "$select": (
             "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
             "unreadItemCount,isHidden"
+        ),
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
+def _managed_device_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$top": _bounded_page_size(page_size),
+        "$select": (
+            "id,userId,deviceName,managedDeviceOwnerType,enrolledDateTime,"
+            "lastSyncDateTime,operatingSystem,complianceState,managementAgent,"
+            "osVersion,azureADRegistered,deviceRegistrationState,isEncrypted,"
+            "userPrincipalName,userDisplayName,model,manufacturer"
         ),
     }
     if cursor is not None:
@@ -541,6 +626,31 @@ def _normalize_mail_folder(row: Mapping[str, object]) -> M365GraphMailFolder | N
     )
 
 
+def _normalize_managed_device(row: Mapping[str, object]) -> M365GraphManagedDevice | None:
+    device_id = _string_value(row, "id")
+    if not device_id:
+        return None
+    return M365GraphManagedDevice(
+        id=device_id,
+        user_id=_string_value(row, "userId"),
+        device_name=_string_value(row, "deviceName"),
+        owner_type=_string_value(row, "managedDeviceOwnerType"),
+        enrolled_date_time=_string_value(row, "enrolledDateTime"),
+        last_sync_date_time=_string_value(row, "lastSyncDateTime"),
+        operating_system=_string_value(row, "operatingSystem"),
+        compliance_state=_string_value(row, "complianceState"),
+        management_agent=_string_value(row, "managementAgent"),
+        os_version=_string_value(row, "osVersion"),
+        azure_ad_registered=_bool_value(row.get("azureADRegistered")),
+        device_registration_state=_string_value(row, "deviceRegistrationState"),
+        is_encrypted=_bool_value(row.get("isEncrypted")),
+        user_principal_name=_string_value(row, "userPrincipalName"),
+        user_display_name=_string_value(row, "userDisplayName"),
+        model=_string_value(row, "model"),
+        manufacturer=_string_value(row, "manufacturer"),
+    )
+
+
 def _string_value(row: Mapping[str, object], key: str) -> str:
     value = row.get(key)
     if isinstance(value, str):
@@ -588,6 +698,8 @@ __all__ = [
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",
     "M365GraphMailFolderReadResponse",
+    "M365GraphManagedDevice",
+    "M365GraphManagedDeviceReadResponse",
     "M365GraphReadError",
     "M365GraphReadResponse",
     "M365GraphSubscribedSku",
