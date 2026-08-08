@@ -63,6 +63,7 @@ from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_move,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_retirement,
     draft_m365_session_revocation,
@@ -221,6 +222,14 @@ class M365ManagedDeviceRetirementDraftRequest(BaseModel):
 class M365MailboxSettingsUpdateDraftRequest(BaseModel):
     user_identity: str = Field(min_length=1, max_length=320)
     settings: dict[str, str] = Field(min_length=1, max_length=4)
+    client_id: str | None = None
+
+
+class M365MailMessageMoveDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    source_folder_id: str = Field(min_length=1, max_length=320)
+    message_id: str = Field(min_length=1, max_length=320)
+    destination_folder_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -2733,6 +2742,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 store,
                 user_identity=payload.user_identity,
                 settings=payload.settings,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/mail-messages/move-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_message_move_draft(
+        payload: M365MailMessageMoveDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_mail_message_move(
+                store,
+                user_identity=payload.user_identity,
+                source_folder_id=payload.source_folder_id,
+                message_id=payload.message_id,
+                destination_folder_id=payload.destination_folder_id,
                 client_id=payload.client_id,
             )
         except ValueError as exc:

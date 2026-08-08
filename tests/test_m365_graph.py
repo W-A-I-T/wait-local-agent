@@ -18,6 +18,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessage,
+    M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
@@ -568,6 +569,50 @@ def test_m365_graph_mail_message_reads_select_metadata_without_body(settings) ->
     assert M365GraphClient(_configured(settings)).list_mail_messages(
         identity="alice@example.test"
     ).result.message == "Microsoft Graph mail folder is required."
+
+
+def test_m365_graph_mail_message_move_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        destination_folder_id="archive",
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1/move"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["Content-Type"] == "application/json"
+        assert json.loads(request.content) == {"destinationId": "archive"}
+        return httpx.Response(201, json={})
+
+    moved = M365GraphClient(active, transport=httpx.MockTransport(handler)).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        destination_folder_id="archive",
+    )
+    assert moved == M365GraphMailMessageMoveResult(
+        "succeeded",
+        "Microsoft Graph mail message move succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        "archive",
+        201,
+    )
+    assert M365GraphClient(active).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
+        destination_folder_id="archive",
+    ).status == "failed"
 
 
 def test_m365_graph_managed_device_reads_select_safe_intune_context(settings) -> None:

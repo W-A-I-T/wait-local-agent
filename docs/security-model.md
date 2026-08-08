@@ -176,6 +176,9 @@ identity/page-size inputs. It never accepts a Graph token or tenant identifier;
 the existing configured-provider gates enforce outbound access. Message reads
 select metadata only and never return bodies, previews, or attachments, while
 all M365 mutations remain on the separate approval-draft and execution paths.
+Message moves are separately approval-gated, use only explicit
+mailbox/folder/message IDs, send only a destination folder ID to Graph, and do
+not expose send, delete, or message-content operations.
 
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write

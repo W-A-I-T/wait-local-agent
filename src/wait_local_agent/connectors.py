@@ -17,6 +17,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailMessageMoveResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
@@ -64,6 +65,7 @@ M365_LICENSE_REMOVE_ACTION = "users.licenses.remove"
 M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
 M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
 M365_MAILBOX_SETTINGS_UPDATE_ACTION = "users.mailbox-settings.update"
+M365_MAIL_MESSAGE_MOVE_ACTION = "mail-messages.move"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -986,6 +988,32 @@ def draft_m365_mailbox_settings_update(
     )
 
 
+def draft_m365_mail_message_move(
+    store: Store,
+    *,
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    destination_folder_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAIL_MESSAGE_MOVE_ACTION,
+        "destination_folder_id": destination_folder_id,
+        "message_id": message_id,
+        "source_folder_id": source_folder_id,
+        "user_identity": user_identity,
+    }
+    validate_m365_mail_message_move_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:message:{message_id.strip()}:move",
+        f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -1005,6 +1033,7 @@ def execute_m365_approval_request(
         f"m365.{M365_SESSION_REVOKE_ACTION}",
         f"m365.{M365_DEVICE_RETIRE_ACTION}",
         f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
+        f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -1025,6 +1054,7 @@ def execute_m365_approval_request(
         M365_SESSION_REVOKE_ACTION,
         M365_DEVICE_RETIRE_ACTION,
         M365_MAILBOX_SETTINGS_UPDATE_ACTION,
+        M365_MAIL_MESSAGE_MOVE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -1035,6 +1065,7 @@ def execute_m365_approval_request(
         | M365GraphSessionRevokeResult
         | M365GraphManagedDeviceRetireResult
         | M365GraphMailboxSettingsUpdateResult
+        | M365GraphMailMessageMoveResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -1109,7 +1140,7 @@ def execute_m365_approval_request(
             "device_id": result.device_id,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_MAILBOX_SETTINGS_UPDATE_ACTION:
         validate_m365_mailbox_settings_update_payload(payload)
         result = client.update_mailbox_settings(
             user_identity=str(payload["user_identity"]),
@@ -1118,6 +1149,21 @@ def execute_m365_approval_request(
         result_payload = {
             "user_identity": result.user_identity,
             "settings": result.settings,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_mail_message_move_payload(payload)
+        result = client.move_mail_message(
+            user_identity=str(payload["user_identity"]),
+            source_folder_id=str(payload["source_folder_id"]),
+            message_id=str(payload["message_id"]),
+            destination_folder_id=str(payload["destination_folder_id"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "source_folder_id": result.source_folder_id,
+            "message_id": result.message_id,
+            "destination_folder_id": result.destination_folder_id,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -1296,6 +1342,30 @@ def validate_m365_mailbox_settings_update_payload(payload: dict[str, object]) ->
             or any(ord(character) < 32 for character in value)
         ):
             raise ValueError(f"M365 mailbox setting {field_name} is invalid")
+
+
+def validate_m365_mail_message_move_payload(payload: dict[str, object]) -> None:
+    required = {
+        "connector",
+        "action_type",
+        "user_identity",
+        "source_folder_id",
+        "message_id",
+        "destination_folder_id",
+    }
+    if set(payload) != required:
+        raise ValueError("M365 mail message move payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_MAIL_MESSAGE_MOVE_ACTION:
+        raise ValueError("M365 mail message move payload is invalid")
+    for field_name in ("user_identity", "source_folder_id", "message_id", "destination_folder_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
 
 
 def _canonical_uuid(value: object, field: str) -> str:

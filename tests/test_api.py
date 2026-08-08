@@ -31,6 +31,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessage,
+    M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
@@ -3726,6 +3727,84 @@ def test_m365_mailbox_settings_update_requires_admin_and_auto_executes_after_app
     assert admin_approval.json()["execution_status"] == "succeeded"
     assert admin_approval.json()["output"]["settings"] == settings_payload
     assert calls == [{"user_identity": "user-1", "settings": settings_payload}]
+
+
+def test_m365_mail_message_move_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def move_mail_message(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailMessageMoveResult(
+                "succeeded",
+                "message moved",
+                user_identity=str(kwargs["user_identity"]),
+                source_folder_id=str(kwargs["source_folder_id"]),
+                message_id=str(kwargs["message_id"]),
+                destination_folder_id=str(kwargs["destination_folder_id"]),
+                status_code=201,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "destination_folder_id": "archive",
+        "client_id": "tenant-a",
+    }
+
+    viewer_draft = client.post(
+        "/connectors/m365/mail-messages/move-drafts",
+        headers=_auth("viewer-token"),
+        json=payload,
+    )
+    draft = client.post(
+        "/connectors/m365/mail-messages/move-drafts",
+        headers=_auth("admin-token"),
+        json=payload,
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.mail-messages.move"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+            "destination_folder_id": "archive",
+        }
+    ]
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

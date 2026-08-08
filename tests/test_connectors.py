@@ -9,6 +9,7 @@ from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_move,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_retirement,
     draft_m365_session_revocation,
@@ -23,6 +24,7 @@ from wait_local_agent.connectors import (
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
+    validate_m365_mail_message_move_payload,
     validate_m365_mailbox_settings_update_payload,
     validate_m365_managed_device_retirement_payload,
     validate_m365_session_revocation_payload,
@@ -33,6 +35,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailMessageMoveResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
@@ -128,6 +131,18 @@ class FakeM365Client:
             user_identity=str(kwargs["user_identity"]),
             settings=dict(kwargs["settings"]),
             status_code=200,
+        )
+
+    def move_mail_message(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphMailMessageMoveResult(
+            "succeeded",
+            "message moved",
+            user_identity=str(kwargs["user_identity"]),
+            source_folder_id=str(kwargs["source_folder_id"]),
+            message_id=str(kwargs["message_id"]),
+            destination_folder_id=str(kwargs["destination_folder_id"]),
+            status_code=201,
         )
 
     def revoke_user_sessions(self, **kwargs):
@@ -499,6 +514,64 @@ def test_m365_mailbox_settings_update_payload_rejects_unsafe_shapes() -> None:
     ):
         with pytest.raises(ValueError):
             validate_m365_mailbox_settings_update_payload(payload)
+
+
+def test_m365_mail_message_move_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_mail_message_move(
+        store,
+        user_identity="user-1",
+        source_folder_id="inbox",
+        message_id="message-1",
+        destination_folder_id="archive",
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert "message-1" in persisted.payload_json
+    validate_m365_mail_message_move_payload(
+        {
+            "connector": "m365",
+            "action_type": "mail-messages.move",
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+            "destination_folder_id": "archive",
+        }
+    )
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(store, cast(Any, client), vault, approval.id or 0)
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+            "destination_folder_id": "archive",
+        }
+    ]
+
+
+def test_m365_mail_message_move_payload_rejects_unsafe_shapes() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "mail-messages.move",
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "destination_folder_id": "archive",
+    }
+    for payload in (
+        {},
+        {**valid, "action_type": "mail-messages.delete"},
+        {**valid, "message_id": "message 1"},
+        {**valid, "destination_folder_id": ""},
+        {**valid, "unexpected": "field"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_mail_message_move_payload(payload)
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:

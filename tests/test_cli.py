@@ -356,6 +356,29 @@ def test_m365_mailbox_settings_draft_command_is_available(monkeypatch, tmp_path)
     assert "en-US" in shown.output
 
 
+def test_m365_mail_message_move_draft_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "connectors",
+            "draft-m365-mail-message-move",
+            "user-1",
+            "inbox",
+            "message-1",
+            "archive",
+        ],
+    )
+    shown = runner.invoke(app, ["approvals", "show", "1"])
+
+    assert result.exit_code == 0
+    assert "action_type=m365.mail-messages.move" in result.output
+    assert shown.exit_code == 0
+    assert "message-1" in shown.output
+
+
 def test_collectors_list_shows_exactly_fourteen_modules(
     monkeypatch, tmp_path, isolated_default_registry
 ) -> None:

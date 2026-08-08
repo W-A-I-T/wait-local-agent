@@ -59,6 +59,7 @@ from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_move,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_retirement,
     draft_m365_session_revocation,
@@ -977,6 +978,31 @@ def draft_m365_mailbox_settings_command(
             _store(),
             user_identity=user_identity,
             settings=parsed,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-mail-message-move")
+def draft_m365_mail_message_move_command(
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    destination_folder_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_mail_message_move(
+            _store(),
+            user_identity=user_identity,
+            source_folder_id=source_folder_id,
+            message_id=message_id,
+            destination_folder_id=destination_folder_id,
             client_id=client_id,
         )
     except ValueError as exc:

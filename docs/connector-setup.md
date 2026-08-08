@@ -343,7 +343,9 @@ obtained through the operator's Microsoft identity flow. Token acquisition is
 outside the local agent and the token is never placed in URLs, query values, or
 action payloads. Its read surface issues only bounded `GET /users` and
 `GET /groups` requests plus selected-field `GET /subscribedSkus` and
-`GET /users/{id}/mailFolders` and `GET /deviceManagement/managedDevices`
+`GET /users/{id}/mailFolders`, selected-field
+`GET /users/{id}/mailFolders/{folder}/messages`, and
+`GET /deviceManagement/managedDevices`
 requests. User creation is a separate `POST /users` action and is disabled
 unless the write flag is enabled and an admin approves the request. Store its
 temporary password under a vault name beginning with `WAIT_M365_TEMP_`; the
@@ -356,6 +358,9 @@ mailbox data, or act on Intune devices. Approved group membership changes are
 a separate action using immutable group and user IDs; they require
 `GroupMember.ReadWrite.All` and support only explicit `add` or `remove`
 operations through the approval queue.
+Approved mailbox message moves are a separate admin-approved action using
+explicit mailbox, source-folder, message, and destination-folder IDs. They
+require `Mail.ReadWrite` and send only `destinationId` to Graph.
 User lookup accepts a user ID or user principal name; group lookup accepts a
 group ID, SMTP address, mail nickname, or exact display name. License context
 is tenant-level subscribed-SKU metadata with aggregate counts; per-user license
@@ -390,12 +395,17 @@ wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
+wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
 ```
 
 The API mirrors these commands under `/connectors/m365/health` and
 `/connectors/m365/users`, `/connectors/m365/groups`,
 `/connectors/m365/licenses`, `/connectors/m365/mail-folders`,
 `/connectors/m365/mail-messages`, and `/connectors/m365/managed-devices`.
+Message moves are exposed through
+`POST /connectors/m365/mail-messages/move-drafts` with
+`user_identity`, `source_folder_id`, `message_id`, and
+`destination_folder_id`.
 Approved user creation is exposed through `POST /connectors/m365/users/drafts`
 and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 `connectors draft-m365-user` and `connectors execute-m365-user`. Approved

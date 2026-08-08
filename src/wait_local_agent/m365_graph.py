@@ -212,6 +212,17 @@ class M365GraphMailboxSettingsUpdateResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphMailMessageMoveResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    source_folder_id: str = ""
+    message_id: str = ""
+    destination_folder_id: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadProvider(Protocol):
     def list_users(
         self,
@@ -606,6 +617,40 @@ class M365GraphClient:
             status_code=status_code,
         )
 
+    def move_mail_message(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+        destination_folder_id: str,
+    ) -> M365GraphMailMessageMoveResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphMailMessageMoveResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            safe_source_folder_id = _safe_mail_folder_id(source_folder_id)
+            safe_message_id = _safe_mail_folder_id(message_id)
+            safe_destination_folder_id = _safe_mail_folder_id(destination_folder_id)
+            endpoint = (
+                f"users/{quote(safe_identity, safe='')}/mailFolders/"
+                f"{quote(safe_source_folder_id, safe='')}/messages/"
+                f"{quote(safe_message_id, safe='')}/move"
+            )
+            _, status_code = self._post(endpoint, {"destinationId": safe_destination_folder_id})
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageMoveResult("failed", exc.message)
+        return M365GraphMailMessageMoveResult(
+            "succeeded",
+            "Microsoft Graph mail message move succeeded.",
+            user_identity=safe_identity,
+            source_folder_id=safe_source_folder_id,
+            message_id=safe_message_id,
+            destination_folder_id=safe_destination_folder_id,
+            status_code=status_code,
+        )
+
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
         if blocked is not None:
@@ -976,6 +1021,17 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[3])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_mail_message_move_endpoint = (
+        len(endpoint_parts) == 7
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "mailFolders"
+        and endpoint_parts[4] == "messages"
+        and endpoint_parts[6] == "move"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and _safe_encoded_segment(endpoint_parts[3])
+        and _safe_encoded_segment(endpoint_parts[5])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_user_endpoint = (
         len(endpoint_parts) == 2
         and endpoint_parts[0] == "users"
@@ -1037,6 +1093,7 @@ def _safe_endpoint(endpoint: str) -> str:
     } and (
         not is_mail_folder_endpoint
         and not is_mail_message_endpoint
+        and not is_mail_message_move_endpoint
         and not is_user_endpoint
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint
