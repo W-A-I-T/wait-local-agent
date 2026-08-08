@@ -33,6 +33,13 @@ validates the component and device against the mapped tenant before issuing
 the documented quick-job request; job status lookup is bounded to the returned
 job identifier and does not expose component output.
 
+N-able N-central calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_NCENTRAL_ORG_UNIT_MAP_JSON`. The adapter sends only
+GET requests, limits each endpoint to one configured page, and rejects returned
+devices, issues, or tasks outside the mapped organization units. Credentials
+and provider IDs are never request-supplied, and the N-central adapter exposes
+no write or execution-status operation.
+
 ## API authentication
 
 Current implementation:

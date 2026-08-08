@@ -175,14 +175,30 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     datto_rmm_status: ConnectorStatusValue = "not_configured"
     if datto_rmm_configured:
         datto_rmm_status = "configured" if settings.allow_http_probing else "blocked"
+    ncentral_configured = bool(
+        settings.ncentral_base_url
+        and settings.ncentral_access_token
+        and settings.ncentral_org_unit_map_json
+    )
+    ncentral_status: ConnectorStatusValue = "not_configured"
+    if ncentral_configured:
+        ncentral_status = "configured" if settings.allow_http_probing else "blocked"
     rmm_configured_name = (
         "NinjaOne RMM"
         if ninjaone_configured
         else "Datto RMM"
         if datto_rmm_configured
+        else "N-able N-central"
+        if ncentral_configured
         else "RMM"
     )
-    rmm_status = ninjaone_status if ninjaone_configured else datto_rmm_status
+    rmm_status = (
+        ninjaone_status
+        if ninjaone_configured
+        else datto_rmm_status
+        if datto_rmm_configured
+        else ncentral_status
+    )
     rmm_configuration_message = (
         (
             "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
@@ -190,17 +206,24 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             else (
                 "Datto RMM is configured for tenant-scoped inventory, component "
                 "metadata, and approval-gated quick jobs."
+                if datto_rmm_configured
+                else "N-able N-central is configured for tenant-scoped read-only device, issue, and task metadata."
             )
         )
         if rmm_status == "configured"
         else (
             "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
             if ninjaone_configured
-            else "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+            else (
+                "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                if datto_rmm_configured
+                else "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+            )
         )
         if rmm_status == "blocked"
         else (
-            "Set WAIT_NINJAONE_* or WAIT_DATTORMM_* values, including the explicit tenant map, "
+            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, or WAIT_NCENTRAL_* values, including the "
+            "explicit tenant map, "
             "to enable a vendor RMM adapter."
         )
     )
@@ -370,7 +393,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name=rmm_configured_name,
             status=rmm_status,
             message=rmm_configuration_message,
-            write_actions_enabled=settings.allow_write_actions and ninjaone_configured,
+            write_actions_enabled=settings.allow_write_actions
+            and (ninjaone_configured or datto_rmm_configured),
             http_probing_enabled=settings.allow_http_probing,
         ),
     ]
@@ -468,6 +492,18 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "dattormm",
         ),
         SecretRecord("WAIT_DATTORMM_PAGE_SIZE", bool(settings.datto_rmm_page_size), "dattormm"),
+        SecretRecord("WAIT_NCENTRAL_BASE_URL", bool(settings.ncentral_base_url), "ncentral"),
+        SecretRecord(
+            "WAIT_NCENTRAL_ACCESS_TOKEN",
+            bool(settings.ncentral_access_token),
+            "ncentral",
+        ),
+        SecretRecord(
+            "WAIT_NCENTRAL_ORG_UNIT_MAP_JSON",
+            bool(settings.ncentral_org_unit_map_json),
+            "ncentral",
+        ),
+        SecretRecord("WAIT_NCENTRAL_PAGE_SIZE", bool(settings.ncentral_page_size), "ncentral"),
     ]
 
 

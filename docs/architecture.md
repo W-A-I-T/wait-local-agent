@@ -130,7 +130,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   adapter has no live alert/script source and blocks execution. The NinjaOne
   adapter uses an explicit WAIT-to-NinjaOne organization map, filters returned
   inventory to that organization, and implements the same contract without
-  accepting credentials or provider scope IDs in action payloads.
+  accepting credentials or provider scope IDs in action payloads. The Datto
+  adapter uses an explicit client-to-site map for bounded inventory and jobs.
+  The N-able N-central adapter is GET-only, maps WAIT clients to explicit
+  organization-unit IDs, filters devices/issues/tasks to those IDs, and blocks
+  task execution and execution lookup.
 - Communication drafts and delivery use the same smart-action contract, tenant
   scope, redaction, and approval pause as other proposed actions. Local ticket
   notes are persisted only for an existing tenant-scoped ticket; external

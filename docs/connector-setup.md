@@ -203,6 +203,31 @@ coverage for tenant mapping, scope filtering, bounded pagination parameters,
 safe errors, blocked HTTP, malformed responses, and approval-gated quick-job
 and status paths.
 
+## N-able N-central
+
+The N-central adapter is read-only and implements bounded tenant-scoped device,
+active-issue, and scheduled-task metadata reads through the shared RMM contract.
+It uses bearer authentication and an explicit WAIT client-to-organization-unit
+map. N-central task execution and execution-status lookup are unavailable.
+
+Required settings:
+
+```text
+WAIT_NCENTRAL_BASE_URL=https://your-ncentral-host
+WAIT_NCENTRAL_ACCESS_TOKEN=
+WAIT_NCENTRAL_ORG_UNIT_MAP_JSON={"acme":[100,101]}
+WAIT_NCENTRAL_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Every request requires a WAIT client ID whose organization-unit mapping is
+configured locally. Responses are filtered to the mapped IDs and requests are
+bounded to one GET page per endpoint. Credentials and provider IDs never come
+from smart-action payloads. The adapter does not issue writes, even when
+`WAIT_ALLOW_WRITE_ACTIONS=true`. See the [N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
+[active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
+and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
+
 ## Hudu
 
 ### Required settings

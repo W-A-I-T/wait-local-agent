@@ -94,7 +94,8 @@ approval, and auditable local execution.
 - HMAC-signed offline license key system.
 - Feature gating: paid features blocked without valid license.
 - White-label branding configuration.
-- N-able RMM connector (read-only).
+- Broader N-central remediation and additional RMM connectors beyond the
+  bounded read-only vendor surfaces already shipped.
 - Kaseya VSA connector (read-only).
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.

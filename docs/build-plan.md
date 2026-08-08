@@ -509,7 +509,8 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 3. HMAC-signed offline license key system (validates without WAIT Sync)
 4. Feature gating: `pack_enabled("msp")` check before executing any paid feature
 5. White-label branding: `WAIT_PRODUCT_NAME`, `WAIT_BRAND_LOGO_URL`
-6. N-able RMM connector (read-only)
+6. Broader N-central remediation and additional RMM connectors; the bounded
+   read-only N-central metadata adapter is already shipped in public core
 7. Kaseya VSA connector (read-only)
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 

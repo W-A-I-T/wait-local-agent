@@ -185,6 +185,10 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.dattormm import DattoRmmAdapter
 
         return DattoRmmAdapter(settings, store=store)
+    if settings.ncentral_base_url or settings.ncentral_access_token:
+        from wait_local_agent.ncentral import NCentralRmmAdapter
+
+        return NCentralRmmAdapter(settings)
     return LocalCollectorRmmAdapter(store)
 
 

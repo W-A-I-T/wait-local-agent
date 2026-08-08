@@ -90,6 +90,10 @@ class Settings:
     datto_rmm_access_token: str = ""
     datto_rmm_site_map_json: str = ""
     datto_rmm_page_size: int = 50
+    ncentral_base_url: str = ""
+    ncentral_access_token: str = ""
+    ncentral_org_unit_map_json: str = ""
+    ncentral_page_size: int = 50
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -253,6 +257,20 @@ def load_settings() -> Settings:
         ),
         datto_rmm_site_map_json=os.getenv("WAIT_DATTORMM_SITE_MAP_JSON", ""),
         datto_rmm_page_size=_int_env("WAIT_DATTORMM_PAGE_SIZE", 50),
+        ncentral_base_url=_secret_value(
+            "WAIT_NCENTRAL_BASE_URL",
+            os.getenv("WAIT_NCENTRAL_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ncentral_access_token=_secret_value(
+            "WAIT_NCENTRAL_ACCESS_TOKEN",
+            os.getenv("WAIT_NCENTRAL_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        ncentral_org_unit_map_json=os.getenv("WAIT_NCENTRAL_ORG_UNIT_MAP_JSON", ""),
+        ncentral_page_size=_int_env("WAIT_NCENTRAL_PAGE_SIZE", 50),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,

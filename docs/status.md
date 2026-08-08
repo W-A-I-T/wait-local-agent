@@ -39,6 +39,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Datto RMM device and open-alert inventory plus component metadata through the
   same bounded contract, with explicit client-to-site mapping, approval-gated
   quick-job execution, and bounded job-status lookup.
+- N-able N-central read-only device, active-issue, and scheduled-task metadata
+  through the same bounded contract with explicit client-to-organization-unit
+  mapping; task execution and execution-status lookup remain unavailable.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file
@@ -209,7 +212,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ServiceNow connector | Read-only core surface built |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
-| RMM connectors | Local read-only adapter built; vendor adapters future |
+| RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/mailbox-settings/message-move/read-state/delete changes built; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
