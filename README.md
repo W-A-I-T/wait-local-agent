@@ -208,6 +208,9 @@ Behavior:
 - `WAIT_ADMIN_TOKEN` grants admin routes.
 - `WAIT_TECH_TOKEN` grants technician routes.
 - `WAIT_VIEWER_TOKEN` grants read-only routes.
+- `WAIT_END_USER_TOKEN` grants only the separately enabled, fixed-scope
+  end-user ticket routes; pair it with `WAIT_END_USER_CLIENT_ID`,
+  `WAIT_END_USER_USER_ID`, and `WAIT_END_USER_SUPPORT_ENABLED=true`.
 - When `WAIT_DEMO_MODE=true`, requests resolve as local admin for demo use.
 
 ## Configuration

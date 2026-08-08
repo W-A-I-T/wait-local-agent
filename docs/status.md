@@ -80,7 +80,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   include a redacted operational final result with the last tool's status,
   output, evidence, and error detail; hidden reasoning is not persisted.
 - Technician-only bounded chat commands reuse the smart-action catalog; free-form
-  planning and end-user chat are not shipped.
+  planning and an end-user conversational agent are not shipped.
+- Optional end-user support can create and track requester-scoped local tickets
+  and request technician escalation; live PSA sync and outbound delivery remain
+  unavailable.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics.

@@ -151,6 +151,18 @@ arbitrary code or forwards the whole message to a model; unsupported requests
 return bounded help text, and existing smart-action approval and tenant checks
 remain authoritative.
 
+## End-user support mode
+
+End-user support is disabled by default. When explicitly enabled with
+`WAIT_END_USER_SUPPORT_ENABLED=true`, a dedicated bearer token is bound to one
+client and one requester via `WAIT_END_USER_CLIENT_ID` and
+`WAIT_END_USER_USER_ID`. The `/end-user/tickets` routes can create a local
+request, expose only that requester's status, and mark that request escalated.
+They cannot choose a tenant, inspect another requester's ticket, invoke smart
+actions, or access technician/admin routes. The local ticket boundary is ready
+for a governed PSA adapter; live PSA synchronization and outbound delivery are
+not implied by enabling it.
+
 ## Event-triggered agents
 
 - `POST /automation/events` accepts supported ticket events with an
