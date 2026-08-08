@@ -1,7 +1,7 @@
-"""Read-only Microsoft Graph identity, group, and license reads through a guarded boundary.
+"""Read-only Microsoft Graph identity, group, license, and mailbox reads through a guarded boundary.
 
 The live connector is intentionally narrower than the cloud inventory adapter:
-it looks up bounded user, group, and tenant license context, accepts a bearer token supplied by
+it looks up bounded user, group, tenant license, and mailbox context, accepts a bearer token supplied by
 the operator's settings/vault boundary, and never creates or mutates Graph data.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 
@@ -81,6 +81,24 @@ class M365GraphLicenseReadResponse:
     next_cursor: str = ""
 
 
+@dataclass(frozen=True)
+class M365GraphMailFolder:
+    id: str
+    display_name: str
+    parent_folder_id: str
+    child_folder_count: int | None
+    total_item_count: int | None
+    unread_item_count: int | None
+    is_hidden: bool | None
+
+
+@dataclass(frozen=True)
+class M365GraphMailFolderReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphMailFolder]
+    next_cursor: str = ""
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph read failure."""
 
@@ -105,7 +123,10 @@ class M365GraphClient:
             return missing
         response = self.list_users(page_size=1)
         if response.result.status == "ready":
-            return ConnectorReadResult("ready", "Microsoft Graph identity and group read prerequisites are ready.")
+            return ConnectorReadResult(
+                "ready",
+                "Microsoft Graph identity, group, license, and mailbox read prerequisites are ready.",
+            )
         return response.result
 
     def list_users(
@@ -157,6 +178,22 @@ class M365GraphClient:
         except M365GraphReadError as exc:
             return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_subscribed_skus(params)
+
+    def list_mail_folders(
+        self,
+        *,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphMailFolderReadResponse:
+        try:
+            if identity is None:
+                raise M365GraphReadError("Microsoft Graph mailbox identity is required.")
+            endpoint = _mail_folder_endpoint(identity)
+            params = _mail_folder_params(page_size, cursor)
+        except M365GraphReadError as exc:
+            return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return self._request_mail_folders(endpoint, params)
 
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
@@ -212,6 +249,32 @@ class M365GraphClient:
         items = [sku for row in rows if (sku := _normalize_subscribed_sku(row)) is not None]
         return M365GraphLicenseReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph subscribed license read succeeded.", len(items)),
+            items,
+            _next_cursor(payload),
+        )
+
+    def _request_mail_folders(
+        self,
+        endpoint: str,
+        params: dict[str, str | int],
+    ) -> M365GraphMailFolderReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphMailFolderReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphMailFolderReadResponse(missing, [])
+        try:
+            payload = self._get(endpoint, params=params)
+        except M365GraphReadError as exc:
+            return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
+        items = [
+            folder
+            for row in _payload_rows(payload)
+            if (folder := _normalize_mail_folder(row)) is not None
+        ]
+        return M365GraphMailFolderReadResponse(
+            ConnectorReadResult("ready", "Microsoft Graph mailbox folder read succeeded.", len(items)),
             items,
             _next_cursor(payload),
         )
@@ -297,7 +360,16 @@ def _api_base_url(base_url: str) -> str:
 
 
 def _safe_endpoint(endpoint: str) -> str:
-    if endpoint not in {"users", "groups", "subscribedSkus"}:
+    endpoint_parts = endpoint.split("/")
+    is_mail_folder_endpoint = (
+        len(endpoint_parts) == 3
+        and endpoint_parts[0] == "users"
+        and bool(endpoint_parts[1])
+        and endpoint_parts[2] == "mailFolders"
+        and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
+        and not any(ord(character) < 32 for character in endpoint)
+    )
+    if endpoint not in {"users", "groups", "subscribedSkus"} and not is_mail_folder_endpoint:
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
 
@@ -343,6 +415,23 @@ def _group_list_params(page_size: int, cursor: str | None) -> dict[str, str | in
         "$top": _bounded_page_size(page_size),
         "$select": (
             "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
+        ),
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
+def _mail_folder_endpoint(identity: str) -> str:
+    return f"users/{quote(_safe_identity(identity), safe='')}/mailFolders"
+
+
+def _mail_folder_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$top": _bounded_page_size(page_size),
+        "$select": (
+            "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
+            "unreadItemCount,isHidden"
         ),
     }
     if cursor is not None:
@@ -437,6 +526,21 @@ def _normalize_subscribed_sku(row: Mapping[str, object]) -> M365GraphSubscribedS
     )
 
 
+def _normalize_mail_folder(row: Mapping[str, object]) -> M365GraphMailFolder | None:
+    folder_id = _string_value(row, "id")
+    if not folder_id:
+        return None
+    return M365GraphMailFolder(
+        id=folder_id,
+        display_name=_string_value(row, "displayName"),
+        parent_folder_id=_string_value(row, "parentFolderId"),
+        child_folder_count=_int_value(row.get("childFolderCount")),
+        total_item_count=_int_value(row.get("totalItemCount")),
+        unread_item_count=_int_value(row.get("unreadItemCount")),
+        is_hidden=_bool_value(row.get("isHidden")),
+    )
+
+
 def _string_value(row: Mapping[str, object], key: str) -> str:
     value = row.get(key)
     if isinstance(value, str):
@@ -448,6 +552,10 @@ def _string_value(row: Mapping[str, object], key: str) -> str:
 
 def _int_value(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _bool_value(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _next_cursor(payload: object) -> str:
@@ -478,6 +586,8 @@ __all__ = [
     "M365GraphGroup",
     "M365GraphGroupReadResponse",
     "M365GraphLicenseReadResponse",
+    "M365GraphMailFolder",
+    "M365GraphMailFolderReadResponse",
     "M365GraphReadError",
     "M365GraphReadResponse",
     "M365GraphSubscribedSku",

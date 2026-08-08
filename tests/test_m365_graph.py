@@ -10,6 +10,8 @@ from wait_local_agent.m365_graph import (
     M365GraphGroup,
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
+    M365GraphMailFolder,
+    M365GraphMailFolderReadResponse,
     M365GraphReadError,
     M365GraphSubscribedSku,
     M365GraphUser,
@@ -17,8 +19,11 @@ from wait_local_agent.m365_graph import (
     _bounded_page_size,
     _group_list_params,
     _list_params,
+    _mail_folder_endpoint,
+    _mail_folder_params,
     _next_cursor,
     _normalize_group,
+    _normalize_mail_folder,
     _normalize_user,
     _payload_rows,
     _safe_cursor,
@@ -226,6 +231,56 @@ def test_m365_graph_subscribed_sku_reads_select_license_context(settings) -> Non
     )
 
 
+def test_m365_graph_mail_folder_reads_use_user_path_and_metadata_only(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/mailFolders")
+        assert "/users/alice+ops@example.test/" in request.url.path
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == (
+            "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
+            "unreadItemCount,isHidden"
+        )
+        assert request.url.params["$skiptoken"] == "folder-next"
+        assert "messages" not in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "inbox-id",
+                        "displayName": "Inbox",
+                        "parentFolderId": "root-id",
+                        "childFolderCount": 3,
+                        "totalItemCount": 42,
+                        "unreadItemCount": 5,
+                        "isHidden": False,
+                        "messages": [{"subject": "ignored"}],
+                    }
+                ],
+                "@odata.nextLink": (
+                    "https://graph.microsoft.com/v1.0/users/alice/mailFolders?$skiptoken=folder-next-2"
+                ),
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_mail_folders(
+        identity="alice+ops@example.test",
+        cursor="folder-next",
+        page_size=2,
+    )
+
+    assert response == M365GraphMailFolderReadResponse(
+        result=response.result,
+        items=[M365GraphMailFolder("inbox-id", "Inbox", "root-id", 3, 42, 5, False)],
+        next_cursor="folder-next-2",
+    )
+    assert M365GraphClient(_configured(settings)).list_mail_folders().result.message == (
+        "Microsoft Graph mailbox identity is required."
+    )
+
+
 def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     def denied(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="private body")
@@ -243,6 +298,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_subscribed_skus()
     assert "HTTP 403" in license_result.result.message
     assert "private body" not in license_result.result.message
+    folder_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_mail_folders(identity="user@example.test")
+    assert "HTTP 403" in folder_result.result.message
+    assert "private body" not in folder_result.result.message
 
     def malformed(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not-json")
@@ -301,6 +361,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
     ).list_subscribed_skus().result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
+    ).list_mail_folders(identity="user@example.test").result.status == "not_configured"
 
     for status_code, marker in (
         (401, "authentication failed"),
@@ -329,6 +396,17 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         ),
         "$skiptoken": "next",
     }
+    assert _mail_folder_params(1000, "next") == {
+        "$top": 200,
+        "$select": (
+            "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
+            "unreadItemCount,isHidden"
+        ),
+        "$skiptoken": "next",
+    }
+    assert _mail_folder_endpoint("alice+ops@example.test") == (
+        "users/alice%2Bops%40example.test/mailFolders"
+    )
     assert _next_cursor(
         {"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=next"}
     ) == "next"
@@ -345,6 +423,10 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         {"id": "group-1", "groupTypes": ["Unified", 7], "mailEnabled": "yes"}
     ) == M365GraphGroup("group-1", "", "", "", "", None, None, ("Unified",))
     assert _normalize_group({}) is None
+    assert _normalize_mail_folder({"id": "folder-1", "isHidden": "yes"}) == M365GraphMailFolder(
+        "folder-1", "", "", None, None, None, None
+    )
+    assert _normalize_mail_folder({}) is None
     assert _payload_rows(None) == []
     assert _next_cursor(None) == ""
     with pytest.raises(M365GraphReadError):
@@ -366,8 +448,12 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         (_safe_cursor, "bad\nvalue"),
         (_safe_endpoint, "users/other"),
         (_safe_endpoint, "//host"),
+        (_safe_endpoint, "users/bad\nvalue/mailFolders"),
     ):
         with pytest.raises(M365GraphReadError):
             helper(value)
     assert _safe_endpoint("groups") == "groups"
     assert _safe_endpoint("subscribedSkus") == "subscribedSkus"
+    assert _safe_endpoint("users/user%40example.test/mailFolders") == (
+        "users/user%40example.test/mailFolders"
+    )

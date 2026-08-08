@@ -262,7 +262,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if m365_status == "blocked"
                 else (
                     "Set WAIT_M365_GRAPH_BASE_URL and WAIT_M365_ACCESS_TOKEN to enable "
-                    "live identity, group, and license reads."
+                    "live identity, group, license, and mailbox-folder reads."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,
