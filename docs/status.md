@@ -71,7 +71,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   unrestricted agent execution are not shipped. Immutable revision history,
   explainable redacted diffs, and restore-as-new-version are available under
   `/agents/{id}/revisions`; each new run records the definition version it
-  used; event
+  used and exposes its redacted snapshot in run detail. Approval-paused runs
+  support cancellation, while terminal failed/rejected/cancelled runs support
+  bounded retry; event
   agents also support same-tenant dependency chains with cycle prevention. A
   scheduled workflow or scheduled agent completion emits a deterministic,
   tenant-scoped `workflow.completed` event that can trigger matching event

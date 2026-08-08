@@ -200,6 +200,16 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
             {"ticket_id": "TCK-1001"},
         )
 
+        rescheduled = manager.reschedule(
+            scheduled_job.id or 0,
+            schedule_type="interval",
+            cron="",
+            interval_seconds=60,
+            run_at=None,
+        )
+        assert rescheduled.schedule_type == "interval"
+        assert rescheduled.interval_seconds == 60
+
         paused = manager.pause(scheduled_job.id or 0)
         resumed = manager.resume(scheduled_job.id or 0)
         rescheduled = manager.reschedule(
@@ -300,6 +310,25 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             interval_seconds=60,
         )
     ) is not None
+
+
+def test_scheduler_validation_rejects_cross_type_and_malformed_schedule_values() -> None:
+    with pytest.raises(ValueError, match="cron schedules"):
+        validate_schedule("cron", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require interval_seconds"):
+        validate_schedule("interval", "", True, None)
+    with pytest.raises(ValueError, match="between 1"):
+        validate_schedule("interval", "", 31_536_001, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("interval", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require run_at"):
+        validate_schedule("once", "", None, "")
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("once", "0 9 * * *", None, "2099-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="ISO-8601"):
+        validate_schedule("once", "", None, "not-a-timestamp")
+    with pytest.raises(ValueError, match="schedule_type"):
+        validate_schedule("unsupported", "", None, None)
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=2,
@@ -374,6 +403,14 @@ def test_scheduler_disabled_mode_and_failed_run_are_audited(tmp_path: Path) -> N
         assert manager.enabled is False
         assert manager.list_jobs()[0].next_run_at is None
         assert store.get_scheduled_job(scheduled_job.id or 0) is not None
+        rescheduled = manager.reschedule(
+            scheduled_job.id or 0,
+            schedule_type="interval",
+            cron="",
+            interval_seconds=60,
+            run_at=None,
+        )
+        assert rescheduled.schedule_type == "interval"
 
         with pytest.raises(LookupError):
             await manager._build_job_callable(scheduled_job)()
