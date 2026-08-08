@@ -20,8 +20,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
-- ConnectWise PSA read-only ticket and company lookup with explicit HTTP
-  probing opt-in; no ConnectWise mutation path is enabled.
+- ConnectWise PSA ticket and company lookup plus an allowlisted,
+  approval-gated ticket update path with explicit HTTP probing opt-in.
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
 - Hudu read-only documentation context.
@@ -546,7 +546,19 @@ WAIT_CONNECTWISE_API_VERSION=2022.1
 Read commands are available through the CLI and the `/connectors/connectwise/*`
 API routes. Set `WAIT_ALLOW_HTTP_PROBING=true` before any network request;
 credentials are read from settings/vault and are never accepted in request
-payloads. Writes are not implemented in the public core.
+payloads. Ticket updates use an explicit allowlisted field map and require
+`WAIT_ALLOW_WRITE_ACTIONS=true`, a pending draft, and separate approval:
+
+```bash
+wait-local-agent connectors connectwise-write-health
+wait-local-agent connectors draft-connectwise CW-1002 update_status --field status_id=42
+wait-local-agent approvals update 1 approved 'approved by technician'
+wait-local-agent connectors execute-connectwise 1
+```
+
+Supported actions are `update_status`, `assign_technician`, and
+`update_ticket_fields`. Arbitrary ConnectWise endpoints and fields are not
+accepted.
 
 ### Syncro
 

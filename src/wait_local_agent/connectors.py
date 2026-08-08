@@ -26,6 +26,9 @@ from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
     ConnectorStatusValue,
+    ConnectWiseTicketDraft,
+    ConnectWiseWriteRequest,
+    ConnectWiseWriteResult,
     HaloTicketDraft,
     HaloWriteRequest,
     HaloWriteResult,
@@ -41,6 +44,12 @@ from wait_local_agent.vault import SecretVault, SecretVaultError
 HALOPSA_ACTION_TYPES = {
     "add_note",
     "draft_response",
+    "update_status",
+    "assign_technician",
+    "update_ticket_fields",
+}
+
+CONNECTWISE_ACTION_TYPES = {
     "update_status",
     "assign_technician",
     "update_ticket_fields",
@@ -198,7 +207,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if halopsa_status == "blocked"
                 else "Set WAIT_HALOPSA_* values to enable the first PSA read path."
             ),
-            write_actions_enabled=settings.allow_write_actions,
+            write_actions_enabled=settings.allow_write_actions and connectwise_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -269,12 +278,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="ConnectWise PSA",
             status=connectwise_status,
             message=(
-                "ConnectWise PSA credentials are configured for read-only ticket and company lookup."
+                "ConnectWise PSA credentials are configured for ticket/company lookup and "
+                "approval-gated ticket updates."
                 if connectwise_status == "configured"
                 else "ConnectWise PSA credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if connectwise_status == "blocked"
-                else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads."
+                else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads and approved ticket updates."
             ),
+            write_actions_enabled=settings.allow_write_actions,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -678,6 +689,37 @@ def draft_halopsa_ticket_action(
     )
 
 
+def draft_connectwise_ticket_action(
+    store: Store,
+    ticket_id: str,
+    action_type: str,
+    fields: dict[str, object],
+    *,
+    client_id: str | None = None,
+) -> ConnectWiseTicketDraft:
+    validate_connectwise_action_fields(action_type, fields)
+    payload: dict[str, object] = {
+        "connector": "connectwise",
+        "ticket_id": ticket_id,
+        "action_type": action_type,
+        "fields": fields,
+    }
+    approval = store.create_approval_request(
+        ticket_id,
+        f"connectwise.{action_type}",
+        payload,
+        client_id=client_id,
+    )
+    return ConnectWiseTicketDraft(
+        ticket_id=ticket_id,
+        action_type=action_type,
+        payload_json=json.dumps(redact_value(payload), sort_keys=True),
+        approval_required=True,
+        status="pending",
+        approval_request_id=approval.id,
+    )
+
+
 def execute_halopsa_approval_request(
     store: Store,
     client: HaloPSAClient,
@@ -722,6 +764,54 @@ def execute_halopsa_approval_request(
         status=result.status,
         message=result.message,
         result=sanitize_halopsa_write_result(result),
+    )
+
+
+def execute_connectwise_approval_request(
+    store: Store,
+    client: ConnectWiseClient,
+    request_id: int,
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if not approval.action_type.startswith("connectwise."):
+        raise ValueError("approval request is not a ConnectWise PSA action")
+    if approval.status != "approved":
+        raise PermissionError("ConnectWise PSA writes require approved approval requests")
+    if approval.execution_status == "succeeded":
+        raise RuntimeError("ConnectWise PSA approval request has already executed successfully")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    if payload.get("connector") != "connectwise":
+        raise ValueError("approval payload connector does not match ConnectWise PSA")
+    action_type = str(payload.get("action_type") or approval.action_type.removeprefix("connectwise."))
+    if action_type not in CONNECTWISE_ACTION_TYPES:
+        raise ValueError(f"unsupported ConnectWise PSA action type: {action_type}")
+    if approval.action_type != f"connectwise.{action_type}":
+        raise ValueError("approval payload action does not match approval request")
+    ticket_id = str(payload.get("ticket_id") or approval.subject_id)
+    if ticket_id != approval.subject_id:
+        raise ValueError("approval payload ticket does not match approval request")
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    validate_connectwise_action_fields(action_type, fields)
+    result = client.execute_write(
+        ConnectWiseWriteRequest(
+            ticket_id=ticket_id,
+            action_type=action_type,
+            fields=fields,
+            approval_request_id=approval.id,
+        )
+    )
+    return store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result=sanitize_connectwise_write_result(result),
+        audit_event_type="connectwise.write",
     )
 
 
@@ -1229,6 +1319,17 @@ def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:
     }
 
 
+def sanitize_connectwise_write_result(result: ConnectWiseWriteResult) -> dict[str, object]:
+    return {
+        "action_type": result.action_type,
+        "ticket_id": result.ticket_id,
+        "endpoint": result.endpoint,
+        "status": result.status,
+        "status_code": result.status_code,
+        "remote_id": result.remote_id,
+    }
+
+
 def update_halopsa_approval_fields(
     store: Store,
     request_id: int,
@@ -1269,6 +1370,54 @@ def validate_halopsa_action_fields(action_type: str, fields: dict[str, object]) 
     has_ticket_field = any(value not in (None, "") for value in fields.values())
     if action_type == "update_ticket_fields" and not has_ticket_field:
         raise ValueError("HaloPSA update_ticket_fields requires at least one field")
+
+
+def update_connectwise_approval_fields(
+    store: Store,
+    request_id: int,
+    fields: dict[str, object],
+    comment: str = "Draft edited before approval",
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if not approval.action_type.startswith("connectwise."):
+        raise ValueError("approval request is not a ConnectWise PSA action")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    action_type = str(payload.get("action_type") or approval.action_type.removeprefix("connectwise."))
+    validate_connectwise_action_fields(action_type, fields)
+    payload["fields"] = fields
+    return store.update_approval_request_payload(request_id, payload, comment)
+
+
+def validate_connectwise_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in CONNECTWISE_ACTION_TYPES:
+        raise ValueError(f"unsupported ConnectWise PSA action type: {action_type}")
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError(f"ConnectWise PSA {action_type} requires ticket fields")
+    if action_type == "update_status":
+        allowed = {"status_id"}
+    elif action_type == "assign_technician":
+        allowed = {"owner_id", "team_id"}
+    else:
+        allowed = {"summary", "description", "status_id", "priority_id", "board_id", "owner_id", "team_id"}
+    if set(fields) - allowed:
+        raise ValueError("ConnectWise PSA ticket fields contain unsupported keys")
+    if action_type == "assign_technician" and not (fields.get("owner_id") or fields.get("team_id")):
+        raise ValueError("ConnectWise PSA assign_technician requires owner_id or team_id")
+    if action_type == "update_status" and not fields.get("status_id"):
+        raise ValueError("ConnectWise PSA update_status requires status_id")
+    for field, value in fields.items():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError(f"ConnectWise PSA field {field} must be text or a number")
+        if isinstance(value, str) and (
+            not value.strip()
+            or len(value.strip()) > 2000
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise ValueError(f"ConnectWise PSA field {field} is invalid")
 
 
 def _first_present(fields: dict[str, object], *keys: str) -> object:

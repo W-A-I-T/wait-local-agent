@@ -6,6 +6,9 @@ from typing import Any, Literal
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
 HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
+ConnectWiseWriteStatus = Literal[
+    "not_started", "blocked", "not_configured", "succeeded", "failed"
+]
 ActionKind = Literal[
     "ticket.triage",
     "ticket.assign",
@@ -162,6 +165,16 @@ class HaloTicketDraft:
 
 
 @dataclass(frozen=True)
+class ConnectWiseTicketDraft:
+    ticket_id: str
+    action_type: str
+    payload_json: str
+    approval_required: bool
+    status: ApprovalStatus
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
 class HaloReadResult:
     status: ConnectorStatusValue
     message: str
@@ -180,8 +193,27 @@ class HaloWriteRequest:
 
 
 @dataclass(frozen=True)
+class ConnectWiseWriteRequest:
+    ticket_id: str
+    action_type: str
+    fields: dict[str, object]
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
 class HaloWriteResult:
     status: HaloWriteStatus
+    message: str
+    action_type: str
+    ticket_id: str
+    endpoint: str = ""
+    status_code: int | None = None
+    remote_id: str = ""
+
+
+@dataclass(frozen=True)
+class ConnectWiseWriteResult:
+    status: ConnectWiseWriteStatus
     message: str
     action_type: str
     ticket_id: str

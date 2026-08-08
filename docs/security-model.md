@@ -152,6 +152,12 @@ credentials, prompts, and hidden reasoning are not added to execution metadata.
 
 Hudu is read-only in the public repo.
 
+ConnectWise PSA ticket writes are restricted to three named actions and a
+closed field-to-JSON-patch map. They require HTTP probing, the global write
+flag, a persisted approval request, and explicit approval. The adapter rejects
+arbitrary endpoint paths, fields, company identifiers, and credential values;
+execution results retain only endpoint/status metadata.
+
 ## Audit trail and export
 
 The event history table is append-only through application code. It records event type, subject id, status, message, payload JSON, and timestamp.

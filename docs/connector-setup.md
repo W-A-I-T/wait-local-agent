@@ -7,10 +7,10 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 | Gate | Default | Effect |
 | --- | --- | --- |
 | `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound PSA and documentation connector HTTP calls |
-| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
-| Approval request | pending | Required before any HaloPSA draft can execute |
+| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA and ConnectWise PSA write execution |
+| Approval request | pending | Required before any HaloPSA or ConnectWise PSA draft can execute |
 
-A fresh install can create HaloPSA drafts but cannot mutate HaloPSA until the operator enables both the write gate and the approval flow.
+A fresh install can create PSA drafts but cannot mutate HaloPSA or ConnectWise PSA until the operator enables both the write gate and the approval flow.
 
 ## API Authentication
 
@@ -426,9 +426,10 @@ WAIT_CONNECTWISE_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The adapter uses the documented ConnectWise PSA REST read endpoints for tickets
-and companies. It normalizes only the fields needed by the local agent and has
-no mutation or credential-in-request-payload path.
+The adapter uses the ConnectWise PSA REST ticket and company surfaces. It
+normalizes only the fields needed by the local agent. Ticket writes use a
+bounded JSON-patch map and never accept arbitrary endpoints, fields, company
+identifiers, or credentials in request payloads.
 
 ### Validate and read
 
@@ -438,11 +439,27 @@ wait-local-agent connectors connectwise-health
 wait-local-agent connectors connectwise-tickets
 wait-local-agent connectors connectwise-ticket <ticket-id>
 wait-local-agent connectors connectwise-companies
+wait-local-agent connectors connectwise-write-health
 ```
 
 The API mirrors these commands under `/connectors/connectwise/health`,
 `/connectors/connectwise/tickets`, and `/connectors/connectwise/companies`.
 All routes remain viewer-authenticated and rate-limited.
+
+### Approved ticket updates
+
+```bash
+wait-local-agent connectors draft-connectwise CW-1002 update_status --field status_id=42
+wait-local-agent approvals show <request-id>
+wait-local-agent approvals update <request-id> approved 'approved by technician'
+wait-local-agent connectors execute-connectwise <request-id>
+```
+
+Live updates require both `WAIT_ALLOW_HTTP_PROBING=true` and
+`WAIT_ALLOW_WRITE_ACTIONS=true`. Supported action types are `update_status`,
+`assign_technician` (`owner_id` or `team_id`), and `update_ticket_fields`
+(`summary`, `description`, `status_id`, `priority_id`, `board_id`, `owner_id`,
+or `team_id`).
 
 ## Syncro
 

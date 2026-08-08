@@ -42,6 +42,7 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseWriteResult,
     HaloReadResult,
     HaloTicket,
     HaloWriteResult,
@@ -2629,6 +2630,76 @@ def test_connectwise_connector_read_routes_and_audit(settings, monkeypatch) -> N
     assert companies.json()["items"][0]["name"] == "Contoso"
     assert any(connector["id"] == "connectwise" for connector in connectors.json())
     assert any(event["event_type"] == "connectwise.read" for event in audit.json())
+
+
+def test_connectwise_approval_gated_ticket_update_routes(settings, monkeypatch) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            self.executed: list[object] = []
+
+        def health(self):
+            return ConnectorReadResult("ready", "ConnectWise ready", 0)
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "ConnectWise writes ready", 0)
+
+        def execute_write(self, request):
+            self.executed.append(request)
+            return ConnectWiseWriteResult(
+                "succeeded", "updated", request.action_type, request.ticket_id,
+                endpoint="service/tickets/42", status_code=200, remote_id="42"
+            )
+
+        def list_tickets(self, **kwargs):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+        def get_ticket(self, ticket_id):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+        def list_companies(self, **kwargs):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+
+    draft = client.post(
+        "/connectors/connectwise/tickets/42/drafts",
+        json={"action_type": "update_status", "fields": {"status_id": 7}, "client_id": "acme"},
+    )
+    assert draft.status_code == 200
+    request_id = draft.json()["approval_request_id"]
+    assert draft.json()["payload"]["connector"] == "connectwise"
+    assert draft.json()["payload"]["fields"] == {"status_id": 7}
+    edited = client.patch(
+        f"/approval-requests/{request_id}/payload",
+        json={"fields": {"status_id": 8}, "comment": "reviewed"},
+    )
+
+    write_health = client.get("/connectors/connectwise/write-health")
+    approved = client.post(
+        f"/approval-requests/{request_id}",
+        json={"status": "approved", "comment": "approved"},
+    )
+    audit = client.get("/audit")
+
+    assert write_health.json()["status"] == "ready"
+    assert edited.status_code == 200
+    assert edited.json()["payload"]["fields"] == {"status_id": 8}
+    assert approved.status_code == 200
+    assert approved.json()["execution_status"] == "succeeded"
+    assert any(event["event_type"] == "connectwise.write" for event in audit.json())
+
+
+def test_connectwise_draft_rejects_unsupported_fields(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/connectors/connectwise/tickets/42/drafts",
+        json={"action_type": "update_status", "fields": {"status": "Closed"}},
+    )
+
+    assert response.status_code == 400
+    assert "unsupported keys" in response.json()["detail"]
 
 
 def test_connectwise_routes_keep_viewer_auth_boundary(settings) -> None:

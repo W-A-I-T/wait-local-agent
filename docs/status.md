@@ -24,8 +24,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Hudu read-only connector configuration surface for documentation lookup.
 - IT Glue read-only organization-scoped documentation lookup through the common
   guarded HTTP boundary; write operations remain unavailable.
-- ConnectWise PSA read-only ticket and company inventory through the common
-  guarded HTTP boundary; write operations remain unavailable.
+- ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
+  ticket status, assignment, and field updates through the common guarded HTTP
+  boundary.
 - Syncro read-only ticket and customer inventory through the common guarded
   HTTP boundary; write operations remain unavailable.
 - ServiceNow read-only incident and company inventory through the common

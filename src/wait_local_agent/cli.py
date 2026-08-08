@@ -55,6 +55,7 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
+    draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
@@ -63,10 +64,12 @@ from wait_local_agent.connectors import (
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
+    execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
+    update_connectwise_approval_fields,
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
@@ -656,7 +659,10 @@ def edit_approval_field(request_id: int, assignment: str) -> None:
         fields = {}
     fields[key.strip()] = value
     try:
-        updated = update_halopsa_approval_fields(store, request_id, fields)
+        if approval.action_type.startswith("connectwise."):
+            updated = update_connectwise_approval_fields(store, request_id, fields)
+        else:
+            updated = update_halopsa_approval_fields(store, request_id, fields)
     except (PermissionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"{updated.id} {updated.status} {updated.action_type} payload_updated=True")
@@ -709,6 +715,13 @@ def update_approval_request(
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
+        except RuntimeError:
+            approval = store.get_approval_request(request_id) or approval
+    if status == "approved" and approval.action_type.startswith("connectwise."):
+        try:
+            approval = execute_connectwise_approval_request(
+                store, _connectwise_client(), request_id
+            )
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
     if status == "approved" and approval.action_type.startswith("m365."):
@@ -1120,6 +1133,58 @@ def connectwise_health() -> None:
     result = _connectwise_client().health()
     _audit_connectwise_cli_read("health", result.status, result.count)
     typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("connectwise-write-health")
+def connectwise_write_health() -> None:
+    result = _connectwise_client().write_health()
+    _store().add_audit_event("connectwise.write_health", "connectwise", result.status)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("draft-connectwise")
+def draft_connectwise(
+    ticket_id: str,
+    action_type: str,
+    field: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--field",
+            help="Field assignment as key=value. Repeat for multiple fields.",
+        ),
+    ] = None,
+) -> None:
+    fields: dict[str, object] = {}
+    for item in field or []:
+        key, separator, value = item.partition("=")
+        if not separator:
+            raise typer.BadParameter("fields must use key=value")
+        fields[key] = value
+    try:
+        draft = draft_connectwise_ticket_action(_store(), ticket_id, action_type, fields)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={draft.approval_request_id} "
+        f"ticket_id={draft.ticket_id} action_type={draft.action_type} status={draft.status}"
+    )
+
+
+@connectors_app.command("execute-connectwise")
+def execute_connectwise(request_id: int) -> None:
+    try:
+        approval = execute_connectwise_approval_request(
+            _store(), _connectwise_client(), request_id
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"{approval.id} {approval.action_type} ticket_id={approval.subject_id} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
 
 
 @connectors_app.command("connectwise-tickets")

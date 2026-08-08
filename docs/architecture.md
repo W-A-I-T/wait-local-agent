@@ -42,8 +42,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - SharePoint read-only site and drive-item metadata through Microsoft Graph
 - Microsoft Graph read-only user and group context lookup through the guarded
   HTTP boundary
-- ConnectWise PSA read-only ticket and company lookup through a guarded,
-  credential-isolated adapter; mutation endpoints are intentionally absent.
+- ConnectWise PSA ticket and company lookup plus an allowlisted,
+  approval-gated ticket PATCH path through a guarded, credential-isolated
+  adapter.
 - Syncro read-only ticket and customer lookup through the same guarded,
   credential-isolated boundary; mutation endpoints are intentionally absent.
 - ServiceNow read-only incident and company lookup through the same guarded,

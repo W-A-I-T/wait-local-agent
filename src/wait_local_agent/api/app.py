@@ -59,6 +59,7 @@ from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
+    draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
@@ -67,10 +68,12 @@ from wait_local_agent.connectors import (
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
+    execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
+    update_connectwise_approval_fields,
     update_halopsa_approval_fields,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
@@ -165,6 +168,12 @@ class HaloDraftRequest(BaseModel):
         "draft_response",
         "update_ticket_fields",
     ]
+    fields: dict[str, object]
+    client_id: str | None = None
+
+
+class ConnectWiseDraftRequest(BaseModel):
+    action_type: Literal["update_status", "assign_technician", "update_ticket_fields"]
     fields: dict[str, object]
     client_id: str | None = None
 
@@ -1446,12 +1455,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             approval = store.get_approval_request(request_id)
             if approval is None or not _approval_in_scope(context, approval):
                 raise KeyError(request_id)
-            approval = update_halopsa_approval_fields(
-                store,
-                request_id,
-                request.fields,
-                request.comment,
-            )
+            if approval.action_type.startswith("connectwise."):
+                approval = update_connectwise_approval_fields(
+                    store, request_id, request.fields, request.comment
+                )
+            else:
+                approval = update_halopsa_approval_fields(
+                    store, request_id, request.fields, request.comment
+                )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
@@ -1494,6 +1505,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
+            if payload.status == "approved" and approval.action_type.startswith("connectwise."):
+                try:
+                    approval = execute_connectwise_approval_request(
+                        store, connectwise_client, request_id
+                    )
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
             if payload.status == "approved" and approval.action_type.startswith("m365."):
@@ -1873,6 +1891,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _halopsa_draft_view(draft)
 
+    @app.post("/connectors/connectwise/tickets/{ticket_id}/drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_connectwise_draft(
+        ticket_id: str,
+        payload: ConnectWiseDraftRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            draft = draft_connectwise_ticket_action(
+                store,
+                ticket_id,
+                payload.action_type,
+                payload.fields,
+                client_id=_approval_client_scope(context, payload.client_id),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _connectwise_draft_view(draft)
+
     @app.get("/connectors/halopsa/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -2014,6 +2052,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = connectwise_client.health()
         _audit_connectwise_read("health", result.status, result.count)
         return asdict(result)
+
+    @app.get("/connectors/connectwise/write-health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = connectwise_client.write_health()
+        store.add_audit_event("connectwise.write_health", "connectwise", result.status)
+        return asdict(result)
+
+    @app.post("/connectors/connectwise/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_connectwise_approval(
+        request_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
+            return _approval_view(execute_connectwise_approval_request(store, connectwise_client, request_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/connectors/connectwise/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -3901,6 +3965,15 @@ def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
 
 
 def _halopsa_draft_view(draft) -> dict[str, object]:
+    payload = _safe_json_object(draft.payload_json)
+    return {
+        **asdict(draft),
+        "payload_json": _redact_json_text(draft.payload_json),
+        "payload": _redact_payload(payload),
+    }
+
+
+def _connectwise_draft_view(draft) -> dict[str, object]:
     payload = _safe_json_object(draft.payload_json)
     return {
         **asdict(draft),

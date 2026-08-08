@@ -21,6 +21,7 @@ from wait_local_agent.itglue import (
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseWriteResult,
     HaloClient,
     HaloReadResult,
     HaloTicket,
@@ -976,6 +977,60 @@ def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_
     assert "execution_status=succeeded" in approved.output
 
 
+def test_connectwise_cli_approval_auto_executes_and_reports_write_health(monkeypatch, tmp_path) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "ConnectWise writes ready", 0)
+
+        def execute_write(self, request):
+            return ConnectWiseWriteResult(
+                "succeeded", "updated", request.action_type, request.ticket_id,
+                endpoint="service/tickets/42", status_code=200, remote_id="42"
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "true")
+    monkeypatch.setattr(cli_module, "ConnectWiseClient", FakeConnectWiseClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "connectwise-write-health"])
+    draft = runner.invoke(
+        app,
+        [
+            "connectors",
+            "draft-connectwise",
+            "CW-42",
+            "update_status",
+            "--field",
+            "status_id=7",
+        ],
+    )
+    request_id = draft.output.split("approval_request_id=")[1].split()[0]
+    edited = runner.invoke(app, ["approvals", "edit-field", request_id, "status_id=8"])
+    approved = runner.invoke(app, ["approvals", "update", request_id, "approved"])
+    manual_draft = runner.invoke(
+        app,
+        ["connectors", "draft-connectwise", "CW-43", "update_status", "--field", "status_id=9"],
+    )
+    manual_id = int(manual_draft.output.split("approval_request_id=")[1].split()[0])
+    Store(tmp_path / "state.db").update_approval_request(manual_id, "approved")
+    manual_execute = runner.invoke(app, ["connectors", "execute-connectwise", str(manual_id)])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ConnectWise writes ready" in health.output
+    assert draft.exit_code == 0
+    assert edited.exit_code == 0
+    assert approved.exit_code == 0
+    assert "execution_status=succeeded" in approved.output
+    assert manual_draft.exit_code == 0
+    assert manual_execute.exit_code == 0
+    assert "execution_status=succeeded" in manual_execute.output
+
+
 def test_halopsa_cli_execute_reports_blocked_and_rejects_pending(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     store = Store(tmp_path / "state.db")
@@ -1071,6 +1126,20 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
         ["connectors", "draft-halopsa", "HALO-1", "bad_action"],
     )
     missing_execute = runner.invoke(app, ["connectors", "execute-halopsa", "999"])
+    bad_connectwise_field = runner.invoke(
+        app,
+        ["connectors", "draft-connectwise", "CW-1", "update_status", "--field", "bad"],
+    )
+    bad_connectwise_action = runner.invoke(
+        app,
+        ["connectors", "draft-connectwise", "CW-1", "bad_action", "--field", "status_id=1"],
+    )
+    missing_connectwise_execute = runner.invoke(
+        app, ["connectors", "execute-connectwise", "999"]
+    )
+    pending_connectwise_execute = runner.invoke(
+        app, ["connectors", "execute-connectwise", str(approval.id)]
+    )
 
     assert missing_show.exit_code != 0
     assert "approval request not found" in missing_show.output
@@ -1082,6 +1151,14 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
     assert "unsupported HaloPSA" in bad_draft_action.output
     assert missing_execute.exit_code != 0
     assert "approval request not found" in missing_execute.output
+    assert bad_connectwise_field.exit_code != 0
+    assert "key=value" in bad_connectwise_field.output
+    assert bad_connectwise_action.exit_code != 0
+    assert "unsupported ConnectWise" in bad_connectwise_action.output
+    assert missing_connectwise_execute.exit_code != 0
+    assert "approval request not found" in missing_connectwise_execute.output
+    assert pending_connectwise_execute.exit_code != 0
+    assert "not a ConnectWise" in pending_connectwise_execute.output
 
 
 def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp_path) -> None:

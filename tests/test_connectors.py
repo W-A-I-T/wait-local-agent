@@ -6,6 +6,7 @@ import pytest
 
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
+    draft_connectwise_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
     draft_m365_mailbox_settings_update,
@@ -13,9 +14,12 @@ from wait_local_agent.connectors import (
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
+    execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
+    update_connectwise_approval_fields,
     update_halopsa_approval_fields,
+    validate_connectwise_action_fields,
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
@@ -33,7 +37,7 @@ from wait_local_agent.m365_graph import (
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
 )
-from wait_local_agent.models import HaloWriteResult
+from wait_local_agent.models import ConnectWiseWriteResult, HaloWriteResult
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
 
@@ -41,6 +45,19 @@ from wait_local_agent.vault import SecretVault
 class FakeHaloClient:
     def execute_write(self, request):
         return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+
+class FakeConnectWiseClient:
+    def execute_write(self, request):
+        return ConnectWiseWriteResult(
+            "succeeded",
+            "updated",
+            request.action_type,
+            request.ticket_id,
+            endpoint="service/tickets/42",
+            status_code=200,
+            remote_id="42",
+        )
 
 
 class FakeM365Client:
@@ -560,7 +577,7 @@ def test_m365_user_creation_payload_validation_rejects_each_sensitive_shape() ->
         "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
         "user_principal_name": "adele.vance@example.test",
     }
-    cases = [
+    cases: list[dict[str, object]] = [
         {**base, "connector": "other"},
         {**base, "display_name": "\n"},
         {**base, "user_principal_name": "bad"},
@@ -671,3 +688,106 @@ def test_halopsa_field_edit_validation_edges(settings) -> None:
     validate_halopsa_action_fields("update_status", {"status_id": "1"})
     validate_halopsa_action_fields("assign_technician", {"team_id": "2"})
     validate_halopsa_action_fields("update_ticket_fields", {"custom_field": "value"})
+
+
+def test_connectwise_drafts_edits_and_approval_execution(settings) -> None:
+    store = Store(settings.data_path)
+    draft = draft_connectwise_ticket_action(
+        store,
+        "CW-42",
+        "update_status",
+        {"status_id": 7},
+        client_id="acme",
+    )
+    assert draft.approval_required is True
+    assert draft.approval_request_id is not None
+    edited = update_connectwise_approval_fields(
+        store, draft.approval_request_id, {"status_id": 8}, "reviewed"
+    )
+    assert edited.comment == "reviewed"
+    with pytest.raises(PermissionError, match="approved"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), draft.approval_request_id
+        )
+    store.update_approval_request(draft.approval_request_id, "approved")
+    completed = execute_connectwise_approval_request(
+        store, cast(Any, FakeConnectWiseClient()), draft.approval_request_id
+    )
+    assert completed.execution_status == "succeeded"
+    with pytest.raises(RuntimeError, match="already executed"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), draft.approval_request_id
+        )
+
+
+def test_connectwise_approval_payload_and_field_validation_edges(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(KeyError):
+        update_connectwise_approval_fields(store, 999, {"status_id": 1})
+    non_connectwise = store.create_approval_request("TCK-1", "halopsa.add_note", {})
+    with pytest.raises(ValueError, match="not a ConnectWise"):
+        update_connectwise_approval_fields(store, non_connectwise.id or 0, {"status_id": 1})
+    with pytest.raises(ValueError, match="not a ConnectWise"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), non_connectwise.id or 0
+        )
+    cases: list[tuple[str, dict[str, object]]] = [
+        ("bad", {"status_id": 1}),
+        ("update_status", {}),
+        ("update_status", {"summary": "x"}),
+        ("assign_technician", {"owner_id": ""}),
+        ("update_ticket_fields", {"unknown": "x"}),
+        ("update_ticket_fields", {"summary": True}),
+        ("update_ticket_fields", {"summary": "\n"}),
+    ]
+    for action_type, fields in cases:
+        with pytest.raises(ValueError):
+            validate_connectwise_action_fields(action_type, fields)
+    validate_connectwise_action_fields("assign_technician", {"team_id": 4})
+    validate_connectwise_action_fields("update_ticket_fields", {"description": "details"})
+    with pytest.raises(ValueError, match="requires status_id"):
+        validate_connectwise_action_fields("update_status", {"status_id": 0})
+
+    wrong_connector = store.create_approval_request(
+        "CW-1",
+        "connectwise.update_status",
+        {"connector": "other", "ticket_id": "CW-1", "action_type": "update_status", "fields": {"status_id": 1}},
+    )
+    store.update_approval_request(wrong_connector.id or 0, "approved")
+    with pytest.raises(ValueError, match="connector"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), wrong_connector.id or 0
+        )
+
+    wrong_ticket = store.create_approval_request(
+        "CW-2",
+        "connectwise.update_status",
+        {"connector": "connectwise", "ticket_id": "OTHER", "action_type": "update_status", "fields": {"status_id": 1}},
+    )
+    store.update_approval_request(wrong_ticket.id or 0, "approved")
+    with pytest.raises(ValueError, match="ticket"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), wrong_ticket.id or 0
+        )
+
+    unsupported = store.create_approval_request(
+        "CW-3",
+        "connectwise.update_status",
+        {"connector": "connectwise", "ticket_id": "CW-3", "action_type": "bad", "fields": {"status_id": 1}},
+    )
+    store.update_approval_request(unsupported.id or 0, "approved")
+    with pytest.raises(ValueError, match="unsupported"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), unsupported.id or 0
+        )
+
+    wrong_action = store.create_approval_request(
+        "CW-4",
+        "connectwise.update_status",
+        {"connector": "connectwise", "ticket_id": "CW-4", "action_type": "assign_technician", "fields": {"team_id": 1}},
+    )
+    store.update_approval_request(wrong_action.id or 0, "approved")
+    with pytest.raises(ValueError, match="action"):
+        execute_connectwise_approval_request(
+            store, cast(Any, FakeConnectWiseClient()), wrong_action.id or 0
+        )
