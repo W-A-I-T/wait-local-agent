@@ -87,8 +87,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   approval-gated user creation path that resolves a temporary password only
   from the local vault at execution time, plus an approval-gated disable path
   that only sets `accountEnabled=false`. Credentials never enter action or
-  approval payloads; session revocation, license/group changes, mailbox
-  mutations, and Intune actions remain separate capabilities.
+  approval payloads; session revocation, license changes, mailbox mutations,
+  and Intune actions remain separate capabilities. Group membership changes
+  are a distinct strict-ID add/remove action using the same approval path.
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device
   lookup without remote control, remediation, or credential-bearing payloads.

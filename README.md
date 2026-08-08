@@ -451,7 +451,12 @@ API. Approved disable/offboarding is exposed through
 `draft-m365-user-disable` / `execute-m365` CLI commands. It issues only
 `PATCH /users/{id | userPrincipalName}` with `accountEnabled=false`; it does
 not revoke sign-in sessions, remove group memberships or licenses, delete
-mailbox data, or mutate Intune devices. Those remain separate future actions.
+mailbox data, or mutate Intune devices. Approved group membership changes are
+exposed through `POST /connectors/m365/groups/membership-drafts` with an
+explicit `add` or `remove` operation using immutable group and user IDs. The
+matching CLI command is `draft-m365-group-membership`; execution uses the
+same approval endpoint and `execute-m365` command. License, session, mailbox,
+and Intune mutations remain separate future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads

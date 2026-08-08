@@ -70,7 +70,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | N-able | ✓ | ✗ | Connector | Phase 5 |
 | Kaseya | ✓ | ✗ | Connector | Phase 5 |
 | IT Glue | ✓ | ✗ | Connector | Phase 3 |
-| M365 / Entra | ✓ | ✗ (stub) | Connector | Phase 4 |
+| M365 / Entra | ✓ | ✓ (bounded reads + approved user/group membership writes) | License, mailbox, session, and device mutations | Phase 4 |
 | Slack / Teams | ✓ | ✗ | Low priority | Phase 5 |
 | Scheduled / proactive tasks | ✓ | ✓ (bounded cron + event agents) | Broader recurrence and event sources | Phase 3 |
 | QBR / ROI reporting | ✓ | ✗ | Report engine | Phase 3 |

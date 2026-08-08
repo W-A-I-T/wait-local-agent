@@ -23,6 +23,7 @@ from wait_local_agent.itglue import (
 )
 from wait_local_agent.m365_graph import (
     M365GraphGroup,
+    M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
@@ -2629,6 +2630,80 @@ def test_m365_user_disable_requires_admin_and_auto_executes_after_approval(setti
     assert admin_approval.json()["output"]["status_code"] == 204
     assert calls == [{"user_identity": "adele.vance@example.test"}]
     assert "password" not in admin_approval.text.lower()
+
+
+def test_m365_group_membership_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def change_group_membership(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphGroupMembershipResult(
+                "succeeded",
+                "membership changed",
+                group_id=str(kwargs["group_id"]),
+                user_id=str(kwargs["user_id"]),
+                operation=str(kwargs["operation"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/groups/membership-drafts",
+        headers=_auth("viewer-token"),
+        json={"group_id": "group-1", "user_id": "user-1", "operation": "add"},
+    )
+
+    draft = client.post(
+        "/connectors/m365/groups/membership-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "group_id": "group-1",
+            "user_id": "user-1",
+            "operation": "remove",
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.groups.members.remove"
+    assert draft.json()["payload"]["group_id"] == "group-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["operation"] == "remove"
+    assert calls == [{"group_id": "group-1", "user_id": "user-1", "operation": "remove"}]
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

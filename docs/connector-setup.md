@@ -278,8 +278,11 @@ Approved disable/offboarding is a separate admin-approved `PATCH /users/{id |
 userPrincipalName}` action that sends only `{"accountEnabled": false}`. It
 requires the application permission combination
 `User.EnableDisableAccount.All` and `User.Read.All` (or the corresponding
-delegated permission), and does not revoke sessions, remove licenses or group
-memberships, mutate mailbox data, or act on Intune devices.
+delegated permission), and does not revoke sessions, remove licenses, mutate
+mailbox data, or act on Intune devices. Approved group membership changes are
+a separate action using immutable group and user IDs; they require
+`GroupMember.ReadWrite.All` and support only explicit `add` or `remove`
+operations through the approval queue.
 User lookup accepts a user ID or user principal name; group lookup accepts a
 group ID, SMTP address, mail nickname, or exact display name. License context
 is tenant-level subscribed-SKU metadata with aggregate counts; per-user license
@@ -325,6 +328,10 @@ and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 disable/offboarding is exposed through
 `POST /connectors/m365/users/disable-drafts` and the same execution endpoint,
 or `connectors draft-m365-user-disable` and `connectors execute-m365`.
+Approved group membership changes are exposed through
+`POST /connectors/m365/groups/membership-drafts` with `group_id`, `user_id`,
+and `operation` (`add` or `remove`), or the CLI command
+`connectors draft-m365-group-membership GROUP_ID USER_ID --operation add|remove`.
 
 ## ConnectWise PSA
 

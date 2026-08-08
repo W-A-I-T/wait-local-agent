@@ -14,6 +14,7 @@ permissions:
 | Mail-folder metadata | `Mail.ReadBasic.All` |
 | Intune managed devices | `DeviceManagementManagedDevices.Read.All` |
 | Approved user disable/offboarding | `User.EnableDisableAccount.All` and `User.Read.All` |
+| Approved group membership changes | `GroupMember.ReadWrite.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -61,7 +62,11 @@ creation route issues only `POST /users` with the fixed required fields. The
 approved disable/offboarding route issues only `PATCH /users/{id |
 userPrincipalName}` with `{"accountEnabled": false}`. It does not revoke
 sign-in sessions, remove licenses or group memberships, mutate mailbox data,
-or act on Intune devices. User reads can
+or act on Intune devices. The approved group membership route uses only
+`POST /groups/{id}/members/$ref` for add and
+`DELETE /groups/{id}/members/{id}/$ref` for remove, always retaining `/$ref`
+to prevent deleting the directory object. It accepts immutable group and user
+IDs only and requires `GroupMember.ReadWrite.All`. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return

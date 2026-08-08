@@ -55,6 +55,7 @@ from wait_local_agent.config import load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_m365_group_membership,
     draft_m365_user_creation,
     draft_m365_user_disable,
     execute_halopsa_approval_request,
@@ -804,6 +805,29 @@ def draft_m365_user_disable_command(
         approval = draft_m365_user_disable(
             _store(),
             user_identity=user_identity,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-group-membership")
+def draft_m365_group_membership_command(
+    group_id: str,
+    user_id: str,
+    operation: Annotated[str, typer.Option("--operation", help="Membership operation: add or remove.")],
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_group_membership(
+            _store(),
+            group_id=group_id,
+            user_id=user_id,
+            operation=operation,
             client_id=client_id,
         )
     except ValueError as exc:
