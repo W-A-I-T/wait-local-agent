@@ -59,18 +59,26 @@ from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
+    draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_delete,
+    draft_m365_mail_message_move,
+    draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
+    draft_m365_managed_device_reboot,
     draft_m365_managed_device_retirement,
+    draft_m365_managed_device_sync,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
+    execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
+    update_connectwise_approval_fields,
     update_halopsa_approval_fields,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
@@ -92,12 +100,19 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
-from wait_local_agent.models import AGENT_BACKFILL_MAX_CONCURRENCY
+from wait_local_agent.models import (
+    AGENT_BACKFILL_MAX_CONCURRENCY,
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    WorkflowRun,
+)
 from wait_local_agent.observability import (
+    APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
+    TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
 from wait_local_agent.providers import provider_from_settings
@@ -163,6 +178,12 @@ class HaloDraftRequest(BaseModel):
     client_id: str | None = None
 
 
+class ConnectWiseDraftRequest(BaseModel):
+    action_type: Literal["update_status", "assign_technician", "update_ticket_fields"]
+    fields: dict[str, object]
+    client_id: str | None = None
+
+
 class M365UserDraftRequest(BaseModel):
     user_principal_name: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=256)
@@ -202,9 +223,42 @@ class M365ManagedDeviceRetirementDraftRequest(BaseModel):
     client_id: str | None = None
 
 
+class M365ManagedDeviceSyncDraftRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
+class M365ManagedDeviceRebootDraftRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
 class M365MailboxSettingsUpdateDraftRequest(BaseModel):
     user_identity: str = Field(min_length=1, max_length=320)
     settings: dict[str, str] = Field(min_length=1, max_length=4)
+    client_id: str | None = None
+
+
+class M365MailMessageMoveDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    source_folder_id: str = Field(min_length=1, max_length=320)
+    message_id: str = Field(min_length=1, max_length=320)
+    destination_folder_id: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
+class M365MailMessageReadStateDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    source_folder_id: str = Field(min_length=1, max_length=320)
+    message_id: str = Field(min_length=1, max_length=320)
+    is_read: bool
+    client_id: str | None = None
+
+
+class M365MailMessageDeleteDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    source_folder_id: str = Field(min_length=1, max_length=320)
+    message_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -217,6 +271,30 @@ class TemplateGalleryCreateRequest(BaseModel):
     source_template_id: str
     provenance: str = Field(min_length=1, max_length=1000)
     display_name: str | None = Field(default=None, max_length=120)
+    instructions: str = Field(default="", max_length=4000)
+    client_id: str | None = None
+
+
+class TemplateGalleryImportRequest(BaseModel):
+    format: Literal["wait-local-agent.workflow-template"]
+    format_version: Literal[1]
+    source_template_id: str
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+    provenance: str = Field(min_length=1, max_length=1000)
+    instructions: str = Field(default="", max_length=4000)
+    client_id: str | None = None
+
+
+class TemplateGalleryUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=4000)
+    enabled: bool | None = None
+    client_id: str | None = None
+
+
+class TemplateGalleryRestoreRequest(BaseModel):
     client_id: str | None = None
 
 
@@ -230,6 +308,16 @@ class TechnicianChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     ticket_id: str | None = Field(default=None, max_length=100)
     client_id: str | None = None
+
+
+class TechnicianChatSessionCreateRequest(BaseModel):
+    ticket_id: str | None = Field(default=None, max_length=100)
+    client_id: str | None = None
+
+
+class TechnicianChatMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    ticket_id: str | None = Field(default=None, max_length=100)
 
 
 class EndUserTicketCreateRequest(BaseModel):
@@ -259,6 +347,12 @@ class AgentDefinitionRequest(BaseModel):
     execution_window_start: str | None = Field(default=None, max_length=5)
     execution_window_end: str | None = Field(default=None, max_length=5)
     execution_window_timezone: str = Field(default="UTC", min_length=1, max_length=100)
+    context_sources: list[Literal["ticket", "client", "knowledge"]] = Field(
+        default_factory=list, max_length=3
+    )
+    approval_expiry_seconds: int | None = Field(
+        default=None, ge=1, le=MAX_APPROVAL_EXPIRY_SECONDS
+    )
 
 
 class AgentRunStartRequest(BaseModel):
@@ -300,6 +394,7 @@ class ScheduledJobCreateRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = Field(default="UTC", min_length=1, max_length=100)
     params: dict[str, object] = Field(default_factory=dict)
 
 
@@ -308,6 +403,7 @@ class ScheduledJobRescheduleRequest(BaseModel):
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
     run_at: str | None = None
+    timezone: str = Field(default="UTC", min_length=1, max_length=100)
 
 
 class CollectorConfigRequest(BaseModel):
@@ -380,6 +476,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         collector_service=collector_service,
         halopsa_client=halopsa_client,
         hudu_client=hudu_client,
+        connectwise_client=connectwise_client,
+        syncro_client=syncro_client,
+        servicenow_client=servicenow_client,
+        autotask_client=autotask_client,
+        itglue_client=itglue_client,
+        confluence_client=confluence_client,
+        sharepoint_client=sharepoint_client,
+        m365_client=m365_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
@@ -388,6 +492,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store,
         enabled=active_settings.scheduler_enabled,
         agent_service=agent_service,
+        smart_action_service=smart_action_service,
         event_dispatcher=event_dispatcher,
     )
 
@@ -624,6 +729,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
+                approval_expiry_seconds=payload.approval_expiry_seconds,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -710,6 +817,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
+                approval_expiry_seconds=payload.approval_expiry_seconds,
             )
         except (AgentDefinitionError, ValidationError) as exc:
             raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
@@ -747,6 +856,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
+                approval_expiry_seconds=payload.approval_expiry_seconds,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1170,6 +1281,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="event delivery not found")
         return _event_delivery_view(delivery)
 
+    @app.post("/automation/event-deliveries/{delivery_id}/retry")
+    @limiter.limit(active_settings.rate_limit_general)
+    def retry_event_delivery(
+        request: Request,
+        delivery_id: int,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="event delivery not found")
+        try:
+            result = event_dispatcher.retry(
+                delivery_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "operator",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="event delivery not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _event_dispatch_view(result)
+
     @app.get("/smart-actions/runs")
     def smart_action_runs(
         context: ViewerAccess, client_id: str | None = None
@@ -1233,30 +1366,136 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
-            command = parse_technician_message(payload.message, ticket_id=payload.ticket_id)
-        except TechnicianChatParseError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if command.action_id is None:
-            return {
-                "status": "help",
-                "message": command.reply,
-                "supported": True,
-            }
-        try:
-            result = smart_action_service.invoke(
-                command.action_id,
-                command.payload,
-                context.approver_id or "api",
+            return _invoke_technician_chat_message(
+                store,
+                smart_action_service,
+                payload.message,
+                ticket_id=payload.ticket_id,
+                actor=context.approver_id or "api",
                 client_id=scoped_client_id,
             )
+        except TechnicianChatParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
-        return {
-            "status": result.status,
-            "message": command.reply,
-            "action_id": command.action_id,
-            "result": asdict(result),
-        }
+
+    @app.post("/technician/chat/sessions")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_technician_chat_session(
+        payload: TechnicianChatSessionCreateRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="chat sessions require a client scope")
+        if payload.ticket_id and store.get_ticket(payload.ticket_id, scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found in client scope")
+        try:
+            session = store.create_technician_chat_session(
+                client_id=scoped_client_id,
+                principal_id=context.approver_id or "api",
+                ticket_id=payload.ticket_id,
+            )
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _technician_chat_session_view(store, session)
+
+    @app.get("/technician/chat/sessions")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def list_technician_chat_sessions(
+        request: Request,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        sessions = store.list_technician_chat_sessions(
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        return [_technician_chat_session_view(store, session) for session in sessions]
+
+    @app.get("/technician/chat/sessions/{session_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def get_technician_chat_session(
+        session_id: str,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.get_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        return _technician_chat_session_view(store, session)
+
+    @app.post("/technician/chat/sessions/{session_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def send_technician_chat_message(
+        session_id: str,
+        payload: TechnicianChatMessageRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.get_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        try:
+            return _invoke_technician_chat_message(
+                store,
+                smart_action_service,
+                payload.message,
+                ticket_id=payload.ticket_id or session.ticket_id,
+                actor=context.approver_id or "api",
+                client_id=session.client_id,
+                session_id=session.id,
+                principal_id=principal_id,
+            )
+        except TechnicianChatParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ticket not found in client scope") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/technician/chat/sessions/{session_id}/close")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def close_technician_chat_session(
+        session_id: str,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.close_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        return _technician_chat_session_view(store, session)
 
     @app.post("/end-user/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -1379,12 +1618,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             approval = store.get_approval_request(request_id)
             if approval is None or not _approval_in_scope(context, approval):
                 raise KeyError(request_id)
-            approval = update_halopsa_approval_fields(
-                store,
-                request_id,
-                request.fields,
-                request.comment,
-            )
+            if approval.action_type.startswith("connectwise."):
+                approval = update_connectwise_approval_fields(
+                    store, request_id, request.fields, request.comment
+                )
+            else:
+                approval = update_halopsa_approval_fields(
+                    store, request_id, request.fields, request.comment
+                )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
@@ -1427,6 +1668,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
+            if payload.status == "approved" and approval.action_type.startswith("connectwise."):
+                try:
+                    approval = execute_connectwise_approval_request(
+                        store, connectwise_client, request_id
+                    )
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
             if payload.status == "approved" and approval.action_type.startswith("m365."):
@@ -1806,6 +2054,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _halopsa_draft_view(draft)
 
+    @app.post("/connectors/connectwise/tickets/{ticket_id}/drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_connectwise_draft(
+        ticket_id: str,
+        payload: ConnectWiseDraftRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            draft = draft_connectwise_ticket_action(
+                store,
+                ticket_id,
+                payload.action_type,
+                payload.fields,
+                client_id=_approval_client_scope(context, payload.client_id),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _connectwise_draft_view(draft)
+
     @app.get("/connectors/halopsa/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -1947,6 +2215,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = connectwise_client.health()
         _audit_connectwise_read("health", result.status, result.count)
         return asdict(result)
+
+    @app.get("/connectors/connectwise/write-health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def connectwise_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = connectwise_client.write_health()
+        store.add_audit_event("connectwise.write_health", "connectwise", result.status)
+        return asdict(result)
+
+    @app.post("/connectors/connectwise/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_connectwise_approval(
+        request_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
+            return _approval_view(execute_connectwise_approval_request(store, connectwise_client, request_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/connectors/connectwise/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -2434,6 +2728,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _m365_mail_folder_response("mail-folders.list", response)
 
+    @app.get("/connectors/m365/mail-messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_messages(
+        request: Request,
+        _: ViewerAccess,
+        identity: str | None = None,
+        folder_id: str | None = None,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = m365_client.list_mail_messages(
+            identity=identity,
+            folder_id=folder_id,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        return _m365_mail_message_response("mail-messages.list", response)
+
     @app.get("/connectors/m365/managed-devices")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_managed_devices(
@@ -2561,6 +2875,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _approval_view(approval)
 
+    @app.post("/connectors/m365/managed-devices/sync-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_managed_device_sync_draft(
+        payload: M365ManagedDeviceSyncDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_managed_device_sync(
+                store,
+                device_id=payload.device_id,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/managed-devices/reboot-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_managed_device_reboot_draft(
+        payload: M365ManagedDeviceRebootDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_managed_device_reboot(
+                store,
+                device_id=payload.device_id,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
     @app.post("/connectors/m365/users/mailbox-settings-drafts")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_mailbox_settings_update_draft(
@@ -2573,6 +2921,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 store,
                 user_identity=payload.user_identity,
                 settings=payload.settings,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/mail-messages/move-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_message_move_draft(
+        payload: M365MailMessageMoveDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_mail_message_move(
+                store,
+                user_identity=payload.user_identity,
+                source_folder_id=payload.source_folder_id,
+                message_id=payload.message_id,
+                destination_folder_id=payload.destination_folder_id,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/mail-messages/read-state-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_message_read_state_draft(
+        payload: M365MailMessageReadStateDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_mail_message_read_state(
+                store,
+                user_identity=payload.user_identity,
+                source_folder_id=payload.source_folder_id,
+                message_id=payload.message_id,
+                is_read=payload.is_read,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/mail-messages/delete-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_message_delete_draft(
+        payload: M365MailMessageDeleteDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_mail_message_delete(
+                store,
+                user_identity=payload.user_identity,
+                source_folder_id=payload.source_folder_id,
+                message_id=payload.message_id,
                 client_id=payload.client_id,
             )
         except ValueError as exc:
@@ -2639,6 +3046,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 provenance=payload.provenance,
                 client_id=scoped_client_id,
                 name=payload.display_name,
+                instructions=payload.instructions,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _template_gallery_view(entry)
+
+    @app.get("/workflow-templates/gallery/{entry_id}/export")
+    def export_template_gallery_entry(entry_id: str, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        return _template_gallery_export_view(entry)
+
+    @app.post("/workflow-templates/gallery/import")
+    def import_template_gallery_entry(
+        payload: TemplateGalleryImportRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        template = get_workflow_template(payload.source_template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail="workflow template not found")
+        try:
+            entry = store.create_template_gallery_entry(
+                template,
+                provenance=payload.provenance,
+                client_id=scoped_client_id,
+                name=payload.name,
+                description=payload.description,
+                instructions=payload.instructions,
+                enabled=False,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2654,6 +3097,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         return _template_gallery_view(entry)
 
+    @app.patch("/workflow-templates/gallery/{entry_id}")
+    def update_template_gallery_entry(
+        entry_id: str,
+        payload: TemplateGalleryUpdateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        try:
+            updated = store.update_template_gallery_entry(
+                entry_id,
+                name=payload.name,
+                description=payload.description,
+                instructions=payload.instructions,
+                enabled=payload.enabled,
+                client_id=entry.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _template_gallery_view(updated)
+
+    @app.get("/workflow-templates/gallery/{entry_id}/revisions")
+    def template_gallery_revisions(
+        entry_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            return []
+        return [
+            _template_gallery_revision_view(revision)
+            for revision in store.list_template_gallery_revisions(entry_id, entry.client_id)
+        ]
+
+    @app.get("/workflow-templates/gallery/{entry_id}/revisions/{version}/diff/{other_version}")
+    def template_gallery_revision_diff(
+        entry_id: str,
+        version: int,
+        other_version: int,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        left = store.get_template_gallery_revision(entry_id, version, entry.client_id)
+        right = store.get_template_gallery_revision(entry_id, other_version, entry.client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        return _template_gallery_revision_diff_view(left, right)
+
+    @app.post("/workflow-templates/gallery/{entry_id}/revisions/{version}/restore")
+    def restore_template_gallery_revision(
+        entry_id: str,
+        version: int,
+        payload: TemplateGalleryRestoreRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        try:
+            restored = store.restore_template_gallery_revision(entry_id, version, entry.client_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="template gallery revision not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="template gallery revision is no longer valid") from exc
+        return _template_gallery_view(restored)
+
     @app.post("/workflow-templates/gallery/{entry_id}/runs")
     def run_template_gallery_entry(
         entry_id: str,
@@ -2666,18 +3192,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
+        if not entry.enabled:
+            raise HTTPException(status_code=409, detail="template gallery entry is disabled")
         if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
-        return asdict(
-            run_workflow_template(
-                store,
-                entry.source_template_id,
-                request.ticket_id,
-                client_id=scoped_client_id,
-                actor=context.approver_id or "api",
-                trigger_source="template_gallery",
-            )
+        source_template = get_workflow_template(entry.source_template_id)
+        if source_template is None:
+            raise HTTPException(status_code=409, detail="source workflow template is unavailable")
+        run = run_workflow_template(
+            store,
+            entry.source_template_id,
+            request.ticket_id,
+            client_id=scoped_client_id,
+            actor=context.approver_id or "api",
+            trigger_source="template_gallery",
+            tool_executor=smart_action_service,
+            template_override=replace(
+                source_template,
+                name=entry.name,
+                description=entry.description,
+            ),
+            operator_instructions=entry.instructions,
+            template_version=entry.version,
         )
+        _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
+        return asdict(run)
 
     @app.get("/scheduled-jobs")
     def scheduled_jobs(
@@ -2721,6 +3260,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2772,6 +3312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
+                timezone=request.timezone,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2808,6 +3349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     schedule_type=payload.schedule_type,
                     interval_seconds=payload.interval_seconds,
                     run_at=payload.run_at,
+                    timezone=payload.timezone,
                 )
             )
         except KeyError as exc:
@@ -2829,17 +3371,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: WorkflowRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
         try:
-            return asdict(
-                run_workflow_template(
-                    store,
-                    template_id,
-                    request.ticket_id,
-                    client_id=request.client_id,
-                    actor=context.approver_id or "api",
-                    trigger_source="api",
-                )
+            run = run_workflow_template(
+                store,
+                template_id,
+                request.ticket_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "api",
+                trigger_source="api",
+                tool_executor=smart_action_service,
             )
+            _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
+            return asdict(run)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="workflow template not found") from exc
         except LookupError as exc:
@@ -2854,7 +3402,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-runs/{run_id}")
     def workflow_run_detail(run_id: int, context: ViewerAccess) -> dict[str, object]:
-        run = store.get_workflow_run(run_id)
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        run = store.get_workflow_run(run_id, client_id=scoped_client_id)
         if run is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
         template = next(
@@ -2878,6 +3429,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
             ],
         }
+
+    @app.get("/workflow-runs/{run_id}/compare/{other_run_id}")
+    def workflow_run_compare(
+        run_id: int,
+        other_run_id: int,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        left = store.get_workflow_run(run_id, client_id=scoped_client_id)
+        right = store.get_workflow_run(other_run_id, client_id=scoped_client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        return _workflow_run_comparison_view(left, right)
 
     @app.get("/executions")
     def executions(
@@ -3020,7 +3586,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_hudu_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
-            "items": [asdict(item) for item in response.items],
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
         }
 
     def _connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> dict[str, object]:
@@ -3095,7 +3661,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_confluence_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
-            "items": [asdict(item) for item in response.items],
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
             "next_cursor": response.next_cursor,
         }
 
@@ -3155,6 +3721,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _m365_mail_folder_response(
         read_type: str,
         response: M365GraphMailFolderReadResponse,
+    ) -> dict[str, object]:
+        _audit_m365_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _m365_mail_message_response(
+        read_type: str,
+        response: M365GraphMailMessageReadResponse,
     ) -> dict[str, object]:
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
@@ -3229,6 +3806,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "schedule_type": job.schedule_type,
             "interval_seconds": job.interval_seconds,
             "run_at": job.run_at,
+            "timezone": job.timezone,
             "paused": job.paused,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
@@ -3281,6 +3859,8 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "execution_window_start": definition.execution_window_start,
                 "execution_window_end": definition.execution_window_end,
                 "execution_window_timezone": definition.execution_window_timezone,
+                "context_sources": definition.context_sources,
+                "approval_expiry_seconds": definition.approval_expiry_seconds,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }
@@ -3311,6 +3891,10 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "agent_ids": _safe_json_values(delivery.agent_ids_json),
         "run_ids": _safe_json_values(delivery.run_ids_json),
         "error_detail": redact_text(delivery.error_detail),
+        "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
+        "retry_count": delivery.retry_count,
+        "max_retries": delivery.max_retries,
+        "next_retry_at": delivery.next_retry_at,
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,
         "client_id": delivery.client_id,
@@ -3329,10 +3913,84 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "risk_level": entry.risk_level,
         "preview_fields": _safe_json_values(entry.preview_fields_json),
         "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
         "version": entry.version,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
         "client_id": entry.client_id,
+    }
+
+
+def _template_gallery_export_view(entry) -> dict[str, object]:
+    """Return a portable artifact without local ids, timestamps, or tenant identity."""
+
+    return {
+        "format": "wait-local-agent.workflow-template",
+        "format_version": 1,
+        "source_template_id": entry.source_template_id,
+        "name": redact_text(entry.name),
+        "description": redact_text(entry.description),
+        "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
+    }
+
+
+def _template_gallery_revision_view(revision) -> dict[str, object]:
+    return {
+        "id": revision.id,
+        "gallery_id": revision.gallery_id,
+        "version": revision.version,
+        "definition": _safe_redacted_json_object(revision.definition_json),
+        "created_at": revision.created_at,
+        "client_id": revision.client_id,
+    }
+
+
+def _workflow_run_comparison_view(left: WorkflowRun, right: WorkflowRun) -> dict[str, object]:
+    fields = (
+        "template_id",
+        "ticket_id",
+        "status",
+        "message",
+        "approval_request_id",
+        "template_version",
+        "client_id",
+    )
+    left_view = asdict(left)
+    right_view = asdict(right)
+    left_view["message"] = redact_text(left.message)
+    right_view["message"] = redact_text(right.message)
+    changes = [
+        {"field": field, "before": left_view[field], "after": right_view[field]}
+        for field in fields
+        if left_view[field] != right_view[field]
+    ]
+    return {
+        "from_run": left_view,
+        "to_run": right_view,
+        "changed": bool(changes),
+        "changes": changes,
+    }
+
+
+def _template_gallery_revision_diff_view(left, right) -> dict[str, object]:
+    left_definition = _safe_redacted_json_object(left.definition_json)
+    right_definition = _safe_redacted_json_object(right.definition_json)
+    changed_fields: list[dict[str, object]] = []
+    for field in sorted(set(left_definition) | set(right_definition)):
+        before = left_definition.get(field)
+        after = right_definition.get(field)
+        if before != after:
+            changed_fields.append({"field": field, "before": before, "after": after})
+    return {
+        "gallery_id": left.gallery_id,
+        "from_version": left.version,
+        "to_version": right.version,
+        "changed": bool(changed_fields),
+        "changes": changed_fields,
+        "client_id": left.client_id,
     }
 
 
@@ -3420,6 +4078,127 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
     }
 
 
+def _technician_chat_session_view(store: Store, session) -> dict[str, object]:
+    return {
+        "id": session.id,
+        "status": session.status,
+        "ticket_id": session.ticket_id,
+        "client_id": session.client_id,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "message": redact_text(message.message),
+                "action_id": message.action_id,
+                "status": message.status,
+                "ticket_id": message.ticket_id,
+                "created_at": message.created_at,
+            }
+            for message in store.list_technician_chat_messages(
+                session.id,
+                client_id=session.client_id,
+            )
+        ],
+    }
+
+
+def _invoke_technician_chat_message(
+    store: Store,
+    smart_action_service: SmartActionService,
+    message: str,
+    *,
+    ticket_id: str | None,
+    actor: str,
+    client_id: str | None,
+    session_id: str | None = None,
+    principal_id: str | None = None,
+) -> dict[str, object]:
+    if session_id is not None:
+        store.add_technician_chat_message(
+            session_id,
+            role="user",
+            message=message,
+            status="received",
+            ticket_id=ticket_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+    try:
+        command = parse_technician_message(message, ticket_id=ticket_id)
+    except TechnicianChatParseError as exc:
+        if session_id is not None:
+            store.add_technician_chat_message(
+                session_id,
+                role="assistant",
+                message=str(exc),
+                status="failed",
+                ticket_id=ticket_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+        raise
+    candidate_ticket_id = command.payload.get("ticket_id")
+    resolved_ticket_id = candidate_ticket_id if isinstance(candidate_ticket_id, str) else None
+    if session_id is not None and resolved_ticket_id and client_id:
+        if (
+            store.update_technician_chat_session_ticket(
+                session_id,
+                client_id=client_id,
+                ticket_id=resolved_ticket_id,
+                principal_id=principal_id,
+            )
+            is None
+        ):
+            raise LookupError(resolved_ticket_id)
+    if command.action_id is None:
+        if session_id is not None:
+            store.add_technician_chat_message(
+                session_id,
+                role="assistant",
+                message=command.reply,
+                status="help",
+                ticket_id=resolved_ticket_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+        response: dict[str, object] = {
+            "status": "help",
+            "message": command.reply,
+            "supported": True,
+        }
+        if session_id is not None:
+            response["session_id"] = session_id
+        return response
+    result = smart_action_service.invoke(
+        command.action_id,
+        command.payload,
+        actor,
+        client_id=client_id,
+    )
+    if session_id is not None:
+        store.add_technician_chat_message(
+            session_id,
+            role="assistant",
+            message=command.reply,
+            action_id=command.action_id,
+            status=result.status,
+            ticket_id=resolved_ticket_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+    response = {
+        "status": result.status,
+        "message": command.reply,
+        "action_id": command.action_id,
+        "result": asdict(result),
+    }
+    if session_id is not None:
+        response["session_id"] = session_id
+    return response
+
+
 def _safe_end_user_ticket_id(ticket_id: str) -> bool:
     return bool(
         ticket_id
@@ -3439,6 +4218,7 @@ def _execution_run_view(run) -> dict[str, object]:
         "finished_at": run.finished_at,
         "trigger_source": run.trigger_source,
         "client_id": run.client_id,
+        "metadata": _safe_redacted_json_object(run.metadata_json),
     }
 
 
@@ -3479,6 +4259,45 @@ def _safe_json_value(payload_json: str) -> object:
         return None
 
 
+def _dispatch_workflow_completion_event(
+    event_dispatcher: EventDispatcher,
+    run: WorkflowRun,
+    actor: str,
+) -> None:
+    """Continue completed API workflow runs without changing their outcome."""
+    if run.status != "completed" or run.id is None or not run.ticket_id.strip():
+        return
+    payload: dict[str, object] = {
+        "workflow_run_id": str(run.id),
+        "workflow_template_id": run.template_id,
+        "status": run.status,
+    }
+    try:
+        event_dispatcher.dispatch(
+            event_type="workflow.completed",
+            entity_type="ticket",
+            entity_id=run.ticket_id,
+            payload=payload,
+            idempotency_key=f"workflow-completed:{run.id}",
+            client_id=run.client_id,
+            actor=actor,
+        )
+        event_dispatcher.store.add_audit_event(
+            "workflow.completion_dispatched",
+            str(run.id),
+            "workflow.completed event dispatched",
+            client_id=run.client_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+        detail = redact_text(f"workflow.completed dispatch failed: {exc}")
+        event_dispatcher.store.add_audit_event(
+            "workflow.completion_dispatch_failed",
+            str(run.id),
+            detail,
+            client_id=run.client_id,
+        )
+
+
 def _empty_analytics_summary(
     started_from: str | None, started_to: str | None
 ) -> dict[str, object]:
@@ -3488,6 +4307,22 @@ def _empty_analytics_summary(
         "executions_over_time": [],
         "success_rate": {"total": 0, "succeeded": 0, "rate": 0.0},
         "failures_by_status": [],
+        "approval_rate": {
+            "requested": 0,
+            "decided": 0,
+            "approved": 0,
+            "rejected": 0,
+            "pending": 0,
+            "rate": 0.0,
+            "derivation": APPROVAL_RATE_DERIVATION,
+        },
+        "ticket_metrics": {
+            "touched": 0,
+            "resolved": 0,
+            "resolution_rate": 0.0,
+            "derivation": TICKET_METRICS_DERIVATION,
+        },
+        "activity_by_workflow": [],
         "estimated_minutes_saved": {
             "minutes": 0,
             "estimate": True,
@@ -3538,6 +4373,15 @@ def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
 
 
 def _halopsa_draft_view(draft) -> dict[str, object]:
+    payload = _safe_json_object(draft.payload_json)
+    return {
+        **asdict(draft),
+        "payload_json": _redact_json_text(draft.payload_json),
+        "payload": _redact_payload(payload),
+    }
+
+
+def _connectwise_draft_view(draft) -> dict[str, object]:
     payload = _safe_json_object(draft.payload_json)
     return {
         **asdict(draft),

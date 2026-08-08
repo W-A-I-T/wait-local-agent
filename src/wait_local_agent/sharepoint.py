@@ -54,6 +54,16 @@ class SharePointClientProtocol(Protocol):
     def health(self) -> ConnectorReadResult:
         ...
 
+    def list_documents(
+        self,
+        site_id: str,
+        *,
+        parent_item_id: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> SharePointReadResponse:
+        ...
+
 
 class SharePointReadError(Exception):
     def __init__(self, message: str) -> None:

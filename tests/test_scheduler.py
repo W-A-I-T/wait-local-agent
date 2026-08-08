@@ -18,7 +18,7 @@ from wait_local_agent.scheduler import (
     validate_schedule,
 )
 from wait_local_agent.security import require_bearer_authorization
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
 
@@ -50,6 +50,28 @@ def test_scheduler_manager_registers_and_reloads_persisted_jobs(tmp_path: Path) 
         assert jobs[0].next_run_at is not None
 
         reloaded_manager.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings) -> None:
+    db_path = tmp_path / "retry-worker.db"
+    _seed_tickets(db_path)
+
+    async def scenario() -> None:
+        store = Store(db_path)
+        dispatcher = EventDispatcher(
+            store,
+            AgentService(store, settings, SmartActionService(store, settings)),
+        )
+        manager = SchedulerManager(store, enabled=True, event_dispatcher=dispatcher)
+        manager.start()
+
+        assert manager._scheduler is not None  # noqa: SLF001
+        retry_job = manager._scheduler.get_job(manager._retry_job_identity())  # noqa: SLF001
+        assert retry_job is not None
+        manager._retry_due_event_deliveries()  # noqa: SLF001
+        manager.shutdown()
 
     asyncio.run(scenario())
 
@@ -208,6 +230,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
             schedule_type="cron",
             interval_seconds=None,
             run_at=None,
+            timezone="America/Vancouver",
         )
         deleted = manager.remove(scheduled_job.id or 0)
 
@@ -217,6 +240,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
         assert resumed.next_run_at is not None
         assert rescheduled.cron == "0 10 * * *"
         assert rescheduled.schedule_type == "cron"
+        assert rescheduled.timezone == "America/Vancouver"
         assert rescheduled.next_run_at is not None
         assert deleted.id == scheduled_job.id
         assert store.get_scheduled_job(scheduled_job.id or 0) is None
@@ -227,6 +251,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
                 schedule_type="cron",
                 interval_seconds=None,
                 run_at=None,
+                timezone="UTC",
             )
         with pytest.raises(KeyError):
             store.update_scheduled_job_schedule(
@@ -235,6 +260,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
                 schedule_type="cron",
                 interval_seconds=None,
                 run_at=None,
+                timezone="UTC",
             )
 
         unregistered = manager.register(
@@ -266,6 +292,7 @@ def test_scheduler_validation_rejects_invalid_cron() -> None:
 
 def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
     validate_schedule("interval", "", 60, None)
+    assert validate_schedule("cron", "0 9 * * *", None, None, " America/Vancouver ") == "America/Vancouver"
     validate_schedule("once", "", None, "2099-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="interval_seconds"):
         validate_schedule("interval", "", None, None)
@@ -287,6 +314,8 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
         validate_schedule("once", "", None, "2020-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="schedule_type"):
         validate_schedule("unknown", "", None, None)
+    with pytest.raises(ValueError, match="valid IANA timezone"):
+        validate_schedule("cron", "0 9 * * *", None, None, "Not/AZone")
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=1,
@@ -300,6 +329,19 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             interval_seconds=60,
         )
     ) is not None
+    timezone_trigger = _schedule_trigger(  # noqa: SLF001
+        ScheduledJob(
+            id=3,
+            template_id="template",
+            cron="0 9 * * *",
+            params_json="{}",
+            paused=False,
+            created_at="",
+            updated_at="",
+            timezone="America/Vancouver",
+        )
+    )
+    assert str(timezone_trigger.timezone) == "America/Vancouver"
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=2,
@@ -471,6 +513,69 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         run_workflow_template(store, "missing-template", "TCK-1001")
     with pytest.raises(LookupError):
         run_workflow_template(store, "ticket-triage", "NOPE")
+
+
+def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    service = SmartActionService(store, settings)
+
+    run = run_workflow_template(
+        store,
+        "ticket-quality-review",
+        "TCK-1001",
+        actor="technician",
+        client_id="acme",
+        tool_executor=service,
+    )
+
+    assert run.status == "completed"
+    assert "ticket quality review" in run.message.lower()
+    action_runs = store.list_smart_action_runs(client_id="acme")
+    assert len(action_runs) == 1
+    assert action_runs[0].action_id == "ticket-quality"
+    assert action_runs[0].status == "success"
+
+
+def test_tool_backed_workflow_requires_executor(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+
+    with pytest.raises(RuntimeError, match="workflow tool ticket-quality is not configured"):
+        run_workflow_template(store, "ticket-quality-review", "TCK-1001")
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_status"),
+    [
+        (ActionResult(status="failed", error_detail="token=should-not-leak"), "failed"),
+        (ActionResult(status="pending_approval", approval_id=91), "pending_approval"),
+    ],
+)
+def test_tool_backed_workflow_maps_non_success_tool_results(settings, result, expected_status) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+
+    class StubExecutor:
+        def invoke(self, *_args, **_kwargs):
+            return result
+
+    run = run_workflow_template(
+        store,
+        "ticket-quality-review",
+        "TCK-1001",
+        actor="technician",
+        tool_executor=StubExecutor(),
+    )
+
+    assert run.status == expected_status
+    if expected_status == "failed":
+        assert "should-not-leak" not in run.message
+        assert "[redacted]" in run.message
+    else:
+        assert run.approval_request_id == 91
 
 
 def test_security_and_store_error_edges(settings) -> None:

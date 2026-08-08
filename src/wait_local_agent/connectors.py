@@ -17,7 +17,12 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailMessageDeleteResult,
+    M365GraphMailMessageMoveResult,
+    M365GraphMailMessageReadStateResult,
+    M365GraphManagedDeviceRebootResult,
     M365GraphManagedDeviceRetireResult,
+    M365GraphManagedDeviceSyncResult,
     M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
@@ -26,6 +31,9 @@ from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
     ConnectorStatusValue,
+    ConnectWiseTicketDraft,
+    ConnectWiseWriteRequest,
+    ConnectWiseWriteResult,
     HaloTicketDraft,
     HaloWriteRequest,
     HaloWriteResult,
@@ -46,6 +54,12 @@ HALOPSA_ACTION_TYPES = {
     "update_ticket_fields",
 }
 
+CONNECTWISE_ACTION_TYPES = {
+    "update_status",
+    "assign_technician",
+    "update_ticket_fields",
+}
+
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
 M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
@@ -54,7 +68,12 @@ M365_LICENSE_ADD_ACTION = "users.licenses.add"
 M365_LICENSE_REMOVE_ACTION = "users.licenses.remove"
 M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
 M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
+M365_DEVICE_SYNC_ACTION = "managed-devices.sync"
+M365_DEVICE_REBOOT_ACTION = "managed-devices.reboot"
 M365_MAILBOX_SETTINGS_UPDATE_ACTION = "users.mailbox-settings.update"
+M365_MAIL_MESSAGE_MOVE_ACTION = "mail-messages.move"
+M365_MAIL_MESSAGE_READ_STATE_ACTION = "mail-messages.read-state"
+M365_MAIL_MESSAGE_DELETE_ACTION = "mail-messages.delete"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -148,6 +167,66 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ninjaone_status: ConnectorStatusValue = "not_configured"
     if ninjaone_configured:
         ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
+    datto_rmm_configured = bool(
+        settings.datto_rmm_base_url
+        and settings.datto_rmm_access_token
+        and settings.datto_rmm_site_map_json
+    )
+    datto_rmm_status: ConnectorStatusValue = "not_configured"
+    if datto_rmm_configured:
+        datto_rmm_status = "configured" if settings.allow_http_probing else "blocked"
+    ncentral_configured = bool(
+        settings.ncentral_base_url
+        and settings.ncentral_access_token
+        and settings.ncentral_org_unit_map_json
+    )
+    ncentral_status: ConnectorStatusValue = "not_configured"
+    if ncentral_configured:
+        ncentral_status = "configured" if settings.allow_http_probing else "blocked"
+    rmm_configured_name = (
+        "NinjaOne RMM"
+        if ninjaone_configured
+        else "Datto RMM"
+        if datto_rmm_configured
+        else "N-able N-central"
+        if ncentral_configured
+        else "RMM"
+    )
+    rmm_status = (
+        ninjaone_status
+        if ninjaone_configured
+        else datto_rmm_status
+        if datto_rmm_configured
+        else ncentral_status
+    )
+    rmm_configuration_message = (
+        (
+            "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
+            if ninjaone_configured
+            else (
+                "Datto RMM is configured for tenant-scoped inventory, component "
+                "metadata, and approval-gated quick jobs."
+                if datto_rmm_configured
+                else "N-able N-central is configured for tenant-scoped read-only device, issue, and task metadata."
+            )
+        )
+        if rmm_status == "configured"
+        else (
+            "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+            if ninjaone_configured
+            else (
+                "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                if datto_rmm_configured
+                else "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+            )
+        )
+        if rmm_status == "blocked"
+        else (
+            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, or WAIT_NCENTRAL_* values, including the "
+            "explicit tenant map, "
+            "to enable a vendor RMM adapter."
+        )
+    )
     return [
         ConnectorStatus(
             id="halopsa",
@@ -164,7 +243,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if halopsa_status == "blocked"
                 else "Set WAIT_HALOPSA_* values to enable the first PSA read path."
             ),
-            write_actions_enabled=settings.allow_write_actions,
+            write_actions_enabled=settings.allow_write_actions and connectwise_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -235,12 +314,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="ConnectWise PSA",
             status=connectwise_status,
             message=(
-                "ConnectWise PSA credentials are configured for read-only ticket and company lookup."
+                "ConnectWise PSA credentials are configured for ticket/company lookup and "
+                "approval-gated ticket updates."
                 if connectwise_status == "configured"
                 else "ConnectWise PSA credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if connectwise_status == "blocked"
-                else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads."
+                else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads and approved ticket updates."
             ),
+            write_actions_enabled=settings.allow_write_actions,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -309,19 +390,11 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         ConnectorStatus(
             id="rmm",
             kind="rmm",
-            name="NinjaOne RMM",
-            status=ninjaone_status,
-            message=(
-                "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
-                if ninjaone_status == "configured"
-                else "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
-                if ninjaone_status == "blocked"
-                else (
-                    "Set WAIT_NINJAONE_BASE_URL, WAIT_NINJAONE_ACCESS_TOKEN, and "
-                    "WAIT_NINJAONE_ORGANIZATION_MAP_JSON for NinjaOne."
-                )
-            ),
-            write_actions_enabled=settings.allow_write_actions,
+            name=rmm_configured_name,
+            status=rmm_status,
+            message=rmm_configuration_message,
+            write_actions_enabled=settings.allow_write_actions
+            and (ninjaone_configured or datto_rmm_configured),
             http_probing_enabled=settings.allow_http_probing,
         ),
     ]
@@ -407,6 +480,30 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "ninjaone",
         ),
         SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
+        SecretRecord("WAIT_DATTORMM_BASE_URL", bool(settings.datto_rmm_base_url), "dattormm"),
+        SecretRecord(
+            "WAIT_DATTORMM_ACCESS_TOKEN",
+            bool(settings.datto_rmm_access_token),
+            "dattormm",
+        ),
+        SecretRecord(
+            "WAIT_DATTORMM_SITE_MAP_JSON",
+            bool(settings.datto_rmm_site_map_json),
+            "dattormm",
+        ),
+        SecretRecord("WAIT_DATTORMM_PAGE_SIZE", bool(settings.datto_rmm_page_size), "dattormm"),
+        SecretRecord("WAIT_NCENTRAL_BASE_URL", bool(settings.ncentral_base_url), "ncentral"),
+        SecretRecord(
+            "WAIT_NCENTRAL_ACCESS_TOKEN",
+            bool(settings.ncentral_access_token),
+            "ncentral",
+        ),
+        SecretRecord(
+            "WAIT_NCENTRAL_ORG_UNIT_MAP_JSON",
+            bool(settings.ncentral_org_unit_map_json),
+            "ncentral",
+        ),
+        SecretRecord("WAIT_NCENTRAL_PAGE_SIZE", bool(settings.ncentral_page_size), "ncentral"),
     ]
 
 
@@ -641,6 +738,37 @@ def draft_halopsa_ticket_action(
     )
 
 
+def draft_connectwise_ticket_action(
+    store: Store,
+    ticket_id: str,
+    action_type: str,
+    fields: dict[str, object],
+    *,
+    client_id: str | None = None,
+) -> ConnectWiseTicketDraft:
+    validate_connectwise_action_fields(action_type, fields)
+    payload: dict[str, object] = {
+        "connector": "connectwise",
+        "ticket_id": ticket_id,
+        "action_type": action_type,
+        "fields": fields,
+    }
+    approval = store.create_approval_request(
+        ticket_id,
+        f"connectwise.{action_type}",
+        payload,
+        client_id=client_id,
+    )
+    return ConnectWiseTicketDraft(
+        ticket_id=ticket_id,
+        action_type=action_type,
+        payload_json=json.dumps(redact_value(payload), sort_keys=True),
+        approval_required=True,
+        status="pending",
+        approval_request_id=approval.id,
+    )
+
+
 def execute_halopsa_approval_request(
     store: Store,
     client: HaloPSAClient,
@@ -685,6 +813,54 @@ def execute_halopsa_approval_request(
         status=result.status,
         message=result.message,
         result=sanitize_halopsa_write_result(result),
+    )
+
+
+def execute_connectwise_approval_request(
+    store: Store,
+    client: ConnectWiseClient,
+    request_id: int,
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if not approval.action_type.startswith("connectwise."):
+        raise ValueError("approval request is not a ConnectWise PSA action")
+    if approval.status != "approved":
+        raise PermissionError("ConnectWise PSA writes require approved approval requests")
+    if approval.execution_status == "succeeded":
+        raise RuntimeError("ConnectWise PSA approval request has already executed successfully")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    if payload.get("connector") != "connectwise":
+        raise ValueError("approval payload connector does not match ConnectWise PSA")
+    action_type = str(payload.get("action_type") or approval.action_type.removeprefix("connectwise."))
+    if action_type not in CONNECTWISE_ACTION_TYPES:
+        raise ValueError(f"unsupported ConnectWise PSA action type: {action_type}")
+    if approval.action_type != f"connectwise.{action_type}":
+        raise ValueError("approval payload action does not match approval request")
+    ticket_id = str(payload.get("ticket_id") or approval.subject_id)
+    if ticket_id != approval.subject_id:
+        raise ValueError("approval payload ticket does not match approval request")
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    validate_connectwise_action_fields(action_type, fields)
+    result = client.execute_write(
+        ConnectWiseWriteRequest(
+            ticket_id=ticket_id,
+            action_type=action_type,
+            fields=fields,
+            approval_request_id=approval.id,
+        )
+    )
+    return store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result=sanitize_connectwise_write_result(result),
+        audit_event_type="connectwise.write",
     )
 
 
@@ -834,6 +1010,46 @@ def draft_m365_managed_device_retirement(
     )
 
 
+def draft_m365_managed_device_sync(
+    store: Store,
+    *,
+    device_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_DEVICE_SYNC_ACTION,
+        "device_id": device_id,
+    }
+    validate_m365_managed_device_sync_payload(payload)
+    return store.create_approval_request(
+        f"m365-managed-device:{device_id.strip()}:sync",
+        f"m365.{M365_DEVICE_SYNC_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def draft_m365_managed_device_reboot(
+    store: Store,
+    *,
+    device_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_DEVICE_REBOOT_ACTION,
+        "device_id": device_id,
+    }
+    validate_m365_managed_device_reboot_payload(payload)
+    return store.create_approval_request(
+        f"m365-managed-device:{device_id.strip()}:reboot",
+        f"m365.{M365_DEVICE_REBOOT_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def draft_m365_mailbox_settings_update(
     store: Store,
     *,
@@ -851,6 +1067,82 @@ def draft_m365_mailbox_settings_update(
     return store.create_approval_request(
         f"m365-user:{user_identity.strip()}:mailbox-settings",
         f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def draft_m365_mail_message_move(
+    store: Store,
+    *,
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    destination_folder_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAIL_MESSAGE_MOVE_ACTION,
+        "destination_folder_id": destination_folder_id,
+        "message_id": message_id,
+        "source_folder_id": source_folder_id,
+        "user_identity": user_identity,
+    }
+    validate_m365_mail_message_move_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:message:{message_id.strip()}:move",
+        f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def draft_m365_mail_message_read_state(
+    store: Store,
+    *,
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    is_read: bool,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAIL_MESSAGE_READ_STATE_ACTION,
+        "is_read": is_read,
+        "message_id": message_id,
+        "source_folder_id": source_folder_id,
+        "user_identity": user_identity,
+    }
+    validate_m365_mail_message_read_state_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:message:{message_id.strip()}:read-state",
+        f"m365.{M365_MAIL_MESSAGE_READ_STATE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def draft_m365_mail_message_delete(
+    store: Store,
+    *,
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAIL_MESSAGE_DELETE_ACTION,
+        "message_id": message_id,
+        "source_folder_id": source_folder_id,
+        "user_identity": user_identity,
+    }
+    validate_m365_mail_message_delete_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:message:{message_id.strip()}:delete",
+        f"m365.{M365_MAIL_MESSAGE_DELETE_ACTION}",
         payload,
         client_id=client_id,
     )
@@ -874,7 +1166,12 @@ def execute_m365_approval_request(
         f"m365.{M365_LICENSE_REMOVE_ACTION}",
         f"m365.{M365_SESSION_REVOKE_ACTION}",
         f"m365.{M365_DEVICE_RETIRE_ACTION}",
+        f"m365.{M365_DEVICE_SYNC_ACTION}",
+        f"m365.{M365_DEVICE_REBOOT_ACTION}",
         f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
+        f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
+        f"m365.{M365_MAIL_MESSAGE_READ_STATE_ACTION}",
+        f"m365.{M365_MAIL_MESSAGE_DELETE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -894,7 +1191,12 @@ def execute_m365_approval_request(
         M365_LICENSE_REMOVE_ACTION,
         M365_SESSION_REVOKE_ACTION,
         M365_DEVICE_RETIRE_ACTION,
+        M365_DEVICE_SYNC_ACTION,
+        M365_DEVICE_REBOOT_ACTION,
         M365_MAILBOX_SETTINGS_UPDATE_ACTION,
+        M365_MAIL_MESSAGE_MOVE_ACTION,
+        M365_MAIL_MESSAGE_READ_STATE_ACTION,
+        M365_MAIL_MESSAGE_DELETE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -904,7 +1206,12 @@ def execute_m365_approval_request(
         | M365GraphLicenseChangeResult
         | M365GraphSessionRevokeResult
         | M365GraphManagedDeviceRetireResult
+        | M365GraphManagedDeviceSyncResult
+        | M365GraphManagedDeviceRebootResult
         | M365GraphMailboxSettingsUpdateResult
+        | M365GraphMailMessageMoveResult
+        | M365GraphMailMessageReadStateResult
+        | M365GraphMailMessageDeleteResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -979,7 +1286,21 @@ def execute_m365_approval_request(
             "device_id": result.device_id,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_DEVICE_SYNC_ACTION:
+        validate_m365_managed_device_sync_payload(payload)
+        result = client.sync_managed_device(device_id=str(payload["device_id"]))
+        result_payload = {
+            "device_id": result.device_id,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_DEVICE_REBOOT_ACTION:
+        validate_m365_managed_device_reboot_payload(payload)
+        result = client.reboot_managed_device(device_id=str(payload["device_id"]))
+        result_payload = {
+            "device_id": result.device_id,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_MAILBOX_SETTINGS_UPDATE_ACTION:
         validate_m365_mailbox_settings_update_payload(payload)
         result = client.update_mailbox_settings(
             user_identity=str(payload["user_identity"]),
@@ -988,6 +1309,49 @@ def execute_m365_approval_request(
         result_payload = {
             "user_identity": result.user_identity,
             "settings": result.settings,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_MAIL_MESSAGE_MOVE_ACTION:
+        validate_m365_mail_message_move_payload(payload)
+        result = client.move_mail_message(
+            user_identity=str(payload["user_identity"]),
+            source_folder_id=str(payload["source_folder_id"]),
+            message_id=str(payload["message_id"]),
+            destination_folder_id=str(payload["destination_folder_id"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "source_folder_id": result.source_folder_id,
+            "message_id": result.message_id,
+            "destination_folder_id": result.destination_folder_id,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_MAIL_MESSAGE_READ_STATE_ACTION:
+        validate_m365_mail_message_read_state_payload(payload)
+        result = client.update_mail_message_read_state(
+            user_identity=str(payload["user_identity"]),
+            source_folder_id=str(payload["source_folder_id"]),
+            message_id=str(payload["message_id"]),
+            is_read=bool(payload["is_read"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "source_folder_id": result.source_folder_id,
+            "message_id": result.message_id,
+            "is_read": result.is_read,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_mail_message_delete_payload(payload)
+        result = client.delete_mail_message(
+            user_identity=str(payload["user_identity"]),
+            source_folder_id=str(payload["source_folder_id"]),
+            message_id=str(payload["message_id"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "source_folder_id": result.source_folder_id,
+            "message_id": result.message_id,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -1141,6 +1505,36 @@ def validate_m365_managed_device_retirement_payload(payload: dict[str, object]) 
         raise ValueError("M365 device_id is invalid")
 
 
+def validate_m365_managed_device_sync_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "device_id"}:
+        raise ValueError("M365 managed-device sync payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_DEVICE_SYNC_ACTION:
+        raise ValueError("M365 managed-device sync payload is invalid")
+    device_id = payload.get("device_id")
+    if (
+        not isinstance(device_id, str)
+        or not device_id.strip()
+        or len(device_id) > 320
+        or any(ord(character) < 32 or character.isspace() for character in device_id)
+    ):
+        raise ValueError("M365 device_id is invalid")
+
+
+def validate_m365_managed_device_reboot_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "device_id"}:
+        raise ValueError("M365 managed-device reboot payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_DEVICE_REBOOT_ACTION:
+        raise ValueError("M365 managed-device reboot payload is invalid")
+    device_id = payload.get("device_id")
+    if (
+        not isinstance(device_id, str)
+        or not device_id.strip()
+        or len(device_id) > 320
+        or any(ord(character) < 32 or character.isspace() for character in device_id)
+    ):
+        raise ValueError("M365 device_id is invalid")
+
+
 def validate_m365_mailbox_settings_update_payload(payload: dict[str, object]) -> None:
     if set(payload) != {"connector", "action_type", "settings", "user_identity"}:
         raise ValueError("M365 mailbox settings payload contains unsupported fields")
@@ -1168,6 +1562,85 @@ def validate_m365_mailbox_settings_update_payload(payload: dict[str, object]) ->
             raise ValueError(f"M365 mailbox setting {field_name} is invalid")
 
 
+def validate_m365_mail_message_move_payload(payload: dict[str, object]) -> None:
+    required = {
+        "connector",
+        "action_type",
+        "user_identity",
+        "source_folder_id",
+        "message_id",
+        "destination_folder_id",
+    }
+    if set(payload) != required:
+        raise ValueError("M365 mail message move payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_MAIL_MESSAGE_MOVE_ACTION:
+        raise ValueError("M365 mail message move payload is invalid")
+    for field_name in ("user_identity", "source_folder_id", "message_id", "destination_folder_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
+
+
+def validate_m365_mail_message_read_state_payload(payload: dict[str, object]) -> None:
+    required = {
+        "connector",
+        "action_type",
+        "user_identity",
+        "source_folder_id",
+        "message_id",
+        "is_read",
+    }
+    if set(payload) != required:
+        raise ValueError("M365 mail message read-state payload contains unsupported fields")
+    if (
+        payload.get("connector") != "m365"
+        or payload.get("action_type") != M365_MAIL_MESSAGE_READ_STATE_ACTION
+    ):
+        raise ValueError("M365 mail message read-state payload is invalid")
+    if not isinstance(payload.get("is_read"), bool):
+        raise ValueError("M365 is_read is invalid")
+    for field_name in ("user_identity", "source_folder_id", "message_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
+
+
+def validate_m365_mail_message_delete_payload(payload: dict[str, object]) -> None:
+    required = {
+        "connector",
+        "action_type",
+        "user_identity",
+        "source_folder_id",
+        "message_id",
+    }
+    if set(payload) != required:
+        raise ValueError("M365 mail message delete payload contains unsupported fields")
+    if (
+        payload.get("connector") != "m365"
+        or payload.get("action_type") != M365_MAIL_MESSAGE_DELETE_ACTION
+    ):
+        raise ValueError("M365 mail message delete payload is invalid")
+    for field_name in ("user_identity", "source_folder_id", "message_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
+
+
 def _canonical_uuid(value: object, field: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"M365 {field} is invalid")
@@ -1182,6 +1655,17 @@ def _canonical_uuid(value: object, field: str) -> str:
 
 
 def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:
+    return {
+        "action_type": result.action_type,
+        "ticket_id": result.ticket_id,
+        "endpoint": result.endpoint,
+        "status": result.status,
+        "status_code": result.status_code,
+        "remote_id": result.remote_id,
+    }
+
+
+def sanitize_connectwise_write_result(result: ConnectWiseWriteResult) -> dict[str, object]:
     return {
         "action_type": result.action_type,
         "ticket_id": result.ticket_id,
@@ -1232,6 +1716,54 @@ def validate_halopsa_action_fields(action_type: str, fields: dict[str, object]) 
     has_ticket_field = any(value not in (None, "") for value in fields.values())
     if action_type == "update_ticket_fields" and not has_ticket_field:
         raise ValueError("HaloPSA update_ticket_fields requires at least one field")
+
+
+def update_connectwise_approval_fields(
+    store: Store,
+    request_id: int,
+    fields: dict[str, object],
+    comment: str = "Draft edited before approval",
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if not approval.action_type.startswith("connectwise."):
+        raise ValueError("approval request is not a ConnectWise PSA action")
+    payload = json.loads(approval.payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    action_type = str(payload.get("action_type") or approval.action_type.removeprefix("connectwise."))
+    validate_connectwise_action_fields(action_type, fields)
+    payload["fields"] = fields
+    return store.update_approval_request_payload(request_id, payload, comment)
+
+
+def validate_connectwise_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in CONNECTWISE_ACTION_TYPES:
+        raise ValueError(f"unsupported ConnectWise PSA action type: {action_type}")
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError(f"ConnectWise PSA {action_type} requires ticket fields")
+    if action_type == "update_status":
+        allowed = {"status_id"}
+    elif action_type == "assign_technician":
+        allowed = {"owner_id", "team_id"}
+    else:
+        allowed = {"summary", "description", "status_id", "priority_id", "board_id", "owner_id", "team_id"}
+    if set(fields) - allowed:
+        raise ValueError("ConnectWise PSA ticket fields contain unsupported keys")
+    if action_type == "assign_technician" and not (fields.get("owner_id") or fields.get("team_id")):
+        raise ValueError("ConnectWise PSA assign_technician requires owner_id or team_id")
+    if action_type == "update_status" and not fields.get("status_id"):
+        raise ValueError("ConnectWise PSA update_status requires status_id")
+    for field, value in fields.items():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError(f"ConnectWise PSA field {field} must be text or a number")
+        if isinstance(value, str) and (
+            not value.strip()
+            or len(value.strip()) > 2000
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise ValueError(f"ConnectWise PSA field {field} is invalid")
 
 
 def _first_present(fields: dict[str, object], *keys: str) -> object:

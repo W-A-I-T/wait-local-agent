@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import replace
 
 import httpx
+import pytest
 
 from wait_local_agent.connectwise import (
     ConnectWiseClient,
     ConnectWiseReadError,
+    ConnectWiseWriteResult,
     _api_base_url,
     _list_params,
     _normalize_company,
@@ -16,7 +19,9 @@ from wait_local_agent.connectwise import (
     _safe_endpoint,
     _safe_segment,
     _safe_version,
+    _write_endpoint_and_patch,
 )
+from wait_local_agent.models import ConnectWiseWriteRequest
 
 
 def _settings(settings, *, allow_http_probing: bool = True):
@@ -63,6 +68,183 @@ def test_connectwise_reads_report_missing_credentials(settings) -> None:
     assert result.status == "not_configured"
     assert "WAIT_CONNECTWISE_PRIVATE_KEY" in result.message
     assert response.result.status == "not_configured"
+
+
+def test_connectwise_writes_require_both_flags_and_never_probe_when_blocked(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def blocked_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    client = ConnectWiseClient(
+        _settings(settings, allow_http_probing=False),
+        transport=httpx.MockTransport(blocked_handler),
+    )
+    request = ConnectWiseWriteRequest("42", "update_status", {"status_id": 7})
+
+    health = client.write_health()
+    result = client.execute_write(request)
+
+    assert health.status == "blocked"
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in health.message
+    assert "WAIT_ALLOW_WRITE_ACTIONS=true" in health.message
+    assert result.status == "blocked"
+    assert requests == []
+
+    write_disabled = ConnectWiseClient(
+        replace(_settings(settings), allow_write_actions=False),
+        transport=httpx.MockTransport(blocked_handler),
+    )
+    assert write_disabled.write_health().status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS=true" in write_disabled.write_health().message
+
+
+def test_connectwise_writes_use_allowlisted_patch_and_sanitize_response(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PATCH"
+        assert request.url.path.endswith("/service/tickets/42")
+        assert request.headers["content-type"] == "application/json"
+        assert json.loads(request.content) == [
+            {"op": "replace", "path": "/summary", "value": "Updated summary"},
+            {"op": "replace", "path": "/status/id", "value": 7},
+            {"op": "replace", "path": "/owner/id", "value": 9},
+        ]
+        return httpx.Response(200, json={"id": 42, "private": "do-not-store"})
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    client = ConnectWiseClient(active, transport=httpx.MockTransport(handler))
+    assert client.write_health().status == "ready"
+    result = client.execute_write(
+        ConnectWiseWriteRequest(
+            "42",
+            "update_ticket_fields",
+            {"summary": "Updated summary", "status_id": 7, "owner_id": 9},
+            approval_request_id=3,
+        )
+    )
+
+    assert result == ConnectWiseWriteResult(
+        "succeeded",
+        "ConnectWise PSA update_ticket_fields write succeeded.",
+        "update_ticket_fields",
+        "42",
+        endpoint="service/tickets/42",
+        status_code=200,
+        remote_id="42",
+    )
+    assert len(requests) == 1
+
+
+def test_connectwise_write_failures_and_empty_success_are_bounded(settings) -> None:
+    active = replace(_settings(settings), allow_write_actions=True)
+    request = ConnectWiseWriteRequest("42", "update_status", {"status_id": 7})
+    http_failure = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(403)),
+    ).execute_write(request)
+    malformed = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"bad")),
+    ).execute_write(request)
+    empty = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(204)),
+    ).execute_write(request)
+    no_remote_id = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    ).execute_write(request)
+    non_object_remote = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    ).execute_write(request)
+
+    def disconnected(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private key", request=request)
+
+    disconnected_result = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(disconnected),
+    ).execute_write(request)
+
+    def patch_http_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("read failed", request=request)
+
+    generic_failure = ConnectWiseClient(
+        active,
+        transport=httpx.MockTransport(patch_http_error),
+    ).execute_write(request)
+
+    assert http_failure.status == "failed"
+    assert "HTTP 403" in http_failure.message
+    assert malformed.status == "failed"
+    assert malformed.message.endswith("returned malformed JSON.")
+    assert empty.status == "succeeded"
+    assert empty.status_code == 204
+    assert no_remote_id.status == "succeeded"
+    assert no_remote_id.remote_id == ""
+    assert non_object_remote.remote_id == ""
+    assert disconnected_result.status == "failed"
+    assert disconnected_result.message.endswith("before receiving a response.")
+    assert "private key" not in disconnected_result.message
+    assert generic_failure.message == "ConnectWise PSA request failed."
+
+
+def test_connectwise_write_validation_and_missing_configuration(settings) -> None:
+    active = replace(_settings(settings), allow_write_actions=True)
+    missing = ConnectWiseClient(
+        replace(active, connectwise_client_id=""),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    ).execute_write(ConnectWiseWriteRequest("42", "update_status", {"status_id": 7}))
+    assert missing.status == "not_configured"
+    assert ConnectWiseClient(
+        replace(active, connectwise_client_id=""),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    ).write_health().status == "not_configured"
+
+    invalids = [
+        ConnectWiseWriteRequest("42", "bad", {"summary": "x"}),
+        ConnectWiseWriteRequest("42/other", "update_status", {"status_id": 7}),
+        ConnectWiseWriteRequest("42", "update_status", {}),
+        ConnectWiseWriteRequest("42", "update_status", {"summary": "x"}),
+        ConnectWiseWriteRequest("42", "assign_technician", {"summary": "x"}),
+        ConnectWiseWriteRequest("42", "update_ticket_fields", {"unknown": "x"}),
+        ConnectWiseWriteRequest("42", "update_ticket_fields", {"summary": "\n"}),
+    ]
+    for request in invalids:
+        result = ConnectWiseClient(active).execute_write(request)
+        assert result.status == "failed"
+
+    assert _write_endpoint_and_patch(
+        ConnectWiseWriteRequest("42", "assign_technician", {"team_id": 5})
+    )[1] == [{"op": "replace", "path": "/team/id", "value": 5}]
+    with pytest.raises(ConnectWiseReadError, match="must be text"):
+        _write_endpoint_and_patch(
+            ConnectWiseWriteRequest("42", "update_ticket_fields", {"summary": True})
+        )
+    with pytest.raises(ConnectWiseReadError, match="invalid"):
+        _write_endpoint_and_patch(
+            ConnectWiseWriteRequest("42", "update_ticket_fields", {"summary": "\n"})
+        )
+    assert _write_endpoint_and_patch(
+        ConnectWiseWriteRequest("42", "update_ticket_fields", {"description": "details"})
+    )[1][0]["path"] == "/initialDescription"
+    with pytest.raises(ConnectWiseReadError, match="WAIT_ALLOW_HTTP_PROBING"):
+        ConnectWiseClient(replace(active, allow_http_probing=False))._patch(
+            "service/tickets/42", []
+        )
+    with pytest.raises(ConnectWiseReadError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        ConnectWiseClient(replace(active, allow_write_actions=False))._patch(
+            "service/tickets/42", []
+        )
+    with pytest.raises(ConnectWiseReadError, match="credentials"):
+        ConnectWiseClient(replace(active, connectwise_client_id=""))._patch(
+            "service/tickets/42", []
+        )
 
 
 def test_connectwise_reads_normalize_payloads_and_bound_requests(settings) -> None:
