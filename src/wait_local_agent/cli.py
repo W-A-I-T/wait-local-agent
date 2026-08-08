@@ -44,6 +44,7 @@ from wait_local_agent.api.packs.loader import (
     install_pack_tarball,
     load_pack_registry,
 )
+from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
 from wait_local_agent.collectors import (
     CollectorService,
@@ -157,6 +158,10 @@ def _servicenow_client() -> ServiceNowClient:
     return ServiceNowClient(load_settings())
 
 
+def _autotask_client() -> AutotaskClient:
+    return AutotaskClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -207,6 +212,13 @@ def doctor() -> None:
         and settings.servicenow_password
     )
     typer.echo(f"servicenow_configured={servicenow_configured}")
+    autotask_configured = bool(
+        settings.autotask_base_url
+        and settings.autotask_username
+        and settings.autotask_secret
+        and settings.autotask_integration_code
+    )
+    typer.echo(f"autotask_configured={autotask_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -632,7 +644,10 @@ def validate_connector(
     connector: Annotated[
         str,
         typer.Argument(
-            help="Connector id: halopsa, hudu, connectwise, syncro, or servicenow."
+            help=(
+                "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
+                "or autotask."
+            )
         ),
     ]
 ) -> None:
@@ -646,6 +661,7 @@ def validate_connector(
             connectwise_client=_connectwise_client(),
             syncro_client=_syncro_client(),
             servicenow_client=_servicenow_client(),
+            autotask_client=_autotask_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -951,6 +967,59 @@ def servicenow_company(sys_id: str) -> None:
     _print_servicenow_response(
         "companies.get",
         _servicenow_client().get_company(sys_id),
+    )
+
+
+@connectors_app.command("autotask-health")
+def autotask_health() -> None:
+    result = _autotask_client().health()
+    _audit_autotask_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("autotask-tickets")
+def autotask_tickets(page: int = 1, page_size: int | None = None) -> None:
+    _print_autotask_response(
+        "tickets.list",
+        _autotask_client().list_tickets(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().autotask_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("autotask-ticket")
+def autotask_ticket(ticket_id: str) -> None:
+    _print_autotask_response(
+        "tickets.get",
+        _autotask_client().get_ticket(ticket_id),
+    )
+
+
+@connectors_app.command("autotask-companies")
+def autotask_companies(page: int = 1, page_size: int | None = None) -> None:
+    _print_autotask_response(
+        "companies.list",
+        _autotask_client().list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else load_settings().autotask_page_size
+            ),
+        ),
+    )
+
+
+@connectors_app.command("autotask-company")
+def autotask_company(company_id: str) -> None:
+    _print_autotask_response(
+        "companies.get",
+        _autotask_client().get_company(company_id),
     )
 
 
@@ -1612,6 +1681,21 @@ def _print_servicenow_response(read_type: str, response: ServiceNowReadResponse)
 
 def _audit_servicenow_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("servicenow.read", read_type, f"{status} count={count}")
+
+
+def _print_autotask_response(read_type: str, response: AutotaskReadResponse) -> None:
+    _audit_autotask_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {"result": asdict(response.result), "items": response.items},
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("autotask.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

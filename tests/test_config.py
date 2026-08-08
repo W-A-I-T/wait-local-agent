@@ -82,6 +82,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.servicenow_password == ""
     assert settings.servicenow_api_version == ""
     assert settings.servicenow_page_size == 25
+    assert settings.autotask_base_url == ""
+    assert settings.autotask_username == ""
+    assert settings.autotask_secret == ""
+    assert settings.autotask_integration_code == ""
+    assert settings.autotask_page_size == 50
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -176,6 +181,22 @@ def test_servicenow_env_values(monkeypatch) -> None:
     assert settings.servicenow_password == "password"
     assert settings.servicenow_api_version == "v1"
     assert settings.servicenow_page_size == 10
+
+
+def test_autotask_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
+    monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "secret")
+    monkeypatch.setenv("WAIT_AUTOTASK_INTEGRATION_CODE", "integration-code")
+    monkeypatch.setenv("WAIT_AUTOTASK_PAGE_SIZE", "20")
+
+    settings = load_settings()
+
+    assert settings.autotask_base_url == "https://webservices1.autotask.net"
+    assert settings.autotask_username == "api-user"
+    assert settings.autotask_secret == "secret"
+    assert settings.autotask_integration_code == "integration-code"
+    assert settings.autotask_page_size == 20
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

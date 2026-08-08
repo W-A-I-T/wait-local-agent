@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
+from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.cli import app
 from wait_local_agent.collectors import (
     default_registry,
@@ -466,6 +467,53 @@ def test_servicenow_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> 
     assert incident.exit_code == 0 and "abc123" in incident.output
     assert companies.exit_code == 0 and "Contoso" in companies.output
     assert company.exit_code == 0 and "co-1" in company.output
+
+
+def test_autotask_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_tickets(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "7", "ticket_number": "T-7"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"id": ticket_id}]
+            )
+
+        def list_companies(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1), [{"id": "3", "name": "Contoso"}]
+            )
+
+        def get_company(self, company_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"id": company_id}]
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "AutotaskClient", FakeAutotaskClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "autotask-health"])
+    tickets = runner.invoke(app, ["connectors", "autotask-tickets"])
+    ticket = runner.invoke(app, ["connectors", "autotask-ticket", "7"])
+    companies = runner.invoke(app, ["connectors", "autotask-companies"])
+    company = runner.invoke(app, ["connectors", "autotask-company", "3"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert tickets.exit_code == 0 and "T-7" in tickets.output
+    assert ticket.exit_code == 0 and "7" in ticket.output
+    assert companies.exit_code == 0 and "Contoso" in companies.output
+    assert company.exit_code == 0 and "3" in company.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

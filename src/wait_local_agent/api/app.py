@@ -41,6 +41,7 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
     install_pack_tarball,
 )
+from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
 from wait_local_agent.backup import (
     BackupEncryptionError,
     backup_state,
@@ -274,6 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     connectwise_client = ConnectWiseClient(active_settings)
     syncro_client = SyncroClient(active_settings)
     servicenow_client = ServiceNowClient(active_settings)
+    autotask_client = AutotaskClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -366,6 +368,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 active_settings.servicenow_base_url
                 and active_settings.servicenow_username
                 and active_settings.servicenow_password
+            ),
+            "autotask_configured": bool(
+                active_settings.autotask_base_url
+                and active_settings.autotask_username
+                and active_settings.autotask_secret
+                and active_settings.autotask_integration_code
             ),
         }
 
@@ -1846,6 +1854,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = servicenow_client.get_company(sys_id)
         return _servicenow_response("companies.get", response)
 
+    @app.get("/connectors/autotask/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = autotask_client.health()
+        _audit_autotask_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/autotask/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = autotask_client.list_tickets(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.autotask_page_size
+            ),
+        )
+        return _autotask_response("tickets.list", response)
+
+    @app.get("/connectors/autotask/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_ticket(
+        ticket_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = autotask_client.get_ticket(ticket_id)
+        return _autotask_response("tickets.get", response)
+
+    @app.get("/connectors/autotask/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = autotask_client.list_companies(
+            page=page,
+            page_size=(
+                page_size
+                if page_size is not None
+                else active_settings.autotask_page_size
+            ),
+        )
+        return _autotask_response("companies.list", response)
+
+    @app.get("/connectors/autotask/companies/{company_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_company(
+        company_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = autotask_client.get_company(company_id)
+        return _autotask_response("companies.get", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2302,6 +2373,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_servicenow_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("servicenow.read", read_type, f"{status} count={count}")
+
+    def _autotask_response(
+        read_type: str,
+        response: AutotaskReadResponse,
+    ) -> dict[str, object]:
+        _audit_autotask_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
+        }
+
+    def _audit_autotask_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("autotask.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
@@ -74,6 +75,15 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     servicenow_status: ConnectorStatusValue = "not_configured"
     if servicenow_configured:
         servicenow_status = "configured" if settings.allow_http_probing else "blocked"
+    autotask_configured = bool(
+        settings.autotask_base_url
+        and settings.autotask_username
+        and settings.autotask_secret
+        and settings.autotask_integration_code
+    )
+    autotask_status: ConnectorStatusValue = "not_configured"
+    if autotask_configured:
+        autotask_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -153,6 +163,20 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
+            id="autotask",
+            kind="psa",
+            name="Autotask PSA",
+            status=autotask_status,
+            message=(
+                "Autotask credentials are configured for read-only ticket and company lookup."
+                if autotask_status == "configured"
+                else "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if autotask_status == "blocked"
+                else "Set WAIT_AUTOTASK_* values to enable Autotask PSA reads."
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
             id="m365",
             kind="m365",
             name="Microsoft 365 / Entra",
@@ -207,6 +231,15 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_SERVICENOW_PASSWORD", bool(settings.servicenow_password), "servicenow"),
         SecretRecord("WAIT_SERVICENOW_API_VERSION", bool(settings.servicenow_api_version), "servicenow"),
         SecretRecord("WAIT_SERVICENOW_PAGE_SIZE", bool(settings.servicenow_page_size), "servicenow"),
+        SecretRecord("WAIT_AUTOTASK_BASE_URL", bool(settings.autotask_base_url), "autotask"),
+        SecretRecord("WAIT_AUTOTASK_USERNAME", bool(settings.autotask_username), "autotask"),
+        SecretRecord("WAIT_AUTOTASK_SECRET", bool(settings.autotask_secret), "autotask"),
+        SecretRecord(
+            "WAIT_AUTOTASK_INTEGRATION_CODE",
+            bool(settings.autotask_integration_code),
+            "autotask",
+        ),
+        SecretRecord("WAIT_AUTOTASK_PAGE_SIZE", bool(settings.autotask_page_size), "autotask"),
     ]
 
 
@@ -219,6 +252,7 @@ def validate_connector_credentials(
     connectwise_client: ConnectWiseClient | None = None,
     syncro_client: SyncroClient | None = None,
     servicenow_client: ServiceNowClient | None = None,
+    autotask_client: AutotaskClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -311,6 +345,25 @@ def validate_connector_credentials(
                 f"ServiceNow credentials are incomplete: {', '.join(missing)}.",
             )
         result = (servicenow_client or ServiceNowClient(settings)).health()
+    elif connector == "autotask":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_AUTOTASK_BASE_URL": settings.autotask_base_url,
+                "WAIT_AUTOTASK_USERNAME": settings.autotask_username,
+                "WAIT_AUTOTASK_SECRET": settings.autotask_secret,
+                "WAIT_AUTOTASK_INTEGRATION_CODE": settings.autotask_integration_code,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Autotask credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (autotask_client or AutotaskClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

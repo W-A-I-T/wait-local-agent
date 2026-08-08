@@ -110,6 +110,11 @@ class Settings:
     servicenow_password: str = ""
     servicenow_api_version: str = ""
     servicenow_page_size: int = 25
+    autotask_base_url: str = ""
+    autotask_username: str = ""
+    autotask_secret: str = ""
+    autotask_integration_code: str = ""
+    autotask_page_size: int = 50
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
@@ -265,6 +270,31 @@ def load_settings() -> Settings:
         ),
         servicenow_api_version=os.getenv("WAIT_SERVICENOW_API_VERSION", "").strip(),
         servicenow_page_size=_int_env("WAIT_SERVICENOW_PAGE_SIZE", 25),
+        autotask_base_url=_secret_value(
+            "WAIT_AUTOTASK_BASE_URL",
+            os.getenv("WAIT_AUTOTASK_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_username=_secret_value(
+            "WAIT_AUTOTASK_USERNAME",
+            os.getenv("WAIT_AUTOTASK_USERNAME", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_secret=_secret_value(
+            "WAIT_AUTOTASK_SECRET",
+            os.getenv("WAIT_AUTOTASK_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_integration_code=_secret_value(
+            "WAIT_AUTOTASK_INTEGRATION_CODE",
+            os.getenv("WAIT_AUTOTASK_INTEGRATION_CODE", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        autotask_page_size=_int_env("WAIT_AUTOTASK_PAGE_SIZE", 50),
         license_key=_secret_value(
             "license_key",
             os.getenv("WAIT_LICENSE_KEY", ""),

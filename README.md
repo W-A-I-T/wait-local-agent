@@ -384,6 +384,33 @@ The API mirrors these commands under `/connectors/servicenow/*`. Requests use
 bounded pagination, explicit fields, basic authentication from settings/vault,
 and read-only GET operations ([ServiceNow Table API](https://www.servicenow.com/docs/r/xanadu/api-reference/rest-apis/c_TableAPI.html)).
 
+### Autotask PSA
+
+Required settings:
+
+```text
+WAIT_AUTOTASK_BASE_URL=
+WAIT_AUTOTASK_USERNAME=
+WAIT_AUTOTASK_SECRET=
+WAIT_AUTOTASK_INTEGRATION_CODE=
+WAIT_AUTOTASK_PAGE_SIZE=50
+```
+
+Read commands cover tickets and companies through Autotask's REST API:
+
+```bash
+wait-local-agent connectors validate autotask
+wait-local-agent connectors autotask-health
+wait-local-agent connectors autotask-tickets
+wait-local-agent connectors autotask-ticket <ticket-id>
+wait-local-agent connectors autotask-companies
+wait-local-agent connectors autotask-company <company-id>
+```
+
+The API mirrors these commands under `/connectors/autotask/*`. Credentials are
+sent only in the documented request headers, network access remains gated by
+`WAIT_ALLOW_HTTP_PROBING`, and no mutation endpoint is exposed ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm)).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:

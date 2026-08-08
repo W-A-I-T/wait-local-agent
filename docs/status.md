@@ -28,6 +28,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   HTTP boundary; write operations remain unavailable.
 - ServiceNow read-only incident and company inventory through the common
   guarded HTTP boundary; write operations remain unavailable.
+- Autotask read-only ticket and company inventory through the common guarded
+  HTTP boundary; write operations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
@@ -124,7 +126,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Air-gap compatible default path | Built |
 | IT Glue connector | Future paid pack or open-core interface |
 | ConnectWise PSA connector | Read-only core surface built |
-| Autotask connector | Existing stacked PR #73 |
+| Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
 | M365 / Entra read-only | Collected-inventory identity lookup built; live connector phase future |
