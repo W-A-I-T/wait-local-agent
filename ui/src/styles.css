@@ -1173,6 +1173,25 @@ dd svg {
   padding-top: 10px;
 }
 
+.template-history-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.template-diff {
+  background: #f5f8f6;
+  border-left: 3px solid #6f9482;
+  padding: 10px 12px;
+}
+
+.template-diff ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
 .evidence-result {
   align-items: center;
   border: 1px solid #e4ebe8;

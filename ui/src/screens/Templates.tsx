@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { TemplateGalleryEntry, TemplateGalleryRevision, WorkflowTemplate } from "../api/types";
+import type { TemplateGalleryEntry, TemplateGalleryRevision, TemplateGalleryRevisionDiff, WorkflowTemplate } from "../api/types";
 
 type GalleryDraft = {
   name: string;
@@ -16,6 +16,7 @@ export function Templates() {
   const [drafts, setDrafts] = useState<Record<string, GalleryDraft>>({});
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [revisions, setRevisions] = useState<Record<string, TemplateGalleryRevision[]>>({});
+  const [diffs, setDiffs] = useState<Record<string, TemplateGalleryRevisionDiff>>({});
   const [sourceTemplateId, setSourceTemplateId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [provenance, setProvenance] = useState("Reviewed by local operator");
@@ -150,6 +151,17 @@ export function Templates() {
     }
   }
 
+  async function compareRevision(entry: TemplateGalleryEntry, fromVersion: number) {
+    try {
+      const diff = await apiFetch<TemplateGalleryRevisionDiff>(
+        `/workflow-templates/gallery/${encodeURIComponent(entry.id)}/revisions/${fromVersion}/diff/${entry.version}`
+      );
+      setDiffs((current) => ({ ...current, [entry.id]: diff }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to compare template history.");
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -195,7 +207,15 @@ export function Templates() {
                 <input aria-label={`Ticket for ${entry.name}`} value={ticketIds[entry.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [entry.id]: event.target.value }))} placeholder="Ticket id" />
                 <button type="button" disabled={!canWrite || !entry.enabled} onClick={() => void runEntry(entry)}>Run</button>
               </div>
-              {entryRevisions.length ? <div className="template-history"><strong>History</strong>{entryRevisions.map((revision) => <button type="button" key={revision.version} disabled={!canWrite || revision.version === entry.version} onClick={() => void restoreRevision(entry, revision.version)}>Restore v{revision.version}</button>)}</div> : null}
+              {entryRevisions.length ? <div className="template-history"><strong>History</strong>{entryRevisions.map((revision) => <div className="template-history-row" key={revision.version}>
+                <span>Version {revision.version}</span>
+                <button type="button" onClick={() => void compareRevision(entry, revision.version)}>Compare to current</button>
+                <button type="button" disabled={!canWrite || revision.version === entry.version} onClick={() => void restoreRevision(entry, revision.version)}>Restore</button>
+              </div>)}</div> : null}
+              {diffs[entry.id] ? <div className="template-diff">
+                <strong>Changes: v{diffs[entry.id].from_version} → v{diffs[entry.id].to_version}</strong>
+                {!diffs[entry.id].changed ? <p>No changes.</p> : <ul>{diffs[entry.id].changes.map((change) => <li key={change.field}><code>{change.field}</code>: {JSON.stringify(change.before)} → {JSON.stringify(change.after)}</li>)}</ul>}
+              </div> : null}
             </article>
           );
         })}

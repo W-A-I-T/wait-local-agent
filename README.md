@@ -86,8 +86,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
   into tenant-scoped editable records, enable or disable them, restore prior
-  versions, and run them through the existing approval path. The gallery never
-  permits arbitrary code, tools, or write permissions.
+  versions, compare redacted revision diffs, and run them through the existing
+  approval path. The gallery never permits arbitrary code, tools, or write
+  permissions.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
   failures, pause/cancel state, and failed-item reruns.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a

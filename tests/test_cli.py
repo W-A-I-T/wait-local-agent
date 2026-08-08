@@ -413,6 +413,13 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     )
     gallery = runner.invoke(app, ["workflows", "gallery"])
     gallery_revisions = runner.invoke(app, ["workflows", "gallery-revisions", gallery_id])
+    gallery_diff = runner.invoke(app, ["workflows", "gallery-diff", gallery_id, "1", "2"])
+    missing_gallery_diff = runner.invoke(
+        app, ["workflows", "gallery-diff", "missing-gallery", "1", "2"]
+    )
+    missing_gallery_diff_revision = runner.invoke(
+        app, ["workflows", "gallery-diff", gallery_id, "1", "999"]
+    )
     gallery_disable = runner.invoke(app, ["workflows", "gallery-disable", gallery_id])
     gallery_enable = runner.invoke(app, ["workflows", "gallery-enable", gallery_id])
     gallery_restore = runner.invoke(app, ["workflows", "gallery-restore", gallery_id, "1"])
@@ -455,6 +462,11 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert gallery_update.exit_code == 0
     assert gallery.exit_code == 0 and "CLI triage updated" in gallery.output
     assert gallery_revisions.exit_code == 0 and "version=2" in gallery_revisions.output
+    assert gallery_diff.exit_code == 0 and '"field": "name"' in gallery_diff.output
+    assert missing_gallery_diff.exit_code != 0
+    assert missing_gallery_diff_revision.exit_code != 0
+    assert cli_module._safe_revision_definition("not-json") == {}  # noqa: SLF001
+    assert cli_module._safe_revision_definition("[]") == {}  # noqa: SLF001
     assert gallery_disable.exit_code == 0 and "enabled=False" in gallery_disable.output
     assert gallery_enable.exit_code == 0 and "enabled=True" in gallery_enable.output
     assert gallery_restore.exit_code == 0 and "version=5" in gallery_restore.output

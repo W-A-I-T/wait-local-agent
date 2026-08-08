@@ -85,9 +85,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   catalog and lets operators select ticket, client, and local-knowledge
   context sources; selected context is recorded with each run.
   provenance-bearing tenant-scoped template gallery can create, edit,
-  enable/disable, version, restore, and run reviewed core workflows through
-  the existing approval path. Gallery runs retain the local template version
-  used for execution. Persisted sequential agent
+  enable/disable, version, compare redacted revision diffs, restore, and run
+  reviewed core workflows through the existing approval path. Gallery runs
+  retain the local template version used for execution. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`, plus a non-persisting dry-run estimate and
   bounded parallel execution with a sequential default.

@@ -118,6 +118,11 @@ agents recorded for that delivery. Successful agent attempts are not replayed;
 retry payloads remain internal and delivery views use the existing redaction
 policy.
 
+Workflow-template revision comparisons require viewer access and resolve both
+revisions through the same tenant-scoped gallery entry. Comparison responses
+contain only redacted stored definition fields; they do not restore, execute, or
+change a template.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

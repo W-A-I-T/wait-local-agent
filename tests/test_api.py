@@ -1665,6 +1665,39 @@ def test_template_gallery_instances_are_editable_versioned_and_disableable(setti
     assert revisions.status_code == 200
     assert [revision["version"] for revision in revisions.json()] == [2, 1]
     assert revisions.json()[0]["definition"]["enabled"] is False
+    diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "acme"},
+    )
+    assert diff.status_code == 200
+    assert diff.json()["changed"] is True
+    assert {change["field"] for change in diff.json()["changes"]} == {
+        "description",
+        "enabled",
+        "instructions",
+        "name",
+    }
+    foreign_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "beta"},
+    )
+    assert foreign_diff.status_code == 404
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update template_gallery_revisions set definition_json = ? where gallery_id = ? and version = 1",
+            (
+                '{"name":"Acme triage v1","description":"Review tickets.",'
+                '"instructions":"Use the local triage policy.","enabled":true,'
+                '"token":"do-not-echo"}',
+                entry_id,
+            ),
+        )
+    redacted_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "acme"},
+    )
+    assert redacted_diff.status_code == 200
+    assert "do-not-echo" not in redacted_diff.text
 
     restored = client.post(
         f"/workflow-templates/gallery/{entry_id}/revisions/1/restore",
@@ -1690,6 +1723,7 @@ def test_template_gallery_instances_are_editable_versioned_and_disableable(setti
     assert foreign_update.status_code == 404
 
     missing_revisions = client.get("/workflow-templates/gallery/missing/revisions")
+    missing_diff = client.get("/workflow-templates/gallery/missing/revisions/1/diff/2")
     missing_update = client.patch(
         "/workflow-templates/gallery/missing",
         json={"name": "Missing"},
@@ -1704,6 +1738,7 @@ def test_template_gallery_instances_are_editable_versioned_and_disableable(setti
     )
     assert missing_revisions.status_code == 200
     assert missing_revisions.json() == []
+    assert missing_diff.status_code == 404
     assert missing_update.status_code == 404
     assert invalid_update.status_code == 422
     assert missing_restore.status_code == 404
@@ -1712,7 +1747,12 @@ def test_template_gallery_instances_are_editable_versioned_and_disableable(setti
         "/workflow-templates/gallery/missing/revisions/1/restore",
         json={},
     )
+    missing_revision_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/999",
+        params={"client_id": "acme"},
+    )
     assert missing_restore_entry.status_code == 404
+    assert missing_revision_diff.status_code == 404
 
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
@@ -1757,6 +1797,10 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
         f"/workflow-templates/gallery/{entry.id}/revisions",
         headers=_auth("viewer-token"),
     )
+    diff = client.get(
+        f"/workflow-templates/gallery/{entry.id}/revisions/1/diff/1",
+        headers=_auth("viewer-token"),
+    )
     restore = client.post(
         f"/workflow-templates/gallery/{entry.id}/revisions/1/restore",
         headers=_auth("tech-token"),
@@ -1770,6 +1814,7 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
 
     assert patch.status_code == 403
     assert revisions.status_code == 200 and revisions.json() == []
+    assert diff.status_code == 404
     assert restore.status_code == 404
     assert run.status_code == 403
 

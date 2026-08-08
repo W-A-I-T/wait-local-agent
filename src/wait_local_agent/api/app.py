@@ -2753,6 +2753,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for revision in store.list_template_gallery_revisions(entry_id, entry.client_id)
         ]
 
+    @app.get("/workflow-templates/gallery/{entry_id}/revisions/{version}/diff/{other_version}")
+    def template_gallery_revision_diff(
+        entry_id: str,
+        version: int,
+        other_version: int,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        left = store.get_template_gallery_revision(entry_id, version, entry.client_id)
+        right = store.get_template_gallery_revision(entry_id, other_version, entry.client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="template gallery revision not found")
+        return _template_gallery_revision_diff_view(left, right)
+
     @app.post("/workflow-templates/gallery/{entry_id}/revisions/{version}/restore")
     def restore_template_gallery_revision(
         entry_id: str,
@@ -3494,6 +3514,25 @@ def _template_gallery_revision_view(revision) -> dict[str, object]:
         "definition": _safe_redacted_json_object(revision.definition_json),
         "created_at": revision.created_at,
         "client_id": revision.client_id,
+    }
+
+
+def _template_gallery_revision_diff_view(left, right) -> dict[str, object]:
+    left_definition = _safe_redacted_json_object(left.definition_json)
+    right_definition = _safe_redacted_json_object(right.definition_json)
+    changed_fields: list[dict[str, object]] = []
+    for field in sorted(set(left_definition) | set(right_definition)):
+        before = left_definition.get(field)
+        after = right_definition.get(field)
+        if before != after:
+            changed_fields.append({"field": field, "before": before, "after": after})
+    return {
+        "gallery_id": left.gallery_id,
+        "from_version": left.version,
+        "to_version": right.version,
+        "changed": bool(changed_fields),
+        "changes": changed_fields,
+        "client_id": left.client_id,
     }
 
 

@@ -49,6 +49,23 @@ describe("Templates", () => {
         const body = JSON.parse(String(init.body));
         return Promise.resolve(new Response(JSON.stringify({ ...entry, ...body, version: 2 }), { status: 200 }));
       }
+      if (path === "/workflow-templates/gallery/gallery-acme/revisions") {
+        return Promise.resolve(new Response(JSON.stringify([
+          { id: 2, gallery_id: "gallery-acme", version: 2, definition: { name: "Acme triage updated" }, created_at: "2026-08-08T01:00:00Z", client_id: "acme" },
+          { id: 1, gallery_id: "gallery-acme", version: 1, definition: { name: "Acme triage" }, created_at: "2026-08-08T00:00:00Z", client_id: "acme" }
+        ]), { status: 200 }));
+      }
+      if (path.includes("/workflow-templates/gallery/gallery-acme/revisions/") && path.includes("/diff/")) {
+        const match = path.match(/revisions\/(\d+)\/diff\/(\d+)/);
+        return Promise.resolve(new Response(JSON.stringify({
+          gallery_id: "gallery-acme",
+          from_version: Number(match?.[1] ?? 1),
+          to_version: Number(match?.[2] ?? 2),
+          changed: false,
+          changes: [],
+          client_id: "acme"
+        }), { status: 200 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -65,5 +82,13 @@ describe("Templates", () => {
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/workflow-templates/gallery/gallery-acme" && init?.method === "PATCH"
     )).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("Version 2")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Compare to current" })[0]);
+    expect(await screen.findByText((_text, element) => {
+      const value = element?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      return element?.tagName === "STRONG" && /^Changes: v\d+ → v\d+$/.test(value);
+    })).toBeInTheDocument();
+    expect(screen.getByText("No changes.")).toBeInTheDocument();
   });
 });

@@ -113,6 +113,19 @@ export type TemplateGalleryRevision = {
   client_id?: string | null;
 };
 
+export type TemplateGalleryRevisionDiff = {
+  gallery_id: string;
+  from_version: number;
+  to_version: number;
+  changed: boolean;
+  changes: Array<{
+    field: string;
+    before?: unknown;
+    after?: unknown;
+  }>;
+  client_id?: string | null;
+};
+
 export type WorkflowRun = {
   id: string | number;
   status: string;

@@ -1671,6 +1671,57 @@ def list_workflow_gallery_revisions(entry_id: str, client_id: str | None = None)
         typer.echo(f"version={revision.version} created_at={revision.created_at}")
 
 
+@workflows_app.command("gallery-diff")
+def diff_workflow_gallery(
+    entry_id: str,
+    from_version: int,
+    to_version: int,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    entry = store.get_template_gallery_entry(entry_id, client_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    left = store.get_template_gallery_revision(entry_id, from_version, entry.client_id)
+    right = store.get_template_gallery_revision(entry_id, to_version, entry.client_id)
+    if left is None or right is None:
+        raise typer.BadParameter("template gallery revision not found")
+    left_definition = _safe_revision_definition(left.definition_json)
+    right_definition = _safe_revision_definition(right.definition_json)
+    changes = [
+        {
+            "field": field,
+            "before": left_definition.get(field),
+            "after": right_definition.get(field),
+        }
+        for field in sorted(set(left_definition) | set(right_definition))
+        if left_definition.get(field) != right_definition.get(field)
+    ]
+    typer.echo(
+        json.dumps(
+            {
+                "gallery_id": entry_id,
+                "from_version": left.version,
+                "to_version": right.version,
+                "changed": bool(changes),
+                "changes": changes,
+                "client_id": entry.client_id,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _safe_revision_definition(definition_json: str) -> dict[str, object]:
+    try:
+        value = json.loads(definition_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return redact_value(value)
+
+
 @workflows_app.command("gallery-restore")
 def restore_workflow_gallery_revision(
     entry_id: str,
