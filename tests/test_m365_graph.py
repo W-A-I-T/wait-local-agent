@@ -48,6 +48,7 @@ from wait_local_agent.m365_graph import (
     _safe_cursor,
     _safe_endpoint,
     _safe_identity,
+    _safe_mail_folder_id,
 )
 
 
@@ -668,6 +669,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_mail_folders(identity="user@example.test")
     assert "HTTP 403" in folder_result.result.message
     assert "private body" not in folder_result.result.message
+    message_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox")
+    assert "HTTP 403" in message_result.result.message
+    assert "private body" not in message_result.result.message
     device_result = M365GraphClient(
         _configured(settings), transport=httpx.MockTransport(denied)
     ).list_managed_devices()
@@ -681,10 +687,26 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         _configured(settings), transport=httpx.MockTransport(malformed)
     ).list_users()
     assert "malformed JSON" in result.result.message
+    message_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(malformed)
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox")
+    assert "malformed JSON" in message_result.result.message
     assert M365GraphClient(_configured(settings)).list_users(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_users(identity="bad\nvalue").result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(identity="bad\nvalue").result.status == "failed"
+    assert (
+        M365GraphClient(_configured(settings))
+        .list_mail_messages(identity=None, folder_id="inbox")
+        .result.status
+        == "failed"
+    )
+    assert (
+        M365GraphClient(_configured(settings))
+        .list_mail_messages(identity="user@example.test", folder_id="bad folder")
+        .result.status
+        == "failed"
+    )
 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("private timeout")
@@ -744,6 +766,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             allow_http_probing=True,
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox").result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
     ).list_managed_devices().result.status == "not_configured"
 
     for status_code, marker in (
@@ -761,6 +790,8 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         assert marker in result.result.message
 
     assert _api_base_url("https://graph.microsoft.com/v1.0/") == "https://graph.microsoft.com/v1.0"
+    with pytest.raises(M365GraphReadError, match="mail folder is invalid"):
+        _safe_mail_folder_id("bad folder")
     assert _list_params(1000, "next") == {
         "$top": 200,
         "$select": "id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department",

@@ -1041,6 +1041,7 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         malformed_hudu,
         {"query": "vpn", "company_id": "acme"},
     ).status == "failed"
+
     assert RmmDeviceLookupAction().run(unavailable_rmm, {"query": "agent"}).status == "failed"
     assert M365IdentityLookupAction().run(
         replace(context, client_id="acme"),
@@ -1054,6 +1055,114 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         context,
         {"query": "vpn", "company_id": 1},
     ).status == "failed"
+
+
+def test_m365_context_action_rejects_invalid_and_malformed_provider_results(settings) -> None:
+    store = Store(settings.data_path)
+    context = _action_context(store, settings, client_id="acme")
+    action = M365LiveContextAction()
+
+    assert action.run(context, {"resource": "unknown"}).status == "failed"
+    assert action.run(context, {"resource": "user", "identity": 42}).status == "failed"
+    assert action.run(context, {"resource": "user", "identity": "alice", "limit": True}).status == "failed"
+    assert action.run(
+        context,
+        {"resource": "mail_messages", "identity": "alice", "folder_id": "bad folder"},
+    ).status == "failed"
+
+    unavailable = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert action.run(unavailable, {"resource": "user", "identity": "alice"}).status == "failed"
+
+    malformed = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"), items={}
+            ),
+        ),
+    )
+    assert action.run(malformed, {"resource": "user", "identity": "alice"}).status == "failed"
+
+    blocked = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="access denied token=secret"), items=[]
+            ),
+        ),
+    )
+    blocked_result = action.run(blocked, {"resource": "user", "identity": "alice"})
+    assert blocked_result.status == "failed"
+    assert blocked_result.output["items"] == []
+    assert "secret" not in (blocked_result.error_detail or "")
+
+    filtered = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"),
+                items=[SimpleNamespace(not_a_dataclass=True)],
+            ),
+        ),
+    )
+    filtered_result = action.run(filtered, {"resource": "user", "identity": "alice"})
+    assert filtered_result.status == "success"
+    assert filtered_result.output["items"] == []
+
+    itglue = ItGlueDocumentationSearchAction()
+    assert itglue.run(context, {"query": "vpn", "organization_id": "other"}).status == "failed"
+    assert itglue.run(context, {"query": "vpn", "organization_id": "acme", "limit": 0}).status == "failed"
+    assert itglue.run(
+        context,
+        {"query": "vpn", "organization_id": "acme", "folder_id": ""},
+    ).status == "failed"
+    itglue_error = replace(
+        context,
+        itglue_client=SimpleNamespace(
+            list_documents=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert itglue.run(itglue_error, {"query": "vpn", "organization_id": "acme"}).status == "failed"
+
+    confluence = ConfluenceDocumentationSearchAction()
+    assert confluence.run(context, {"query": "vpn", "space_id": "other"}).status == "failed"
+    assert confluence.run(context, {"query": "vpn", "space_id": "acme", "limit": 0}).status == "failed"
+    confluence_error = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert confluence.run(confluence_error, {"query": "vpn", "space_id": "acme"}).status == "failed"
+    confluence_malformed = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda **kwargs: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"), items={}
+            ),
+        ),
+    )
+    assert confluence.run(confluence_malformed, {"query": "vpn", "space_id": "acme"}).status == "failed"
+
+    sharepoint = SharePointDocumentationSearchAction()
+    assert sharepoint.run(context, {"query": "vpn", "site_id": "other"}).status == "failed"
+    assert sharepoint.run(context, {"query": "vpn", "site_id": "acme", "limit": 0}).status == "failed"
+    assert sharepoint.run(
+        context,
+        {"query": "vpn", "site_id": "acme", "parent_item_id": ""},
+    ).status == "failed"
+    sharepoint_error = replace(
+        context,
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert sharepoint.run(sharepoint_error, {"query": "vpn", "site_id": "acme"}).status == "failed"
 
 
 def test_local_rmm_adapter_skips_malformed_assets(settings, monkeypatch) -> None:
