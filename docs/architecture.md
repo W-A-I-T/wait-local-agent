@@ -102,9 +102,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   locale, date-format, and time-format fields; message contents and forwarding
   are not exposed. Group membership changes
   are a distinct strict-ID add/remove action using the same approval path.
-- The read-only RMM boundary currently normalizes tenant-scoped
-  `endpoint-agent` collector assets through a local adapter. It exposes device
-  lookup without remote control, remediation, or credential-bearing payloads.
+- The RMM boundary normalizes tenant-scoped `endpoint-agent` collector assets
+  and exposes a shared contract for device lookup, alerts, script metadata,
+  script preview, and approval-aware execution. The local adapter has no live
+  alert/script source and blocks execution; vendor adapters must implement the
+  same contract without accepting credentials in action payloads.
 - Communication drafts and delivery use the same smart-action contract, tenant
   scope, redaction, and approval pause as other proposed actions. Local ticket
   notes are persisted only for an existing tenant-scoped ticket; external

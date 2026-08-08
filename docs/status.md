@@ -93,9 +93,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   and read/write classification. The catalog also exposes a technician-gated,
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory; no credentials or write operation are accepted by the
-  action. A matching read-only RMM device lookup normalizes collected
-  `endpoint-agent` assets through the local adapter boundary; remote control
-  and vendor credentials are not accepted. Existing HaloPSA ticket reads and
+  action. A matching RMM contract exposes tenant-scoped device and alert
+  lookup, script metadata, script preview, and approval-aware execution. The
+  local adapter remains inventory-only and blocks execution until a reviewed
+  vendor adapter is installed. Existing HaloPSA ticket reads and
   Hudu article search are available as tenant-scoped read tools using the
   guarded connector clients; connector credentials are never action payloads.
 - Signed update-channel client checks with pinned public keys.

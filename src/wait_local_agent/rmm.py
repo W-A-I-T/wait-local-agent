@@ -1,10 +1,10 @@
-"""Small read-only RMM boundary backed by collected endpoint-agent evidence."""
+"""Bounded RMM boundary backed by collected evidence and provider adapters."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 from wait_local_agent.store import Store
 
@@ -17,11 +17,71 @@ class RmmDevice:
     attributes: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RmmAlert:
+    alert_id: str
+    device_id: str
+    severity: str
+    title: str
+    status: str = "open"
+
+
+@dataclass(frozen=True)
+class RmmScript:
+    script_id: str
+    name: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class RmmScriptPreview:
+    script_id: str
+    device_id: str
+    arguments: dict[str, str]
+    status: Literal["preview", "blocked"]
+    message: str
+
+
+@dataclass(frozen=True)
+class RmmScriptExecution:
+    script_id: str
+    device_id: str
+    status: Literal["blocked", "queued", "succeeded", "failed"]
+    message: str
+    execution_id: str = ""
+
+
 class RmmInventoryProvider(Protocol):
     adapter_id: str
 
     def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
         """Return read-only device inventory scoped to one tenant."""
+
+    def list_alerts(self, client_id: str | None = None) -> list[RmmAlert]:
+        """Return bounded alerts scoped to one tenant."""
+
+    def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
+        """Return available scripts without script contents or credentials."""
+
+    def preview_script(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptPreview:
+        """Validate a script request without executing it."""
+
+    def execute_script(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptExecution:
+        """Execute only through a provider-specific, already-approved path."""
 
 
 class LocalCollectorRmmAdapter:
@@ -54,5 +114,50 @@ class LocalCollectorRmmAdapter:
             )
         return devices
 
+    def list_alerts(self, client_id: str | None = None) -> list[RmmAlert]:
+        return []
 
-__all__ = ["LocalCollectorRmmAdapter", "RmmDevice", "RmmInventoryProvider"]
+    def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
+        return []
+
+    def preview_script(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptPreview:
+        return RmmScriptPreview(
+            script_id=script_id,
+            device_id=device_id,
+            arguments=dict(arguments),
+            status="blocked",
+            message="local collector RMM adapter has no script execution provider",
+        )
+
+    def execute_script(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None = None,
+    ) -> RmmScriptExecution:
+        return RmmScriptExecution(
+            script_id=script_id,
+            device_id=device_id,
+            status="blocked",
+            message="RMM script execution requires a reviewed vendor adapter",
+        )
+
+
+__all__ = [
+    "LocalCollectorRmmAdapter",
+    "RmmAlert",
+    "RmmDevice",
+    "RmmInventoryProvider",
+    "RmmScript",
+    "RmmScriptExecution",
+    "RmmScriptPreview",
+]
