@@ -70,8 +70,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   the same approval path, and terminal failed/rejected/cancelled runs can be
   retried. Event agents can depend on same-tenant agents; the dispatcher
   applies cycle prevention at definition time and waits for upstream completion
-  with a bounded sequential pass. Backfills and conversational agents remain
-  future extensions.
+  with a bounded sequential pass. Each run also persists and returns a
+  redacted operational final result containing the last tool status, output,
+  evidence, and error detail; it contains no hidden reasoning. Backfills and
+  conversational agents remain future extensions.
 
 ## Template gallery
 
