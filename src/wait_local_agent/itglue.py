@@ -62,6 +62,16 @@ class ItGlueClientProtocol(Protocol):
     def health(self) -> ConnectorReadResult:
         ...
 
+    def list_documents(
+        self,
+        organization_id: str,
+        *,
+        folder_id: str | None = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> ItGlueReadResponse:
+        ...
+
 
 class ItGlueReadError(Exception):
     def __init__(self, message: str) -> None:

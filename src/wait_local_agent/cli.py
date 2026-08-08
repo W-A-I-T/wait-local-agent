@@ -2099,6 +2099,7 @@ def invoke_smart_action(
         syncro_client=_syncro_client(),
         servicenow_client=_servicenow_client(),
         autotask_client=_autotask_client(),
+        itglue_client=_itglue_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:

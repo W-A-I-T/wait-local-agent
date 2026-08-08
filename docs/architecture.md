@@ -92,9 +92,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Existing HaloPSA, ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket
-  reads, plus Hudu article reads, are exposed through the same tool contract.
-  The actions reuse the guarded connector clients, require an explicit local
-  tenant scope, and never accept connector credentials in action payloads.
+  reads, plus Hudu article and IT Glue document reads, are exposed through the
+  same tool contract. The actions reuse the guarded connector clients, require
+  an explicit local tenant scope, and never accept connector credentials in
+  action payloads.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,

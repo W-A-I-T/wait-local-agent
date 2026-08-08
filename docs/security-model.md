@@ -161,6 +161,11 @@ uses that ticket identifier as the provider request identifier and rejects a
 returned record whose identifier does not match; connector credentials are
 never accepted in tool payloads.
 
+The IT Glue documentation tool is also read-only. It requires an explicit
+organization identifier matching the caller's tenant scope, bounds the
+organization document query and local result filter, and rejects returned
+documents that identify a different organization.
+
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write
 flag, a persisted approval request, and explicit approval. The adapter rejects

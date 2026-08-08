@@ -18,6 +18,7 @@ from wait_local_agent.communication import (
 )
 from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseReadProvider
+from wait_local_agent.itglue import ItGlueClientProtocol
 from wait_local_agent.models import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
@@ -120,6 +121,7 @@ class ActionContext:
     syncro_client: SyncroReadProvider | None = None
     servicenow_client: ServiceNowReadProvider | None = None
     autotask_client: AutotaskReadProvider | None = None
+    itglue_client: ItGlueClientProtocol | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -1224,6 +1226,111 @@ class HuduDocumentationSearchAction:
         )
 
 
+class ItGlueDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="itglue-documentation-search",
+        title="IT Glue documentation search",
+        description="Search tenant-scoped IT Glue document metadata through the existing read-only connector.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "organization_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "organization_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "folder_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"documents": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        organization_id = payload.get("organization_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if (
+            not isinstance(organization_id, str)
+            or not organization_id.strip()
+            or len(organization_id.strip()) > 64
+        ):
+            return _failed("organization_id must be a non-empty string of at most 64 characters")
+        scoped_organization_id = organization_id.strip()
+        if context.client_id is not None and scoped_organization_id != context.client_id:
+            return _failed("organization_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        folder_id = payload.get("folder_id")
+        if folder_id is not None and (
+            not isinstance(folder_id, str) or not folder_id.strip() or len(folder_id.strip()) > 64
+        ):
+            return _failed("folder_id must be a non-empty string of at most 64 characters")
+        from wait_local_agent.itglue import ItGlueClient
+
+        provider = context.itglue_client or ItGlueClient(context.settings)
+        try:
+            response = provider.list_documents(
+                scoped_organization_id,
+                folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                page=1,
+                page_size=limit,
+            )
+        except Exception:
+            return _failed("IT Glue documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "IT Glue read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("IT Glue returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "organization_id": scoped_organization_id,
+                    "connector_status": status,
+                    "documents": [],
+                    "count": 0,
+                },
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        documents = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and (
+                not getattr(item, "organization_id", "")
+                or getattr(item, "organization_id", "") == scoped_organization_id
+            )
+            and query_value in str(getattr(item, "name", "")).casefold()
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "organization_id": scoped_organization_id,
+                "connector_status": status,
+                "documents": documents,
+                "count": len(documents),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "itglue",
+                    "operation": "documents.list",
+                    "organization_id": scoped_organization_id,
+                }
+            ],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -1536,6 +1643,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ServiceNowIncidentLookupAction(),
         AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
+        ItGlueDocumentationSearchAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
@@ -1570,6 +1678,7 @@ class SmartActionService:
         syncro_client: SyncroReadProvider | None = None,
         servicenow_client: ServiceNowReadProvider | None = None,
         autotask_client: AutotaskReadProvider | None = None,
+        itglue_client: ItGlueClientProtocol | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1583,6 +1692,7 @@ class SmartActionService:
         self.syncro_client = syncro_client
         self.servicenow_client = servicenow_client
         self.autotask_client = autotask_client
+        self.itglue_client = itglue_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -1930,6 +2040,7 @@ class SmartActionService:
             syncro_client=self.syncro_client,
             servicenow_client=self.servicenow_client,
             autotask_client=self.autotask_client,
+            itglue_client=self.itglue_client,
         )
 
     def _persist_result(

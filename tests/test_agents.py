@@ -63,6 +63,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "m365-identity-lookup",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
+        "itglue-documentation-search",
         "rmm-device-lookup",
         "rmm-alert-lookup",
         "rmm-script-catalog",

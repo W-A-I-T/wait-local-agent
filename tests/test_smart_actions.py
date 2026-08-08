@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from wait_local_agent.collectors import CollectorPreview
+from wait_local_agent.itglue import ItGlueDocument
 from wait_local_agent.models import HaloTicket, HuduArticle, SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
@@ -22,6 +23,7 @@ from wait_local_agent.smart_actions import (
     FindSimilarTicketsAction,
     HaloPSATicketLookupAction,
     HuduDocumentationSearchAction,
+    ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
     M365IdentityLookupAction,
     RmmDeviceLookupAction,
@@ -262,6 +264,12 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 items=[{"id": ticket_id, "title": "Remote ticket", "company_id": "acme"}],
             )
         ),
+        itglue_client=SimpleNamespace(
+            list_documents=lambda organization_id, folder_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[ItGlueDocument("doc-1", "VPN runbook", organization_id, "folder-1", "today", "https://itglue")],
+            )
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -279,6 +287,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     )
     autotask = AutotaskTicketLookupAction().run(
         connector_context, {"ticket_id": "TCK-1001"}
+    )
+    itglue = ItGlueDocumentationSearchAction().run(
+        replace(connector_context, client_id="org-1"),
+        {"query": "vpn", "organization_id": "org-1"},
     )
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
@@ -305,6 +317,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == syncro.status
         == servicenow.status
         == autotask.status
+        == itglue.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -325,6 +338,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert syncro.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
     assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert itglue.output["documents"][0]["name"] == "VPN runbook"  # type: ignore[index]
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
@@ -360,6 +374,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         SyncroTicketLookupAction(),
         ServiceNowIncidentLookupAction(),
         AutotaskTicketLookupAction(),
+        ItGlueDocumentationSearchAction(),
         HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
@@ -635,6 +650,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "find-similar-tickets",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
+        "itglue-documentation-search",
         "knowledge-search",
         "m365-identity-lookup",
         "rmm-alert-lookup",
@@ -743,6 +759,15 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
             )
         ),
     )
+    blocked_itglue = replace(
+        context,
+        itglue_client=SimpleNamespace(
+            list_documents=lambda organization_id, folder_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
     malformed_halo = replace(
         context,
         halopsa_client=SimpleNamespace(
@@ -821,6 +846,9 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     )
     assert mismatched.status == "failed"
     assert mismatched.output["connector_status"] == "scope_mismatch"
+    assert ItGlueDocumentationSearchAction().run(
+        blocked_itglue, {"query": "vpn", "organization_id": "acme"}
+    ).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},
