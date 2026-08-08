@@ -204,6 +204,14 @@ class M365GraphManagedDeviceRetireResult:
 
 
 @dataclass(frozen=True)
+class M365GraphManagedDeviceSyncResult:
+    status: str
+    message: str
+    device_id: str = ""
+    status_code: int | None = None
+
+
+@dataclass(frozen=True)
 class M365GraphMailboxSettingsUpdateResult:
     status: str
     message: str
@@ -610,6 +618,26 @@ class M365GraphClient:
         return M365GraphManagedDeviceRetireResult(
             "succeeded",
             "Microsoft Graph Intune managed-device retirement succeeded.",
+            device_id=safe_device_id,
+            status_code=status_code,
+        )
+
+    def sync_managed_device(self, *, device_id: str) -> M365GraphManagedDeviceSyncResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphManagedDeviceSyncResult("blocked", health.message)
+        try:
+            safe_device_id = _safe_directory_object_id(device_id, "device_id")
+            endpoint = (
+                "deviceManagement/managedDevices/"
+                f"{quote(safe_device_id, safe='')}/syncDevice"
+            )
+            _, status_code = self._post(endpoint, None)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceSyncResult("failed", exc.message)
+        return M365GraphManagedDeviceSyncResult(
+            "succeeded",
+            "Microsoft Graph Intune managed-device sync succeeded.",
             device_id=safe_device_id,
             status_code=status_code,
         )
@@ -1158,6 +1186,14 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[2])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_managed_device_sync_endpoint = (
+        len(endpoint_parts) == 4
+        and endpoint_parts[0] == "deviceManagement"
+        and endpoint_parts[1] == "managedDevices"
+        and endpoint_parts[3] == "syncDevice"
+        and _safe_encoded_segment(endpoint_parts[2])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_mailbox_settings_endpoint = (
         len(endpoint_parts) == 3
         and endpoint_parts[0] == "users"
@@ -1196,6 +1232,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint
         and not is_managed_device_retire_endpoint
+        and not is_managed_device_sync_endpoint
         and not is_mailbox_settings_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint

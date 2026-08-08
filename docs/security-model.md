@@ -184,6 +184,8 @@ boolean `isRead` field to Graph.
 Message deletion is separately approval-gated, uses only explicit
 mailbox/folder/message IDs, sends no request body, and does not expose
 permanent deletion.
+Managed-device sync is separately approval-gated, uses only a strict device ID,
+sends no request body, and does not expose wipe or delete operations.
 
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write

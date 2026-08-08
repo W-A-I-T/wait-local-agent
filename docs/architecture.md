@@ -109,6 +109,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   that only sets `accountEnabled=false`. Credentials never enter action or
   approval payloads. Intune managed-device retirement is a separate
   approval-gated, strict-ID action; it does not expose wipe or delete. A
+  separate approval-gated managed-device sync action accepts only a strict
+  device ID, sends no request body, and does not expose wipe or delete. A
   separate approval-gated mailbox-settings action accepts only timezone,
   locale, date-format, and time-format fields; message contents and forwarding
   are not exposed. A separate approval-gated message-move action accepts only

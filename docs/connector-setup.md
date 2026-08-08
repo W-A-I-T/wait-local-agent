@@ -395,6 +395,7 @@ wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
+wait-local-agent connectors draft-m365-managed-device-sync device-1
 wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
 wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
 wait-local-agent connectors draft-m365-mail-message-delete user-1 inbox-id message-id
@@ -416,6 +417,10 @@ Message deletion is exposed through
 `POST /connectors/m365/mail-messages/delete-drafts` with
 `user_identity`, `source_folder_id`, and `message_id`; it is also
 administrator-approved and does not expose permanent deletion.
+Managed-device sync is exposed through
+`POST /connectors/m365/managed-devices/sync-drafts` with `device_id`; it is
+administrator-approved, sends no request body, and does not expose wipe or
+delete.
 Approved user creation is exposed through `POST /connectors/m365/users/drafts`
 and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 `connectors draft-m365-user` and `connectors execute-m365-user`. Approved

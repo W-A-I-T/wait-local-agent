@@ -14,6 +14,7 @@ from wait_local_agent.connectors import (
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
     draft_m365_managed_device_retirement,
+    draft_m365_managed_device_sync,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
@@ -31,6 +32,7 @@ from wait_local_agent.connectors import (
     validate_m365_mail_message_read_state_payload,
     validate_m365_mailbox_settings_update_payload,
     validate_m365_managed_device_retirement_payload,
+    validate_m365_managed_device_sync_payload,
     validate_m365_session_revocation_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
@@ -43,6 +45,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadStateResult,
     M365GraphManagedDeviceRetireResult,
+    M365GraphManagedDeviceSyncResult,
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
 )
@@ -125,6 +128,15 @@ class FakeM365Client:
         return M365GraphManagedDeviceRetireResult(
             "succeeded",
             "device retired",
+            device_id=str(kwargs["device_id"]),
+            status_code=204,
+        )
+
+    def sync_managed_device(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphManagedDeviceSyncResult(
+            "succeeded",
+            "device synced",
             device_id=str(kwargs["device_id"]),
             status_code=204,
         )
@@ -490,6 +502,51 @@ def test_m365_managed_device_retirement_payload_rejects_extra_or_unsafe_fields()
     ):
         with pytest.raises(ValueError):
             validate_m365_managed_device_retirement_payload(payload)
+
+
+def test_m365_managed_device_sync_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_managed_device_sync(
+        store, device_id="device-1", client_id="tenant-a"
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.payload_json == (
+        '{"action_type":"managed-devices.sync","connector":"m365",'
+        '"device_id":"device-1"}'
+    )
+    validate_m365_managed_device_sync_payload(
+        {
+            "connector": "m365",
+            "action_type": "managed-devices.sync",
+            "device_id": "device-1",
+        }
+    )
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store, cast(Any, client), vault, approval.id or 0
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [{"device_id": "device-1"}]
+
+
+def test_m365_managed_device_sync_payload_rejects_extra_or_unsafe_fields() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "managed-devices.sync",
+        "device_id": "device-1",
+    }
+    for payload in (
+        {**valid, "raw_endpoint": "deviceManagement/managedDevices/device-1/syncDevice"},
+        {**valid, "device_id": "device 1"},
+        {**valid, "action_type": "managed-devices.wipe"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_managed_device_sync_payload(payload)
 
 
 def test_m365_mailbox_settings_update_approval_is_strict_and_executes(settings, tmp_path) -> None:
