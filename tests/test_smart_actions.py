@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.rmm import LocalCollectorRmmAdapter
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
@@ -17,6 +19,8 @@ from wait_local_agent.smart_actions import (
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
+    M365IdentityLookupAction,
+    RmmDeviceLookupAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -174,11 +178,43 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
     context = _action_context(store, settings, FakeProvider(), available=True)
+    store.upsert_canonical_asset(
+        canonical_id="m365:user:user-1",
+        asset_type="m365-user",
+        display_name="Acme Admin",
+        attributes={
+            "user_id": "user-1",
+            "display_name": "Acme Admin",
+            "user_principal_name": "admin@acme.example",
+            "mail": "admin@acme.example",
+            "account_enabled": True,
+            "job_title": "Administrator",
+            "department": "IT",
+        },
+        client_id="acme",
+        source_module="cloud-m365",
+    )
+    store.upsert_canonical_asset(
+        canonical_id="agent:sentinelone",
+        asset_type="endpoint-agent",
+        display_name="SentinelOne",
+        attributes={"agent": "SentinelOne", "category": "edr"},
+        client_id="acme",
+        source_module="endpoint-agents",
+    )
 
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
     summary = TicketSummaryAction().run(context, {"ticket_id": "TCK-1001"})
     resolution = SuggestResolutionAction().run(context, {"ticket_id": "TCK-1002"})
     knowledge = KnowledgeSearchAction().run(context, {"ticket_id": "TCK-1001"})
+    identity = M365IdentityLookupAction().run(
+        replace(context, client_id="acme"),
+        {"identity": "ADMIN@ACME.EXAMPLE"},
+    )
+    rmm = RmmDeviceLookupAction().run(
+        replace(context, client_id="acme"),
+        {"query": "sentinel"},
+    )
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
     escalation = TicketEscalationAction().run(context, {"ticket_id": "TCK-1001"})
@@ -193,6 +229,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == summary.status
         == resolution.status
         == knowledge.status
+        == identity.status
+        == rmm.status
         == quality.status
         == sentiment.status
         == escalation.status
@@ -203,6 +241,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert summary.output["suggested_response"] == "Resolution for TCK-1001"
     assert resolution.output["citations"]
     assert knowledge.output["ticket_id"] == "TCK-1001"
+    assert identity.output["count"] == 1
+    assert identity.output["matches"][0]["user_principal_name"] == "admin@acme.example"  # type: ignore[index]
+    assert rmm.output["count"] == 1
+    assert rmm.output["devices"][0]["device_id"] == "agent:sentinelone"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"
@@ -231,6 +273,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         TicketSummaryAction(),
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
+        M365IdentityLookupAction(),
+        RmmDeviceLookupAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -239,6 +283,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
+    assert RmmDeviceLookupAction().run(context, {"query": "agent", "limit": 0}).status == "failed"
 
     assert CollectorPreviewAction().run(context, {}).status == "failed"
     assert CollectorPreviewAction().run(
@@ -467,6 +512,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-identity-lookup",
+        "rmm-device-lookup",
         "suggest-resolution",
         "ticket-escalation",
         "ticket-quality",
@@ -475,6 +522,18 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_local_rmm_adapter_skips_malformed_assets(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    assets = [
+        SimpleNamespace(asset_type="host", attributes_json="{}"),
+        SimpleNamespace(asset_type="endpoint-agent", attributes_json="[]"),
+        SimpleNamespace(asset_type="endpoint-agent", attributes_json="{bad"),
+    ]
+    monkeypatch.setattr(store, "list_canonical_assets", lambda *, client_id=None: assets)
+
+    assert LocalCollectorRmmAdapter(store).list_devices(client_id="acme") == []
 
 
 def test_deterministic_action_persists_run_and_audit(settings) -> None:

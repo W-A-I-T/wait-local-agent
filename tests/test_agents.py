@@ -57,6 +57,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "suggest-resolution",
         "find-similar-tickets",
         "knowledge-search",
+        "m365-identity-lookup",
+        "rmm-device-lookup",
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
@@ -469,6 +471,85 @@ def test_sentiment_and_escalation_tools_are_tenant_scoped_and_technician_gated(s
     assert sentiment.json()["output"]["sentiment"] == "negative"
     assert foreign.status_code == 200
     assert foreign.json()["status"] == "failed"
+
+
+def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure.data_path)
+    store.upsert_canonical_asset(
+        canonical_id="m365:user:acme-1",
+        asset_type="m365-user",
+        display_name="Acme Admin",
+        attributes={
+            "user_id": "acme-1",
+            "display_name": "Acme Admin",
+            "user_principal_name": "admin@acme.example",
+            "mail": "admin@acme.example",
+            "account_enabled": True,
+        },
+        client_id="acme",
+        source_module="cloud-m365",
+    )
+    store.upsert_canonical_asset(
+        canonical_id="m365:user:beta-1",
+        asset_type="m365-user",
+        display_name="Beta Admin",
+        attributes={
+            "user_id": "beta-1",
+            "display_name": "Beta Admin",
+            "user_principal_name": "admin@beta.example",
+            "mail": "admin@beta.example",
+            "account_enabled": True,
+        },
+        client_id="beta",
+        source_module="cloud-m365",
+    )
+    store.upsert_canonical_asset(
+        canonical_id="agent:acme-rmm",
+        asset_type="endpoint-agent",
+        display_name="Acme RMM",
+        attributes={"agent": "Acme RMM", "category": "rmm"},
+        client_id="acme",
+        source_module="endpoint-agents",
+    )
+    client = TestClient(create_app(secure))
+    viewer = client.post(
+        "/smart-actions/m365-identity-lookup/invoke",
+        headers={"Authorization": "Bearer viewer-token"},
+        json={"payload": {"identity": "admin"}},
+    )
+    acme = client.post(
+        "/smart-actions/m365-identity-lookup/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"identity": "admin"}},
+    )
+    beta = client.post(
+        "/smart-actions/m365-identity-lookup/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"identity": "admin@beta.example"}},
+    )
+    rmm = client.post(
+        "/smart-actions/rmm-device-lookup/invoke",
+        headers={"Authorization": "Bearer tech-token"},
+        json={"payload": {"query": "acme"}},
+    )
+
+    assert viewer.status_code == 403
+    assert acme.status_code == 200
+    assert acme.json()["output"]["count"] == 1
+    assert acme.json()["output"]["matches"][0]["user_principal_name"] == "admin@acme.example"
+    assert beta.status_code == 200
+    assert beta.json()["output"]["count"] == 0
+    assert rmm.status_code == 200
+    assert rmm.json()["output"]["count"] == 1
 
 
 def test_agent_retry_rejects_completed_runs(settings) -> None:

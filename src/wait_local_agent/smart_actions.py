@@ -18,6 +18,7 @@ from wait_local_agent.providers import (
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.retrieval import retrieve_sources
+from wait_local_agent.rmm import LocalCollectorRmmAdapter, RmmInventoryProvider
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
@@ -90,6 +91,7 @@ class ActionContext:
     client_id: str | None = None
     provider_available: bool = False
     collector_service: CollectorPreviewProvider | None = None
+    rmm_provider: RmmInventoryProvider | None = None
 
 
 @dataclass(frozen=True)
@@ -280,6 +282,149 @@ class KnowledgeSearchAction:
                 "estimate": self.manifest.estimated_minutes_saved,
             },
             evidence=citations,
+        )
+
+
+class M365IdentityLookupAction:
+    manifest = SmartActionManifest(
+        action_id="m365-identity-lookup",
+        title="Microsoft 365 identity lookup",
+        description="Search previously collected, read-only Microsoft 365 user inventory by identity.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["identity"],
+            "properties": {
+                "identity": {"type": "string", "minLength": 1, "maxLength": 200},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+        },
+        output_schema={"matches": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        identity = payload.get("identity")
+        if not isinstance(identity, str) or not identity.strip() or len(identity.strip()) > 200:
+            return _failed("identity must be a non-empty string of at most 200 characters")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 100:
+            return _failed("limit must be an integer between 1 and 100")
+
+        query = identity.strip().casefold()
+        matches: list[dict[str, object]] = []
+        for asset in context.store.list_canonical_assets(client_id=context.client_id):
+            if asset.asset_type != "m365-user":
+                continue
+            try:
+                attributes = json.loads(asset.attributes_json)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(attributes, dict):
+                continue
+            searchable = " ".join(
+                str(attributes.get(field, ""))
+                for field in ("display_name", "user_principal_name", "mail", "user_id")
+            )
+            if query not in searchable.casefold():
+                continue
+            matches.append(
+                {
+                    "asset_id": asset.canonical_id,
+                    "display_name": attributes.get("display_name", asset.display_name),
+                    "user_principal_name": attributes.get("user_principal_name", ""),
+                    "mail": attributes.get("mail", ""),
+                    "account_enabled": attributes.get("account_enabled", ""),
+                    "job_title": attributes.get("job_title", ""),
+                    "department": attributes.get("department", ""),
+                    "last_seen": asset.last_seen,
+                }
+            )
+        matches.sort(key=lambda item: (str(item.get("display_name", "")).casefold(), str(item["asset_id"])))
+        return ActionResult(
+            status="success",
+            output={
+                "matches": matches[:limit],
+                "count": min(len(matches), limit),
+                "source": "stored m365-user inventory",
+            },
+            evidence=[
+                {"type": "canonical_asset", "asset_id": str(item["asset_id"])}
+                for item in matches[:limit]
+            ],
+        )
+
+
+class RmmDeviceLookupAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-device-lookup",
+        title="RMM device lookup",
+        description="Search read-only endpoint-management inventory normalized through the RMM adapter boundary.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+        },
+        output_schema={"devices": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 100:
+            return _failed("limit must be an integer between 1 and 100")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        try:
+            devices = provider.list_devices(context.client_id)
+        except Exception:
+            return _failed("RMM inventory is unavailable")
+        needle = query.strip().casefold()
+        matches = [
+            device
+            for device in devices
+            if needle
+            in " ".join(
+                [device.device_id, device.name, device.category]
+                + [str(value) for value in device.attributes.values()]
+            ).casefold()
+        ]
+        matches.sort(key=lambda device: (device.name.casefold(), device.device_id))
+        selected = matches[:limit]
+        output_devices = [
+            {
+                "device_id": device.device_id,
+                "name": device.name,
+                "category": device.category,
+                "attributes": device.attributes,
+            }
+            for device in selected
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "devices": output_devices,
+                "count": len(output_devices),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {"type": "rmm_device", "device_id": device.device_id}
+                for device in selected
+            ],
         )
 
 
@@ -582,6 +727,8 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketSummaryAction(),
         SuggestResolutionAction(),
         KnowledgeSearchAction(),
+        M365IdentityLookupAction(),
+        RmmDeviceLookupAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
