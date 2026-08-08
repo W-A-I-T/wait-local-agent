@@ -27,7 +27,10 @@ from wait_local_agent.providers import (
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.retrieval import retrieve_sources
-from wait_local_agent.rmm import LocalCollectorRmmAdapter, RmmInventoryProvider
+from wait_local_agent.rmm import (
+    LocalCollectorRmmAdapter,
+    RmmInventoryProvider,
+)
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 
@@ -642,6 +645,147 @@ class RmmDeviceLookupAction:
         )
 
 
+class RmmAlertLookupAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-alert-lookup",
+        title="RMM alert lookup",
+        description="List bounded tenant-scoped alerts from the configured RMM adapter.",
+        kind="deterministic",
+        input_schema={"type": "object"},
+        output_schema={"alerts": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        try:
+            alerts = provider.list_alerts(context.client_id)
+        except Exception:
+            return _failed("RMM alerts are unavailable")
+        output = [asdict(alert) for alert in alerts[:100]]
+        return ActionResult(
+            status="success",
+            output={"alerts": output, "count": len(output), "source": provider.adapter_id},
+            evidence=[{"type": "rmm_alert", "alert_id": alert.alert_id} for alert in alerts[:100]],
+        )
+
+
+class RmmScriptCatalogAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-script-catalog",
+        title="RMM script catalog",
+        description="List script metadata without exposing script source or credentials.",
+        kind="deterministic",
+        input_schema={"type": "object"},
+        output_schema={"scripts": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=2,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        try:
+            scripts = provider.list_scripts(context.client_id)
+        except Exception:
+            return _failed("RMM script catalog is unavailable")
+        output = [asdict(script) for script in scripts[:100]]
+        return ActionResult(
+            status="success",
+            output={"scripts": output, "count": len(output), "source": provider.adapter_id},
+            evidence=[{"type": "rmm_script", "script_id": script.script_id} for script in scripts[:100]],
+        )
+
+
+class RmmScriptPreviewAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-script-preview",
+        title="RMM script preview",
+        description="Validate a bounded script request without executing it.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["script_id", "device_id"]},
+        output_schema={"script_id": "string", "device_id": "string", "status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="medium",
+        required_role="technician",
+        access_mode="draft",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        request = _rmm_script_request(payload)
+        if isinstance(request, ActionResult):
+            return request
+        script_id, device_id, arguments = request
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        try:
+            preview = provider.preview_script(
+                script_id, device_id, arguments, client_id=context.client_id
+            )
+        except Exception:
+            return _failed("RMM script preview failed")
+        return ActionResult(
+            status="success" if preview.status == "preview" else "failed",
+            output=asdict(preview),
+            evidence=[{"type": "rmm_script_preview", "script_id": script_id, "device_id": device_id}],
+            error_detail="" if preview.status == "preview" else preview.message,
+        )
+
+
+class RmmScriptExecuteAction:
+    manifest = SmartActionManifest(
+        action_id="rmm-script-execute",
+        title="Execute RMM script",
+        description="Execute a provider script only after approval and provider authorization.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["script_id", "device_id"]},
+        output_schema={"script_id": "string", "device_id": "string", "status": "string"},
+        requires_approval=True,
+        estimated_minutes_saved=8,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        request = _rmm_script_request(payload)
+        if isinstance(request, ActionResult):
+            return request
+        script_id, device_id, arguments = request
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        if not payload.get("_approval_completed"):
+            try:
+                preview = provider.preview_script(
+                    script_id, device_id, arguments, client_id=context.client_id
+                )
+            except Exception:
+                return _failed("RMM script preview failed")
+            return ActionResult(
+                status="success" if preview.status == "preview" else "failed",
+                output={**asdict(preview), "approval_required": True, "approved": False},
+                evidence=[{"type": "rmm_script_preview", "script_id": script_id, "device_id": device_id}],
+                error_detail="" if preview.status == "preview" else preview.message,
+            )
+        try:
+            execution = provider.execute_script(
+                script_id, device_id, arguments, client_id=context.client_id
+            )
+        except Exception:
+            return _failed("RMM script execution failed")
+        return ActionResult(
+            status="success" if execution.status in {"queued", "succeeded"} else "failed",
+            output={**asdict(execution), "approved": True},
+            evidence=[{"type": "rmm_script_execution", "script_id": script_id, "device_id": device_id}],
+            error_detail="" if execution.status in {"queued", "succeeded"} else execution.message,
+        )
+
+
 class HaloPSATicketLookupAction:
     manifest = SmartActionManifest(
         action_id="halopsa-ticket-lookup",
@@ -1100,6 +1244,10 @@ def _build_default_registry() -> SmartActionRegistry:
         KnowledgeSearchAction(),
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
+        RmmAlertLookupAction(),
+        RmmScriptCatalogAction(),
+        RmmScriptPreviewAction(),
+        RmmScriptExecuteAction(),
         HaloPSATicketLookupAction(),
         HuduDocumentationSearchAction(),
         CommunicationPreviewAction(),
@@ -1584,6 +1732,33 @@ def _communication_message(
         client_id=context.client_id,
         ticket_id=ticket_id.strip() if isinstance(ticket_id, str) else None,
     )
+
+
+def _rmm_script_request(
+    payload: dict[str, object],
+) -> tuple[str, str, dict[str, str]] | ActionResult:
+    script_id = payload.get("script_id")
+    device_id = payload.get("device_id")
+    arguments = payload.get("arguments", {})
+    if not isinstance(script_id, str) or not script_id.strip() or len(script_id.strip()) > 200:
+        return _failed("script_id must be a non-empty string of at most 200 characters")
+    if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 200:
+        return _failed("device_id must be a non-empty string of at most 200 characters")
+    if not isinstance(arguments, dict) or len(arguments) > 20:
+        return _failed("arguments must be an object with at most 20 entries")
+    normalized: dict[str, str] = {}
+    for key, value in arguments.items():
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or len(key) > 100
+            or not isinstance(value, str)
+            or len(value) > 500
+            or any(ord(character) < 32 for character in key + value)
+        ):
+            return _failed("script arguments must be bounded text values")
+        normalized[key.strip()] = value
+    return script_id.strip(), device_id.strip(), normalized
 
 
 def _ticket_from_payload(
