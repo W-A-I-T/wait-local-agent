@@ -8,6 +8,7 @@ from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mailbox_settings_update,
     draft_m365_managed_device_retirement,
     draft_m365_session_revocation,
     draft_m365_user_creation,
@@ -18,6 +19,7 @@ from wait_local_agent.connectors import (
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
+    validate_m365_mailbox_settings_update_payload,
     validate_m365_managed_device_retirement_payload,
     validate_m365_session_revocation_payload,
     validate_m365_user_creation_payload,
@@ -26,6 +28,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
+    M365GraphMailboxSettingsUpdateResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
@@ -98,6 +101,16 @@ class FakeM365Client:
             "device retired",
             device_id=str(kwargs["device_id"]),
             status_code=204,
+        )
+
+    def update_mailbox_settings(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphMailboxSettingsUpdateResult(
+            "succeeded",
+            "mailbox settings updated",
+            user_identity=str(kwargs["user_identity"]),
+            settings=dict(kwargs["settings"]),
+            status_code=200,
         )
 
     def revoke_user_sessions(self, **kwargs):
@@ -416,6 +429,59 @@ def test_m365_managed_device_retirement_payload_rejects_extra_or_unsafe_fields()
     ):
         with pytest.raises(ValueError):
             validate_m365_managed_device_retirement_payload(payload)
+
+
+def test_m365_mailbox_settings_update_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    settings_payload = {"locale": "en-US", "time_zone": "UTC"}
+    approval = draft_m365_mailbox_settings_update(
+        store,
+        user_identity="user-1",
+        settings=settings_payload,
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.payload_json == (
+        '{"action_type":"users.mailbox-settings.update","connector":"m365",'
+        '"settings":{"locale":"en-US","time_zone":"UTC"},'
+        '"user_identity":"user-1"}'
+    )
+
+    validate_m365_mailbox_settings_update_payload(
+        {
+            "connector": "m365",
+            "action_type": "users.mailbox-settings.update",
+            "settings": settings_payload,
+            "user_identity": "user-1",
+        }
+    )
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(store, cast(Any, client), vault, approval.id or 0)
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [{"user_identity": "user-1", "settings": settings_payload}]
+
+
+def test_m365_mailbox_settings_update_payload_rejects_unsafe_shapes() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "users.mailbox-settings.update",
+        "settings": {"locale": "en-US"},
+        "user_identity": "user-1",
+    }
+    for payload in (
+        {},
+        {**valid, "action_type": "users.mailbox-settings.delete"},
+        {**valid, "settings": {}},
+        {**valid, "settings": {"forwarding_address": "bad@example.test"}},
+        {**valid, "settings": {"locale": "en\nUS"}},
+        {**valid, "user_identity": "user 1"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_mailbox_settings_update_payload(payload)
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:
