@@ -36,6 +36,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file
   downloads and write operations remain unavailable.
+- Microsoft Graph read-only user identity lookup with externally supplied
+  delegated or application bearer credentials; mutations and broader resource
+  reads remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.
@@ -89,14 +92,15 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Next
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
-- Additional connector families beyond HaloPSA and Hudu, including read-only
-  Confluence and SharePoint documentation access.
+- Broader live Microsoft Graph resources and additional RMM/documentation
+  capabilities beyond the bounded read surfaces already shipped.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
 ## Not ready yet
 
-- Live RMM, M365, Hudu, IT Glue, Confluence, or SharePoint write synchronization.
+- Live RMM, Hudu, IT Glue, Confluence, or SharePoint write synchronization;
+  Microsoft Graph broader-resource reads and all M365 writes remain unavailable.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
 - Ungated side effects. HaloPSA writes require explicit flags, credentials, rate-limit budget, and approval; other live writes remain disabled.
@@ -138,7 +142,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface built |
 | RMM connectors | Local read-only adapter built; vendor adapters future |
-| M365 / Entra read-only | Collected-inventory identity lookup built; live connector phase future |
+| M365 / Entra read-only | Collected-inventory identity lookup plus bounded live Graph user lookup built; broader resources future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

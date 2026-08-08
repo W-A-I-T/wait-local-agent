@@ -38,7 +38,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `/tools` including read-only local knowledge search, ticket-quality and
   deterministic sentiment/escalation checks, collector previews, a
   technician-gated Microsoft 365 identity lookup over collected read-only
-  inventory, and a bounded read-only RMM device lookup over collected
+  inventory plus a separate bounded live Graph user-read connector, and a
+  bounded read-only RMM device lookup over collected
   endpoint-agent inventory, plus tenant-scoped HaloPSA ticket and Hudu
   documentation read tools,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
@@ -403,6 +404,33 @@ The API mirrors these commands under `/connectors/sharepoint/*`. The supplied
 delegated or application bearer token stays in settings/vault; only bounded
 Graph GET requests are issued, file content is not downloaded, and live network
 access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
+
+### Microsoft 365 identity
+
+The live Microsoft Graph identity surface is intentionally limited to bounded,
+read-only user context. Configure an externally acquired delegated or
+application bearer token:
+
+```text
+WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
+WAIT_M365_ACCESS_TOKEN=
+WAIT_M365_PAGE_SIZE=25
+```
+
+Use the connector validation, health, and user lookup commands. Omitting
+`--identity` returns a bounded page; supplying a user ID or user principal name
+performs a tenant-scoped identity lookup:
+
+```bash
+wait-local-agent connectors validate m365
+wait-local-agent connectors m365-health
+wait-local-agent connectors m365-users
+wait-local-agent connectors m365-users --identity user@example.com
+```
+
+Only Graph GET requests are issued. User creation, disable/offboarding, group
+changes, license changes, mailbox operations, and Intune actions remain absent
+until separately permissioned and approval-gated.
 
 ### ConnectWise PSA
 

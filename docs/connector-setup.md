@@ -253,6 +253,40 @@ wait-local-agent connectors sharepoint-document <site-id> <item-id>
 The API mirrors these commands under `/connectors/sharepoint/health`,
 `/connectors/sharepoint/sites`, and the site-scoped document routes.
 
+## Microsoft 365 identity
+
+### Required settings
+
+```text
+WAIT_M365_GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
+WAIT_M365_ACCESS_TOKEN=
+WAIT_M365_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The live identity connector accepts a delegated or application bearer token
+obtained through the operator's Microsoft identity flow. Token acquisition is
+outside the local agent and the token is never placed in URLs, query values, or
+action payloads. The connector issues only bounded `GET /users` requests and
+supports an equality-filtered user ID or user principal name lookup. It does
+not create, disable, modify, or license users.
+
+Microsoft documents `User.Read.All` for application user reads and
+`User.ReadBasic.All` or `User.Read.All` for delegated work/school reads; grant
+only the permission required by the chosen flow ([list users](https://learn.microsoft.com/en-us/graph/api/user-list?tabs=http&view=graph-rest-1.0), [get a user](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0)).
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate m365
+wait-local-agent connectors m365-health
+wait-local-agent connectors m365-users
+wait-local-agent connectors m365-users --identity user@example.com
+```
+
+The API mirrors these commands under `/connectors/m365/health` and
+`/connectors/m365/users`.
+
 ## ConnectWise PSA
 
 ### Required settings

@@ -77,6 +77,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
+from wait_local_agent.m365_graph import M365GraphClient, M365GraphReadResponse
 from wait_local_agent.models import AgentDefinition
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
@@ -282,6 +283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     itglue_client = ItGlueClient(active_settings)
     confluence_client = ConfluenceClient(active_settings)
     sharepoint_client = SharePointClient(active_settings)
+    m365_client = M365GraphClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -392,6 +394,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sharepoint_configured": bool(
                 active_settings.sharepoint_base_url
                 and active_settings.sharepoint_access_token
+            ),
+            "m365_configured": bool(
+                active_settings.m365_graph_base_url
+                and active_settings.m365_access_token
             ),
         }
 
@@ -2111,6 +2117,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = sharepoint_client.get_document(site_id, item_id)
         return _sharepoint_response("documents.get", response)
 
+    @app.get("/connectors/m365/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = m365_client.health()
+        _audit_m365_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/m365/users")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_users(
+        request: Request,
+        _: ViewerAccess,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = m365_client.list_users(
+            identity=identity,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        return _m365_response("users.list", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2621,6 +2652,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_sharepoint_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
+
+    def _m365_response(
+        read_type: str,
+        response: M365GraphReadResponse,
+    ) -> dict[str, object]:
+        _audit_m365_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _audit_m365_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("m365.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)

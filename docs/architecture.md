@@ -40,6 +40,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - IT Glue read-only organization-scoped documentation context
 - Confluence Cloud read-only page listing and detail through REST API v2
 - SharePoint read-only site and drive-item metadata through Microsoft Graph
+- Microsoft Graph read-only user identity lookup through the guarded HTTP boundary
 - ConnectWise PSA read-only ticket and company lookup through a guarded,
   credential-isolated adapter; mutation endpoints are intentionally absent.
 - Syncro read-only ticket and customer lookup through the same guarded,
@@ -78,9 +79,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   the same tool contract. The actions reuse the guarded connector clients,
   require an explicit local tenant scope, and never accept connector
   credentials in action payloads.
-- The read-first Microsoft 365 identity tool searches only tenant-scoped,
-  previously collected `m365-user` inventory. It does not make live Graph
-  writes or accept credentials through the action payload.
+- The read-first Microsoft 365 identity tool searches tenant-scoped,
+  previously collected `m365-user` inventory. The separate connector surface
+  can perform bounded live Graph user reads with operator-supplied credentials;
+  neither path accepts credentials through an action payload or exposes writes.
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device
   lookup without remote control, remediation, or credential-bearing payloads.

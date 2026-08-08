@@ -38,6 +38,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_CONFLUENCE_API_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_SHAREPOINT_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_SHAREPOINT_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_M365_GRAPH_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_M365_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
@@ -102,6 +104,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.sharepoint_base_url == ""
     assert settings.sharepoint_access_token == ""
     assert settings.sharepoint_page_size == 25
+    assert settings.m365_graph_base_url == ""
+    assert settings.m365_access_token == ""
+    assert settings.m365_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -206,6 +211,18 @@ def test_sharepoint_env_values(monkeypatch) -> None:
     assert settings.sharepoint_base_url == "https://graph.microsoft.com/v1.0"
     assert settings.sharepoint_access_token == "access-token"
     assert settings.sharepoint_page_size == 50
+
+
+def test_m365_graph_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_M365_GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
+    monkeypatch.setenv("WAIT_M365_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_M365_PAGE_SIZE", "50")
+
+    settings = load_settings()
+
+    assert settings.m365_graph_base_url == "https://graph.microsoft.com/v1.0"
+    assert settings.m365_access_token == "access-token"
+    assert settings.m365_page_size == 50
 
 
 def test_servicenow_env_values(monkeypatch) -> None:

@@ -93,6 +93,16 @@ class _FakeSharePointClient:
         return ConnectorReadResult("ready", "SharePoint read prerequisites are ready.")
 
 
+class _FakeM365Client:
+    def __init__(self, _settings) -> None:
+        self.settings = _settings
+
+    def health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult("blocked", "Microsoft Graph live reads are blocked.")
+        return ConnectorReadResult("ready", "Microsoft Graph identity reads are ready.")
+
+
 def test_validate_halopsa_cli_success(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -319,3 +329,21 @@ def test_validate_sharepoint_cli_success_and_missing_config(monkeypatch, tmp_pat
     assert "layer=config" in missing.output
     assert success.exit_code == 0
     assert "PASS connector=sharepoint layer=connector" in success.output
+
+
+def test_validate_m365_cli_success_and_missing_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["connectors", "validate", "m365"])
+
+    monkeypatch.setenv("WAIT_M365_GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
+    monkeypatch.setenv("WAIT_M365_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setattr(cli_module, "M365GraphClient", _FakeM365Client)
+    success = runner.invoke(app, ["connectors", "validate", "m365"])
+
+    assert missing.exit_code == 1
+    assert "layer=config" in missing.output
+    assert success.exit_code == 0
+    assert "PASS connector=m365 layer=connector" in success.output
