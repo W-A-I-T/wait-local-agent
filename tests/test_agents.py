@@ -66,6 +66,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
+        "communication-draft",
         "dispatch-suggestion",
         "collector-preview",
     }

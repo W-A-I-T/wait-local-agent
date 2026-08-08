@@ -22,6 +22,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
+- Preview-first communication drafts for email, Teams, Slack, and SMS through
+  the common smart-action contract; drafts are approval-gated and explicitly
+  non-sendable.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete,
   tenant-scoped reschedule, and audit trail. Cron, interval, and one-time

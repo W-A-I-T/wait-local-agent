@@ -545,6 +545,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
 
     assert [manifest.action_id for manifest in service.list()] == [
         "collector-preview",
+        "communication-draft",
         "dispatch-suggestion",
         "find-similar-tickets",
         "halopsa-ticket-lookup",

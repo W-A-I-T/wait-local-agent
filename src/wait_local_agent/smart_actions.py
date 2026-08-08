@@ -6,6 +6,12 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+from wait_local_agent.communication import (
+    CommunicationChannel,
+    CommunicationMessage,
+    CommunicationProvider,
+    PreviewCommunicationProvider,
+)
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
@@ -94,6 +100,7 @@ class ActionContext:
     rmm_provider: RmmInventoryProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
+    communication_provider: CommunicationProvider | None = None
 
 
 class HaloPSAReadProvider(Protocol):
@@ -109,6 +116,87 @@ class HuduReadProvider(Protocol):
         page_size: int | None = None,
     ) -> object:
         """Read documentation articles through the existing guarded client."""
+
+
+class CommunicationPreviewAction:
+    manifest = SmartActionManifest(
+        action_id="communication-draft",
+        title="Draft communication",
+        description="Prepare an approval-gated message preview for a supported channel.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["channel", "recipient", "body"],
+            "properties": {
+                "channel": {"type": "string", "enum": ["email", "teams", "slack", "sms"]},
+                "recipient": {"type": "string"},
+                "subject": {"type": "string"},
+                "body": {"type": "string"},
+                "ticket_id": {"type": "string"},
+            },
+        },
+        output_schema={
+            "channel": "string",
+            "recipient": "string",
+            "subject": "string",
+            "body": "string",
+            "delivery_mode": "string",
+            "sendable": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=3,
+        risk_level="medium",
+        required_role="technician",
+        access_mode="draft",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        channel = payload.get("channel")
+        recipient = payload.get("recipient")
+        body = payload.get("body")
+        subject = payload.get("subject", "")
+        if channel not in {"email", "teams", "slack", "sms"}:
+            return _failed("channel must be one of email, teams, slack, or sms")
+        if not isinstance(recipient, str) or not recipient.strip() or len(recipient) > 320:
+            return _failed("recipient must be a non-empty string of at most 320 characters")
+        if not isinstance(body, str) or not body.strip() or len(body) > 10_000:
+            return _failed("body must be a non-empty string of at most 10000 characters")
+        if not isinstance(subject, str) or len(subject) > 500:
+            return _failed("subject must be a string of at most 500 characters")
+        ticket_id = payload.get("ticket_id")
+        if ticket_id is not None:
+            if not isinstance(ticket_id, str) or not ticket_id.strip():
+                return _failed("ticket_id must be a non-empty string when provided")
+            if _ticket_from_payload(context.store, payload, context.client_id) is None:
+                return _failed("ticket_id must identify an existing ticket")
+        elif context.client_id is None:
+            return _failed("communication drafts require a tenant or ticket_id")
+        if channel == "sms" and subject:
+            return _failed("subject is not supported for sms")
+        provider = context.communication_provider or PreviewCommunicationProvider()
+        try:
+            draft = provider.draft(
+                CommunicationMessage(
+                    channel=cast("CommunicationChannel", channel),
+                    recipient=recipient.strip(),
+                    subject=subject.strip(),
+                    body=body.strip(),
+                    client_id=context.client_id,
+                )
+            )
+        except ValueError as exc:
+            return _failed(redact_text(str(exc)))
+        except Exception:
+            return _failed("communication preview failed")
+        output = asdict(draft)
+        output["approval_required"] = True
+        output["estimate"] = self.manifest.estimated_minutes_saved
+        evidence: list[dict[str, object]] = [
+            {"type": "communication_preview", "channel": draft.channel}
+        ]
+        if isinstance(ticket_id, str):
+            evidence.append({"type": "ticket", "ticket_id": ticket_id.strip()})
+        return ActionResult(status="success", output=output, evidence=evidence)
 
 
 @dataclass(frozen=True)
@@ -905,6 +993,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmDeviceLookupAction(),
         HaloPSATicketLookupAction(),
         HuduDocumentationSearchAction(),
+        CommunicationPreviewAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
@@ -930,6 +1019,7 @@ class SmartActionService:
         collector_service: CollectorPreviewProvider | None = None,
         halopsa_client: HaloPSAReadProvider | None = None,
         hudu_client: HuduReadProvider | None = None,
+        communication_provider: CommunicationProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -938,6 +1028,7 @@ class SmartActionService:
         self.collector_service = collector_service
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
+        self.communication_provider = communication_provider
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
             if provider_configured is not None
@@ -1231,6 +1322,7 @@ class SmartActionService:
             collector_service=self.collector_service,
             halopsa_client=self.halopsa_client,
             hudu_client=self.hudu_client,
+            communication_provider=self.communication_provider,
         )
 
     def _persist_result(

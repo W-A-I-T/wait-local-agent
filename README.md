@@ -21,6 +21,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
 - Hudu read-only documentation context.
+- A preview-only communication draft tool for email, Microsoft Teams, Slack,
+  and SMS. Drafts are tenant-scoped, require technician approval, and never
+  send network traffic in the public core.
 - Connector credential validation with `wait-local-agent connectors validate halopsa` and `wait-local-agent connectors validate hudu`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
 - Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
@@ -327,6 +330,7 @@ Workflow runs and scheduled jobs are available over API routes, including:
 - `POST /scheduled-jobs`
 - `POST /scheduled-jobs/{job_id}/pause`
 - `POST /scheduled-jobs/{job_id}/resume`
+- `POST /scheduled-jobs/{job_id}/reschedule`
 - `DELETE /scheduled-jobs/{job_id}`
 
 Use `template_id` for a workflow schedule. Use `agent_id` plus `entity_id` for
@@ -334,6 +338,11 @@ an agent schedule; the agent definition must use the `scheduled` trigger and
 the job's `params.input` object is passed to the bounded executor.
 
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
+
+Communication previews are available through the `communication-draft` smart
+action and `/tools` catalog. Supported channels are `email`, `teams`, `slack`,
+and `sms`; the result is explicitly marked `delivery_mode: preview` and
+`sendable: false` until a separately governed connector execution path exists.
 
 ## Updates
 
