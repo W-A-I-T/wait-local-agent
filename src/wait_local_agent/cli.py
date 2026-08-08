@@ -553,7 +553,11 @@ def update_approval_request(
     if existing.action_type.startswith("smart_action:"):
         settings = load_settings()
         context = _cli_access(settings, token, Role.TECHNICIAN)
-        service = SmartActionService(store, settings)
+        service = SmartActionService(
+            store,
+            settings,
+            collector_service=CollectorService(store),
+        )
         try:
             approval = service.update_approval(
                 request_id,
@@ -806,7 +810,8 @@ def search_knowledge(query: str, limit: int = 3, backend: str | None = None) -> 
 @smart_actions_app.command("list")
 def list_smart_actions() -> None:
     settings = load_settings()
-    service = SmartActionService(Store(settings.data_path), settings)
+    store = Store(settings.data_path)
+    service = SmartActionService(store, settings, collector_service=CollectorService(store))
     for manifest in service.list():
         typer.echo(
             f"{manifest.action_id} kind={manifest.kind} "
@@ -818,7 +823,8 @@ def list_smart_actions() -> None:
 @smart_actions_app.command("describe")
 def describe_smart_action(action_id: str) -> None:
     settings = load_settings()
-    service = SmartActionService(Store(settings.data_path), settings)
+    store = Store(settings.data_path)
+    service = SmartActionService(store, settings, collector_service=CollectorService(store))
     try:
         manifest = service.describe(action_id)
     except KeyError as exc:
@@ -839,7 +845,11 @@ def invoke_smart_action(
 ) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
-    service = SmartActionService(store, settings)
+    service = SmartActionService(
+        store,
+        settings,
+        collector_service=CollectorService(store),
+    )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:
         raise typer.BadParameter("authenticated principal has no tenant")
@@ -945,7 +955,7 @@ def analytics_summary_command(
     settings = load_settings()
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
-    service = SmartActionService(store, settings)
+    service = SmartActionService(store, settings, collector_service=CollectorService(store))
     estimates = {
         manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()
     }

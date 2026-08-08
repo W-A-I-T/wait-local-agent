@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from wait_local_agent.collectors import CollectorPreview
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
@@ -12,6 +13,7 @@ from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
+    CollectorPreviewAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     KnowledgeSearchAction,
@@ -125,7 +127,15 @@ class UnavailableProvider(FakeProvider):
         raise ProviderUnavailableError("offline")
 
 
-def _action_context(store: Store, settings, provider=None, *, client_id=None, available=False):
+def _action_context(
+    store: Store,
+    settings,
+    provider=None,
+    *,
+    client_id=None,
+    available=False,
+    collector_service=None,
+):
     return ActionContext(
         store=store,
         settings=settings,
@@ -133,7 +143,29 @@ def _action_context(store: Store, settings, provider=None, *, client_id=None, av
         actor="technician",
         client_id=client_id,
         provider_available=available,
+        collector_service=collector_service,
     )
+
+
+class FakeCollectorPreviewService:
+    def __init__(self, result: CollectorPreview | None = None, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def preview(
+        self,
+        module_id: str,
+        config: dict[str, object],
+        *,
+        client_id: str | None = None,
+    ) -> CollectorPreview:
+        self.calls.append((module_id, config))
+        if self.error is not None:
+            raise self.error
+        if self.result is None:
+            raise RuntimeError("missing fake preview")
+        return self.result
 
 
 def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
@@ -169,6 +201,23 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
 
+    collector = FakeCollectorPreviewService(
+        CollectorPreview(
+            module_id="process-inventory",
+            source_name="Processes",
+            scopes=["local_host"],
+            estimated_assets=2,
+            estimated_observations=2,
+        )
+    )
+    collector_result = CollectorPreviewAction().run(
+        replace(context, collector_service=collector),
+        {"module_id": "process-inventory", "config": {"limit": 2}},
+    )
+    assert collector_result.status == "success"
+    assert collector_result.output["estimated_assets"] == 2
+    assert collector.calls == [("process-inventory", {"limit": 2})]
+
     actions = (
         TicketTriageAction(),
         TicketSummaryAction(),
@@ -180,6 +229,24 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     )
     for action in actions:
         assert action.run(context, {}) .status == "failed"
+
+    assert CollectorPreviewAction().run(context, {}).status == "failed"
+    assert CollectorPreviewAction().run(
+        replace(context, collector_service=FakeCollectorPreviewService()),
+        {"module_id": ""},
+    ).status == "failed"
+    assert CollectorPreviewAction().run(
+        replace(context, collector_service=FakeCollectorPreviewService()),
+        {"module_id": "process-inventory", "config": "bad"},
+    ).status == "failed"
+    assert CollectorPreviewAction().run(
+        replace(context, collector_service=FakeCollectorPreviewService(error=KeyError("unknown"))),
+        {"module_id": "unknown"},
+    ).error_detail == "collector module is not registered"
+    assert CollectorPreviewAction().run(
+        replace(context, collector_service=FakeCollectorPreviewService(error=ValueError("password=secret"))),
+        {"module_id": "process-inventory"},
+    ).error_detail == "password=[redacted]"
 
 
 def test_action_run_validation_and_provider_errors(settings) -> None:
@@ -386,6 +453,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "collector-preview",
         "dispatch-suggestion",
         "find-similar-tickets",
         "knowledge-search",
