@@ -77,10 +77,12 @@ class Store:
                     body text not null,
                     priority text not null,
                     status text not null,
-                    client_id text
+                    client_id text,
+                    requester_id text
                 )
                 """
             )
+            self._ensure_column(connection, "tickets", "requester_id", "text")
             connection.execute(
                 """
                 create table if not exists approvals (
@@ -737,15 +739,16 @@ class Store:
             for ticket in tickets:
                 connection.execute(
                     """
-                    insert into tickets (id, client, subject, body, priority, status, client_id)
-                    values (?, ?, ?, ?, ?, ?, ?)
+                    insert into tickets (id, client, subject, body, priority, status, client_id, requester_id)
+                    values (?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(id) do update set
                       client=excluded.client,
                       subject=excluded.subject,
                       body=excluded.body,
                       priority=excluded.priority,
                       status=excluded.status,
-                      client_id=coalesce(excluded.client_id, tickets.client_id)
+                      client_id=coalesce(excluded.client_id, tickets.client_id),
+                      requester_id=coalesce(excluded.requester_id, tickets.requester_id)
                     """,
                     (
                         ticket.id,
@@ -755,6 +758,7 @@ class Store:
                         ticket.priority,
                         ticket.status,
                         _normalize_client_id(ticket.client_id),
+                        ticket.requester_id,
                     ),
                 )
                 self._add_audit_event(
@@ -796,6 +800,100 @@ class Store:
         self, ticket_id: str, client_id: str | None = None
     ) -> Ticket | None:
         return self.get_ticket(ticket_id, client_id)
+
+    def create_end_user_ticket(
+        self,
+        *,
+        client_id: str,
+        requester_id: str,
+        subject: str,
+        body: str,
+    ) -> Ticket:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id:
+            raise ValueError("end-user tickets require a client scope")
+        if not requester_id.strip():
+            raise ValueError("end-user tickets require a requester identity")
+        safe_subject = _redact_text(subject.strip())
+        safe_body = _redact_text(body.strip())
+        for _ in range(3):
+            ticket_id = f"EUS-{uuid.uuid4().hex[:12].upper()}"
+            try:
+                with self._connect() as connection:
+                    connection.execute(
+                        """
+                        insert into tickets
+                          (id, client, subject, body, priority, status, client_id, requester_id)
+                        values (?, ?, ?, ?, 'normal', 'new', ?, ?)
+                        """,
+                        (
+                            ticket_id,
+                            normalized_client_id,
+                            safe_subject,
+                            safe_body,
+                            normalized_client_id,
+                            _redact_text(requester_id.strip()),
+                        ),
+                    )
+                    self._add_audit_event(
+                        connection,
+                        "end_user.ticket.created",
+                        ticket_id,
+                        f"End-user ticket created for {normalized_client_id}",
+                        client_id=normalized_client_id,
+                    )
+                created = self.get_ticket(ticket_id, normalized_client_id)
+                if created is None:
+                    raise RuntimeError("end-user ticket was not persisted")
+                return created
+            except sqlite3.IntegrityError:
+                continue
+        raise RuntimeError("end-user ticket ID allocation failed")
+
+    def get_end_user_ticket(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        requester_id: str,
+    ) -> Ticket | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from tickets
+                where id = ? and client_id = ? and requester_id = ?
+                """,
+                (ticket_id, normalized_client_id, requester_id.strip()),
+            ).fetchone()
+        return Ticket(**dict(row)) if row else None
+
+    def escalate_end_user_ticket(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        requester_id: str,
+    ) -> Ticket | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update tickets set status = 'escalated'
+                where id = ? and client_id = ? and requester_id = ?
+                """,
+                (ticket_id, normalized_client_id, requester_id.strip()),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._add_audit_event(
+                connection,
+                "end_user.ticket.escalated",
+                ticket_id,
+                "End-user requested technician escalation",
+                client_id=normalized_client_id,
+            )
+        return self.get_ticket(ticket_id, normalized_client_id)
 
     def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
         safe_comment = _redact_text(comment)

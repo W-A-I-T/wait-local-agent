@@ -11,6 +11,7 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
+| `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
 
@@ -29,6 +30,19 @@ Production-like local installs should set:
 WAIT_DEMO_MODE=false
 WAIT_API_TOKEN=<strong-local-token>
 ```
+
+End-user support requires a separate token and explicit fixed scope:
+
+```text
+WAIT_END_USER_SUPPORT_ENABLED=true
+WAIT_END_USER_TOKEN=<end-user-token>
+WAIT_END_USER_CLIENT_ID=<client-id>
+WAIT_END_USER_USER_ID=<requester-id>
+```
+
+The end-user token is not a technician or admin token. It cannot select a
+tenant in the request, invoke smart actions, or read tickets belonging to a
+different requester.
 
 ## Secrets management
 

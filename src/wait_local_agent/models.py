@@ -32,6 +32,7 @@ class Ticket:
     priority: str
     status: str
     client_id: str | None = None
+    requester_id: str | None = None
 
 
 @dataclass(frozen=True)

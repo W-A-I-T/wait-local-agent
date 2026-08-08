@@ -60,6 +60,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "execution_window_timezone" in _columns(connection, "agent_definitions")
     assert "failed_entity_ids_json" in backfill_columns
     assert "max_concurrency" in backfill_columns
+    assert "requester_id" in _columns(connection, "tickets")
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
     assert ticket is not None and ticket["client_id"] is None
