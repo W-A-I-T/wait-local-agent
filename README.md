@@ -64,10 +64,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.
-- Successful API/gallery workflows, scheduled workflows, and scheduled agents
-  emit an idempotent, tenant-scoped `workflow.completed` event. Event agents
-  can filter it by `workflow_template_id` or `workflow_run_id` to continue a
-  bounded chain; pending-approval runs do not emit completion.
+- Successful CLI/API/gallery workflows, scheduled workflows, and scheduled
+  agents emit an idempotent, tenant-scoped `workflow.completed` event. Event
+  agents can filter it by `workflow_template_id` or `workflow_run_id` to
+  continue a bounded chain; pending-approval runs do not emit completion.
 - `GET /analytics/summary` and `wait-local-agent analytics summary` include
   tenant-scoped approval decisions, distinct tickets referenced by executions,
   current `resolved`/`closed` ticket counts, and grouped activity by workflow,

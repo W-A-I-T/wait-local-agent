@@ -71,6 +71,7 @@ from wait_local_agent.connectors import (
     validate_connector_credentials,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
+from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -1580,8 +1581,46 @@ def list_workflows() -> None:
 
 @workflows_app.command("run")
 def run_workflow(template_id: str, ticket_id: str) -> None:
-    run = run_workflow_template(_store(), template_id, ticket_id, actor="cli", trigger_source="cli")
+    settings = load_settings()
+    store = Store(settings.data_path)
+    run = run_workflow_template(store, template_id, ticket_id, actor="cli", trigger_source="cli")
+    _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
+
+
+def _dispatch_cli_workflow_completion(store: Store, settings, run) -> None:
+    if run.status != "completed" or run.id is None or not run.ticket_id.strip():
+        return
+    agent_service = AgentService(store, settings, SmartActionService(store, settings))
+    dispatcher = EventDispatcher(store, agent_service)
+    payload: dict[str, object] = {
+        "workflow_run_id": str(run.id),
+        "workflow_template_id": run.template_id,
+        "status": run.status,
+    }
+    try:
+        dispatcher.dispatch(
+            event_type="workflow.completed",
+            entity_type="ticket",
+            entity_id=run.ticket_id,
+            payload=payload,
+            idempotency_key=f"workflow-completed:{run.id}",
+            client_id=run.client_id,
+            actor="cli",
+        )
+        store.add_audit_event(
+            "workflow.completion_dispatched",
+            str(run.id),
+            "workflow.completed event dispatched",
+            client_id=run.client_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+        store.add_audit_event(
+            "workflow.completion_dispatch_failed",
+            str(run.id),
+            redact_text(f"workflow.completed dispatch failed: {exc}"),
+            client_id=run.client_id,
+        )
 
 
 @agents_app.command("list")

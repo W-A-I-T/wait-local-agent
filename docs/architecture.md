@@ -125,11 +125,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   evidence, and error detail; it contains no hidden reasoning. Backfills and
   conversational agents remain future extensions.
 
-The API and scheduler emit `workflow.completed` through the existing event
-dispatcher after an API/gallery workflow, scheduled workflow, or scheduled
-agent completes. The event carries only the tenant-scoped ticket, run ID,
-template/agent ID, and status, uses a deterministic idempotency key, and
-records dispatch failures without changing the already-completed workflow
+The CLI, API, and scheduler emit `workflow.completed` through the existing
+event dispatcher after a CLI/API/gallery workflow, scheduled workflow, or
+scheduled agent completes. The event carries only the tenant-scoped ticket,
+run ID, template/agent ID, and status, uses a deterministic idempotency key,
+and records dispatch failures without changing the already-completed workflow
 outcome. Pending-approval runs do not emit completion.
 
 Analytics reads the same tenant-scoped execution and approval records. It
@@ -186,7 +186,7 @@ not implied by enabling it.
   `Idempotency-Key` header or request-body key.
 - Event definitions use `trigger: "event"` and deterministic filters such as
   `{"event_type": "ticket.created", "priority": "P1"}`.
-- API/gallery workflow and scheduled workflow/agent completion emits `workflow.completed` with
+- CLI/API/gallery workflow and scheduled workflow/agent completion emits `workflow.completed` with
   `workflow_run_id`, `workflow_template_id`, and `status` fields; these can be
   used in deterministic filters to trigger the next bounded agent.
 - Deliveries persist redacted payloads, matched definitions, run IDs, status,

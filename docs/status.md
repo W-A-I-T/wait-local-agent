@@ -73,7 +73,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   `/agents/{id}/revisions`; each new run records the definition version it
   used; event
   agents also support same-tenant dependency chains with cycle prevention. A
-  API/gallery workflow or scheduled workflow/agent completion emits a
+  CLI/API/gallery workflow or scheduled workflow/agent completion emits a
   deterministic, tenant-scoped `workflow.completed` event that can trigger
   matching event agents with idempotency and audit history; pending-approval
   runs do not emit completion. A
