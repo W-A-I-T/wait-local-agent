@@ -630,7 +630,7 @@ def test_m365_managed_device_remote_lock_approval_is_strict_and_executes(setting
         '{"action_type":"managed-devices.remote-lock","connector":"m365",'
         '"device_id":"device-1"}'
     )
-    valid = {
+    valid: dict[str, object] = {
         "connector": "m365",
         "action_type": "managed-devices.remote-lock",
         "device_id": "device-1",
