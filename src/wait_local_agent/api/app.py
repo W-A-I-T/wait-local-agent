@@ -97,6 +97,7 @@ from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -298,6 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ninjaone_client = NinjaOneClient(active_settings)
     autotask_client = AutotaskClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
+    syncro_client = SyncroClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -1901,6 +1903,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connectwise_client.list_companies(page=page, page_size=page_size),
         )
 
+    @app.get("/connectors/syncro/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = syncro_client.health()
+        store.add_audit_event("syncro.read", "syncro.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/syncro/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _syncro_response(
+            "tickets.list",
+            syncro_client.list_tickets(page=page, page_size=page_size),
+        )
+
+    @app.get("/connectors/syncro/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _syncro_response("tickets.get", syncro_client.get_ticket(ticket_id))
+
+    @app.get("/connectors/syncro/companies")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_companies(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        return _syncro_response(
+            "companies.list",
+            syncro_client.list_companies(page=page, page_size=page_size),
+        )
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2373,6 +2413,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _connectwise_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
         store.add_audit_event(
             "connectwise.read",
+            read_type,
+            f"{response.result.status} count={response.result.count}",
+        )
+        return {"result": asdict(response.result), "items": response.items}
+
+    def _syncro_response(read_type: str, response: PsaReadResponse) -> dict[str, object]:
+        store.add_audit_event(
+            "syncro.read",
             read_type,
             f"{response.result.status} count={response.result.count}",
         )

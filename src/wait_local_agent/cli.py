@@ -82,6 +82,7 @@ from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -162,6 +163,10 @@ def _connectwise_client() -> ConnectWiseClient:
     return ConnectWiseClient(load_settings())
 
 
+def _syncro_client() -> SyncroClient:
+    return SyncroClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -227,6 +232,8 @@ def doctor() -> None:
         and settings.connectwise_client_id
     )
     typer.echo(f"connectwise_configured={connectwise_configured}")
+    syncro_configured = bool(settings.syncro_base_url and settings.syncro_api_key)
+    typer.echo(f"syncro_configured={syncro_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -647,7 +654,7 @@ def list_secrets() -> None:
 def validate_connector(
     connector: Annotated[
         str,
-        typer.Argument(help="Connector id, such as halopsa, hudu, autotask, or connectwise."),
+        typer.Argument(help="Connector id, such as halopsa, hudu, autotask, connectwise, or syncro."),
     ]
 ) -> None:
     settings = load_settings()
@@ -661,6 +668,7 @@ def validate_connector(
             ninjaone_client=_ninjaone_client(),
             autotask_client=_autotask_client(),
             connectwise_client=_connectwise_client(),
+            syncro_client=_syncro_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -941,6 +949,34 @@ def connectwise_companies(page: int = 1, page_size: int = 50) -> None:
     _print_connectwise_response(
         "companies.list",
         _connectwise_client().list_companies(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("syncro-health")
+def syncro_health() -> None:
+    result = _syncro_client().health()
+    _audit_syncro_cli_read("syncro.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("syncro-tickets")
+def syncro_tickets(page: int = 1, page_size: int = 50) -> None:
+    _print_syncro_response(
+        "tickets.list",
+        _syncro_client().list_tickets(page=page, page_size=page_size),
+    )
+
+
+@connectors_app.command("syncro-ticket")
+def syncro_ticket(ticket_id: str) -> None:
+    _print_syncro_response("tickets.get", _syncro_client().get_ticket(ticket_id))
+
+
+@connectors_app.command("syncro-companies")
+def syncro_companies(page: int = 1, page_size: int = 50) -> None:
+    _print_syncro_response(
+        "companies.list",
+        _syncro_client().list_companies(page=page, page_size=page_size),
     )
 
 
@@ -1581,6 +1617,13 @@ def _print_connectwise_response(read_type: str, response: PsaReadResponse) -> No
         typer.echo(item)
 
 
+def _print_syncro_response(read_type: str, response: PsaReadResponse) -> None:
+    _audit_syncro_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
+    for item in response.items:
+        typer.echo(item)
+
+
 def _audit_halopsa_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
@@ -1603,6 +1646,10 @@ def _audit_autotask_cli_read(read_type: str, status: str, count: int) -> None:
 
 def _audit_connectwise_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("connectwise.read", read_type, f"{status} count={count}")
+
+
+def _audit_syncro_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("syncro.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

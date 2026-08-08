@@ -21,6 +21,7 @@ from wait_local_agent.models import (
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import NinjaOneClient, RmmClient
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroClient
 
 HALOPSA_ACTION_TYPES = {
     "add_note",
@@ -84,6 +85,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     connectwise_status: ConnectorStatusValue = "not_configured"
     if connectwise_configured:
         connectwise_status = "configured" if settings.allow_http_probing else "blocked"
+    syncro_configured = bool(settings.syncro_base_url and settings.syncro_api_key)
+    syncro_status: ConnectorStatusValue = "not_configured"
+    if syncro_configured:
+        syncro_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -188,6 +193,22 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             ),
             http_probing_enabled=settings.allow_http_probing,
         ),
+        ConnectorStatus(
+            id="syncro",
+            kind="psa",
+            name="SyncroMSP",
+            status=syncro_status,
+            message=(
+                "Syncro read-only ticket and customer inventory is configured."
+                if syncro_status == "configured"
+                else (
+                    "Syncro credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if syncro_status == "blocked"
+                    else "Set WAIT_SYNCRO_BASE_URL and WAIT_SYNCRO_API_KEY to enable read-only PSA inventory."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
     ]
 
 
@@ -238,6 +259,9 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_CONNECTWISE_PRIVATE_KEY", bool(settings.connectwise_private_key), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_CLIENT_ID", bool(settings.connectwise_client_id), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_PAGE_SIZE", bool(settings.connectwise_page_size), "connectwise"),
+        SecretRecord("WAIT_SYNCRO_BASE_URL", bool(settings.syncro_base_url), "syncro"),
+        SecretRecord("WAIT_SYNCRO_API_KEY", bool(settings.syncro_api_key), "syncro"),
+        SecretRecord("WAIT_SYNCRO_PAGE_SIZE", bool(settings.syncro_page_size), "syncro"),
     ]
 
 
@@ -251,6 +275,7 @@ def validate_connector_credentials(
     ninjaone_client: RmmClient | None = None,
     autotask_client: PsaClient | None = None,
     connectwise_client: PsaClient | None = None,
+    syncro_client: PsaClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -362,6 +387,23 @@ def validate_connector_credentials(
                 f"ConnectWise credentials are incomplete: {', '.join(missing)}.",
             )
         result = (connectwise_client or ConnectWiseClient(settings)).health()
+    elif connector == "syncro":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SYNCRO_BASE_URL": settings.syncro_base_url,
+                "WAIT_SYNCRO_API_KEY": settings.syncro_api_key,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Syncro credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (syncro_client or SyncroClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

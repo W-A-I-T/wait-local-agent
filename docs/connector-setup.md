@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, and ConnectWise HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, and Syncro HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -257,3 +257,20 @@ wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY
 wait-local-agent secrets set WAIT_CONNECTWISE_CLIENT_ID
 WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate connectwise
 ```
+
+## SyncroMSP
+
+The public Syncro adapter is read-only and requires explicit HTTP probing. Set
+the Syncro subdomain API base URL and API key. Syncro documents the API key as a
+query parameter; the local adapter never includes it in connector result,
+audit, or error messages.
+
+```bash
+wait-local-agent secrets set WAIT_SYNCRO_BASE_URL
+wait-local-agent secrets set WAIT_SYNCRO_API_KEY
+wait-local-agent secrets set WAIT_SYNCRO_PAGE_SIZE
+WAIT_ALLOW_HTTP_PROBING=true wait-local-agent connectors validate syncro
+```
+
+Use the vendor's current API documentation when selecting the account and
+subdomain endpoint: <https://api-docs.syncromsp.com/>.

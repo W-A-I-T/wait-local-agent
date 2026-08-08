@@ -1678,6 +1678,42 @@ def test_connectwise_api_read_surfaces_are_blocked_and_ready_without_writes(sett
     )
 
 
+def test_syncro_api_read_surfaces_are_blocked_and_ready_without_writes(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    blocked = blocked_client.get("/connectors/syncro/health")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked"
+
+    result = ConnectorReadResult("ready", "fake Syncro response", 1)
+
+    class FakeSyncroClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_tickets(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "ticket-1"}])
+
+        def get_ticket(self, ticket_id):
+            return PsaReadResponse(result, [{"id": ticket_id}])
+
+        def list_companies(self, *, page=1, page_size=None):
+            return PsaReadResponse(result, [{"id": "customer-1"}])
+
+    monkeypatch.setattr(app_module, "SyncroClient", FakeSyncroClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/syncro/health").json()["status"] == "ready"
+    assert client.get("/connectors/syncro/tickets").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/syncro/tickets/ticket-1").json()["items"] == [{"id": "ticket-1"}]
+    assert client.get("/connectors/syncro/companies").json()["items"] == [{"id": "customer-1"}]
+    assert any(
+        event["event_type"] == "syncro.read"
+        for event in client.get("/audit").json()
+    )
+
+
 def test_halopsa_api_read_surfaces_missing_credentials(settings) -> None:
     configured_settings = settings.__class__(
         **{
@@ -1709,6 +1745,8 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
             "connectwise_public_key": "public-key",
             "connectwise_private_key": "private-key",
             "connectwise_client_id": "client-id",
+            "syncro_base_url": "https://acme.syncromsp.com/api/v1",
+            "syncro_api_key": "syncro-key",
         }
     )
     enabled_settings = blocked_settings.__class__(
@@ -1727,6 +1765,10 @@ def test_connector_list_marks_configured_halopsa_as_blocked_until_http_enabled(s
     enabled_connectwise = next(item for item in enabled.json() if item["id"] == "connectwise")
     assert blocked_connectwise["status"] == "blocked"
     assert enabled_connectwise["status"] == "configured"
+    blocked_syncro = next(item for item in blocked.json() if item["id"] == "syncro")
+    enabled_syncro = next(item for item in enabled.json() if item["id"] == "syncro")
+    assert blocked_syncro["status"] == "blocked"
+    assert enabled_syncro["status"] == "configured"
 
 
 def test_halopsa_api_returns_normalized_mocked_reads(settings, monkeypatch) -> None:

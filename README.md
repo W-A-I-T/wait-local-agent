@@ -24,11 +24,12 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
 - IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
-- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, and `connectwise`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, `connectwise`, and `syncro`.
 - Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
   safe script execution previews; script execution is not exposed.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
 - Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
+- Read-only SyncroMSP ticket and customer inventory; Syncro writes are not exposed.
 - Preview-only `build-message` drafts cover ticket notes, email, Teams, Slack, and
   SMS-shaped messages; no outbound transport is enabled.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
@@ -370,6 +371,21 @@ wait-local-agent connectors validate connectwise
 wait-local-agent connectors connectwise-health
 wait-local-agent connectors connectwise-tickets
 wait-local-agent connectors connectwise-companies
+```
+
+### SyncroMSP
+
+The public Syncro adapter is read-only and requires explicit HTTP probing.
+Configure the Syncro subdomain API base URL and API key, then use the `syncro`
+validation and read commands. The API key is sent only in the vendor-documented
+request query parameter and is never printed in connector results or audit text.
+No Syncro mutation endpoint is exposed.
+
+```bash
+wait-local-agent connectors validate syncro
+wait-local-agent connectors syncro-health
+wait-local-agent connectors syncro-tickets
+wait-local-agent connectors syncro-companies
 ```
 
 ## Scheduled Workflows and Tenancy Filters

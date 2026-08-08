@@ -20,7 +20,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
 - JSON and CSV event history export.
 - Optional Fernet-backed local secrets vault for connector credentials.
-- Connector setup validation commands for HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, and ConnectWise.
+- Connector setup validation commands for HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, and Syncro.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
 - Hudu read-only connector configuration surface for documentation lookup.
@@ -33,6 +33,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   disabled.
 - ConnectWise PSA read-only ticket and company inventory; mutation endpoints
   remain disabled.
+- SyncroMSP read-only ticket and customer inventory; mutation endpoints remain
+  disabled.
 - Preview-only communication drafts support ticket notes, email, Teams, Slack,
   and SMS-shaped messages; outbound delivery adapters are not enabled.
 - Deterministic ticket sentiment reports explainable terms and an escalation
@@ -89,7 +91,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 ## Next
 
 - Proprietary MSP Pack and Founder Pack implementation in the private pack repo.
-- Additional connector families beyond HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, and ConnectWise.
+- Additional connector families beyond HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, and Syncro.
 - Hosted WAIT Sync coordination surfaces and encrypted cloud backup relay.
 - White-label and enterprise packaging work.
 
@@ -133,6 +135,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | IT Glue connector | Built in open core as a read-only adapter; writes and richer mapping remain future work |
 | ConnectWise PSA connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | Autotask connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
+| SyncroMSP connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | NinjaOne RMM read-only | Built in open core; execution and additional RMM vendors remain future work |
 | M365 / Entra read-only inventory | Built through governed collector modules |
 | Scheduled / proactive workflows | Built |
