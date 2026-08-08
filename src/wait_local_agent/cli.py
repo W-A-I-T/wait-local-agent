@@ -66,6 +66,7 @@ from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
+from wait_local_agent.m365_graph import M365GraphClient, M365GraphReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -177,6 +178,10 @@ def _sharepoint_client() -> SharePointClient:
     return SharePointClient(load_settings())
 
 
+def _m365_client() -> M365GraphClient:
+    return M365GraphClient(load_settings())
+
+
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     app.registered_groups = [
         group for group in app.registered_groups if getattr(group, "name", None) not in _PACK_CLI_NAMES
@@ -246,6 +251,8 @@ def doctor() -> None:
         settings.sharepoint_base_url and settings.sharepoint_access_token
     )
     typer.echo(f"sharepoint_configured={sharepoint_configured}")
+    m365_configured = bool(settings.m365_graph_base_url and settings.m365_access_token)
+    typer.echo(f"m365_configured={m365_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
 
@@ -674,7 +681,7 @@ def validate_connector(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
                 "autotask, itglue, or confluence."
-                " SharePoint is also supported for read-only documentation."
+                " SharePoint and m365 are also supported for read-only connector reads."
             )
         ),
     ]
@@ -693,6 +700,7 @@ def validate_connector(
             itglue_client=_itglue_client(),
             confluence_client=_confluence_client(),
             sharepoint_client=_sharepoint_client(),
+            m365_client=_m365_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1214,6 +1222,29 @@ def sharepoint_document(site_id: str, item_id: str) -> None:
     _print_sharepoint_response(
         "documents.get",
         _sharepoint_client().get_document(site_id, item_id),
+    )
+
+
+@connectors_app.command("m365-health")
+def m365_health() -> None:
+    result = _m365_client().health()
+    _audit_m365_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("m365-users")
+def m365_users(
+    identity: str | None = None,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_m365_response(
+        "users.list",
+        _m365_client().list_users(
+            identity=identity,
+            cursor=cursor,
+            page_size=page_size if page_size is not None else load_settings().m365_page_size,
+        ),
     )
 
 
@@ -1946,6 +1977,25 @@ def _print_sharepoint_response(read_type: str, response: SharePointReadResponse)
 
 def _audit_sharepoint_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
+
+
+def _print_m365_response(read_type: str, response: M365GraphReadResponse) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_m365_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("m365.read", read_type, f"{status} count={count}")
 
 
 def _approval_cli_view(approval) -> dict[str, object]:

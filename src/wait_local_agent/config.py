@@ -106,6 +106,9 @@ class Settings:
     sharepoint_base_url: str = ""
     sharepoint_access_token: str = ""
     sharepoint_page_size: int = 25
+    m365_graph_base_url: str = ""
+    m365_access_token: str = ""
+    m365_page_size: int = 25
     connectwise_base_url: str = ""
     connectwise_company: str = ""
     connectwise_public_key: str = ""
@@ -261,6 +264,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         sharepoint_page_size=_int_env("WAIT_SHAREPOINT_PAGE_SIZE", 25),
+        m365_graph_base_url=_secret_value(
+            "WAIT_M365_GRAPH_BASE_URL",
+            os.getenv("WAIT_M365_GRAPH_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        m365_access_token=_secret_value(
+            "WAIT_M365_ACCESS_TOKEN",
+            os.getenv("WAIT_M365_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        m365_page_size=_int_env("WAIT_M365_PAGE_SIZE", 25),
         connectwise_base_url=_secret_value(
             "WAIT_CONNECTWISE_BASE_URL",
             os.getenv("WAIT_CONNECTWISE_BASE_URL", ""),

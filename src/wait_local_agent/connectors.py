@@ -10,6 +10,7 @@ from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
 from wait_local_agent.itglue import ItGlueClient
+from wait_local_agent.m365_graph import M365GraphClient
 from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
@@ -105,6 +106,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     autotask_status: ConnectorStatusValue = "not_configured"
     if autotask_configured:
         autotask_status = "configured" if settings.allow_http_probing else "blocked"
+    m365_configured = bool(settings.m365_graph_base_url and settings.m365_access_token)
+    m365_status: ConnectorStatusValue = "not_configured"
+    if m365_configured:
+        m365_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -249,8 +254,18 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             id="m365",
             kind="m365",
             name="Microsoft 365 / Entra",
-            status="not_configured",
-            message="Planned read-only identity, group, license, and mailbox lookup connector.",
+            status=m365_status,
+            message=(
+                "Microsoft Graph is configured for read-only user identity lookup."
+                if m365_status == "configured"
+                else "Microsoft Graph credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if m365_status == "blocked"
+                else (
+                    "Set WAIT_M365_GRAPH_BASE_URL and WAIT_M365_ACCESS_TOKEN to enable "
+                    "live identity reads."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
             id="rmm",
@@ -300,6 +315,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "sharepoint",
         ),
         SecretRecord("WAIT_SHAREPOINT_PAGE_SIZE", bool(settings.sharepoint_page_size), "sharepoint"),
+        SecretRecord(
+            "WAIT_M365_GRAPH_BASE_URL",
+            bool(settings.m365_graph_base_url),
+            "m365",
+        ),
+        SecretRecord("WAIT_M365_ACCESS_TOKEN", bool(settings.m365_access_token), "m365"),
+        SecretRecord("WAIT_M365_PAGE_SIZE", bool(settings.m365_page_size), "m365"),
         SecretRecord("WAIT_CONNECTWISE_BASE_URL", bool(settings.connectwise_base_url), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_COMPANY", bool(settings.connectwise_company), "connectwise"),
         SecretRecord("WAIT_CONNECTWISE_PUBLIC_KEY", bool(settings.connectwise_public_key), "connectwise"),
@@ -339,6 +361,7 @@ def validate_connector_credentials(
     itglue_client: ItGlueClient | None = None,
     confluence_client: ConfluenceClient | None = None,
     sharepoint_client: SharePointClient | None = None,
+    m365_client: M365GraphClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -428,6 +451,23 @@ def validate_connector_credentials(
                 f"SharePoint credentials are incomplete: {', '.join(missing)}.",
             )
         result = (sharepoint_client or SharePointClient(settings)).health()
+    elif connector == "m365":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_M365_GRAPH_BASE_URL": settings.m365_graph_base_url,
+                "WAIT_M365_ACCESS_TOKEN": settings.m365_access_token,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Microsoft Graph credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (m365_client or M365GraphClient(settings)).health()
     elif connector == "connectwise":
         missing = [
             key
