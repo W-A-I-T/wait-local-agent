@@ -16,10 +16,17 @@ type HuduSnapshot = {
 };
 
 export function Connectors() {
-  const { connectors, haloConnector, huduConnector, writeHealth, loading } = useDashboard();
+  const { connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
   const [huduHealth, setHuduHealth] = useState<HealthState | null>(null);
+  const [ninjaoneHealth, setNinjaoneHealth] = useState<HealthState | null>(null);
   const [huduData, setHuduData] = useState<HuduSnapshot>({ companies: [], articles: [] });
+  const [ninjaDeviceId, setNinjaDeviceId] = useState("");
+  const [ninjaScriptId, setNinjaScriptId] = useState("");
+  const [ninjaVariables, setNinjaVariables] = useState("{}");
+  const [ninjaRunAs, setNinjaRunAs] = useState("");
+  const [ninjaRequestMessage, setNinjaRequestMessage] = useState("");
+  const [ninjaRequestBusy, setNinjaRequestBusy] = useState(false);
 
   const refreshConnectivity = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -27,7 +34,8 @@ export function Connectors() {
       apiFetch<HealthState>("/connectors/halopsa/write-health"),
       apiFetch<HealthState>("/connectors/hudu/health"),
       apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/companies"),
-      apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/articles")
+      apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/articles"),
+      apiFetch<HealthState>("/connectors/ninjaone/health")
     ]);
 
     if (results[0].status === "fulfilled") {
@@ -35,6 +43,9 @@ export function Connectors() {
     }
     if (results[2].status === "fulfilled") {
       setHuduHealth(results[2].value);
+    }
+    if (results[5].status === "fulfilled") {
+      setNinjaoneHealth(results[5].value);
     }
     const companiesResult = results[3];
     if (companiesResult.status === "fulfilled") {
@@ -55,6 +66,35 @@ export function Connectors() {
       }));
     }
   }, []);
+
+  async function createNinjaOneRequest() {
+    setNinjaRequestBusy(true);
+    setNinjaRequestMessage("");
+    try {
+      const variables = JSON.parse(ninjaVariables) as unknown;
+      if (variables === null || typeof variables !== "object" || Array.isArray(variables)) {
+        throw new Error("Script variables must be a JSON object.");
+      }
+      const response = await apiFetch<{ id: number }>(
+        `/connectors/ninjaone/devices/${encodeURIComponent(ninjaDeviceId.trim())}/script-requests`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            script_id: ninjaScriptId.trim(),
+            variables,
+            run_as: ninjaRunAs
+          })
+        }
+      );
+      setNinjaRequestMessage(`Approval request ${response.id} created. Review it in the approval queue before execution.`);
+      setNinjaVariables("{}");
+    } catch (error) {
+      setNinjaRequestMessage(error instanceof Error ? error.message : "Unable to create the NinjaOne approval request.");
+    } finally {
+      setNinjaRequestBusy(false);
+    }
+  }
 
   useEffect(() => {
     void refreshConnectivity();
@@ -143,6 +183,44 @@ export function Connectors() {
           <span>{writeHealth.status}</span>
         </div>
         <p>{writeHealth.message}</p>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>NinjaOne approved script run</h2>
+          <span>{ninjaoneHealth?.status || "unknown"}</span>
+        </div>
+        <p>
+          Create a reviewable request for one script. Nothing runs until a technician approves it and both safety gates are enabled.
+        </p>
+        <div className="form-grid">
+          <label>
+            NinjaOne device ID
+            <input value={ninjaDeviceId} onChange={(event) => setNinjaDeviceId(event.target.value)} placeholder="17" />
+          </label>
+          <label>
+            NinjaOne script ID
+            <input value={ninjaScriptId} onChange={(event) => setNinjaScriptId(event.target.value)} placeholder="4" />
+          </label>
+          <label>
+            Run as (optional)
+            <input value={ninjaRunAs} onChange={(event) => setNinjaRunAs(event.target.value)} placeholder="system" />
+          </label>
+          <label>
+            Script variables (JSON object)
+            <textarea value={ninjaVariables} onChange={(event) => setNinjaVariables(event.target.value)} rows={4} />
+          </label>
+        </div>
+        <div className="row-actions">
+          <button
+            type="button"
+            disabled={!canWrite || ninjaRequestBusy || !ninjaDeviceId.trim() || !ninjaScriptId.trim()}
+            onClick={() => void createNinjaOneRequest()}
+          >
+            {ninjaRequestBusy ? "Creating request…" : "Request script review"}
+          </button>
+        </div>
+        {ninjaRequestMessage ? <p className="screen-note">{ninjaRequestMessage}</p> : null}
       </section>
     </div>
   );

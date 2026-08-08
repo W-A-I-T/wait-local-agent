@@ -114,6 +114,62 @@ describe("App", () => {
     });
   });
 
+  it("creates a NinjaOne approval request from the connector workbench", async () => {
+    renderApp();
+
+    fireEvent.change(await screen.findByLabelText("NinjaOne device ID"), { target: { value: "17" } });
+    fireEvent.change(screen.getByLabelText("NinjaOne script ID"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Script variables (JSON object)"), {
+      target: { value: '{"Path":"/tmp/logs"}' }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Request script review" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/connectors/ninjaone/devices/17/script-requests",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ script_id: "4", variables: { Path: "/tmp/logs" }, run_as: "" })
+        })
+      );
+    });
+  });
+
+  it("routes approved NinjaOne actions through the NinjaOne execution endpoint", async () => {
+    const ninjaApproval = {
+      id: 7,
+      subject_id: "17",
+      action_type: "ninjaone.script.run",
+      status: "approved",
+      comment: "approved",
+      execution_status: "not_started",
+      execution_message: "",
+      payload: { device_id: "17", script_id: "4", variables: { Path: "/tmp/logs" } },
+      can_execute: true,
+      block_reason: "",
+      workflow_run_id: null
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/approval-requests") {
+        return json([ninjaApproval]);
+      }
+      if (String(input) === "/connectors/ninjaone/approval-requests/7/execute") {
+        return json({ ...ninjaApproval, execution_status: "succeeded", execution_message: "accepted" });
+      }
+      return mockFetch(input, false, "admin");
+    }));
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Execute action" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/connectors/ninjaone/approval-requests/7/execute",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
+
   it("keeps approvals available while Halo execution is blocked", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, true)));
     renderApp();
