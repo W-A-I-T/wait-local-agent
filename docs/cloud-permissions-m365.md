@@ -10,6 +10,7 @@ permissions:
 | Users | `User.Read.All` |
 | Groups | `Group.Read.All` |
 | Subscribed license SKUs | `LicenseAssignment.Read.All` |
+| Mail-folder metadata | `Mail.ReadBasic.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -23,7 +24,7 @@ resolved at runtime and never persists in config, evidence, logs, or errors.
 Do not grant write permissions, `Directory.ReadWrite.All`, or role-management
 permissions.
 
-## Live identity, group, and license lookup
+## Live identity, group, license, and mailbox lookup
 
 The optional live identity connector uses the same Graph read boundary but
 accepts an operator-supplied bearer token through settings or the local vault:
@@ -35,18 +36,24 @@ WAIT_M365_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-It issues only bounded `GET /users` and `GET /groups` requests plus a selected-
-field `GET /subscribedSkus` request. User reads can
+It issues only bounded `GET /users` and `GET /groups` requests plus selected-
+field `GET /subscribedSkus` and `GET /users/{id}/mailFolders` requests. User reads can
 use an equality filter for a user ID or user principal name. Group reads can
 use an equality filter for a group ID, SMTP address, mail nickname, or exact
 display name; group members and owners are not expanded. License reads return
 tenant subscribed-SKU metadata and aggregate counts, not per-user assignments.
+Mailbox reads require an explicit user ID or user principal name and return
+selected root mail-folder metadata and aggregate counts; messages, bodies,
+attachments, and hidden folders are not requested.
 Microsoft documents
 `User.Read.All` for application user reads and `User.ReadBasic.All` or
 `User.Read.All` for delegated work/school user reads. The Graph groups API
 documents group-read permissions for group metadata. The subscribed-SKU API
-uses `LicenseAssignment.Read.All` for application or delegated access. The
+uses `LicenseAssignment.Read.All` for application or delegated access. Mailbox
+folder reads use `Mail.ReadBasic.All` for application access or
+`Mail.ReadBasic` for delegated access. The
 per-user `licenseDetails` API is not used because application permissions are
 not supported there. Grant only the permission required by the chosen flow.
 The token acquisition flow is deliberately outside WAIT, and this slice does
-not create, disable, modify, or assign licenses to users or groups.
+not create, disable, modify, or assign licenses to users or groups, and does
+not mutate mailboxes.

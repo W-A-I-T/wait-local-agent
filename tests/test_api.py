@@ -25,6 +25,8 @@ from wait_local_agent.m365_graph import (
     M365GraphGroup,
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
+    M365GraphMailFolder,
+    M365GraphMailFolderReadResponse,
     M365GraphReadResponse,
     M365GraphSubscribedSku,
     M365GraphUser,
@@ -2396,6 +2398,13 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "license-next-token",
             )
 
+        def list_mail_folders(self, **kwargs):
+            return M365GraphMailFolderReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [M365GraphMailFolder("inbox-id", "Inbox", "root-id", 3, 42, 5, False)],
+                "folder-next-token",
+            )
+
     monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
     client = TestClient(create_app(settings))
 
@@ -2412,6 +2421,10 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/licenses",
         params={"cursor": "license-next"},
     )
+    mail_folders = client.get(
+        "/connectors/m365/mail-folders",
+        params={"identity": "adele@example.test", "cursor": "folder-next", "page_size": 2},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -2423,6 +2436,8 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert groups.json()["next_cursor"] == "group-next-token"
     assert licenses.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
     assert licenses.json()["next_cursor"] == "license-next-token"
+    assert mail_folders.json()["items"][0]["display_name"] == "Inbox"
+    assert mail_folders.json()["next_cursor"] == "folder-next-token"
     assert any(connector["id"] == "m365" for connector in connectors.json())
     assert any(event["event_type"] == "m365.read" for event in audit.json())
 
@@ -2433,6 +2448,7 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     assert client.get("/connectors/m365/health").status_code == 401
     assert client.get("/connectors/m365/groups").status_code == 401
     assert client.get("/connectors/m365/licenses").status_code == 401
+    assert client.get("/connectors/m365/mail-folders").status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

@@ -38,7 +38,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `/tools` including read-only local knowledge search, ticket-quality and
   deterministic sentiment/escalation checks, collector previews, a
   technician-gated Microsoft 365 identity lookup over collected read-only
-  inventory plus a separate bounded live Graph user/group-read connector, and a
+  inventory plus a separate bounded live Graph user/group/license/mailbox-read connector, and a
   bounded read-only RMM device lookup over collected
   endpoint-agent inventory, plus tenant-scoped HaloPSA ticket and Hudu
   documentation read tools,
@@ -403,10 +403,11 @@ delegated or application bearer token stays in settings/vault; only bounded
 Graph GET requests are issued, file content is not downloaded, and live network
 access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
 
-### Microsoft 365 identity, group, and license context
+### Microsoft 365 identity, group, license, and mailbox context
 
 The live Microsoft Graph surface is intentionally limited to bounded,
-read-only user, group, and tenant subscribed-license context. Configure an
+read-only user, group, tenant subscribed-license, and mailbox-folder context.
+Configure an
 externally acquired delegated or application bearer token:
 
 ```text
@@ -415,9 +416,10 @@ WAIT_M365_ACCESS_TOKEN=
 WAIT_M365_PAGE_SIZE=25
 ```
 
-Use the connector validation, health, and user lookup commands. Omitting
-`--identity` returns a bounded page; supplying a user ID or user principal name
-performs a tenant-scoped identity lookup:
+Use the connector validation, health, and lookup commands. Omitting
+`--identity` returns a bounded user/group page; supplying a user ID or user
+principal name performs a tenant-scoped lookup. Mail-folder reads require an
+explicit identity:
 
 ```bash
 wait-local-agent connectors validate m365
@@ -427,12 +429,15 @@ wait-local-agent connectors m365-users --identity user@example.com
 wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
+wait-local-agent connectors m365-mail-folders --identity user@example.com
 ```
 
 Only Graph GET requests are issued. License reads return tenant subscribed-SKU
 metadata and aggregate consumption/prepaid counts; per-user license details,
-user creation, disable/offboarding, group membership changes, license
-assignments, mailbox operations, and Intune actions remain absent until
+and mailbox reads return selected root mail-folder metadata and aggregate item
+counts; messages, bodies, attachments, and hidden folders are not expanded.
+User creation, disable/offboarding, group membership changes, license
+assignments, mailbox mutations, and Intune actions remain absent until
 separately permissioned and approval-gated. Group reads return bounded group
 metadata only; members and owners are not expanded.
 
