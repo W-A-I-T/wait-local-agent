@@ -246,6 +246,14 @@ def test_scheduler_disabled_mode_and_failed_run_are_audited(tmp_path: Path) -> N
         assert manager.enabled is False
         assert manager.list_jobs()[0].next_run_at is None
         assert store.get_scheduled_job(scheduled_job.id or 0) is not None
+        rescheduled = manager.reschedule(
+            scheduled_job.id or 0,
+            schedule_type="interval",
+            cron="",
+            interval_seconds=60,
+            run_at=None,
+        )
+        assert rescheduled.schedule_type == "interval"
 
         with pytest.raises(LookupError):
             await manager._build_job_callable(scheduled_job)()
