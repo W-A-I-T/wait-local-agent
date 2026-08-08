@@ -336,6 +336,9 @@ Approved direct user license changes are exposed through
 `POST /connectors/m365/users/license-drafts` with `user_id`, `sku_ids`, and
 `operation` (`add` or `remove`), or the CLI command
 `connectors draft-m365-license-change USER_ID --sku-id SKU_ID --operation add|remove`.
+Approved session revocation is exposed through
+`POST /connectors/m365/users/session-revocation-drafts` or the CLI command
+`connectors draft-m365-session-revocation USER_ID`.
 
 ## ConnectWise PSA
 

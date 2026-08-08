@@ -167,6 +167,14 @@ class M365GraphLicenseChangeResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphSessionRevokeResult:
+    status: str
+    message: str
+    user_id: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
@@ -434,6 +442,23 @@ class M365GraphClient:
             status_code=status_code,
         )
 
+    def revoke_user_sessions(self, *, user_id: str) -> M365GraphSessionRevokeResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphSessionRevokeResult("blocked", health.message)
+        try:
+            safe_user_id = _safe_directory_object_id(user_id, "user_id")
+            endpoint = f"users/{quote(safe_user_id, safe='')}/revokeSignInSessions"
+            _, status_code = self._post(endpoint, None)
+        except M365GraphReadError as exc:
+            return M365GraphSessionRevokeResult("failed", exc.message)
+        return M365GraphSessionRevokeResult(
+            "succeeded",
+            "Microsoft Graph user session revocation succeeded.",
+            user_id=safe_user_id,
+            status_code=status_code,
+        )
+
     def _request_users(self, params: dict[str, str | int]) -> M365GraphReadResponse:
         blocked = self._blocked_response()
         if blocked is not None:
@@ -577,7 +602,11 @@ class M365GraphClient:
                 f"Microsoft Graph GET {safe_endpoint} returned malformed JSON."
             ) from exc
 
-    def _post(self, endpoint: str, payload: dict[str, object]) -> tuple[object, int]:
+    def _post(
+        self,
+        endpoint: str,
+        payload: dict[str, object] | None,
+    ) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
             raise M365GraphReadError(
                 "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
@@ -592,15 +621,23 @@ class M365GraphClient:
         try:
             safe_endpoint = _safe_endpoint(endpoint)
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
-                response = client.post(
-                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
-                    headers={
-                        "Authorization": f"Bearer {self.settings.m365_access_token}",
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
+                headers = {
+                    "Authorization": f"Bearer {self.settings.m365_access_token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                }
+                if payload is None:
+                    response = client.post(
+                        f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                        headers=headers,
+                        content=b"",
+                    )
+                else:
+                    response = client.post(
+                        f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                        headers=headers,
+                        json=payload,
+                    )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise M365GraphReadError(
                 "Microsoft Graph request failed before receiving a response."
@@ -767,6 +804,13 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[1])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_user_session_revoke_endpoint = (
+        len(endpoint_parts) == 3
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "revokeSignInSessions"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_group_members_add_endpoint = (
         len(endpoint_parts) == 4
         and endpoint_parts[0] == "groups"
@@ -793,6 +837,7 @@ def _safe_endpoint(endpoint: str) -> str:
         not is_mail_folder_endpoint
         and not is_user_endpoint
         and not is_user_license_endpoint
+        and not is_user_session_revoke_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint
     ):
@@ -1158,6 +1203,7 @@ __all__ = [
     "M365GraphGroupMembershipResult",
     "M365GraphGroupReadResponse",
     "M365GraphLicenseChangeResult",
+    "M365GraphSessionRevokeResult",
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",
     "M365GraphMailFolderReadResponse",

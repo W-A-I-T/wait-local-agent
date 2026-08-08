@@ -19,6 +19,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
     M365GraphReadError,
+    M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
     M365GraphUser,
     M365GraphUserCreateResult,
@@ -754,6 +755,7 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         (_safe_endpoint, "//host"),
         (_safe_endpoint, "users/bad\nvalue/mailFolders"),
         (_safe_endpoint, "users/user-1/assignLicense/extra"),
+        (_safe_endpoint, "users/user-1/revokeSignInSessions/extra"),
     ):
         with pytest.raises(M365GraphReadError):
             helper(value)
@@ -767,6 +769,9 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     )
     assert _safe_endpoint("users/user%40example.test") == "users/user%40example.test"
     assert _safe_endpoint("users/user-1/assignLicense") == "users/user-1/assignLicense"
+    assert _safe_endpoint("users/user-1/revokeSignInSessions") == (
+        "users/user-1/revokeSignInSessions"
+    )
 
 
 def test_m365_graph_user_disable_patches_only_account_enabled(settings) -> None:
@@ -1054,6 +1059,48 @@ def test_m365_graph_license_changes_are_strict_and_write_gated(settings) -> None
     assert duplicate_sku.status == "failed"
     assert empty_skus.status == "failed"
     assert non_string_sku.status == "failed"
+
+
+def test_m365_graph_session_revocation_posts_no_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1.0/users/user-1/revokeSignInSessions"
+        assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(200, json={"value": True})
+
+    response = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    ).revoke_user_sessions(user_id="user-1")
+
+    assert response == M365GraphSessionRevokeResult(
+        "succeeded",
+        "Microsoft Graph user session revocation succeeded.",
+        user_id="user-1",
+        status_code=200,
+    )
+
+
+def test_m365_graph_session_revocation_is_write_gated_and_sanitized(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).revoke_user_sessions(user_id="user-1")
+    invalid = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).revoke_user_sessions(user_id="user\n1")
+    forbidden = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403, json={"error": {"message": "secret must not leak"}}
+            )
+        ),
+    ).revoke_user_sessions(user_id="user-1")
+
+    assert blocked.status == "blocked"
+    assert invalid.status == "failed"
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
 
 
 def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(settings) -> None:

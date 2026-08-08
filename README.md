@@ -459,8 +459,10 @@ matching CLI command is `draft-m365-group-membership`; execution uses the
 same approval endpoint and `execute-m365` command. Approved direct user license
 changes are exposed through `POST /connectors/m365/users/license-drafts` or
 `draft-m365-license-change`; only explicit add/remove operations using immutable
-user IDs and SKU GUIDs are supported. Session, mailbox, and Intune mutations
-remain separate future actions.
+user IDs and SKU GUIDs are supported. Approved session revocation is exposed
+through `POST /connectors/m365/users/session-revocation-drafts` or
+`draft-m365-session-revocation`; mailbox and Intune mutations remain separate
+future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads
