@@ -173,6 +173,25 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             interval_seconds=60,
         )
     ) is not None
+
+
+def test_scheduler_validation_rejects_cross_type_and_malformed_schedule_values() -> None:
+    with pytest.raises(ValueError, match="cron schedules"):
+        validate_schedule("cron", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require interval_seconds"):
+        validate_schedule("interval", "", True, None)
+    with pytest.raises(ValueError, match="between 1"):
+        validate_schedule("interval", "", 31_536_001, None)
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("interval", "0 9 * * *", 60, None)
+    with pytest.raises(ValueError, match="require run_at"):
+        validate_schedule("once", "", None, "")
+    with pytest.raises(ValueError, match="cannot include cron"):
+        validate_schedule("once", "0 9 * * *", None, "2099-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError, match="ISO-8601"):
+        validate_schedule("once", "", None, "not-a-timestamp")
+    with pytest.raises(ValueError, match="schedule_type"):
+        validate_schedule("unsupported", "", None, None)
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=2,
