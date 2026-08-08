@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    DEFAULT_EVENT_MAX_RETRIES,
     MAX_APPROVAL_EXPIRY_SECONDS,
     AgentBackfill,
     AgentDefinition,
@@ -200,7 +201,10 @@ class Store:
                     error_detail text not null default '',
                     received_at text not null,
                     processed_at text not null default '',
-                    client_id text
+                    client_id text,
+                    agent_attempts_json text not null default '{}',
+                    retry_count integer not null default 0,
+                    max_retries integer not null default 3
                 )
                 """
             )
@@ -415,6 +419,24 @@ class Store:
                 "scheduled_jobs",
                 "timezone",
                 "text not null default 'UTC'",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "agent_attempts_json",
+                "text not null default '{}'",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "retry_count",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "max_retries",
+                f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
             )
             self._ensure_column(
                 connection,
@@ -1559,8 +1581,9 @@ class Store:
                 insert or ignore into event_deliveries
                   (idempotency_key, event_type, entity_type, entity_id, payload_json,
                    status, matched_agent_count, agent_ids_json, run_ids_json,
-                   error_detail, received_at, processed_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   error_detail, received_at, processed_at, client_id,
+                   agent_attempts_json, retry_count, max_retries)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idempotency_key,
@@ -1576,6 +1599,9 @@ class Store:
                     received_at,
                     "",
                     normalized_client_id,
+                    "{}",
+                    0,
+                    DEFAULT_EVENT_MAX_RETRIES,
                 ),
             )
             created = cursor.rowcount == 1
@@ -1613,6 +1639,8 @@ class Store:
         agent_ids: list[str],
         run_ids: list[int],
         error_detail: str = "",
+        agent_attempts: dict[str, dict[str, object]] | None = None,
+        retry_count: int | None = None,
     ) -> EventDelivery:
         processed_at = utc_now()
         safe_error = _redact_text(error_detail)
@@ -1621,7 +1649,9 @@ class Store:
                 """
                 update event_deliveries
                 set status = ?, matched_agent_count = ?, agent_ids_json = ?,
-                    run_ids_json = ?, error_detail = ?, processed_at = ?
+                    run_ids_json = ?, error_detail = ?, processed_at = ?,
+                    agent_attempts_json = coalesce(?, agent_attempts_json),
+                    retry_count = coalesce(?, retry_count)
                 where id = ?
                 """,
                 (
@@ -1631,6 +1661,8 @@ class Store:
                     _json_dumps_value(run_ids),
                     safe_error,
                     processed_at,
+                    _json_dumps_value(agent_attempts) if agent_attempts is not None else None,
+                    retry_count,
                     delivery_id,
                 ),
             )
@@ -1640,6 +1672,91 @@ class Store:
         if delivery is None:
             raise RuntimeError("event delivery was not persisted")
         return delivery
+
+    def claim_event_delivery_retry(
+        self,
+        delivery_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> EventDelivery:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is not None:
+                claimed = connection.execute(
+                    """
+                    update event_deliveries
+                    set status = 'retrying', retry_count = retry_count + 1,
+                        error_detail = ''
+                    where id = ? and client_id = ?
+                      and status = 'failed'
+                      and retry_count < max_retries
+                    """,
+                    (delivery_id, normalized_client_id),
+                )
+                lookup = connection.execute(
+                    """
+                    select status, retry_count, max_retries
+                    from event_deliveries
+                    where id = ? and client_id = ?
+                    """,
+                    (delivery_id, normalized_client_id),
+                )
+            else:
+                claimed = connection.execute(
+                    """
+                    update event_deliveries
+                    set status = 'retrying', retry_count = retry_count + 1,
+                        error_detail = ''
+                    where id = ?
+                      and status = 'failed'
+                      and retry_count < max_retries
+                    """,
+                    (delivery_id,),
+                )
+                lookup = connection.execute(
+                    """
+                    select status, retry_count, max_retries
+                    from event_deliveries
+                    where id = ?
+                    """,
+                    (delivery_id,),
+                )
+            if claimed.rowcount != 1:
+                row = lookup.fetchone()
+                if row is None:
+                    raise KeyError(delivery_id)
+                if str(row["status"]) != "failed":
+                    raise ValueError("only failed event deliveries can be retried")
+                raise ValueError("event delivery retry limit reached")
+        delivery = self.get_event_delivery(delivery_id, normalized_client_id)
+        if delivery is None:
+            raise RuntimeError("event delivery was not persisted")
+        return delivery
+
+    def get_event_delivery_payload(
+        self,
+        delivery_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select payload_json from event_deliveries where id = ?",
+                    (delivery_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select payload_json from event_deliveries where id = ? and client_id = ?",
+                    (delivery_id, normalized_client_id),
+                ).fetchone()
+        if row is None:
+            raise KeyError(delivery_id)
+        payload = json.loads(str(row["payload_json"]))
+        if not isinstance(payload, dict):
+            raise ValueError("event delivery payload must be an object")
+        return cast(dict[str, object], payload)
 
     def get_event_delivery(self, delivery_id: int, client_id: str | None = None) -> EventDelivery | None:
         normalized_client_id = _normalize_client_id(client_id)
@@ -4970,6 +5087,8 @@ def _optional_text(value: object) -> str | None:
 def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload = dict(row)
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
+    payload["retry_count"] = int(payload.get("retry_count") or 0)
+    payload["max_retries"] = int(payload.get("max_retries") or DEFAULT_EVENT_MAX_RETRIES)
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     payload["error_detail"] = _redact_text(str(payload["error_detail"]))

@@ -27,6 +27,7 @@ AgentRunStatus = Literal[
 AGENT_BACKFILL_MAX_CONCURRENCY = 4
 DEFAULT_APPROVAL_EXPIRY_SECONDS = 24 * 60 * 60
 MAX_APPROVAL_EXPIRY_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_EVENT_MAX_RETRIES = 3
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,9 @@ class EventDelivery:
     received_at: str
     processed_at: str
     client_id: str | None = None
+    agent_attempts_json: str = "{}"
+    retry_count: int = 0
+    max_retries: int = DEFAULT_EVENT_MAX_RETRIES
 
 
 @dataclass(frozen=True)

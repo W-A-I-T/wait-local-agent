@@ -1204,6 +1204,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="event delivery not found")
         return _event_delivery_view(delivery)
 
+    @app.post("/automation/event-deliveries/{delivery_id}/retry")
+    @limiter.limit(active_settings.rate_limit_general)
+    def retry_event_delivery(
+        request: Request,
+        delivery_id: int,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="event delivery not found")
+        try:
+            result = event_dispatcher.retry(
+                delivery_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "operator",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="event delivery not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _event_dispatch_view(result)
+
     @app.get("/smart-actions/runs")
     def smart_action_runs(
         context: ViewerAccess, client_id: str | None = None
@@ -3434,6 +3456,9 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "agent_ids": _safe_json_values(delivery.agent_ids_json),
         "run_ids": _safe_json_values(delivery.run_ids_json),
         "error_detail": redact_text(delivery.error_detail),
+        "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
+        "retry_count": delivery.retry_count,
+        "max_retries": delivery.max_retries,
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,
         "client_id": delivery.client_id,

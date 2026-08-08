@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from wait_local_agent.agents import AgentService
-from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError, _json_list
+from wait_local_agent.event_dispatch import (
+    EventDispatcher,
+    EventDispatchError,
+    _attempts_from_json,
+    _json_list,
+)
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 
@@ -149,6 +154,8 @@ def test_event_dispatch_rejects_unsupported_events_and_cross_tenant_entities(set
         )
     assert _json_list("not-json") == []
     assert _json_list("{}") == []
+    assert _attempts_from_json("not-json") == {}
+    assert _attempts_from_json("[]") == {}
     with pytest.raises(LookupError):
         dispatcher.dispatch(
             event_type="ticket.created",
@@ -320,3 +327,118 @@ def test_event_dispatch_failure_is_recorded_without_blocking_other_agents(settin
     assert result.matched_agent_ids == [definition.id]
     assert result.run_ids == []
     assert "should-redact" not in result.delivery.error_detail
+    failed_duplicate = EventDispatcher(store, FailingAgentService()).dispatch(  # type: ignore[arg-type]
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="disabled-event-second-key",
+        client_id="acme",
+    )
+    assert failed_duplicate.run_ids == []
+
+
+def test_event_dispatch_retries_only_failed_agents_with_a_bounded_count(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service, definition = _event_agent(settings, store)
+    successful_definition = service.create(
+        name="Independent event summary",
+        description="Runs independently of the flaky agent.",
+        enabled=True,
+        trigger="event",
+        entity_type="ticket",
+        filters={"event_type": "ticket.created", "priority": "P1"},
+        enabled_tools=["ticket-summary"],
+        steps=[{"tool_id": "ticket-summary", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    class FlakyAgentService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("provider secret=retry-me")
+            return service.run(*args, **kwargs)
+
+    flaky = FlakyAgentService()
+    dispatcher = EventDispatcher(store, flaky)  # type: ignore[arg-type]
+    failed = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="retryable-event",
+        client_id="acme",
+    )
+
+    assert failed.delivery.status == "failed"
+    assert failed.delivery.retry_count == 0
+    assert "retry-me" not in failed.delivery.error_detail
+
+    retried = dispatcher.retry(failed.delivery.id or 0, client_id="acme")
+    assert retried.delivery.status == "completed"
+    assert retried.delivery.retry_count == 1
+    assert retried.run_ids
+    assert '"status":"completed"' in retried.delivery.agent_attempts_json
+    assert definition.id in retried.delivery.agent_attempts_json
+    assert successful_definition.id in retried.delivery.agent_attempts_json
+    assert flaky.calls == 3
+    assert len(store.list_agent_runs(client_id="acme")) == 2
+
+    with pytest.raises(ValueError, match="only failed"):
+        dispatcher.retry(failed.delivery.id or 0, client_id="acme")
+
+    class AlwaysFailingAgentService:
+        def run(self, *args, **kwargs):
+            raise RuntimeError("still failing")
+
+    exhausted = EventDispatcher(store, AlwaysFailingAgentService()).dispatch(  # type: ignore[arg-type]
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1002",
+        payload={"priority": "P1"},
+        idempotency_key="exhausted-event",
+        client_id="acme",
+    )
+    for _ in range(3):
+        exhausted = EventDispatcher(store, AlwaysFailingAgentService()).retry(  # type: ignore[arg-type]
+            exhausted.delivery.id or 0,
+            client_id="acme",
+        )
+    assert exhausted.delivery.retry_count == exhausted.delivery.max_retries
+    with pytest.raises(ValueError, match="retry limit"):
+        EventDispatcher(store, AlwaysFailingAgentService()).retry(  # type: ignore[arg-type]
+            exhausted.delivery.id or 0,
+            client_id="acme",
+        )
+
+
+def test_event_dispatch_retry_records_ineligible_agent(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service, definition = _event_agent(settings, store)
+
+    class FailingAgentService:
+        def run(self, *args, **kwargs):
+            raise RuntimeError("temporary provider failure")
+
+    dispatcher = EventDispatcher(store, FailingAgentService())  # type: ignore[arg-type]
+    failed = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="ineligible-retry-event",
+        client_id="acme",
+    )
+    store.update_agent_definition(replace(definition, enabled=False, version=definition.version + 1))
+
+    retry = dispatcher.retry(failed.delivery.id or 0, client_id="acme")
+    assert retry.delivery.status == "failed"
+    assert "no longer eligible" in retry.errors[0]

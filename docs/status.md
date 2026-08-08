@@ -69,7 +69,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   bounded retry route with persisted retry lineage.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
-  redacted delivery records, and delivery history APIs. Conversational and
+  redacted delivery records, delivery history APIs, and an operator-triggered
+  bounded retry route that retries only failed or dependency-blocked agents
+  using persisted per-agent attempt state. Conversational and
   unrestricted agent execution are not shipped. Immutable revision history,
   explainable redacted diffs, and restore-as-new-version are available under
   `/agents/{id}/revisions`; each new run records the definition version it

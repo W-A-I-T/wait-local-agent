@@ -53,6 +53,9 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "interval_seconds" in scheduled_columns
     assert "run_at" in scheduled_columns
     assert "timezone" in scheduled_columns
+    assert "agent_attempts_json" in _columns(connection, "event_deliveries")
+    assert "retry_count" in _columns(connection, "event_deliveries")
+    assert "max_retries" in _columns(connection, "event_deliveries")
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
@@ -407,6 +410,43 @@ def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     assert [job.id for job in store.list_scheduled_jobs(client_id="")] == [acme.id]
     assert acme.timezone == "UTC"
     assert store.get_scheduled_job(beta.id or 0) is None
+
+
+def test_store_event_retry_claims_and_payload_scope(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    delivery, _ = store.create_event_delivery(
+        idempotency_key="store-retry-event",
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1",
+        payload={"priority": "P1"},
+        client_id="acme",
+    )
+    with pytest.raises(KeyError):
+        store.claim_event_delivery_retry(999, client_id="acme")
+    with pytest.raises(ValueError, match="only failed"):
+        store.claim_event_delivery_retry(delivery.id or 0, client_id="acme")
+    with pytest.raises(KeyError):
+        store.get_event_delivery_payload(delivery.id or 0, client_id="beta")
+    assert store.get_event_delivery_payload(delivery.id or 0)["priority"] == "P1"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE event_deliveries SET payload_json = ? WHERE id = ?",
+            ("[]", delivery.id),
+        )
+    with pytest.raises(ValueError, match="payload must be an object"):
+        store.get_event_delivery_payload(delivery.id or 0)
+    store.update_event_delivery(
+        delivery.id or 0,
+        status="failed",
+        matched_agent_count=0,
+        agent_ids=[],
+        run_ids=[],
+    )
+    claimed = store.claim_event_delivery_retry(delivery.id or 0)
+    assert claimed.retry_count == 1
+    with pytest.raises(ValueError, match="only failed"):
+        store.claim_event_delivery_retry(delivery.id or 0)
 
 
 def test_store_smart_action_crud_filters_and_completion_guards(tmp_path: Path) -> None:

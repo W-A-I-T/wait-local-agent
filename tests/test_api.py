@@ -1316,6 +1316,50 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
     assert missing_delivery.status_code == 404
 
 
+def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    delivery, _ = store.create_event_delivery(
+        idempotency_key="api-retry-event",
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1", "access_token": "do-not-echo"},
+        client_id="acme",
+    )
+    store.update_event_delivery(
+        delivery.id or 0,
+        status="failed",
+        matched_agent_count=0,
+        agent_ids=[],
+        run_ids=[],
+        error_detail="provider access_token=do-not-echo",
+        agent_attempts={},
+    )
+    beta_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "beta",
+            "tech_token": "beta-token",
+        }
+    )
+    wrong_tenant = TestClient(create_app(beta_settings)).post(
+        f"/automation/event-deliveries/{delivery.id}/retry",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    client = TestClient(create_app(settings))
+    retried = client.post(f"/automation/event-deliveries/{delivery.id}/retry")
+
+    assert wrong_tenant.status_code == 404
+    assert retried.status_code == 200
+    assert retried.json()["delivery"]["status"] == "completed"
+    assert retried.json()["delivery"]["retry_count"] == 1
+    assert "do-not-echo" not in retried.text
+
+
 def test_manual_workflow_run_emits_completion_event(settings) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

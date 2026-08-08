@@ -112,6 +112,12 @@ Scheduled jobs accept only validated IANA timezone names. Existing rows migrate
 to `UTC`; schedule timezones affect trigger interpretation but do not change
 tenant scope, approval policy, or connector authorization.
 
+Event-delivery retries require technician access and the original tenant scope.
+They are capped at three attempts and target only failed or dependency-blocked
+agents recorded for that delivery. Successful agent attempts are not replayed;
+retry payloads remain internal and delivery views use the existing redaction
+policy.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export
