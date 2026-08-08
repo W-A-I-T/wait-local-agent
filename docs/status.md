@@ -77,6 +77,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Agent run responses and persisted run state
   include a redacted operational final result with the last tool's status,
   output, evidence, and error detail; hidden reasoning is not persisted.
+- Technician-only bounded chat commands reuse the smart-action catalog; free-form
+  planning and end-user chat are not shipped.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics.
