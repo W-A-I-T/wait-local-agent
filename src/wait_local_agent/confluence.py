@@ -19,6 +19,7 @@ from wait_local_agent.models import ConnectorReadResult
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 MAX_CURSOR_LENGTH = 4096
+MAX_PAGE_BODY_LENGTH = 20_000
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class ConfluenceClient:
                 params["cursor"] = _safe_cursor(cursor)
         except ConfluenceReadError as exc:
             return ConfluenceReadResponse(ConnectorReadResult("failed", exc.message), [])
+        params["body-format"] = "storage"
         return self._request_items("pages", _normalize_page, params=params)
 
     def get_page(self, page_id: str) -> ConfluenceReadResponse:
@@ -109,7 +111,11 @@ class ConfluenceClient:
             safe_id = _safe_segment(page_id)
         except ConfluenceReadError as exc:
             return ConfluenceReadResponse(ConnectorReadResult("failed", exc.message), [])
-        return self._request_items(f"pages/{safe_id}", _normalize_page)
+        return self._request_items(
+            f"pages/{safe_id}",
+            _normalize_page,
+            params={"body-format": "storage"},
+        )
 
     def _request_items(
         self,
@@ -297,6 +303,7 @@ def _normalize_page(row: Mapping[str, object]) -> ConfluencePage | None:
             atlas_doc_format = body.get("atlas_doc_format")
             if isinstance(atlas_doc_format, dict):
                 body_text = _string_value(atlas_doc_format, "value")
+    body_text = body_text[:MAX_PAGE_BODY_LENGTH]
     return ConfluencePage(
         id=page_id,
         title=title,

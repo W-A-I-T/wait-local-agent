@@ -3661,7 +3661,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_confluence_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
-            "items": [asdict(item) for item in response.items],
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
             "next_cursor": response.next_cursor,
         }
 

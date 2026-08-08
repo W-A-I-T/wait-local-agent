@@ -25,6 +25,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common
   guarded HTTP boundary; write operations remain unavailable.
+- Confluence read-only space-scoped page body retrieval and content search
+  through the common guarded HTTP boundary; write operations remain unavailable.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
   ticket status, assignment, and field updates through the common guarded HTTP
   boundary.
@@ -149,7 +151,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   lookup, script metadata, script preview, and approval-aware execution. The
   local adapter remains inventory-only and blocks execution until a reviewed
   vendor adapter is installed. Existing HaloPSA ticket reads and
-  Hudu article-content, IT Glue, Confluence, and SharePoint documentation search, and
+  Hudu article-content, IT Glue, Confluence page-content, and SharePoint documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients; connector
   credentials are never action payloads.
@@ -207,6 +209,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | --- | --- |
 | HaloPSA read + approval-gated write | Built |
 | Hudu read-only | Built, including bounded article content search |
+| Confluence read-only | Built, including bounded page content search |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |

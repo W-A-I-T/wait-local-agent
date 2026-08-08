@@ -295,7 +295,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 items=[
                     ConfluencePage(
                         "page-1", "VPN runbook", space_id, "current", "3", "today",
-                        "https://confluence", "secret body",
+                        "https://confluence", "MFA reset token=secret",
                     )
                 ],
             )
@@ -382,6 +382,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         replace(connector_context, client_id="space-1"),
         {"query": "vpn", "space_id": "space-1"},
     )
+    confluence_content = ConfluenceDocumentationSearchAction().run(
+        connector_context,
+        {"query": "mfa", "space_id": "acme"},
+    )
     sharepoint = SharePointDocumentationSearchAction().run(
         replace(connector_context, client_id="site-1"),
         {"query": "vpn", "site_id": "site-1"},
@@ -467,7 +471,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     confluence_page = confluence_pages[0]
     assert isinstance(confluence_page, dict)
     assert confluence_page["title"] == "VPN runbook"
-    assert "body" not in confluence_page
+    assert confluence_page["body"] == "MFA reset token=[redacted]"
+    assert confluence_content.status == "success"
+    assert confluence_content.output["pages"][0]["body"] == "MFA reset token=[redacted]"  # type: ignore[index]
     sharepoint_documents = sharepoint.output["documents"]
     assert isinstance(sharepoint_documents, list)
     assert isinstance(sharepoint_documents[0], dict)

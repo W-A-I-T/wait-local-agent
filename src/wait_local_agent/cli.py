@@ -2949,7 +2949,7 @@ def _print_confluence_response(read_type: str, response: ConfluenceReadResponse)
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
                 "next_cursor": response.next_cursor,
             },
             sort_keys=True,

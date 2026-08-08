@@ -2979,13 +2979,13 @@ def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> No
         def list_pages(self, **kwargs):
             return ConfluenceReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
-                [ConfluencePage("9", "Runbook", "42", "current", "3", "today", "/page/9", "body")],
+                [ConfluencePage("9", "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
             )
 
         def get_page(self, page_id):
             return ConfluenceReadResponse(
                 ConnectorReadResult("ready", "page ready", 1),
-                [ConfluencePage(page_id, "Runbook", "42", "current", "3", "today", "/page/9", "body")],
+                [ConfluencePage(page_id, "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
             )
 
     monkeypatch.setattr(app_module, "ConfluenceClient", FakeConfluenceClient)
@@ -3003,7 +3003,9 @@ def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> No
     assert health.status_code == 200
     assert health.json()["status"] == "ready"
     assert pages.json()["items"][0]["title"] == "Runbook"
+    assert pages.json()["items"][0]["body"] == "token=[redacted]"
     assert page.json()["items"][0]["id"] == "9"
+    assert page.json()["items"][0]["body"] == "token=[redacted]"
     assert any(connector["id"] == "confluence" for connector in connectors.json())
     assert any(event["event_type"] == "confluence.read" for event in audit.json())
 

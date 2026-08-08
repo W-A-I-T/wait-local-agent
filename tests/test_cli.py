@@ -13,6 +13,7 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.config import load_settings
+from wait_local_agent.confluence import ConfluencePage, ConfluenceReadResponse
 from wait_local_agent.itglue import (
     ItGlueDocument,
     ItGlueFolder,
@@ -1169,6 +1170,37 @@ def test_itglue_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
     assert documents.exit_code == 0 and "Runbook" in documents.output
     assert document.exit_code == 0 and "Runbook" in document.output
     assert folders.exit_code == 0 and "Ops" in folders.output
+
+
+def test_confluence_cli_commands_redact_page_content(monkeypatch, tmp_path) -> None:
+    class FakeConfluenceClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def list_pages(self, **kwargs):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ConfluencePage("9", "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
+            )
+
+        def get_page(self, page_id):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [ConfluencePage(page_id, "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "ConfluenceClient", FakeConfluenceClient)
+    runner = CliRunner()
+
+    pages = runner.invoke(app, ["connectors", "confluence-pages", "--space-id", "42"])
+    page = runner.invoke(app, ["connectors", "confluence-page", "9"])
+
+    assert pages.exit_code == 0
+    assert "token=secret" not in pages.output
+    assert "token=[redacted]" in pages.output
+    assert page.exit_code == 0
+    assert "token=[redacted]" in page.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

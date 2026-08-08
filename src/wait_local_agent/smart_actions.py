@@ -1459,7 +1459,10 @@ class ConfluenceDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="confluence-documentation-search",
         title="Confluence documentation search",
-        description="Search tenant-scoped Confluence page metadata through the existing read-only connector.",
+        description=(
+            "Search tenant-scoped Confluence page titles and bounded body content "
+            "through the existing read-only connector."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -1520,11 +1523,15 @@ class ConfluenceDocumentationSearchAction:
                 "version": str(getattr(item, "version", "")),
                 "updated_at": str(getattr(item, "updated_at", "")),
                 "url": str(getattr(item, "url", "")),
+                "body": str(getattr(item, "body", "")),
             }
             for item in items
             if hasattr(item, "__dataclass_fields__")
             and str(getattr(item, "space_id", "")) in {"", scoped_space_id}
-            and query_value in str(getattr(item, "title", "")).casefold()
+            and (
+                query_value in str(getattr(item, "title", "")).casefold()
+                or query_value in str(getattr(item, "body", "")).casefold()
+            )
         ][:limit]
         return ActionResult(
             status="success",
