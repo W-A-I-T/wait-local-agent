@@ -1076,6 +1076,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             json={
                 "template_id": "documentation-assisted-response",
                 "cron": "0 9 * * *",
+                "timezone": "America/Vancouver",
                 "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
             },
         )
@@ -1094,6 +1095,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             json={
                 "template_id": "documentation-assisted-response",
                 "cron": "0 9 * * *",
+                "timezone": "America/Vancouver",
                 "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
             },
         )
@@ -1106,6 +1108,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert created.status_code == 200
         assert created.json()["next_run_at"] is not None
         assert created.json()["params"]["ticket_id"] == "TCK-1001"
+        assert created.json()["timezone"] == "America/Vancouver"
         assert app.state.scheduler._scheduler is not None
         assert len(app.state.scheduler._scheduler.get_jobs()) == 1
         assert listed.status_code == 200
@@ -1143,7 +1146,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         rescheduled = client.post(
             f"/scheduled-jobs/{job_id}/reschedule",
             headers=_auth("tech-token"),
-            json={"schedule_type": "interval", "interval_seconds": 120},
+            json={"schedule_type": "interval", "interval_seconds": 120, "timezone": "America/Vancouver"},
         )
         invalid_reschedule = client.post(
             f"/scheduled-jobs/{job_id}/reschedule",
@@ -1161,6 +1164,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert rescheduled.status_code == 200
         assert rescheduled.json()["schedule_type"] == "interval"
         assert rescheduled.json()["interval_seconds"] == 120
+        assert rescheduled.json()["timezone"] == "America/Vancouver"
         assert invalid_reschedule.status_code == 422
         assert deleted.status_code == 200
         assert deleted.json()["id"] == job_id

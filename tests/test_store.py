@@ -52,6 +52,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "schedule_type" in scheduled_columns
     assert "interval_seconds" in scheduled_columns
     assert "run_at" in scheduled_columns
+    assert "timezone" in scheduled_columns
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
@@ -404,6 +405,7 @@ def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     assert deleted.id == beta.id
     assert [job.id for job in store.list_scheduled_jobs(client_id="acme")] == [acme.id]
     assert [job.id for job in store.list_scheduled_jobs(client_id="")] == [acme.id]
+    assert acme.timezone == "UTC"
     assert store.get_scheduled_job(beta.id or 0) is None
 
 

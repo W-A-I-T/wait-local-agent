@@ -53,8 +53,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, approver identity capture, and a bounded 24-hour expiry that terminates linked pending work and blocks late execution.
 - Agent definitions can shorten approval deadlines with a bounded policy; they cannot extend a tool's configured deadline.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete, and
-  audit trail. Cron, interval, and one-time triggers use the existing UTC
-  APScheduler path and persist their agent/entity target. Scheduled jobs can
+  audit trail. Cron, interval, and one-time triggers use the existing
+  APScheduler path and persist their agent/entity target plus a validated IANA
+  schedule timezone (UTC remains the migration default). Scheduled jobs can
   also be rescheduled through a tenant-scoped API route; pause, resume,
   reschedule, and delete all enforce the authenticated tenant boundary.
   Agent definitions may additionally declare a validated local execution

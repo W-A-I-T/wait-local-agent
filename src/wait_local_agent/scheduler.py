@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -72,8 +73,9 @@ class SchedulerManager:
         schedule_type: str = "cron",
         interval_seconds: int | None = None,
         run_at: str | None = None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
-        validate_schedule(schedule_type, cron, interval_seconds, run_at)
+        normalized_timezone = validate_schedule(schedule_type, cron, interval_seconds, run_at, timezone)
         _validate_schedule_target(job_kind, template_id, agent_id, entity_id)
         client_id = _string_or_none(params.get("client_id"))
         scheduled_job = self._store.create_scheduled_job(
@@ -87,6 +89,7 @@ class SchedulerManager:
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
             run_at=run_at,
+            timezone=normalized_timezone,
         )
         if self._scheduler is not None:
             self._register_live_job(scheduled_job)
@@ -119,11 +122,12 @@ class SchedulerManager:
         schedule_type: str,
         interval_seconds: int | None,
         run_at: str | None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         existing = self._store.get_scheduled_job(job_id)
         if existing is None:
             raise KeyError(job_id)
-        validate_schedule(schedule_type, cron, interval_seconds, run_at)
+        normalized_timezone = validate_schedule(schedule_type, cron, interval_seconds, run_at, timezone)
         _validate_schedule_target(existing.job_kind, existing.template_id, existing.agent_id, existing.entity_id)
         scheduled_job = self._store.update_scheduled_job_schedule(
             job_id,
@@ -131,6 +135,7 @@ class SchedulerManager:
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
             run_at=run_at,
+            timezone=normalized_timezone,
         )
         if self._scheduler is not None:
             self._register_live_job(scheduled_job)
@@ -335,9 +340,9 @@ class SchedulerManager:
         return f"scheduled-job:{job_id}"
 
 
-def validate_cron_expression(cron: str) -> None:
+def validate_cron_expression(cron: str, timezone: str = "UTC") -> None:
     try:
-        CronTrigger.from_crontab(cron, timezone=UTC)
+        CronTrigger.from_crontab(cron, timezone=ZoneInfo(validate_timezone(timezone)))
     except ValueError as exc:
         raise ValueError("invalid cron expression; expected standard 5-field crontab syntax") from exc
 
@@ -347,12 +352,14 @@ def validate_schedule(
     cron: str,
     interval_seconds: int | None,
     run_at: str | None,
-) -> None:
+    timezone: str = "UTC",
+) -> str:
+    normalized_timezone = validate_timezone(timezone)
     if schedule_type == "cron":
-        validate_cron_expression(cron)
+        validate_cron_expression(cron, normalized_timezone)
         if interval_seconds is not None or run_at is not None:
             raise ValueError("cron schedules cannot include interval_seconds or run_at")
-        return
+        return normalized_timezone
     if schedule_type == "interval":
         if not isinstance(interval_seconds, int) or isinstance(interval_seconds, bool):
             raise ValueError("interval schedules require interval_seconds")
@@ -360,7 +367,7 @@ def validate_schedule(
             raise ValueError("interval_seconds must be between 1 and 31536000")
         if cron or run_at is not None:
             raise ValueError("interval schedules cannot include cron or run_at")
-        return
+        return normalized_timezone
     if schedule_type == "once":
         if not isinstance(run_at, str) or not run_at.strip():
             raise ValueError("one-time schedules require run_at")
@@ -369,16 +376,36 @@ def validate_schedule(
         parsed = _parse_run_at(run_at)
         if parsed <= datetime.now(UTC):
             raise ValueError("run_at must be in the future")
-        return
+        return normalized_timezone
     raise ValueError("schedule_type must be cron, interval, or once")
+
+
+def validate_timezone(timezone: str) -> str:
+    if not isinstance(timezone, str) or not timezone.strip():
+        raise ValueError("timezone must be a valid IANA timezone")
+    normalized_timezone = timezone.strip()
+    try:
+        ZoneInfo(normalized_timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError("timezone must be a valid IANA timezone") from exc
+    return normalized_timezone
 
 
 def _schedule_trigger(scheduled_job: ScheduledJob) -> Any:
     if scheduled_job.schedule_type == "interval":
-        return IntervalTrigger(seconds=scheduled_job.interval_seconds or 0, timezone=UTC)
+        return IntervalTrigger(
+            seconds=scheduled_job.interval_seconds or 0,
+            timezone=ZoneInfo(validate_timezone(scheduled_job.timezone)),
+        )
     if scheduled_job.schedule_type == "once":
-        return DateTrigger(run_date=_parse_run_at(scheduled_job.run_at or ""), timezone=UTC)
-    return CronTrigger.from_crontab(scheduled_job.cron, timezone=UTC)
+        return DateTrigger(
+            run_date=_parse_run_at(scheduled_job.run_at or ""),
+            timezone=ZoneInfo(validate_timezone(scheduled_job.timezone)),
+        )
+    return CronTrigger.from_crontab(
+        scheduled_job.cron,
+        timezone=ZoneInfo(validate_timezone(scheduled_job.timezone)),
+    )
 
 
 def _parse_run_at(run_at: str) -> datetime:

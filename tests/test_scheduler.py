@@ -208,6 +208,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
             schedule_type="cron",
             interval_seconds=None,
             run_at=None,
+            timezone="America/Vancouver",
         )
         deleted = manager.remove(scheduled_job.id or 0)
 
@@ -217,6 +218,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
         assert resumed.next_run_at is not None
         assert rescheduled.cron == "0 10 * * *"
         assert rescheduled.schedule_type == "cron"
+        assert rescheduled.timezone == "America/Vancouver"
         assert rescheduled.next_run_at is not None
         assert deleted.id == scheduled_job.id
         assert store.get_scheduled_job(scheduled_job.id or 0) is None
@@ -227,6 +229,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
                 schedule_type="cron",
                 interval_seconds=None,
                 run_at=None,
+                timezone="UTC",
             )
         with pytest.raises(KeyError):
             store.update_scheduled_job_schedule(
@@ -235,6 +238,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
                 schedule_type="cron",
                 interval_seconds=None,
                 run_at=None,
+                timezone="UTC",
             )
 
         unregistered = manager.register(
@@ -266,6 +270,7 @@ def test_scheduler_validation_rejects_invalid_cron() -> None:
 
 def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
     validate_schedule("interval", "", 60, None)
+    assert validate_schedule("cron", "0 9 * * *", None, None, " America/Vancouver ") == "America/Vancouver"
     validate_schedule("once", "", None, "2099-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="interval_seconds"):
         validate_schedule("interval", "", None, None)
@@ -287,6 +292,8 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
         validate_schedule("once", "", None, "2020-01-01T00:00:00+00:00")
     with pytest.raises(ValueError, match="schedule_type"):
         validate_schedule("unknown", "", None, None)
+    with pytest.raises(ValueError, match="valid IANA timezone"):
+        validate_schedule("cron", "0 9 * * *", None, None, "Not/AZone")
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=1,
@@ -300,6 +307,19 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             interval_seconds=60,
         )
     ) is not None
+    timezone_trigger = _schedule_trigger(  # noqa: SLF001
+        ScheduledJob(
+            id=3,
+            template_id="template",
+            cron="0 9 * * *",
+            params_json="{}",
+            paused=False,
+            created_at="",
+            updated_at="",
+            timezone="America/Vancouver",
+        )
+    )
+    assert str(timezone_trigger.timezone) == "America/Vancouver"
     assert _schedule_trigger(  # noqa: SLF001
         ScheduledJob(
             id=2,

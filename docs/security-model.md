@@ -108,6 +108,10 @@ An agent definition may shorten that deadline for its approval-required tools;
 the override is validated, capped at 30 days, and never extends the tool-level
 approval policy.
 
+Scheduled jobs accept only validated IANA timezone names. Existing rows migrate
+to `UTC`; schedule timezones affect trigger interpretation but do not change
+tenant scope, approval policy, or connector authorization.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

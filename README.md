@@ -639,7 +639,9 @@ Use `template_id` for a workflow schedule. Use `agent_id` plus `entity_id` for
 an agent schedule; the agent definition must use the `scheduled` trigger and
 the job's `params.input` object is passed to the bounded executor. An agent's
 optional execution window is evaluated in its configured IANA timezone before
-the run is created.
+the run is created. Schedule requests accept an IANA `timezone` (default
+`UTC`); cron and interval triggers use it for local-time interpretation, while
+one-time `run_at` timestamps remain absolute instants.
 
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 

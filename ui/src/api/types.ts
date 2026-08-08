@@ -398,6 +398,10 @@ export type ScheduledJob = {
   agent_id: string | null;
   entity_id: string | null;
   cron: string;
+  schedule_type: "cron" | "interval" | "once";
+  interval_seconds?: number | null;
+  run_at?: string | null;
+  timezone: string;
   paused: boolean;
   created_at: string;
   updated_at: string;
@@ -411,6 +415,10 @@ export type ScheduledJobRequestBody = {
   agent_id?: string;
   entity_id?: string;
   cron: string;
+  schedule_type?: "cron" | "interval" | "once";
+  interval_seconds?: number;
+  run_at?: string;
+  timezone?: string;
   params: Record<string, unknown>;
 };
 
