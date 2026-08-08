@@ -102,6 +102,25 @@ class M365GraphMailFolderReadResponse:
 
 
 @dataclass(frozen=True)
+class M365GraphMailMessage:
+    id: str
+    subject: str
+    sender_name: str
+    sender_address: str
+    received_date_time: str
+    is_read: bool | None
+    has_attachments: bool | None
+    importance: str
+
+
+@dataclass(frozen=True)
+class M365GraphMailMessageReadResponse:
+    result: ConnectorReadResult
+    items: list[M365GraphMailMessage]
+    next_cursor: str = ""
+
+
+@dataclass(frozen=True)
 class M365GraphManagedDevice:
     id: str
     user_id: str
@@ -224,6 +243,16 @@ class M365GraphReadProvider(Protocol):
     ) -> M365GraphMailFolderReadResponse:
         ...
 
+    def list_mail_messages(
+        self,
+        *,
+        identity: str | None = None,
+        folder_id: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphMailMessageReadResponse:
+        ...
+
     def list_managed_devices(
         self,
         *,
@@ -328,6 +357,25 @@ class M365GraphClient:
         except M365GraphReadError as exc:
             return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_mail_folders(endpoint, params)
+
+    def list_mail_messages(
+        self,
+        *,
+        identity: str | None = None,
+        folder_id: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphMailMessageReadResponse:
+        try:
+            if identity is None:
+                raise M365GraphReadError("Microsoft Graph mailbox identity is required.")
+            if folder_id is None:
+                raise M365GraphReadError("Microsoft Graph mail folder is required.")
+            endpoint = _mail_message_endpoint(identity, folder_id)
+            params = _mail_message_params(page_size, cursor)
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageReadResponse(ConnectorReadResult("failed", exc.message), [])
+        return self._request_mail_messages(endpoint, params)
 
     def list_managed_devices(
         self,
@@ -642,6 +690,36 @@ class M365GraphClient:
             _next_cursor(payload),
         )
 
+    def _request_mail_messages(
+        self,
+        endpoint: str,
+        params: dict[str, str | int],
+    ) -> M365GraphMailMessageReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return M365GraphMailMessageReadResponse(blocked, [])
+        missing = self._not_configured_result()
+        if missing is not None:
+            return M365GraphMailMessageReadResponse(missing, [])
+        try:
+            payload = self._get(endpoint, params=params)
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageReadResponse(ConnectorReadResult("failed", exc.message), [])
+        items = [
+            message
+            for row in _payload_rows(payload)
+            if (message := _normalize_mail_message(row)) is not None
+        ]
+        return M365GraphMailMessageReadResponse(
+            ConnectorReadResult(
+                "ready",
+                "Microsoft Graph mailbox message metadata read succeeded.",
+                len(items),
+            ),
+            items,
+            _next_cursor(payload),
+        )
+
     def _request_managed_devices(
         self,
         params: dict[str, str | int],
@@ -889,6 +967,15 @@ def _safe_endpoint(endpoint: str) -> str:
         and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_mail_message_endpoint = (
+        len(endpoint_parts) == 5
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "mailFolders"
+        and endpoint_parts[4] == "messages"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and _safe_encoded_segment(endpoint_parts[3])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_user_endpoint = (
         len(endpoint_parts) == 2
         and endpoint_parts[0] == "users"
@@ -949,6 +1036,7 @@ def _safe_endpoint(endpoint: str) -> str:
         "deviceManagement/managedDevices",
     } and (
         not is_mail_folder_endpoint
+        and not is_mail_message_endpoint
         and not is_user_endpoint
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint
@@ -1101,6 +1189,17 @@ def _safe_identity(value: str) -> str:
     return stripped
 
 
+def _safe_mail_folder_id(value: str) -> str:
+    stripped = value.strip()
+    if (
+        not stripped
+        or len(stripped) > MAX_IDENTITY_LENGTH
+        or any(ord(character) < 32 or character.isspace() for character in stripped)
+    ):
+        raise M365GraphReadError("Microsoft Graph mail folder is invalid.")
+    return stripped
+
+
 def _safe_cursor(value: str) -> str:
     stripped = value.strip()
     if not stripped or len(stripped) > MAX_CURSOR_LENGTH or any(ord(character) < 32 for character in stripped):
@@ -1142,6 +1241,13 @@ def _mail_folder_endpoint(identity: str) -> str:
     return f"users/{quote(_safe_identity(identity), safe='')}/mailFolders"
 
 
+def _mail_message_endpoint(identity: str, folder_id: str) -> str:
+    return (
+        f"users/{quote(_safe_identity(identity), safe='')}/mailFolders/"
+        f"{quote(_safe_mail_folder_id(folder_id), safe='')}/messages"
+    )
+
+
 def _mail_folder_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
     params: dict[str, str | int] = {
         "$top": _bounded_page_size(page_size),
@@ -1149,6 +1255,16 @@ def _mail_folder_params(page_size: int, cursor: str | None) -> dict[str, str | i
             "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
             "unreadItemCount,isHidden"
         ),
+    }
+    if cursor is not None:
+        params["$skiptoken"] = _safe_cursor(cursor)
+    return params
+
+
+def _mail_message_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
+    params: dict[str, str | int] = {
+        "$top": _bounded_page_size(page_size),
+        "$select": "id,subject,sender,receivedDateTime,isRead,hasAttachments,importance",
     }
     if cursor is not None:
         params["$skiptoken"] = _safe_cursor(cursor)
@@ -1269,6 +1385,25 @@ def _normalize_mail_folder(row: Mapping[str, object]) -> M365GraphMailFolder | N
         total_item_count=_int_value(row.get("totalItemCount")),
         unread_item_count=_int_value(row.get("unreadItemCount")),
         is_hidden=_bool_value(row.get("isHidden")),
+    )
+
+
+def _normalize_mail_message(row: Mapping[str, object]) -> M365GraphMailMessage | None:
+    message_id = _string_value(row, "id")
+    if not message_id:
+        return None
+    sender = row.get("sender")
+    sender_email = sender.get("emailAddress") if isinstance(sender, Mapping) else None
+    sender_values = sender_email if isinstance(sender_email, Mapping) else {}
+    return M365GraphMailMessage(
+        id=message_id,
+        subject=_string_value(row, "subject"),
+        sender_name=_string_value(sender_values, "name"),
+        sender_address=_string_value(sender_values, "address"),
+        received_date_time=_string_value(row, "receivedDateTime"),
+        is_read=_bool_value(row.get("isRead")),
+        has_attachments=_bool_value(row.get("hasAttachments")),
+        importance=_string_value(row, "importance"),
     )
 
 

@@ -15,6 +15,8 @@ from wait_local_agent.m365_graph import (
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
@@ -326,6 +328,15 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 ConnectorReadResult("ready", "ok", 1),
                 [M365GraphMailFolder("folder-1", "Inbox", "", 0, 1, 0, False)],
             ),
+            list_mail_messages=lambda identity, folder_id, page_size: M365GraphMailMessageReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [
+                    M365GraphMailMessage(
+                        "message-1", "VPN issue", "Adele", "adele@example.test",
+                        "today", False, True, "high",
+                    )
+                ],
+            ),
             list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
                 ConnectorReadResult("ready", "ok", 1),
                 [
@@ -377,6 +388,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     m365_mail = M365LiveContextAction().run(
         connector_context, {"resource": "mailbox_folders", "identity": "alice@example.test"}
     )
+    m365_messages = M365LiveContextAction().run(
+        connector_context,
+        {"resource": "mail_messages", "identity": "alice@example.test", "folder_id": "inbox"},
+    )
     m365_device = M365LiveContextAction().run(
         connector_context, {"resource": "managed_devices"}
     )
@@ -412,6 +427,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == m365_group.status
         == m365_license.status
         == m365_mail.status
+        == m365_messages.status
         == m365_device.status
         == hudu.status
         == quality.status
@@ -448,6 +464,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert m365_group.output["count"] == 1
     assert m365_license.output["count"] == 1
     assert m365_mail.output["count"] == 1
+    assert m365_messages.output["count"] == 1
     assert m365_device.output["count"] == 1
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
@@ -1002,6 +1019,10 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         blocked_m365, {"resource": "user", "identity": "alice@example.test"}
     ).status == "failed"
     assert M365LiveContextAction().run(context, {"resource": "user"}).status == "failed"
+    assert M365LiveContextAction().run(
+        context,
+        {"resource": "mail_messages", "identity": "alice@example.test"},
+    ).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},

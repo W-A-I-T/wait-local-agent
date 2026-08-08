@@ -177,6 +177,20 @@ def test_m365_mail_folder_command_is_available_and_safe_by_default(monkeypatch, 
     assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
 
 
+def test_m365_mail_message_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["connectors", "m365-mail-messages", "user@example.test", "inbox"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "blocked"' in result.output
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
+
+
 def test_m365_managed_device_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

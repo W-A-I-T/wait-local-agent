@@ -622,9 +622,13 @@ class M365LiveContextAction:
             "properties": {
                 "resource": {
                     "type": "string",
-                    "enum": ["user", "group", "licenses", "mailbox_folders", "managed_devices"],
+                    "enum": [
+                        "user", "group", "licenses", "mailbox_folders", "mail_messages",
+                        "managed_devices",
+                    ],
                 },
                 "identity": {"type": "string", "minLength": 1, "maxLength": 200},
+                "folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50},
             },
         },
@@ -638,10 +642,10 @@ class M365LiveContextAction:
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
         resource = payload.get("resource")
-        resources = {"user", "group", "licenses", "mailbox_folders", "managed_devices"}
+        resources = {"user", "group", "licenses", "mailbox_folders", "mail_messages", "managed_devices"}
         if not isinstance(resource, str) or resource not in resources:
             return _failed(
-                "resource must be one of user, group, licenses, mailbox_folders, or managed_devices"
+                "resource must be one of user, group, licenses, mailbox_folders, mail_messages, or managed_devices"
             )
         identity = payload.get("identity")
         if identity is not None and (
@@ -649,8 +653,13 @@ class M365LiveContextAction:
         ):
             return _failed("identity must be a non-empty string of at most 200 characters")
         normalized_identity = identity.strip() if isinstance(identity, str) else None
-        if resource in {"user", "group", "mailbox_folders"} and normalized_identity is None:
-            return _failed("identity is required for user, group, and mailbox_folders resources")
+        if resource in {"user", "group", "mailbox_folders", "mail_messages"} and normalized_identity is None:
+            return _failed("identity is required for user, group, mailbox_folders, and mail_messages resources")
+        folder_id = payload.get("folder_id")
+        if resource == "mail_messages" and (
+            not isinstance(folder_id, str) or not folder_id.strip() or len(folder_id.strip()) > 320
+        ):
+            return _failed("folder_id is required for mail_messages and must be at most 320 characters")
         limit = payload.get("limit", 20)
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
             return _failed("limit must be an integer between 1 and 50")
@@ -667,6 +676,12 @@ class M365LiveContextAction:
                 response = provider.list_subscribed_skus()
             elif resource == "mailbox_folders":
                 response = provider.list_mail_folders(identity=normalized_identity, page_size=limit)
+            elif resource == "mail_messages":
+                response = provider.list_mail_messages(
+                    identity=normalized_identity,
+                    folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                    page_size=limit,
+                )
             else:
                 response = provider.list_managed_devices(page_size=limit)
         except Exception:

@@ -388,13 +388,14 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
 ```
 
 The API mirrors these commands under `/connectors/m365/health` and
 `/connectors/m365/users`, `/connectors/m365/groups`,
-`/connectors/m365/licenses`, `/connectors/m365/mail-folders`, and
-`/connectors/m365/managed-devices`.
+`/connectors/m365/licenses`, `/connectors/m365/mail-folders`,
+`/connectors/m365/mail-messages`, and `/connectors/m365/managed-devices`.
 Approved user creation is exposed through `POST /connectors/m365/users/drafts`
 and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 `connectors draft-m365-user` and `connectors execute-m365-user`. Approved

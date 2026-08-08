@@ -43,7 +43,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file
   downloads and write operations remain unavailable.
-- Microsoft Graph bounded user, group, license, mailbox-folder, and Intune
+- Microsoft Graph bounded user, group, license, mailbox-folder, message-metadata, and Intune
   context lookup with externally supplied delegated or application bearer
   credentials, plus admin-approved user creation, disable/offboarding, and
   strict-ID group membership add/remove, direct user license add/remove, and

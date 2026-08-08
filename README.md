@@ -493,6 +493,7 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
 wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
@@ -500,8 +501,8 @@ wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=
 
 Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
 metadata and aggregate consumption/prepaid counts; per-user license details,
-and mailbox reads return selected root mail-folder metadata and aggregate item
-counts; messages, bodies, attachments, and hidden folders are not expanded.
+and mailbox reads return selected root-folder and bounded message metadata;
+message bodies, previews, attachments, and hidden folders are not expanded.
 User creation requires `WAIT_ALLOW_WRITE_ACTIONS=true`, an admin approval, and
 an encrypted-vault reference to the temporary password. Create a draft through
 `POST /connectors/m365/users/drafts`, approve it through the approval queue, and

@@ -17,6 +17,8 @@ from wait_local_agent.m365_graph import (
     M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
     M365GraphManagedDeviceRetireResult,
@@ -32,10 +34,13 @@ from wait_local_agent.m365_graph import (
     _list_params,
     _mail_folder_endpoint,
     _mail_folder_params,
+    _mail_message_endpoint,
+    _mail_message_params,
     _managed_device_params,
     _next_cursor,
     _normalize_group,
     _normalize_mail_folder,
+    _normalize_mail_message,
     _normalize_managed_device,
     _normalize_subscribed_sku,
     _normalize_user,
@@ -491,6 +496,77 @@ def test_m365_graph_mail_folder_reads_use_user_path_and_metadata_only(settings) 
     assert M365GraphClient(_configured(settings)).list_mail_folders().result.message == (
         "Microsoft Graph mailbox identity is required."
     )
+
+
+def test_m365_graph_mail_message_reads_select_metadata_without_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/users/alice@example.test/mailFolders/inbox/messages"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == (
+            "id,subject,sender,receivedDateTime,isRead,hasAttachments,importance"
+        )
+        assert request.url.params["$skiptoken"] == "message-next"
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "message-1",
+                        "subject": "VPN issue",
+                        "sender": {
+                            "emailAddress": {
+                                "name": "Adele Vance",
+                                "address": "adele@example.test",
+                            }
+                        },
+                        "receivedDateTime": "2026-08-08T10:00:00Z",
+                        "isRead": False,
+                        "hasAttachments": True,
+                        "importance": "high",
+                        "body": {"content": "must not be returned"},
+                        "bodyPreview": "must not be returned",
+                    }
+                ],
+                "@odata.nextLink": (
+                    "https://graph.microsoft.com/v1.0/users/alice/mailFolders/inbox/messages"
+                    "?$skiptoken=message-next-2"
+                ),
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_mail_messages(
+        identity="alice@example.test",
+        folder_id="inbox",
+        cursor="message-next",
+        page_size=2,
+    )
+
+    assert response == M365GraphMailMessageReadResponse(
+        result=response.result,
+        items=[
+            M365GraphMailMessage(
+                "message-1",
+                "VPN issue",
+                "Adele Vance",
+                "adele@example.test",
+                "2026-08-08T10:00:00Z",
+                False,
+                True,
+                "high",
+            )
+        ],
+        next_cursor="message-next-2",
+    )
+    assert _mail_message_endpoint("alice@example.test", "inbox").endswith(
+        "/mailFolders/inbox/messages"
+    )
+    assert _mail_message_params(2, "next")["$top"] == 2
+    assert _normalize_mail_message({"subject": "missing id"}) is None
+    assert M365GraphClient(_configured(settings)).list_mail_messages(
+        identity="alice@example.test"
+    ).result.message == "Microsoft Graph mail folder is required."
 
 
 def test_m365_graph_managed_device_reads_select_safe_intune_context(settings) -> None:

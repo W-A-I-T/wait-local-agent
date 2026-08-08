@@ -30,6 +30,8 @@ from wait_local_agent.m365_graph import (
     M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
     M365GraphManagedDeviceRetireResult,
@@ -3130,6 +3132,24 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "folder-next-token",
             )
 
+        def list_mail_messages(self, **kwargs):
+            return M365GraphMailMessageReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphMailMessage(
+                        "message-1",
+                        "VPN issue",
+                        "Adele Vance",
+                        "adele@example.test",
+                        "today",
+                        False,
+                        True,
+                        "high",
+                    )
+                ],
+                "message-next-token",
+            )
+
         def list_managed_devices(self, **kwargs):
             return M365GraphManagedDeviceReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
@@ -3177,6 +3197,15 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/mail-folders",
         params={"identity": "adele@example.test", "cursor": "folder-next", "page_size": 2},
     )
+    mail_messages = client.get(
+        "/connectors/m365/mail-messages",
+        params={
+            "identity": "adele@example.test",
+            "folder_id": "inbox-id",
+            "cursor": "message-next",
+            "page_size": 2,
+        },
+    )
     managed_devices = client.get(
         "/connectors/m365/managed-devices",
         params={"cursor": "device-next", "page_size": 2},
@@ -3194,6 +3223,8 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert licenses.json()["next_cursor"] == "license-next-token"
     assert mail_folders.json()["items"][0]["display_name"] == "Inbox"
     assert mail_folders.json()["next_cursor"] == "folder-next-token"
+    assert mail_messages.json()["items"][0]["subject"] == "VPN issue"
+    assert mail_messages.json()["next_cursor"] == "message-next-token"
     assert managed_devices.json()["items"][0]["device_name"] == "LAPTOP-1"
     assert managed_devices.json()["next_cursor"] == "device-next-token"
     assert any(connector["id"] == "m365" for connector in connectors.json())
@@ -3207,6 +3238,7 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     assert client.get("/connectors/m365/groups").status_code == 401
     assert client.get("/connectors/m365/licenses").status_code == 401
     assert client.get("/connectors/m365/mail-folders").status_code == 401
+    assert client.get("/connectors/m365/mail-messages").status_code == 401
     assert client.get("/connectors/m365/managed-devices").status_code == 401
 
 

@@ -84,6 +84,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
@@ -1628,6 +1629,24 @@ def m365_mail_folders(
     )
 
 
+@connectors_app.command("m365-mail-messages")
+def m365_mail_messages(
+    identity: str,
+    folder_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_m365_mail_message_response(
+        "mail-messages.list",
+        _m365_client().list_mail_messages(
+            identity=identity,
+            folder_id=folder_id,
+            cursor=cursor,
+            page_size=page_size if page_size is not None else load_settings().m365_page_size,
+        ),
+    )
+
+
 @connectors_app.command("m365-managed-devices")
 def m365_managed_devices(
     cursor: str | None = None,
@@ -2800,6 +2819,24 @@ def _print_m365_license_response(read_type: str, response: M365GraphLicenseReadR
 def _print_m365_mail_folder_response(
     read_type: str,
     response: M365GraphMailFolderReadResponse,
+) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_m365_mail_message_response(
+    read_type: str,
+    response: M365GraphMailMessageReadResponse,
 ) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
