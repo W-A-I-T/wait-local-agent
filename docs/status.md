@@ -115,7 +115,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   execution-referenced tickets, current `resolved`/`closed` ticket counts, and
   grouped activity by workflow, agent, or smart action. Resolution is a
   current-status aggregate and does not infer historical resolution time. The
-  React dashboard exposes these local metrics at `/analytics`.
+  React dashboard exposes these local metrics at `/analytics`, including
+  server-side date-range and client filters within the permitted tenant scope.
 - The React dashboard exposes `/executions` history with run-kind/status
   filters, redacted step detail, and generated artifact metadata through the
   existing tenant-scoped observability API. Smart-action records include

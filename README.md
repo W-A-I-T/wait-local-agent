@@ -83,7 +83,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   agent, or smart action. These are explainable aggregates, not historical
   lifecycle or wall-clock measurements.
 - The React dashboard exposes the same local analytics at `/analytics`, with
-  role-scoped metric cards, workflow activity, and outcome details.
+  role-scoped metric cards, workflow activity, outcome details, and server-side
+  date/client filters.
 - The workflow catalog includes executable ticket-quality, sentiment,
   escalation, and similar-ticket review templates backed by the existing
   smart-action contract. These are read-only analyses and do not mutate PSA

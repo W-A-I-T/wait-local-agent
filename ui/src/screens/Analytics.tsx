@@ -35,12 +35,21 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
 
 export function Analytics() {
   const [summary, setSummary] = useState<AnalyticsSummary>(EMPTY_SUMMARY);
+  const [startedFrom, setStartedFrom] = useState("");
+  const [startedTo, setStartedTo] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [filters, setFilters] = useState({ startedFrom: "", startedTo: "", clientId: "" });
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     let active = true;
-    void apiFetch<AnalyticsSummary>("/analytics/summary")
+    const query = new URLSearchParams();
+    if (filters.startedFrom) query.set("from", filters.startedFrom);
+    if (filters.startedTo) query.set("to", filters.startedTo);
+    if (filters.clientId) query.set("client_id", filters.clientId);
+    const queryString = query.toString();
+    void apiFetch<AnalyticsSummary>(`/analytics/summary${queryString ? `?${queryString}` : ""}`)
       .then((data) => {
         if (active) {
           setSummary(data);
@@ -58,7 +67,7 @@ export function Analytics() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [filters]);
 
   const successRate = formatPercent(summary.success_rate.rate);
   const approvalRate = formatPercent(summary.approval_rate.rate);
@@ -80,6 +89,39 @@ export function Analytics() {
           <Metric icon={<CheckCircle2 size={18} aria-hidden="true" />} label="Tickets resolved" value={String(summary.ticket_metrics.resolved)} detail={`${summary.ticket_metrics.touched} touched · ${resolutionRate}`} />
           <Metric icon={<ShieldCheck size={18} aria-hidden="true" />} label="Approval rate" value={approvalRate} detail={`${summary.approval_rate.requested} requested · ${summary.approval_rate.pending} pending`} />
           <Metric icon={<Clock3 size={18} aria-hidden="true" />} label="Estimated time saved" value={`${summary.estimated_minutes_saved.minutes} min`} detail="Estimate, not measured time" />
+        </div>
+      </section>
+
+      <section className="panel analytics-filter-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Filter analytics</h2>
+            <p className="screen-note">Filters are applied server-side within your permitted tenant scope.</p>
+          </div>
+          <span>{summary.client_id ? `Client: ${summary.client_id}` : "All permitted clients"}</span>
+        </div>
+        <div className="analytics-filters">
+          <label>
+            From date
+            <input type="date" value={startedFrom} onChange={(event) => setStartedFrom(event.target.value)} />
+          </label>
+          <label>
+            To date
+            <input type="date" value={startedTo} onChange={(event) => setStartedTo(event.target.value)} />
+          </label>
+          <label>
+            Client ID
+            <input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Optional client" />
+          </label>
+          <div className="analytics-filter-actions">
+            <button type="button" onClick={() => setFilters({ startedFrom, startedTo, clientId })}>Apply filters</button>
+            <button type="button" className="secondary-button" onClick={() => {
+              setStartedFrom("");
+              setStartedTo("");
+              setClientId("");
+              setFilters({ startedFrom: "", startedTo: "", clientId: "" });
+            }}>Clear filters</button>
+          </div>
         </div>
       </section>
 
