@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+from wait_local_agent.autotask import AutotaskReadProvider
 from wait_local_agent.communication import (
     CommunicationChannel,
     CommunicationDeliveryError,
@@ -39,8 +40,10 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     rmm_provider_from_settings,
 )
+from wait_local_agent.servicenow import ServiceNowReadProvider
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+from wait_local_agent.syncro import SyncroReadProvider
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorPreview
@@ -114,6 +117,9 @@ class ActionContext:
     collector_service: CollectorPreviewProvider | None = None
     rmm_provider: RmmInventoryProvider | None = None
     connectwise_client: ConnectWiseReadProvider | None = None
+    syncro_client: SyncroReadProvider | None = None
+    servicenow_client: ServiceNowReadProvider | None = None
+    autotask_client: AutotaskReadProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -975,6 +981,164 @@ class ConnectWiseTicketLookupAction:
         )
 
 
+class SyncroTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="syncro-ticket-lookup",
+        title="Syncro ticket lookup",
+        description="Read one tenant-scoped ticket through the existing Syncro connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.syncro import SyncroClient
+
+        provider = context.syncro_client or SyncroClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_ticket,
+            connector="syncro",
+            operation="tickets.get",
+            failure_message="Syncro ticket lookup failed",
+            malformed_message="Syncro returned malformed ticket data",
+            empty_message="Syncro returned no matching ticket",
+        )
+
+
+class ServiceNowIncidentLookupAction:
+    manifest = SmartActionManifest(
+        action_id="servicenow-incident-lookup",
+        title="ServiceNow incident lookup",
+        description="Read one tenant-scoped incident through the existing ServiceNow connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.servicenow import ServiceNowClient
+
+        provider = context.servicenow_client or ServiceNowClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_incident,
+            connector="servicenow",
+            operation="incidents.get",
+            failure_message="ServiceNow incident lookup failed",
+            malformed_message="ServiceNow returned malformed incident data",
+            empty_message="ServiceNow returned no matching incident",
+        )
+
+
+class AutotaskTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="autotask-ticket-lookup",
+        title="Autotask ticket lookup",
+        description="Read one tenant-scoped ticket through the existing Autotask connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.autotask import AutotaskClient
+
+        provider = context.autotask_client or AutotaskClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_ticket,
+            connector="autotask",
+            operation="tickets.get",
+            failure_message="Autotask ticket lookup failed",
+            malformed_message="Autotask returned malformed ticket data",
+            empty_message="Autotask returned no matching ticket",
+        )
+
+
+def _run_psa_ticket_lookup(
+    context: ActionContext,
+    payload: dict[str, object],
+    lookup: object,
+    *,
+    connector: str,
+    operation: str,
+    failure_message: str,
+    malformed_message: str,
+    empty_message: str,
+) -> ActionResult:
+    ticket = _ticket_from_payload(context.store, payload, context.client_id)
+    if ticket is None:
+        return _failed("ticket_id must identify an existing ticket in the tenant scope")
+    if not callable(lookup):
+        return _failed(failure_message)
+    try:
+        response = lookup(ticket.id)
+    except Exception:
+        return _failed(failure_message)
+    result = getattr(response, "result", None)
+    status = str(getattr(result, "status", "failed"))
+    message = redact_text(str(getattr(result, "message", f"{connector} read failed")))
+    items = getattr(response, "items", [])
+    if not isinstance(items, list):
+        return _failed(malformed_message)
+    if status != "ready":
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": status, "ticket": {}},
+            error_detail=message,
+        )
+    if not items or not isinstance(items[0], dict):
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": "empty", "ticket": {}},
+            error_detail=empty_message,
+        )
+    raw_record = items[0]
+    returned_id = raw_record.get("id", raw_record.get("sys_id"))
+    if returned_id not in (None, "") and str(returned_id) != ticket.id:
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": "scope_mismatch", "ticket": {}},
+            error_detail="PSA returned a record outside the requested ticket scope",
+        )
+    normalized = cast(dict[str, object], redact_value(raw_record))
+    return ActionResult(
+        status="success",
+        output={
+            "ticket_id": ticket.id,
+            "connector_status": status,
+            "ticket": normalized,
+        },
+        evidence=[
+            {
+                "type": "connector_read",
+                "connector": connector,
+                "operation": operation,
+                "ticket_id": ticket.id,
+            }
+        ],
+    )
+
+
 class HuduDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="hudu-documentation-search",
@@ -1368,6 +1532,9 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptExecutionLookupAction(),
         HaloPSATicketLookupAction(),
         ConnectWiseTicketLookupAction(),
+        SyncroTicketLookupAction(),
+        ServiceNowIncidentLookupAction(),
+        AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
@@ -1400,6 +1567,9 @@ class SmartActionService:
         communication_sender: CommunicationSender | None = None,
         rmm_provider: RmmInventoryProvider | None = None,
         connectwise_client: ConnectWiseReadProvider | None = None,
+        syncro_client: SyncroReadProvider | None = None,
+        servicenow_client: ServiceNowReadProvider | None = None,
+        autotask_client: AutotaskReadProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1410,6 +1580,9 @@ class SmartActionService:
         self.hudu_client = hudu_client
         self.rmm_provider = rmm_provider or rmm_provider_from_settings(settings, store)
         self.connectwise_client = connectwise_client
+        self.syncro_client = syncro_client
+        self.servicenow_client = servicenow_client
+        self.autotask_client = autotask_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -1754,6 +1927,9 @@ class SmartActionService:
             communication_sender=self.communication_sender,
             rmm_provider=self.rmm_provider,
             connectwise_client=self.connectwise_client,
+            syncro_client=self.syncro_client,
+            servicenow_client=self.servicenow_client,
+            autotask_client=self.autotask_client,
         )
 
     def _persist_result(

@@ -54,6 +54,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     tools = {tool.id: tool for tool in service.list_tools()}
 
     assert set(tools) == {
+        "autotask-ticket-lookup",
         "ticket-triage",
         "ticket-summary",
         "suggest-resolution",
@@ -76,6 +77,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "communication-draft",
         "communication-send",
         "connectwise-ticket-lookup",
+        "syncro-ticket-lookup",
+        "servicenow-incident-lookup",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True
@@ -1193,7 +1196,11 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_end"] == "23:59"
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
     assert created.json()["context_sources"] == ["ticket", "client"]
-    assert client.get("/tools").json()[0]["access_mode"] == "read"
+    tools_response = client.get("/tools")
+    assert tools_response.status_code == 200
+    tool_ids = {tool["id"] for tool in tools_response.json()}
+    assert {"syncro-ticket-lookup", "servicenow-incident-lookup", "autotask-ticket-lookup"} <= tool_ids
+    assert tools_response.json()[0]["access_mode"] == "read"
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
     run = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})

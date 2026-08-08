@@ -15,6 +15,7 @@ from wait_local_agent.rmm import LocalCollectorRmmAdapter
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
+    AutotaskTicketLookupAction,
     CollectorPreviewAction,
     ConnectWiseTicketLookupAction,
     DispatchSuggestionAction,
@@ -24,10 +25,12 @@ from wait_local_agent.smart_actions import (
     KnowledgeSearchAction,
     M365IdentityLookupAction,
     RmmDeviceLookupAction,
+    ServiceNowIncidentLookupAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
     SuggestResolutionAction,
+    SyncroTicketLookupAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
@@ -241,6 +244,24 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 ],
             )
         ),
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": ticket_id, "subject": "Remote ticket", "customer_id": "acme"}],
+            )
+        ),
+        servicenow_client=SimpleNamespace(
+            get_incident=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"sys_id": ticket_id, "short_description": "Remote incident"}],
+            )
+        ),
+        autotask_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": ticket_id, "title": "Remote ticket", "company_id": "acme"}],
+            )
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -250,6 +271,13 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     )
     halopsa = HaloPSATicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
     connectwise = ConnectWiseTicketLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
+    syncro = SyncroTicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    servicenow = ServiceNowIncidentLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
+    autotask = AutotaskTicketLookupAction().run(
         connector_context, {"ticket_id": "TCK-1001"}
     )
     hudu = HuduDocumentationSearchAction().run(
@@ -274,6 +302,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == rmm.status
         == halopsa.status
         == connectwise.status
+        == syncro.status
+        == servicenow.status
+        == autotask.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -291,6 +322,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert rmm.output["devices"][0]["device_id"] == "agent:sentinelone"  # type: ignore[index]
     assert halopsa.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert connectwise.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert syncro.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
+    assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
@@ -323,6 +357,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
         HaloPSATicketLookupAction(),
+        SyncroTicketLookupAction(),
+        ServiceNowIncidentLookupAction(),
+        AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
@@ -589,6 +626,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "autotask-ticket-lookup",
         "collector-preview",
         "communication-draft",
         "communication-send",
@@ -605,7 +643,9 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "servicenow-incident-lookup",
         "suggest-resolution",
+        "syncro-ticket-lookup",
         "ticket-escalation",
         "ticket-quality",
         "ticket-sentiment",
@@ -667,6 +707,39 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         connectwise_client=SimpleNamespace(
             get_ticket=lambda ticket_id: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=0), items=[]
+            )
+        ),
+    )
+    blocked_syncro = replace(
+        context,
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    malformed_servicenow = replace(
+        context,
+        servicenow_client=SimpleNamespace(
+            get_incident=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items={},
+            )
+        ),
+    )
+    unavailable_autotask = replace(
+        context,
+        autotask_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    mismatched_syncro = replace(
+        context,
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": "different-ticket", "subject": "Unexpected"}],
             )
         ),
     )
@@ -734,6 +807,20 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     assert ConnectWiseTicketLookupAction().run(
         empty_connectwise, {"ticket_id": "TCK-1001"}
     ).status == "failed"
+    assert SyncroTicketLookupAction().run(
+        blocked_syncro, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ServiceNowIncidentLookupAction().run(
+        malformed_servicenow, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert AutotaskTicketLookupAction().run(
+        unavailable_autotask, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    mismatched = SyncroTicketLookupAction().run(
+        mismatched_syncro, {"ticket_id": "TCK-1001"}
+    )
+    assert mismatched.status == "failed"
+    assert mismatched.output["connector_status"] == "scope_mismatch"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},

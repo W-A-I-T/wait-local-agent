@@ -2096,6 +2096,9 @@ def invoke_smart_action(
         settings,
         collector_service=CollectorService(store),
         connectwise_client=_connectwise_client(),
+        syncro_client=_syncro_client(),
+        servicenow_client=_servicenow_client(),
+        autotask_client=_autotask_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:

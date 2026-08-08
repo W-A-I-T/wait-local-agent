@@ -155,6 +155,12 @@ credentials, prompts, and hidden reasoning are not added to execution metadata.
 
 Hudu is read-only in the public repo.
 
+The Syncro, ServiceNow, and Autotask agent lookup tools are read-only and
+require an existing local ticket in the caller's tenant scope. Each lookup
+uses that ticket identifier as the provider request identifier and rejects a
+returned record whose identifier does not match; connector credentials are
+never accepted in tool payloads.
+
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write
 flag, a persisted approval request, and explicit approval. The adapter rejects

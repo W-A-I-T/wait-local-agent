@@ -1228,6 +1228,9 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     bad_payload = runner.invoke(app, ["smart-actions", "invoke", "ticket-triage", "--payload", "not-json"])
 
     assert listed.exit_code == 0 and "ticket-triage" in listed.output
+    assert "syncro-ticket-lookup" in listed.output
+    assert "servicenow-incident-lookup" in listed.output
+    assert "autotask-ticket-lookup" in listed.output
     assert described.exit_code == 0 and '"action_id": "ticket-triage"' in described.output
     assert invoked.exit_code == 0 and json.loads(invoked.output)["status"] == "success"
     assert collector_preview.exit_code == 0 and json.loads(collector_preview.output)["status"] == "success"

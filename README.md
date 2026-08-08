@@ -24,6 +24,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   approval-gated ticket update path with explicit HTTP probing opt-in.
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
+- ServiceNow incident and Autotask ticket reads are available through the same
+  bounded, read-only connector and agent-tool surfaces; no mutation path is
+  enabled for either connector.
 - Hudu read-only documentation context.
 - A preview and approval-gated communication tool for local ticket notes,
   email, Microsoft Teams, Slack, and SMS. Local notes stay tenant-scoped;
@@ -43,7 +46,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution until a reviewed
   vendor adapter is installed. This is alongside tenant-scoped HaloPSA ticket and Hudu
-  documentation read tools, and a ConnectWise PSA ticket lookup tool,
+  documentation read tools for Hudu, and ticket lookup tools for ConnectWise
+  PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity
