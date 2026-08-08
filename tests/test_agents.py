@@ -226,6 +226,112 @@ def test_agent_run_can_cancel_pending_approval_and_retry(settings) -> None:
     assert retried.revision_version == definition.version
 
 
+def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Retrying summary agent",
+        description="Exercise bounded retry behavior.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["suggest-resolution"],
+        steps=[{"tool_id": "suggest-resolution", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    first = service.run(
+        definition,
+        entity_id="TCK-1001",
+        actor="requester",
+        input_payload={"safe_context": "keep"},
+    )
+    assert first.status == "failed"
+    previous = service.store.get_agent_run(first.run_id, client_id="acme")
+    assert previous is not None
+
+    updated = service.update(
+        definition,
+        name=definition.name,
+        description=definition.description,
+        enabled=True,
+        trigger=definition.trigger,
+        entity_type=definition.entity_type,
+        filters=definition.filters,
+        enabled_tools=definition.enabled_tools,
+        steps=definition.steps,
+        max_steps=definition.max_steps,
+        execution_timeout_seconds=definition.execution_timeout_seconds,
+    )
+    with pytest.raises(AgentDefinitionError, match="definition changed"):
+        service.retry(updated, previous, actor="requester")
+
+    retry = service.retry(definition, previous, actor="requester")
+    assert retry.status == "failed"
+    retried_run = service.store.get_agent_run(retry.run_id, client_id="acme")
+    assert retried_run is not None
+    retried_state = json.loads(retried_run.state_json)
+    assert retried_state["retry_count"] == 1
+    assert retried_state["retry_of_run_id"] == first.run_id
+    assert retried_state["input"] == {"safe_context": "keep"}
+
+    current = retried_run
+    for _ in range(2):
+        current_result = service.retry(definition, current, actor="requester")
+        next_run = service.store.get_agent_run(current_result.run_id, client_id="acme")
+        assert next_run is not None
+        current = next_run
+
+    with pytest.raises(AgentDefinitionError, match="retry limit"):
+        service.retry(definition, current, actor="requester")
+
+
+def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -> None:
+    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
+    store = Store(scoped.data_path)
+    _seed(store, client_id="acme")
+    client = TestClient(create_app(scoped))
+
+    created = client.post(
+        "/agents",
+        json={
+            "name": "Retrying summary agent",
+            "enabled_tools": ["suggest-resolution"],
+            "steps": [{"tool_id": "suggest-resolution", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    agent_id = created.json()["id"]
+    failed = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    run_id = failed.json()["run_id"]
+
+    retry = client.post(f"/agent-runs/{run_id}/retry")
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "failed"
+    assert client.post(f"/agent-runs/{run_id}/retry", params={"client_id": "other"}).status_code == 404
+
+    successful = client.post(
+        "/agents",
+        json={
+            "name": "Completed triage agent",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert successful.status_code == 200
+    completed_run = client.post(f"/agents/{successful.json()['id']}/run", json={"entity_id": "TCK-1001"})
+    assert completed_run.json()["status"] == "completed"
+    assert client.post(f"/agent-runs/{completed_run.json()['run_id']}/retry").status_code == 409
+
+
 def test_agent_retry_rejects_completed_runs(settings) -> None:
     service = _service(settings)
     definition = _create(service)
