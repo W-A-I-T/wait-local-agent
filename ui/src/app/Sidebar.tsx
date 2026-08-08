@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   BarChart3,
   BookOpenText,
   CalendarClock,
@@ -22,6 +23,7 @@ const navigation = [
   { to: "/tickets", label: "Tickets", icon: ClipboardList },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/agents", label: "Agents", icon: Bot },
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },

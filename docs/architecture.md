@@ -84,6 +84,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   configured client scope. Manual runs and persisted five-field cron schedules
   are supported. Optional execution windows are persisted with revisions and
   evaluated before direct or scheduled runs.
+- Definitions may explicitly select bounded `ticket`, `client`, and local
+  `knowledge` context sources. Selected context is tenant-scoped, capped and
+  redacted, persisted with the operational run state, and passed to each
+  existing tool call as data; it is never treated as executable instructions.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
 - Existing HaloPSA ticket reads and Hudu article reads are also exposed through
@@ -125,8 +129,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   applies cycle prevention at definition time and waits for upstream completion
   with a bounded sequential pass. Each run also persists and returns a
   redacted operational final result containing the last tool status, output,
-  evidence, and error detail; it contains no hidden reasoning. Backfills and
-  conversational agents remain future extensions.
+  evidence, and error detail; it contains no hidden reasoning. Conversational
+  agents remain a future extension.
 
 The CLI, API, and scheduler emit `workflow.completed` through the existing
 event dispatcher after a CLI/API/gallery workflow, scheduled workflow, or

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
+import { Agents } from "./screens/Agents";
 import { Connectors } from "./screens/Connectors";
 import { Collectors } from "./screens/Collectors";
 import { FounderJourney } from "./surfaces/founder/FounderJourney";
@@ -30,6 +31,7 @@ export function AppRoutes() {
       <Route path="tickets" element={<Tickets />} />
       <Route path="approvals" element={<Approvals />} />
       <Route path="analytics" element={<Analytics />} />
+      <Route path="agents" element={<Agents />} />
       <Route path="settings" element={<Settings />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

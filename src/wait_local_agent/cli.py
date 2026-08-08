@@ -1781,7 +1781,8 @@ def list_agents() -> None:
         )
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
-            f"enabled={definition.enabled} version={definition.version}{window}"
+            f"enabled={definition.enabled} version={definition.version}{window} "
+            f"context={','.join(definition.context_sources) or '-'}"
         )
 
 

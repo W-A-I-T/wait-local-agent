@@ -307,9 +307,16 @@ class Store:
                     depends_on_agent_ids_json text not null default '[]',
                     execution_window_start text,
                     execution_window_end text,
-                    execution_window_timezone text not null default 'UTC'
+                    execution_window_timezone text not null default 'UTC',
+                    context_sources_json text not null default '[]'
                 )
                 """
+            )
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "context_sources_json",
+                "text not null default '[]'",
             )
             connection.execute(
                 """
@@ -1956,8 +1963,9 @@ class Store:
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
                    run_once_per_entity, depends_on_agent_ids_json,
-                   execution_window_start, execution_window_end, execution_window_timezone)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   execution_window_start, execution_window_end, execution_window_timezone,
+                   context_sources_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1980,6 +1988,7 @@ class Store:
                     definition.execution_window_start,
                     definition.execution_window_end,
                     definition.execution_window_timezone,
+                    _json_dumps_value(definition.context_sources),
                 ),
             )
             self._add_audit_event(
@@ -2034,7 +2043,7 @@ class Store:
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
                     run_once_per_entity = ?, depends_on_agent_ids_json = ?,
                     execution_window_start = ?, execution_window_end = ?,
-                    execution_window_timezone = ?
+                    execution_window_timezone = ?, context_sources_json = ?
                 where id = ?
                 """,
                 (
@@ -2056,6 +2065,7 @@ class Store:
                     definition.execution_window_start,
                     definition.execution_window_end,
                     definition.execution_window_timezone,
+                    _json_dumps_value(definition.context_sources),
                     definition.id,
                 ),
             )
@@ -4821,6 +4831,9 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["execution_window_start"] = _optional_text(payload.get("execution_window_start"))
     payload["execution_window_end"] = _optional_text(payload.get("execution_window_end"))
     payload["execution_window_timezone"] = str(payload.get("execution_window_timezone") or "UTC")
+    payload["context_sources"] = cast(
+        list[str], _json_list_or_empty(payload.pop("context_sources_json"))
+    )
     return AgentDefinition(**payload)
 
 
@@ -4918,6 +4931,7 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "execution_window_start": definition.execution_window_start,
             "execution_window_end": definition.execution_window_end,
             "execution_window_timezone": definition.execution_window_timezone,
+            "context_sources": definition.context_sources,
         }
     )
 

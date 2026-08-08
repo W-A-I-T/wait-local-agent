@@ -126,6 +126,31 @@ export type WorkflowRun = {
   template_version?: number | null;
 };
 
+export type AgentTool = {
+  id: string;
+  name: string;
+  description: string;
+  risk_level: string;
+  required_role: string;
+  approval_required: boolean;
+  access_mode: string;
+};
+
+export type AgentRunDetail = {
+  id: number;
+  agent_id: string;
+  entity_id: string;
+  status: string;
+  current_step: number;
+  state?: {
+    context?: Record<string, unknown>;
+    steps?: Array<Record<string, unknown>>;
+    final_result?: Record<string, unknown>;
+  };
+  revision_version?: number | null;
+  client_id?: string | null;
+};
+
 export type AnalyticsSummary = {
   range: { from: string | null; to: string | null };
   client_id: string | null;
@@ -390,12 +415,23 @@ export type ScheduledJobRequestBody = {
 export type AgentDefinition = {
   id: string;
   name: string;
+  description: string;
   trigger: "manual" | "scheduled" | "event";
   enabled: boolean;
+  entity_type: string;
+  filters: Record<string, unknown>;
+  enabled_tools: string[];
+  steps: Array<{ tool_id: string; payload: Record<string, unknown> }>;
+  max_steps: number;
+  execution_timeout_seconds: number;
   client_id: string | null;
+  version: number;
+  run_once_per_entity: boolean;
+  depends_on_agent_ids: string[];
   execution_window_start?: string | null;
   execution_window_end?: string | null;
   execution_window_timezone?: string;
+  context_sources: string[];
 };
 
 export type ProviderSettings = {

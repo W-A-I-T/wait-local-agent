@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+import wait_local_agent.agents as agents_module
 import wait_local_agent.api.app as app_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
@@ -110,6 +111,131 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     assert len(executions) == 1
     assert executions[0].source_run_id == result.run_id
     assert len(service.store.list_execution_steps(executions[0].id or 0)) == 2
+
+
+def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> None:
+    service = _service(settings)
+    service.store.upsert_knowledge_document(
+        path="examples/sample_docs/mfa-runbook.md",
+        title="MFA Runbook",
+        kind="markdown",
+        checksum="mfa-checksum",
+        modified_at="2026-08-08T00:00:00+00:00",
+        chunks=["MFA phone replacement requires identity verification and a new authenticator registration."],
+        client_id="acme",
+    )
+    definition = service.create(
+        name="Context-aware triage",
+        description="Pass selected ticket and knowledge context to bounded tools.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        context_sources=["ticket", "client", "knowledge"],
+    )
+
+    result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    persisted = service.store.get_agent_run(result.run_id, client_id="acme")
+    assert persisted is not None
+    state = json.loads(persisted.state_json)
+    assert set(state["context"]) == {"ticket", "client", "knowledge"}
+    assert state["context"]["knowledge"]["status"] == "ready"
+    assert state["context"]["ticket"]["id"] == "TCK-1001"
+    assert state["context"]["client"] == {"id": "acme", "name": "Northwind Dental"}
+    assert state["context"]["knowledge"]["count"] == 1
+    assert state["steps"][0]["input"]["_agent_context"] == state["context"]
+
+    with pytest.raises(AgentDefinitionError, match="unsupported context sources"):
+        service.create(
+            name="Invalid context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["secrets"],
+        )
+    with pytest.raises(AgentDefinitionError, match="duplicates"):
+        service.create(
+            name="Duplicate context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["ticket", "ticket"],
+        )
+    with pytest.raises(AgentDefinitionError, match="contain 0-3"):
+        service.create(
+            name="Too much context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["ticket", "client", "knowledge", "extra"],
+        )
+    with pytest.raises(AgentDefinitionError, match="non-empty strings"):
+        service.create(
+            name="Empty context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=[""],
+        )
+
+
+def test_agent_context_reports_knowledge_unavailable(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Unavailable knowledge context",
+        description="Surface retrieval failure without treating it as no matches.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        context_sources=["knowledge"],
+    )
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(agents_module, "retrieve_sources", unavailable)
+
+    context = service._build_context(definition, "TCK-1001")  # noqa: SLF001
+
+    assert context["knowledge"] == {"status": "unavailable", "sources": [], "count": 0}
 
 
 def test_agent_execution_windows_normalize_timezones_and_support_overnight_ranges(settings) -> None:
@@ -976,6 +1102,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "execution_window_start": "00:00",
             "execution_window_end": "23:59",
             "execution_window_timezone": "America/Vancouver",
+            "context_sources": ["ticket", "client"],
             "client_id": "acme",
         },
     )
@@ -984,6 +1111,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_start"] == "00:00"
     assert created.json()["execution_window_end"] == "23:59"
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
+    assert created.json()["context_sources"] == ["ticket", "client"]
     assert client.get("/tools").json()[0]["access_mode"] == "read"
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
@@ -995,6 +1123,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
     assert detail.json()["state"]["final_result"]["status"] == "success"
     assert detail.json()["state"]["final_result"]["tool_id"] == "ticket-triage"
+    assert set(detail.json()["state"]["context"]) == {"ticket", "client"}
 
     updated = client.put(
         f"/agents/{agent_id}",

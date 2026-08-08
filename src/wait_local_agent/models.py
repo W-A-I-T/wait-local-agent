@@ -594,6 +594,7 @@ class AgentDefinition:
     execution_window_start: str | None = None
     execution_window_end: str | None = None
     execution_window_timezone: str = "UTC"
+    context_sources: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

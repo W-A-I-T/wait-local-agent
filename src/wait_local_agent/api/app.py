@@ -274,6 +274,9 @@ class AgentDefinitionRequest(BaseModel):
     execution_window_start: str | None = Field(default=None, max_length=5)
     execution_window_end: str | None = Field(default=None, max_length=5)
     execution_window_timezone: str = Field(default="UTC", min_length=1, max_length=100)
+    context_sources: list[Literal["ticket", "client", "knowledge"]] = Field(
+        default_factory=list, max_length=3
+    )
 
 
 class AgentRunStartRequest(BaseModel):
@@ -640,6 +643,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -726,6 +730,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
             )
         except (AgentDefinitionError, ValidationError) as exc:
             raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
@@ -763,6 +768,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 execution_window_start=payload.execution_window_start,
                 execution_window_end=payload.execution_window_end,
                 execution_window_timezone=payload.execution_window_timezone,
+                context_sources=list(payload.context_sources),
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3380,6 +3386,7 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "execution_window_start": definition.execution_window_start,
                 "execution_window_end": definition.execution_window_end,
                 "execution_window_timezone": definition.execution_window_timezone,
+                "context_sources": definition.context_sources,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }
