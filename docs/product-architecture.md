@@ -221,7 +221,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | ConnectWise PSA | Phase 4 | ✓ | ✓ gated | MSP Pack |
 | Autotask | Phase 4 | ✓ | ✓ gated | MSP Pack |
 | NinjaOne RMM | Phase 4 | ✓ inventory | — | MSP Pack |
-| Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
+| Datto RMM | Phase 4 | ✓ read-only inventory | — | Open core |
 | M365 / Entra | Phase 4 | ✓ read-only | — first | MSP Pack |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able | Phase 5 | ✓ | — | MSP Pack |

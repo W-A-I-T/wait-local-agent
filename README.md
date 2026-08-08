@@ -24,9 +24,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   are auditable and cannot be approved, edited, or executed.
 - Hudu read-only documentation context.
 - IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
-- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, `connectwise`, `syncro`, and `servicenow`.
+- Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `itglue`, `ninjaone`, `dattormm`, `autotask`, `connectwise`, `syncro`, and `servicenow`.
 - NinjaOne RMM inventory for devices, alerts, and automation scripts, plus an
   approval-gated script execution request path with persisted execution history.
+- Datto RMM read-only device, open-alert, and component inventory with a
+  non-executing component preview; Datto RMM writes are not exposed.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
 - Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
 - Read-only SyncroMSP ticket and customer inventory; Syncro writes are not exposed.
@@ -358,6 +360,26 @@ approved request, `WAIT_ALLOW_HTTP_PROBING=true`, and
 `WAIT_ALLOW_WRITE_ACTIONS=true`; script variables must not contain secret-like
 names. Device, alert, and script metadata remain read-only, and no general
 NinjaOne management mutation is exposed.
+
+### Datto RMM
+
+The public Datto RMM adapter is read-only and requires explicit HTTP probing.
+Configure the API URL shown for the API-enabled Datto RMM user, the generated
+API key and secret, then use:
+
+```bash
+wait-local-agent connectors validate dattormm
+wait-local-agent connectors dattormm-devices
+wait-local-agent connectors dattormm-device <device-uid>
+wait-local-agent connectors dattormm-alerts
+wait-local-agent connectors dattormm-scripts
+wait-local-agent connectors dattormm-script-preview <device-uid> <component-uid>
+```
+
+The API equivalents are under `/connectors/dattormm`. The adapter reads account
+devices, open alerts, and components through the documented Datto RMM API v2.
+The preview is metadata-only: no quick job or other Datto mutation endpoint is
+called.
 
 ### Autotask PSA
 

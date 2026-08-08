@@ -79,7 +79,7 @@ from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.rmm import NinjaOneClient, RmmReadResponse
+from wait_local_agent.rmm import DattoRmmClient, NinjaOneClient, RmmReadResponse
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.services import TicketIntelligenceService
@@ -158,6 +158,10 @@ def _ninjaone_client() -> NinjaOneClient:
     return NinjaOneClient(load_settings())
 
 
+def _dattormm_client() -> DattoRmmClient:
+    return DattoRmmClient(load_settings())
+
+
 def _autotask_client() -> AutotaskClient:
     return AutotaskClient(load_settings())
 
@@ -222,6 +226,10 @@ def doctor() -> None:
         settings.ninjaone_base_url and settings.ninjaone_client_id and settings.ninjaone_client_secret
     )
     typer.echo(f"ninjaone_configured={ninjaone_configured}")
+    dattormm_configured = bool(
+        settings.dattormm_base_url and settings.dattormm_api_key and settings.dattormm_api_secret
+    )
+    typer.echo(f"dattormm_configured={dattormm_configured}")
     autotask_configured = bool(
         settings.autotask_base_url
         and settings.autotask_username
@@ -669,6 +677,7 @@ def validate_connector(
             hudu_client=_hudu_client(),
             itglue_client=_itglue_client(),
             ninjaone_client=_ninjaone_client(),
+            dattormm_client=_dattormm_client(),
             autotask_client=_autotask_client(),
             connectwise_client=_connectwise_client(),
             syncro_client=_syncro_client(),
@@ -938,6 +947,47 @@ def ninjaone_script_execute(request_id: int) -> None:
         f"approval_id={approval.id} status={approval.status} "
         f"execution_status={approval.execution_status} "
         f"execution_message={approval.execution_message}"
+    )
+
+
+@connectors_app.command("dattormm-health")
+def dattormm_health() -> None:
+    result = _dattormm_client().health()
+    _audit_rmm_cli_read("dattormm.health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("dattormm-devices")
+def dattormm_devices(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "dattormm.devices.list",
+        _dattormm_client().list_devices(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("dattormm-device")
+def dattormm_device(device_id: str) -> None:
+    _print_rmm_response("dattormm.device.get", _dattormm_client().get_device(device_id))
+
+
+@connectors_app.command("dattormm-alerts")
+def dattormm_alerts(page_size: int = 50, after: str | None = None) -> None:
+    _print_rmm_response(
+        "dattormm.alerts.list",
+        _dattormm_client().list_alerts(page_size=page_size, after=after),
+    )
+
+
+@connectors_app.command("dattormm-scripts")
+def dattormm_scripts() -> None:
+    _print_rmm_response("dattormm.components.list", _dattormm_client().list_scripts())
+
+
+@connectors_app.command("dattormm-script-preview")
+def dattormm_script_preview(device_id: str, script_id: str) -> None:
+    _print_rmm_response(
+        "dattormm.component.preview",
+        _dattormm_client().preview_script(device_id, script_id),
     )
 
 

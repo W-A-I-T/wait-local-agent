@@ -33,6 +33,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_NINJAONE_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_SCOPE", raising=False)
     monkeypatch.delenv("WAIT_NINJAONE_PAGE_SIZE", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_API_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_DATTORMM_PAGE_SIZE", raising=False)
     monkeypatch.delenv("WAIT_AUTOTASK_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_AUTOTASK_USERNAME", raising=False)
     monkeypatch.delenv("WAIT_AUTOTASK_SECRET", raising=False)
@@ -88,6 +92,10 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.ninjaone_client_secret == ""
     assert settings.ninjaone_scope == "monitoring"
     assert settings.ninjaone_page_size == 50
+    assert settings.dattormm_base_url == ""
+    assert settings.dattormm_api_key == ""
+    assert settings.dattormm_api_secret == ""
+    assert settings.dattormm_page_size == 50
     assert settings.autotask_base_url == ""
     assert settings.autotask_username == ""
     assert settings.autotask_secret == ""
@@ -160,6 +168,10 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_NINJAONE_CLIENT_SECRET", "ninja-secret")
     monkeypatch.setenv("WAIT_NINJAONE_SCOPE", "monitoring")
     monkeypatch.setenv("WAIT_NINJAONE_PAGE_SIZE", "20")
+    monkeypatch.setenv("WAIT_DATTORMM_BASE_URL", "https://merlot-api.centrastage.net")
+    monkeypatch.setenv("WAIT_DATTORMM_API_KEY", "datto-key")
+    monkeypatch.setenv("WAIT_DATTORMM_API_SECRET", "datto-secret")
+    monkeypatch.setenv("WAIT_DATTORMM_PAGE_SIZE", "20")
     monkeypatch.setenv("WAIT_AUTOTASK_BASE_URL", "https://webservices1.autotask.net")
     monkeypatch.setenv("WAIT_AUTOTASK_USERNAME", "api-user")
     monkeypatch.setenv("WAIT_AUTOTASK_SECRET", "api-secret")
@@ -196,6 +208,10 @@ def test_hudu_and_knowledge_env_values(monkeypatch) -> None:
     assert settings.ninjaone_client_secret == "ninja-secret"
     assert settings.ninjaone_scope == "monitoring"
     assert settings.ninjaone_page_size == 20
+    assert settings.dattormm_base_url == "https://merlot-api.centrastage.net"
+    assert settings.dattormm_api_key == "datto-key"
+    assert settings.dattormm_api_secret == "datto-secret"
+    assert settings.dattormm_page_size == 20
     assert settings.autotask_base_url == "https://webservices1.autotask.net"
     assert settings.autotask_username == "api-user"
     assert settings.autotask_secret == "api-secret"

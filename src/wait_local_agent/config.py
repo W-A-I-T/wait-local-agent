@@ -104,6 +104,10 @@ class Settings:
     ninjaone_client_secret: str = ""
     ninjaone_scope: str = "monitoring"
     ninjaone_page_size: int = 50
+    dattormm_base_url: str = ""
+    dattormm_api_key: str = ""
+    dattormm_api_secret: str = ""
+    dattormm_page_size: int = 50
     autotask_base_url: str = ""
     autotask_username: str = ""
     autotask_secret: str = ""
@@ -246,6 +250,25 @@ def load_settings() -> Settings:
         ),
         ninjaone_scope=os.getenv("WAIT_NINJAONE_SCOPE", "monitoring").strip() or "monitoring",
         ninjaone_page_size=_int_env("WAIT_NINJAONE_PAGE_SIZE", 50),
+        dattormm_base_url=_secret_value(
+            "WAIT_DATTORMM_BASE_URL",
+            os.getenv("WAIT_DATTORMM_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_api_key=_secret_value(
+            "WAIT_DATTORMM_API_KEY",
+            os.getenv("WAIT_DATTORMM_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_api_secret=_secret_value(
+            "WAIT_DATTORMM_API_SECRET",
+            os.getenv("WAIT_DATTORMM_API_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        dattormm_page_size=_int_env("WAIT_DATTORMM_PAGE_SIZE", 50),
         autotask_base_url=_secret_value(
             "WAIT_AUTOTASK_BASE_URL",
             os.getenv("WAIT_AUTOTASK_BASE_URL", ""),

@@ -233,6 +233,43 @@ creates a pending approval. Execution additionally requires both safety flags
 and rejects secret-like variable names; execution results persist only bounded
 metadata, never script parameters.
 
+## Datto RMM
+
+The public Datto RMM adapter is read-only. It lists account devices, open
+alerts, and component metadata, and can create a metadata-only component
+execution preview. It does not call Datto quick-job or other mutation
+endpoints.
+
+Datto requires API access to be enabled and an API key pair generated for a
+user. Use the API URL shown on that user record as the base URL:
+
+```text
+WAIT_DATTORMM_BASE_URL=https://<platform>-api.centrastage.net
+WAIT_DATTORMM_API_KEY=
+WAIT_DATTORMM_API_SECRET=
+WAIT_DATTORMM_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Keep the key and secret in the local vault when possible:
+
+```bash
+wait-local-agent secrets set WAIT_DATTORMM_API_KEY '<api-key>'
+wait-local-agent secrets set WAIT_DATTORMM_API_SECRET '<api-secret>'
+wait-local-agent connectors validate dattormm
+```
+
+Read and preview commands:
+
+```bash
+wait-local-agent connectors dattormm-health
+wait-local-agent connectors dattormm-devices
+wait-local-agent connectors dattormm-device <device-uid>
+wait-local-agent connectors dattormm-alerts
+wait-local-agent connectors dattormm-scripts
+wait-local-agent connectors dattormm-script-preview <device-uid> <component-uid>
+```
+
 ## Autotask PSA
 
 The public Autotask adapter is read-only. It lists tickets and companies and

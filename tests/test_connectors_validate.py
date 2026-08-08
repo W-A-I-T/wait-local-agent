@@ -166,6 +166,29 @@ def test_validate_ninjaone_cli_requires_read_only_credentials_and_accepts_ready(
     assert "PASS connector=ninjaone layer=connector" in ready.output
 
 
+def test_validate_dattormm_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
+    class FakeDattoRmmClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "Datto RMM read prerequisites are ready.")
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    missing = CliRunner().invoke(app, ["connectors", "validate", "dattormm"])
+    assert missing.exit_code == 1
+    assert "WAIT_DATTORMM_BASE_URL" in missing.output
+
+    monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
+    monkeypatch.setenv("WAIT_DATTORMM_BASE_URL", "https://merlot-api.centrastage.net")
+    monkeypatch.setenv("WAIT_DATTORMM_API_KEY", "datto-key")
+    monkeypatch.setenv("WAIT_DATTORMM_API_SECRET", "datto-secret")
+    monkeypatch.setattr(cli_module, "DattoRmmClient", FakeDattoRmmClient)
+    ready = CliRunner().invoke(app, ["connectors", "validate", "dattormm"])
+    assert ready.exit_code == 0
+    assert "PASS connector=dattormm layer=connector" in ready.output
+
+
 def test_validate_autotask_cli_requires_credentials_and_accepts_ready(monkeypatch, tmp_path) -> None:
     class FakeAutotaskClient:
         def __init__(self, _settings) -> None:
@@ -296,6 +319,44 @@ def test_ninjaone_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> 
     ]
     results = [runner.invoke(app, command) for command in commands]
 
+    assert all(item.exit_code == 0 for item in results)
+    assert all("ready count=1" in item.output for item in results)
+
+
+def test_dattormm_cli_read_commands_use_safe_contract(monkeypatch, tmp_path) -> None:
+    result = ConnectorReadResult("ready", "fake Datto RMM response", 1)
+
+    class FakeDattoRmmClient:
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "component-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(result, [{"device_id": device_id, "script_id": script_id}])
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "_dattormm_client", lambda: FakeDattoRmmClient())
+    runner = CliRunner()
+    commands = [
+        ["connectors", "dattormm-health"],
+        ["connectors", "dattormm-devices"],
+        ["connectors", "dattormm-device", "device-1"],
+        ["connectors", "dattormm-alerts"],
+        ["connectors", "dattormm-scripts"],
+        ["connectors", "dattormm-script-preview", "device-1", "component-1"],
+    ]
+    results = [runner.invoke(app, command) for command in commands]
     assert all(item.exit_code == 0 for item in results)
     assert all("ready count=1" in item.output for item in results)
 

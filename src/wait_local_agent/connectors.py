@@ -19,7 +19,7 @@ from wait_local_agent.models import (
     SecretRecord,
 )
 from wait_local_agent.reports.renderers import redact_value
-from wait_local_agent.rmm import NinjaOneClient, RmmClient, RmmExecutionClient, RmmExecutionResult
+from wait_local_agent.rmm import DattoRmmClient, NinjaOneClient, RmmClient, RmmExecutionClient, RmmExecutionResult
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
@@ -65,6 +65,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ninjaone_status: ConnectorStatusValue = "not_configured"
     if ninjaone_configured:
         ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
+    dattormm_configured = bool(
+        settings.dattormm_base_url and settings.dattormm_api_key and settings.dattormm_api_secret
+    )
+    dattormm_status: ConnectorStatusValue = "not_configured"
+    if dattormm_configured:
+        dattormm_status = "configured" if settings.allow_http_probing else "blocked"
     autotask_configured = bool(
         settings.autotask_base_url
         and settings.autotask_username
@@ -159,6 +165,22 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "NinjaOne credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                     if ninjaone_status == "blocked"
                     else "Set WAIT_NINJAONE_* values to enable read-only RMM inventory."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
+            id="dattormm",
+            kind="rmm",
+            name="Datto RMM",
+            status=dattormm_status,
+            message=(
+                "Datto RMM read-only device, alert, and component inventory is configured."
+                if dattormm_status == "configured"
+                else (
+                    "Datto RMM credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                    if dattormm_status == "blocked"
+                    else "Set WAIT_DATTORMM_* values to enable read-only RMM inventory."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,
@@ -265,6 +287,10 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_NINJAONE_CLIENT_SECRET", bool(settings.ninjaone_client_secret), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_SCOPE", bool(settings.ninjaone_scope), "ninjaone"),
         SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
+        SecretRecord("WAIT_DATTORMM_BASE_URL", bool(settings.dattormm_base_url), "dattormm"),
+        SecretRecord("WAIT_DATTORMM_API_KEY", bool(settings.dattormm_api_key), "dattormm"),
+        SecretRecord("WAIT_DATTORMM_API_SECRET", bool(settings.dattormm_api_secret), "dattormm"),
+        SecretRecord("WAIT_DATTORMM_PAGE_SIZE", bool(settings.dattormm_page_size), "dattormm"),
         SecretRecord("WAIT_AUTOTASK_BASE_URL", bool(settings.autotask_base_url), "autotask"),
         SecretRecord("WAIT_AUTOTASK_USERNAME", bool(settings.autotask_username), "autotask"),
         SecretRecord("WAIT_AUTOTASK_SECRET", bool(settings.autotask_secret), "autotask"),
@@ -298,6 +324,7 @@ def validate_connector_credentials(
     hudu_client: HuduClient | None = None,
     itglue_client: ItGlueClient | None = None,
     ninjaone_client: RmmClient | None = None,
+    dattormm_client: RmmClient | None = None,
     autotask_client: PsaClient | None = None,
     connectwise_client: PsaClient | None = None,
     syncro_client: PsaClient | None = None,
@@ -374,6 +401,24 @@ def validate_connector_credentials(
                 f"NinjaOne credentials are incomplete: {', '.join(missing)}.",
             )
         result = (ninjaone_client or NinjaOneClient(settings)).health()
+    elif connector == "dattormm":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_DATTORMM_BASE_URL": settings.dattormm_base_url,
+                "WAIT_DATTORMM_API_KEY": settings.dattormm_api_key,
+                "WAIT_DATTORMM_API_SECRET": settings.dattormm_api_secret,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Datto RMM credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (dattormm_client or DattoRmmClient(settings)).health()
     elif connector == "autotask":
         missing = [
             key

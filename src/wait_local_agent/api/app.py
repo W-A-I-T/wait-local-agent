@@ -93,7 +93,7 @@ from wait_local_agent.reports.hardening_checks import HardeningContext, run_hard
 from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.rmm import NinjaOneClient, RmmReadResponse
+from wait_local_agent.rmm import DattoRmmClient, NinjaOneClient, RmmReadResponse
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient
@@ -305,6 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     hudu_client = HuduClient(active_settings)
     itglue_client = ItGlueClient(active_settings)
     ninjaone_client = NinjaOneClient(active_settings)
+    dattormm_client = DattoRmmClient(active_settings)
     autotask_client = AutotaskClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
     syncro_client = SyncroClient(active_settings)
@@ -1858,6 +1859,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/connectors/dattormm/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = dattormm_client.health()
+        store.add_audit_event("rmm.read", "dattormm.health", f"{result.status} count={result.count}")
+        return asdict(result)
+
+    @app.get("/connectors/dattormm/devices")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_devices(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.devices.list",
+            dattormm_client.list_devices(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/dattormm/devices/{device_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_device(device_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("dattormm.device.get", dattormm_client.get_device(device_id))
+
+    @app.get("/connectors/dattormm/alerts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_alerts(
+        request: Request,
+        _: ViewerAccess,
+        page_size: int = 50,
+        after: str | None = None,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.alerts.list",
+            dattormm_client.list_alerts(page_size=page_size, after=after),
+        )
+
+    @app.get("/connectors/dattormm/scripts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_scripts(request: Request, _: ViewerAccess) -> dict[str, object]:
+        return _rmm_response("dattormm.components.list", dattormm_client.list_scripts())
+
+    @app.post("/connectors/dattormm/devices/{device_id}/script-preview")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def dattormm_script_preview(
+        device_id: str,
+        payload: NinjaScriptPreviewRequest,
+        request: Request,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        return _rmm_response(
+            "dattormm.component.preview",
+            dattormm_client.preview_script(device_id, payload.script_id, payload.variables),
+        )
 
     @app.get("/connectors/autotask/health")
     @limiter.limit(active_settings.rate_limit_connector)

@@ -11,10 +11,13 @@ from wait_local_agent.connectors import (
     validate_connector_credentials,
 )
 from wait_local_agent.rmm import (
+    DattoRmmClient,
     NinjaOneClient,
     RmmReadError,
     _api_base_url,
     _bounded_page_size,
+    _datto_api_base_url,
+    _datto_token_url,
     _payload_rows,
     _safe_endpoint,
     _safe_segment,
@@ -36,6 +39,16 @@ def _configured(
         ninjaone_client_id="client-id",
         ninjaone_client_secret="client-secret",
         ninjaone_scope="monitoring",
+    )
+
+
+def _configured_datto(settings, *, allow_http_probing: bool = True):
+    return replace(
+        settings,
+        allow_http_probing=allow_http_probing,
+        dattormm_base_url="https://merlot-api.centrastage.net",
+        dattormm_api_key="datto-key",
+        dattormm_api_secret="datto-secret",
     )
 
 
@@ -370,6 +383,12 @@ def test_ninjaone_connector_status_and_validation(settings) -> None:
     blocked = list_connector_statuses(_configured(settings, allow_http_probing=False))
     ninjaone = next(item for item in blocked if item.id == "ninjaone")
     assert ninjaone.status == "blocked"
+    dattormm = next(
+        item
+        for item in list_connector_statuses(_configured_datto(settings, allow_http_probing=False))
+        if item.id == "dattormm"
+    )
+    assert dattormm.status == "blocked"
 
     class FakeClient:
         def health(self):
@@ -384,6 +403,118 @@ def test_ninjaone_connector_status_and_validation(settings) -> None:
     )
     assert result.passed is True
     assert result.layer == "connector"
+    dattormm_result = validate_connector_credentials(
+        "dattormm",
+        _configured_datto(settings),
+        dattormm_client=FakeClient(),  # type: ignore[arg-type]
+    )
+    assert dattormm_result.passed is True
+
+
+def test_dattormm_read_contract_uses_documented_oauth_and_normalizes_inventory(settings) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/auth/oauth/token":
+            assert request.headers["Authorization"].startswith("Basic ")
+            assert b"grant_type=password" in request.content
+            assert b"username=datto-key" in request.content
+            assert b"password=datto-secret" in request.content
+            return httpx.Response(200, json={"access_token": "datto-token", "expires_in": 360000})
+        assert request.headers["Authorization"] == "Bearer datto-token"
+        if request.url.path == "/api/v2/account/devices":
+            assert request.url.params["max"] == "2"
+            assert request.url.params["page"] == "3"
+            return httpx.Response(
+                200,
+                json={
+                    "devices": [
+                        {
+                            "uid": "device-1",
+                            "hostname": "ACME-01",
+                            "siteUid": "site-1",
+                            "online": True,
+                            "lastSeen": "2026-08-07T20:00:00Z",
+                        },
+                        {"hostname": "missing uid"},
+                    ]
+                },
+            )
+        if request.url.path == "/api/v2/device/device-1":
+            return httpx.Response(200, json={"uid": "device-1", "hostname": "ACME-01", "online": False})
+        if request.url.path == "/api/v2/account/alerts/open":
+            return httpx.Response(
+                200,
+                json={"alerts": [{"uid": "alert-1", "deviceUid": "device-1", "priority": "High"}]},
+            )
+        if request.url.path == "/api/v2/account/components":
+            return httpx.Response(
+                200,
+                json={"components": [{"uid": "component-1", "name": "Collect logs", "componentType": "PowerShell"}]},
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = DattoRmmClient(_configured_datto(settings), transport=httpx.MockTransport(handler))
+
+    assert client.health().status == "ready"
+    devices = client.list_devices(page_size=2, after="3")
+    device = client.get_device("device-1")
+    alerts = client.list_alerts(page_size=2)
+    scripts = client.list_scripts()
+
+    assert devices.items[0]["id"] == "device-1"
+    assert devices.items[0]["organization_id"] == "site-1"
+    assert devices.items[0]["offline"] is False
+    assert device.items[0]["offline"] is True
+    assert alerts.items[0]["severity"] == "High"
+    assert scripts.items[0]["name"] == "Collect logs"
+    assert calls.count(("POST", "/auth/oauth/token")) == 1
+    assert ("GET", "/api/v2/account/devices") in calls
+    assert ("GET", "/api/v2/device/device-1") in calls
+    assert ("GET", "/api/v2/account/alerts/open") in calls
+    assert ("GET", "/api/v2/account/components") in calls
+
+
+def test_dattormm_is_read_only_and_preview_redacts_variable_values(settings) -> None:
+    client = DattoRmmClient(_configured_datto(settings))
+    preview = client.preview_script("device-1", "component-1", {"api_token": "do-not-return"})
+
+    assert preview.result.status == "ready"
+    assert preview.items[0]["execution_enabled"] is False
+    assert preview.items[0]["variable_names"] == ["api_token"]
+    assert "do-not-return" not in str(preview.items)
+    result = client.execute_script("device-1", "component-1")
+    assert result.status == "blocked"
+    assert "read-only" in result.message
+    assert client.preview_script("device/escape", "component-1").result.status == "failed"
+    assert client.list_devices(after="not-a-page").result.status == "failed"
+
+
+def test_dattormm_guards_and_sanitizes_failures(settings) -> None:
+    assert DattoRmmClient(settings).list_devices().result.status == "blocked"
+    blocked_settings = _configured_datto(settings, allow_http_probing=False)
+    assert DattoRmmClient(blocked_settings).get_device("device-1").result.status == "blocked"
+    assert DattoRmmClient(blocked_settings).list_scripts().result.status == "blocked"
+    missing = DattoRmmClient(replace(settings, allow_http_probing=True))
+    assert missing.health().status == "not_configured"
+    assert "WAIT_DATTORMM_BASE_URL" in missing.health().message
+
+    def unauthorized(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="datto-secret-response")
+
+    failed = DattoRmmClient(
+        _configured_datto(settings), transport=httpx.MockTransport(unauthorized)
+    ).health()
+    assert failed.status == "failed"
+    assert "HTTP 401" in failed.message
+    assert "datto-secret-response" not in failed.message
+
+
+def test_dattormm_endpoint_helpers() -> None:
+    assert _datto_api_base_url("https://merlot-api.centrastage.net") == "https://merlot-api.centrastage.net/api"
+    assert _datto_api_base_url("https://merlot-api.centrastage.net/api/v2") == "https://merlot-api.centrastage.net/api"
+    assert _datto_token_url("https://merlot-api.centrastage.net/api") == "https://merlot-api.centrastage.net/auth/oauth/token"
 
 
 def test_connector_validation_edges_remain_explicit(settings) -> None:

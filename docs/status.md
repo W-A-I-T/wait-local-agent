@@ -29,6 +29,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - NinjaOne RMM adapter for device inventory, active alerts, automation script
   metadata, safe previews, and approval-gated script execution with persisted
   metadata-only results. General NinjaOne management mutations remain disabled.
+- Datto RMM read-only account device, open-alert, and component inventory with
+  metadata-only component previews. Datto RMM execution and management writes
+  remain disabled.
 - Autotask PSA read-only ticket and company inventory; mutation endpoints remain
   disabled.
 - ConnectWise PSA read-only ticket and company inventory; mutation endpoints
@@ -139,7 +142,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | SyncroMSP connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
 | ServiceNow connector | Built in open core as a read-only adapter; mutation and richer mapping remain future work |
-| NinjaOne RMM | Built in open core with approval-gated script execution; additional RMM vendors and management mutations remain future work |
+| NinjaOne RMM | Built in open core with approval-gated script execution; additional RMM management mutations remain future work |
+| Datto RMM | Built in open core as a read-only device, alert, and component adapter; execution and management mutations remain future work |
 | M365 / Entra read-only inventory | Built through governed collector modules |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |

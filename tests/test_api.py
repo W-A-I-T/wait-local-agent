@@ -1623,6 +1623,55 @@ def test_ninjaone_api_ready_read_surfaces_use_shared_contract(settings, monkeypa
     assert preview.json()["items"][0]["variable_names"] == ["token"]
 
 
+def test_dattormm_api_read_surfaces_are_blocked_and_use_shared_contract(settings, monkeypatch) -> None:
+    blocked_client = TestClient(create_app(settings))
+    assert blocked_client.get("/connectors/dattormm/health").json()["status"] == "blocked"
+    assert blocked_client.get("/connectors/dattormm/devices").json()["result"]["status"] == "blocked"
+    preview = blocked_client.post(
+        "/connectors/dattormm/devices/device-1/script-preview",
+        json={"script_id": "component-1", "variables": {"secret_token": "never-return"}},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["items"][0]["execution_enabled"] is False
+    assert "never-return" not in preview.text
+
+    result = ConnectorReadResult("ready", "fake Datto RMM response", 1)
+
+    class FakeDattoRmmClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return result
+
+        def list_devices(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "device-1"}])
+
+        def get_device(self, device_id):
+            return RmmReadResponse(result, [{"id": device_id}])
+
+        def list_alerts(self, *, page_size=None, after=None):
+            return RmmReadResponse(result, [{"id": "alert-1"}])
+
+        def list_scripts(self):
+            return RmmReadResponse(result, [{"id": "component-1"}])
+
+        def preview_script(self, device_id, script_id, variables=None):
+            return RmmReadResponse(
+                result,
+                [{"device_id": device_id, "script_id": script_id, "variable_names": sorted(variables or {})}],
+            )
+
+    monkeypatch.setattr(app_module, "DattoRmmClient", FakeDattoRmmClient)
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/dattormm/health").json()["status"] == "ready"
+    assert client.get("/connectors/dattormm/devices").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/dattormm/devices/device-1").json()["items"] == [{"id": "device-1"}]
+    assert client.get("/connectors/dattormm/alerts").json()["items"] == [{"id": "alert-1"}]
+    assert client.get("/connectors/dattormm/scripts").json()["items"] == [{"id": "component-1"}]
+    assert any(event["event_type"] == "rmm.read" for event in client.get("/audit").json())
+
+
 def test_ninjaone_api_script_request_requires_approval_and_records_execution(settings, monkeypatch) -> None:
     class FakeNinjaOneClient:
         def __init__(self, _settings) -> None:
