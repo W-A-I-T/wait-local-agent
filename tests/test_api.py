@@ -24,7 +24,9 @@ from wait_local_agent.itglue import (
 from wait_local_agent.m365_graph import (
     M365GraphGroup,
     M365GraphGroupReadResponse,
+    M365GraphLicenseReadResponse,
     M365GraphReadResponse,
+    M365GraphSubscribedSku,
     M365GraphUser,
 )
 from wait_local_agent.models import (
@@ -2382,6 +2384,26 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
                 "group-next-token",
             )
 
+        def list_subscribed_skus(self, **kwargs):
+            return M365GraphLicenseReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphSubscribedSku(
+                        "sku-1",
+                        "sku-guid",
+                        "M365_BUSINESS_PREMIUM",
+                        "Enabled",
+                        "User",
+                        7,
+                        25,
+                        2,
+                        1,
+                        0,
+                    )
+                ],
+                "license-next-token",
+            )
+
     monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
     client = TestClient(create_app(settings))
 
@@ -2394,6 +2416,10 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
         "/connectors/m365/groups",
         params={"identity": "helpdesk@example.test", "cursor": "group-next", "page_size": 2},
     )
+    licenses = client.get(
+        "/connectors/m365/licenses",
+        params={"cursor": "license-next"},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -2403,6 +2429,8 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
     assert users.json()["next_cursor"] == "next-token"
     assert groups.json()["items"][0]["mail_nickname"] == "helpdesk"
     assert groups.json()["next_cursor"] == "group-next-token"
+    assert licenses.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
+    assert licenses.json()["next_cursor"] == "license-next-token"
     assert any(connector["id"] == "m365" for connector in connectors.json())
     assert any(event["event_type"] == "m365.read" for event in audit.json())
 
@@ -2412,6 +2440,7 @@ def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
     client = TestClient(create_app(settings))
     assert client.get("/connectors/m365/health").status_code == 401
     assert client.get("/connectors/m365/groups").status_code == 401
+    assert client.get("/connectors/m365/licenses").status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

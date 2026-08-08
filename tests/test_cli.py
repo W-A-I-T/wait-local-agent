@@ -60,6 +60,17 @@ def test_m365_group_command_is_available_and_safe_by_default(monkeypatch, tmp_pa
     assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
 
 
+def test_m365_license_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["connectors", "m365-licenses"])
+
+    assert result.exit_code == 0
+    assert '"status": "blocked"' in result.output
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in result.output
+
+
 def test_collectors_list_shows_exactly_fourteen_modules(
     monkeypatch, tmp_path, isolated_default_registry
 ) -> None:
