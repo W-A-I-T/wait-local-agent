@@ -117,7 +117,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded workers; result accounting remains deterministic.
 - Technician operators can use `/technician/chat` or
   `wait-local-agent technician-chat` for bounded requests over the existing
-  smart-action catalog.
+  smart-action catalog. Persisted, tenant-scoped technician sessions are
+  available through `/technician/chat/sessions`; the CLI supports
+  `--new-session`, `--session-id`, and `--client-id` for the same bounded
+  history path. Only redacted operational messages, action IDs, statuses, and
+  ticket references are stored.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.

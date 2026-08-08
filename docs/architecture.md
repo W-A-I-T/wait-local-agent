@@ -196,7 +196,12 @@ triage, similar-ticket search, documentation search, resolution suggestions,
 quality, sentiment, escalation, and dispatch suggestions. It never evaluates
 arbitrary code or forwards the whole message to a model; unsupported requests
 return bounded help text, and existing smart-action approval and tenant checks
-remain authoritative.
+remain authoritative. The `/technician/chat/sessions` routes and the CLI
+session options persist bounded, tenant- and principal-scoped conversation
+history. History contains only redacted user/assistant operational summaries,
+action IDs, statuses, and ticket references; hidden reasoning and provider
+payloads are not persisted. Sessions can be closed, after which new messages
+are rejected.
 
 ## End-user support mode
 

@@ -310,6 +310,16 @@ class TechnicianChatRequest(BaseModel):
     client_id: str | None = None
 
 
+class TechnicianChatSessionCreateRequest(BaseModel):
+    ticket_id: str | None = Field(default=None, max_length=100)
+    client_id: str | None = None
+
+
+class TechnicianChatMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    ticket_id: str | None = Field(default=None, max_length=100)
+
+
 class EndUserTicketCreateRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=10_000)
@@ -1356,30 +1366,136 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
-            command = parse_technician_message(payload.message, ticket_id=payload.ticket_id)
-        except TechnicianChatParseError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if command.action_id is None:
-            return {
-                "status": "help",
-                "message": command.reply,
-                "supported": True,
-            }
-        try:
-            result = smart_action_service.invoke(
-                command.action_id,
-                command.payload,
-                context.approver_id or "api",
+            return _invoke_technician_chat_message(
+                store,
+                smart_action_service,
+                payload.message,
+                ticket_id=payload.ticket_id,
+                actor=context.approver_id or "api",
                 client_id=scoped_client_id,
             )
+        except TechnicianChatParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
-        return {
-            "status": result.status,
-            "message": command.reply,
-            "action_id": command.action_id,
-            "result": asdict(result),
-        }
+
+    @app.post("/technician/chat/sessions")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_technician_chat_session(
+        payload: TechnicianChatSessionCreateRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="chat sessions require a client scope")
+        if payload.ticket_id and store.get_ticket(payload.ticket_id, scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="ticket not found in client scope")
+        try:
+            session = store.create_technician_chat_session(
+                client_id=scoped_client_id,
+                principal_id=context.approver_id or "api",
+                ticket_id=payload.ticket_id,
+            )
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _technician_chat_session_view(store, session)
+
+    @app.get("/technician/chat/sessions")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def list_technician_chat_sessions(
+        request: Request,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        sessions = store.list_technician_chat_sessions(
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        return [_technician_chat_session_view(store, session) for session in sessions]
+
+    @app.get("/technician/chat/sessions/{session_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def get_technician_chat_session(
+        session_id: str,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.get_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        return _technician_chat_session_view(store, session)
+
+    @app.post("/technician/chat/sessions/{session_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def send_technician_chat_message(
+        session_id: str,
+        payload: TechnicianChatMessageRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.get_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        try:
+            return _invoke_technician_chat_message(
+                store,
+                smart_action_service,
+                payload.message,
+                ticket_id=payload.ticket_id or session.ticket_id,
+                actor=context.approver_id or "api",
+                client_id=session.client_id,
+                session_id=session.id,
+                principal_id=principal_id,
+            )
+        except TechnicianChatParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ticket not found in client scope") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/technician/chat/sessions/{session_id}/close")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def close_technician_chat_session(
+        session_id: str,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
+        session = store.close_technician_chat_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="technician chat session not found")
+        return _technician_chat_session_view(store, session)
 
     @app.post("/end-user/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -3960,6 +4076,127 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
         "priority": ticket.priority,
         "client_id": ticket.client_id,
     }
+
+
+def _technician_chat_session_view(store: Store, session) -> dict[str, object]:
+    return {
+        "id": session.id,
+        "status": session.status,
+        "ticket_id": session.ticket_id,
+        "client_id": session.client_id,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "message": redact_text(message.message),
+                "action_id": message.action_id,
+                "status": message.status,
+                "ticket_id": message.ticket_id,
+                "created_at": message.created_at,
+            }
+            for message in store.list_technician_chat_messages(
+                session.id,
+                client_id=session.client_id,
+            )
+        ],
+    }
+
+
+def _invoke_technician_chat_message(
+    store: Store,
+    smart_action_service: SmartActionService,
+    message: str,
+    *,
+    ticket_id: str | None,
+    actor: str,
+    client_id: str | None,
+    session_id: str | None = None,
+    principal_id: str | None = None,
+) -> dict[str, object]:
+    if session_id is not None:
+        store.add_technician_chat_message(
+            session_id,
+            role="user",
+            message=message,
+            status="received",
+            ticket_id=ticket_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+    try:
+        command = parse_technician_message(message, ticket_id=ticket_id)
+    except TechnicianChatParseError as exc:
+        if session_id is not None:
+            store.add_technician_chat_message(
+                session_id,
+                role="assistant",
+                message=str(exc),
+                status="failed",
+                ticket_id=ticket_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+        raise
+    candidate_ticket_id = command.payload.get("ticket_id")
+    resolved_ticket_id = candidate_ticket_id if isinstance(candidate_ticket_id, str) else None
+    if session_id is not None and resolved_ticket_id and client_id:
+        if (
+            store.update_technician_chat_session_ticket(
+                session_id,
+                client_id=client_id,
+                ticket_id=resolved_ticket_id,
+                principal_id=principal_id,
+            )
+            is None
+        ):
+            raise LookupError(resolved_ticket_id)
+    if command.action_id is None:
+        if session_id is not None:
+            store.add_technician_chat_message(
+                session_id,
+                role="assistant",
+                message=command.reply,
+                status="help",
+                ticket_id=resolved_ticket_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+        response: dict[str, object] = {
+            "status": "help",
+            "message": command.reply,
+            "supported": True,
+        }
+        if session_id is not None:
+            response["session_id"] = session_id
+        return response
+    result = smart_action_service.invoke(
+        command.action_id,
+        command.payload,
+        actor,
+        client_id=client_id,
+    )
+    if session_id is not None:
+        store.add_technician_chat_message(
+            session_id,
+            role="assistant",
+            message=command.reply,
+            action_id=command.action_id,
+            status=result.status,
+            ticket_id=resolved_ticket_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+    response = {
+        "status": result.status,
+        "message": command.reply,
+        "action_id": command.action_id,
+        "result": asdict(result),
+    }
+    if session_id is not None:
+        response["session_id"] = session_id
+    return response
 
 
 def _safe_end_user_ticket_id(ticket_id: str) -> bool:

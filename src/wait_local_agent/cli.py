@@ -567,17 +567,112 @@ def technician_chat(
     message: str,
     ticket_id: Annotated[str | None, typer.Option("--ticket-id")] = None,
     client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    session_id: Annotated[str | None, typer.Option("--session-id")] = None,
+    new_session: Annotated[bool, typer.Option("--new-session")] = False,
 ) -> None:
+    if session_id and new_session:
+        raise typer.BadParameter("--session-id and --new-session cannot be combined")
+    settings = load_settings() if session_id or new_session else None
+    store = Store(settings.data_path) if settings is not None else None
+    session = None
+    if settings is not None:
+        if store is None:
+            raise RuntimeError("technician chat store was not initialized")
+        if not client_id:
+            raise typer.BadParameter("--client-id is required for persisted technician chat")
+        persisted_client_id = client_id
+        if new_session:
+            if ticket_id and store.get_ticket(ticket_id, persisted_client_id) is None:
+                raise typer.BadParameter("ticket not found in client scope")
+            session = store.create_technician_chat_session(
+                client_id=persisted_client_id,
+                principal_id="cli",
+                ticket_id=ticket_id,
+            )
+        else:
+            session = store.get_technician_chat_session(
+                session_id or "",
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
+            if session is None:
+                raise typer.BadParameter("technician chat session not found")
+            if session.status != "active":
+                raise typer.BadParameter("technician chat session is closed")
+            ticket_id = ticket_id or session.ticket_id
+        store.add_technician_chat_message(
+            session.id,
+            role="user",
+            message=message,
+            status="received",
+            ticket_id=ticket_id,
+            client_id=persisted_client_id,
+            principal_id="cli",
+        )
     try:
         command = parse_technician_message(message, ticket_id=ticket_id)
     except TechnicianChatParseError as exc:
+        if session is not None:
+            if store is None:
+                raise RuntimeError("technician chat store was not initialized") from exc
+            store.add_technician_chat_message(
+                session.id,
+                role="assistant",
+                message=str(exc),
+                status="failed",
+                ticket_id=ticket_id,
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
         raise typer.BadParameter(str(exc)) from exc
+    resolved_ticket_id = command.payload.get("ticket_id")
+    if session is not None and isinstance(resolved_ticket_id, str):
+        if store is None:
+            raise RuntimeError("technician chat store was not initialized")
+        if (
+            store.update_technician_chat_session_ticket(
+                session.id,
+                client_id=persisted_client_id,
+                ticket_id=resolved_ticket_id,
+                principal_id="cli",
+            )
+            is None
+        ):
+            raise typer.BadParameter("ticket not found in client scope")
     if command.action_id is None:
+        if session is not None:
+            if store is None:
+                raise RuntimeError("technician chat store was not initialized")
+            store.add_technician_chat_message(
+                session.id,
+                role="assistant",
+                message=command.reply,
+                status="help",
+                ticket_id=ticket_id,
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
+            typer.echo(f"session_id={session.id}")
         typer.echo(command.reply)
         return
-    settings = load_settings()
-    service = SmartActionService(Store(settings.data_path), settings)
+    if settings is None:
+        settings = load_settings()
+        store = Store(settings.data_path)
+    if store is None:
+        raise RuntimeError("technician chat store was not initialized")
+    service = SmartActionService(store, settings)
     result = service.invoke(command.action_id, command.payload, "cli", client_id=client_id)
+    if session is not None:
+        store.add_technician_chat_message(
+            session.id,
+            role="assistant",
+            message=command.reply,
+            action_id=command.action_id,
+            status=result.status,
+            ticket_id=resolved_ticket_id if isinstance(resolved_ticket_id, str) else ticket_id,
+            client_id=persisted_client_id,
+            principal_id="cli",
+        )
     typer.echo(
         json.dumps(
             {
@@ -585,6 +680,7 @@ def technician_chat(
                 "message": command.reply,
                 "action_id": command.action_id,
                 "result": asdict(result),
+                **({"session_id": session.id} if session is not None else {}),
             },
             sort_keys=True,
         )

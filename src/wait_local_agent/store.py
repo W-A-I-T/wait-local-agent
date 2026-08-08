@@ -37,6 +37,8 @@ from wait_local_agent.models import (
     RmmExecutionScope,
     ScheduledJob,
     SmartActionRun,
+    TechnicianChatMessage,
+    TechnicianChatSession,
     TemplateGalleryEntry,
     TemplateGalleryRevision,
     Ticket,
@@ -60,6 +62,7 @@ if TYPE_CHECKING:
     from wait_local_agent.reports.models import GeneratedReport
 
 MAX_SEARCH_LIMIT = 25
+MAX_TECHNICIAN_CHAT_MESSAGES = 200
 
 
 class Store:
@@ -124,6 +127,45 @@ class Store:
                     client_id text,
                     approver_id text
                 )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists technician_chat_sessions (
+                    id text primary key,
+                    client_id text not null,
+                    principal_id text not null,
+                    status text not null default 'active',
+                    ticket_id text,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists technician_chat_messages (
+                    id integer primary key autoincrement,
+                    session_id text not null,
+                    role text not null,
+                    message text not null,
+                    action_id text,
+                    status text not null,
+                    ticket_id text,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_technician_chat_sessions_scope
+                on technician_chat_sessions (client_id, principal_id, updated_at)
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_technician_chat_messages_session
+                on technician_chat_messages (session_id, id)
                 """
             )
             connection.execute(
@@ -1076,6 +1118,285 @@ class Store:
                 (ticket_id, normalized_client_id),
             ).fetchall()
         return [TicketNote(**dict(row)) for row in rows]
+
+    def create_technician_chat_session(
+        self,
+        *,
+        client_id: str,
+        principal_id: str,
+        ticket_id: str | None = None,
+    ) -> TechnicianChatSession:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip())
+        safe_ticket_id = ticket_id.strip() if isinstance(ticket_id, str) and ticket_id.strip() else None
+        if not normalized_client_id:
+            raise ValueError("technician chat sessions require a client scope")
+        if not safe_principal_id:
+            raise ValueError("technician chat sessions require a principal identity")
+        if safe_ticket_id and self.get_ticket(safe_ticket_id, normalized_client_id) is None:
+            raise LookupError(safe_ticket_id)
+        session_id = f"TCS-{uuid.uuid4().hex[:24].upper()}"
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into technician_chat_sessions
+                  (id, client_id, principal_id, status, ticket_id, created_at, updated_at)
+                values (?, ?, ?, 'active', ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_ticket_id,
+                    now,
+                    now,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.session.created",
+                session_id,
+                "Technician chat session created",
+                client_id=normalized_client_id,
+            )
+        session = self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=safe_principal_id,
+        )
+        if session is None:
+            raise RuntimeError("technician chat session was not persisted")
+        return session
+
+    def get_technician_chat_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from technician_chat_sessions
+                where id = ?
+                  and (? is null or client_id = ?)
+                  and (? is null or principal_id = ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_principal_id,
+                ),
+            ).fetchone()
+        return _technician_chat_session_from_row(row) if row else None
+
+    def list_technician_chat_sessions(
+        self,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[TechnicianChatSession]:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from technician_chat_sessions
+                where (? is null or client_id = ?)
+                  and (? is null or principal_id = ?)
+                order by updated_at desc, id desc
+                """,
+                (
+                    normalized_client_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_principal_id,
+                ),
+            ).fetchall()
+        return [_technician_chat_session_from_row(row) for row in rows]
+
+    def update_technician_chat_session_ticket(
+        self,
+        session_id: str,
+        *,
+        client_id: str,
+        ticket_id: str,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id or self.get_ticket(ticket_id, normalized_client_id) is None:
+            return None
+        existing = self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+        if existing is None or existing.status != "active":
+            return None
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update technician_chat_sessions
+                set ticket_id = ?, updated_at = ?
+                where id = ? and client_id = ?
+                """,
+                (ticket_id, now, session_id, normalized_client_id),
+            )
+        return self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+
+    def close_technician_chat_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        existing = self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+        if existing is None:
+            return None
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update technician_chat_sessions
+                set status = 'closed', updated_at = ?
+                where id = ?
+                """,
+                (now, session_id),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.session.closed",
+                session_id,
+                "Technician chat session closed",
+                client_id=existing.client_id,
+            )
+        return self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+
+    def add_technician_chat_message(
+        self,
+        session_id: str,
+        *,
+        role: Literal["user", "assistant"],
+        message: str,
+        status: str,
+        action_id: str | None = None,
+        ticket_id: str | None = None,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatMessage:
+        session = self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise LookupError(session_id)
+        if session.status != "active":
+            raise ValueError("technician chat session is closed")
+        if role not in {"user", "assistant"}:
+            raise ValueError("technician chat message role is invalid")
+        safe_message = _redact_text(message.strip())
+        safe_status = _redact_text(status.strip())
+        safe_action_id = _redact_text(action_id.strip()) if action_id else None
+        safe_ticket_id = ticket_id.strip() if isinstance(ticket_id, str) and ticket_id.strip() else None
+        if not safe_message or not safe_status:
+            raise ValueError("technician chat messages require message and status")
+        if len(safe_message) > 4000 or len(safe_status) > 80 or (
+            safe_action_id is not None and len(safe_action_id) > 120
+        ):
+            raise ValueError("technician chat message fields are too long")
+        now = utc_now()
+        with self._connect() as connection:
+            count = connection.execute(
+                "select count(*) from technician_chat_messages where session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+            if int(count) >= MAX_TECHNICIAN_CHAT_MESSAGES:
+                raise ValueError("technician chat session message limit reached")
+            cursor = connection.execute(
+                """
+                insert into technician_chat_messages
+                  (session_id, role, message, action_id, status, ticket_id, created_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    role,
+                    safe_message,
+                    safe_action_id,
+                    safe_status,
+                    safe_ticket_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                "update technician_chat_sessions set updated_at = ? where id = ?",
+                (now, session_id),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.message.recorded",
+                session_id,
+                f"Technician chat {role} message recorded",
+                client_id=session.client_id,
+            )
+            message_id = cursor.lastrowid
+        return TechnicianChatMessage(
+            id=message_id,
+            session_id=session_id,
+            role=role,
+            message=safe_message,
+            action_id=safe_action_id,
+            status=safe_status,
+            ticket_id=safe_ticket_id,
+            created_at=now,
+        )
+
+    def list_technician_chat_messages(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[TechnicianChatMessage]:
+        if self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        ) is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, session_id, role, message, action_id, status, ticket_id, created_at
+                from technician_chat_messages
+                where session_id = ?
+                order by id
+                limit ?
+                """,
+                (session_id, MAX_TECHNICIAN_CHAT_MESSAGES),
+            ).fetchall()
+        return [_technician_chat_message_from_row(row) for row in rows]
 
     def create_end_user_ticket(
         self,
@@ -5412,6 +5733,24 @@ def _event_history_from_row(row: sqlite3.Row) -> EventHistoryEntry:
     payload["message"] = _redact_text(str(payload["message"]))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     return EventHistoryEntry(**payload)
+
+
+def _technician_chat_session_from_row(row: sqlite3.Row) -> TechnicianChatSession:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id")) or ""
+    payload["principal_id"] = _redact_text(str(payload.get("principal_id") or ""))
+    payload["ticket_id"] = _optional_text(payload.get("ticket_id"))
+    payload["status"] = _redact_text(str(payload.get("status") or ""))
+    return TechnicianChatSession(**payload)
+
+
+def _technician_chat_message_from_row(row: sqlite3.Row) -> TechnicianChatMessage:
+    payload = dict(row)
+    payload["message"] = _redact_text(str(payload.get("message") or ""))
+    payload["action_id"] = _optional_text(payload.get("action_id"))
+    payload["ticket_id"] = _optional_text(payload.get("ticket_id"))
+    payload["status"] = _redact_text(str(payload.get("status") or ""))
+    return TechnicianChatMessage(**payload)
 
 
 def _execution_run_from_row(row: sqlite3.Row) -> ExecutionRun:

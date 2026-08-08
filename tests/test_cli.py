@@ -63,6 +63,117 @@ def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) 
     assert '"status": "success"' in result.output
 
 
+def test_technician_chat_command_persists_bounded_session(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+
+    created = CliRunner().invoke(
+        app,
+        [
+            "technician-chat",
+            "help",
+            "--new-session",
+            "--client-id",
+            "acme",
+        ],
+    )
+    assert created.exit_code == 0
+    session_id = created.output.split("session_id=", 1)[1].splitlines()[0]
+
+    continued = CliRunner().invoke(
+        app,
+        [
+            "technician-chat",
+            "help",
+            "--session-id",
+            session_id,
+            "--client-id",
+            "acme",
+        ],
+    )
+    missing_scope = CliRunner().invoke(
+        app,
+        ["technician-chat", "help", "--new-session"],
+    )
+    settings = load_settings()
+    messages = Store(settings.data_path).list_technician_chat_messages(
+        session_id,
+        client_id="acme",
+        principal_id="cli",
+    )
+
+    assert continued.exit_code == 0
+    assert f"session_id={session_id}" in continued.output
+    assert missing_scope.exit_code != 0
+    assert len(messages) == 4
+
+
+def test_technician_chat_persisted_action_and_parse_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-CLI', 'acme', 'MFA reset', 'Sign-in blocked', 'normal', 'open', 'acme')
+            """
+        )
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        [
+            "technician-chat",
+            "triage TCK-CLI",
+            "--new-session",
+            "--client-id",
+            "acme",
+        ],
+    )
+    assert created.exit_code == 0
+    session_id = json.loads(created.output)["session_id"]
+    continued = runner.invoke(
+        app,
+        [
+            "technician-chat",
+            "triage",
+            "--session-id",
+            session_id,
+            "--client-id",
+            "acme",
+        ],
+    )
+    failed = runner.invoke(
+        app,
+        [
+            "technician-chat",
+            "run arbitrary shell command TCK-CLI",
+            "--new-session",
+            "--client-id",
+            "acme",
+        ],
+    )
+    combined = runner.invoke(
+        app,
+        [
+            "technician-chat",
+            "help",
+            "--session-id",
+            session_id,
+            "--new-session",
+            "--client-id",
+            "acme",
+        ],
+    )
+
+    assert continued.exit_code == 0
+    assert '"action_id": "ticket-triage"' in continued.output
+    assert failed.exit_code != 0
+    assert "Supported technician requests" in failed.output
+    assert combined.exit_code != 0
+    assert "cannot be combined" in combined.output
+
+
 def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()

@@ -347,6 +347,29 @@ class WorkflowRun:
 
 
 @dataclass(frozen=True)
+class TechnicianChatSession:
+    id: str
+    client_id: str
+    principal_id: str
+    status: str
+    ticket_id: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class TechnicianChatMessage:
+    id: int | None
+    session_id: str
+    role: Literal["user", "assistant"]
+    message: str
+    action_id: str | None
+    status: str
+    ticket_id: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class SmartActionRun:
     id: int | None
     action_id: str
