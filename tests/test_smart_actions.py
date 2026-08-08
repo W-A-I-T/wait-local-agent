@@ -557,6 +557,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-device-lookup",
         "rmm-script-catalog",
         "rmm-script-execute",
+        "rmm-script-execution-lookup",
         "rmm-script-preview",
         "suggest-resolution",
         "ticket-escalation",

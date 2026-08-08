@@ -140,6 +140,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     m365_status: ConnectorStatusValue = "not_configured"
     if m365_configured:
         m365_status = "configured" if settings.allow_http_probing else "blocked"
+    ninjaone_configured = bool(
+        settings.ninjaone_base_url
+        and settings.ninjaone_access_token
+        and settings.ninjaone_organization_map_json
+    )
+    ninjaone_status: ConnectorStatusValue = "not_configured"
+    if ninjaone_configured:
+        ninjaone_status = "configured" if settings.allow_http_probing else "blocked"
     return [
         ConnectorStatus(
             id="halopsa",
@@ -301,9 +309,20 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         ConnectorStatus(
             id="rmm",
             kind="rmm",
-            name="RMM inventory",
-            status="not_configured",
-            message="Planned read-only device inventory before approved script execution.",
+            name="NinjaOne RMM",
+            status=ninjaone_status,
+            message=(
+                "NinjaOne is configured for tenant-scoped inventory and approval-gated script actions."
+                if ninjaone_status == "configured"
+                else "NinjaOne is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                if ninjaone_status == "blocked"
+                else (
+                    "Set WAIT_NINJAONE_BASE_URL, WAIT_NINJAONE_ACCESS_TOKEN, and "
+                    "WAIT_NINJAONE_ORGANIZATION_MAP_JSON for NinjaOne."
+                )
+            ),
+            write_actions_enabled=settings.allow_write_actions,
+            http_probing_enabled=settings.allow_http_probing,
         ),
     ]
 
@@ -376,6 +395,18 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "autotask",
         ),
         SecretRecord("WAIT_AUTOTASK_PAGE_SIZE", bool(settings.autotask_page_size), "autotask"),
+        SecretRecord("WAIT_NINJAONE_BASE_URL", bool(settings.ninjaone_base_url), "ninjaone"),
+        SecretRecord(
+            "WAIT_NINJAONE_ACCESS_TOKEN",
+            bool(settings.ninjaone_access_token),
+            "ninjaone",
+        ),
+        SecretRecord(
+            "WAIT_NINJAONE_ORGANIZATION_MAP_JSON",
+            bool(settings.ninjaone_organization_map_json),
+            "ninjaone",
+        ),
+        SecretRecord("WAIT_NINJAONE_PAGE_SIZE", bool(settings.ninjaone_page_size), "ninjaone"),
     ]
 
 

@@ -574,6 +574,27 @@ The API mirrors these commands under `/connectors/autotask/*`. Credentials are
 sent only in the documented request headers, network access remains gated by
 `WAIT_ALLOW_HTTP_PROBING`, and no mutation endpoint is exposed ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm)).
 
+### NinjaOne RMM
+
+The bounded NinjaOne adapter is configured with an OAuth access token and an
+explicit per-tenant organization map:
+
+```text
+WAIT_NINJAONE_BASE_URL=https://app.ninjarmm.com/api/v2
+WAIT_NINJAONE_ACCESS_TOKEN=
+WAIT_NINJAONE_ORGANIZATION_MAP_JSON={"acme":42}
+WAIT_NINJAONE_PAGE_SIZE=50
+```
+
+It provides tenant-scoped device/alert inventory, script catalog and preview,
+approval-gated script execution, and execution-status lookup through the
+existing smart-action contract. Live calls require
+`WAIT_ALLOW_HTTP_PROBING=true`; execution also requires
+`WAIT_ALLOW_WRITE_ACTIONS=true` and technician approval. Credentials are kept
+in settings or the encrypted vault, never in action payloads. See
+[NinjaOne Public API](https://app.ninjaone.com/apidocs/) and
+[NinjaOne OAuth token configuration](https://www.ninjaone.com/docs/application-programming-interface-api/oauth-token-configuration/).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:

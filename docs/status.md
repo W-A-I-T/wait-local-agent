@@ -32,6 +32,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   guarded HTTP boundary; write operations remain unavailable.
 - Autotask read-only ticket and company inventory through the common guarded
   HTTP boundary; write operations remain unavailable.
+- NinjaOne RMM device and alert inventory, script catalog and preview, plus
+  approval-gated script execution through the bounded tenant-mapped adapter;
+  responses and execution lookups remain scope-checked and sanitized.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph; file
