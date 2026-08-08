@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,10 +9,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+import wait_local_agent.agents as agents_module
 import wait_local_agent.api.app as app_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import HaloTicket, HuduArticle
+from wait_local_agent.models import AgentDefinitionRevision, AgentRun, HaloTicket, HuduArticle
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
@@ -65,9 +67,9 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
-        "collector-preview",
-        "dispatch-suggestion",
         "communication-draft",
+        "dispatch-suggestion",
+        "collector-preview",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True
@@ -283,17 +285,66 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.final_result["status"] == "success"
 
 
-def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
+def test_pending_run_continues_from_its_revision_after_definition_update(settings) -> None:
     service = _service(settings)
     definition = service.create(
-        name="Dispatch cancellation",
-        description="Prepare a dispatch proposal that can be cancelled.",
+        name="Dispatch then triage",
+        description="Keep the pending run tied to its original definition.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion", "ticket-triage"],
+        steps=[
+            {"tool_id": "dispatch-suggestion", "payload": {"technicians": []}},
+            {"tool_id": "ticket-triage", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.status == "pending_approval"
+    assert pending.revision_version == 1
+
+    updated = service.update(
+        definition,
+        name="Only triage now",
+        description="The active definition changed after the run started.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+    )
+    assert updated.version == 2
+
+    resumed = service.resume(
+        updated,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert resumed.status == "completed"
+    assert len(resumed.steps) == 2
+    assert resumed.steps[1]["tool_id"] == "ticket-triage"
+
+
+def test_agent_run_can_cancel_pending_approval_and_retry(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Cancellable dispatch",
+        description="Cancel the pending run before retrying it.",
         enabled=True,
         trigger="manual",
         entity_type="ticket",
         filters={},
         enabled_tools=["dispatch-suggestion"],
-        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
         max_steps=1,
         execution_timeout_seconds=30,
         client_id="acme",
@@ -303,7 +354,20 @@ def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
     cancelled = service.cancel(
         definition,
         service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
-        actor="requester",
+        actor="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert cancelled.status == "cancelled"
+    assert cancelled.steps[0]["status"] == "cancelled"
+    assert service.store.get_approval_request(pending.approval_id or 0).status == "rejected"  # type: ignore[union-attr]
+    assert (
+        service.cancel(
+            definition,
+            service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+            actor="approver",
+            approver_role=Role.TECHNICIAN,
+        ).status
+        == "cancelled"
     )
 
     assert cancelled.status == "cancelled"
@@ -328,35 +392,13 @@ def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
         approver_role=Role.TECHNICIAN,
     ).status == "cancelled"
 
-
-def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -> None:
-    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
-    store = Store(scoped.data_path)
-    _seed(store, client_id="acme")
-    client = TestClient(create_app(scoped))
-    created = client.post(
-        "/agents",
-        json={
-            "name": "Cancellable dispatch agent",
-            "enabled_tools": ["dispatch-suggestion"],
-            "steps": [{"tool_id": "dispatch-suggestion", "payload": {}}],
-            "max_steps": 1,
-            "client_id": "acme",
-        },
+    retried = service.retry(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        actor="requester",
     )
-    assert created.status_code == 200
-    agent_id = created.json()["id"]
-    pending = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
-    assert pending.status_code == 200
-    run_id = pending.json()["run_id"]
-
-    cancelled = client.post(f"/agent-runs/{run_id}/cancel")
-    assert cancelled.status_code == 200
-    assert cancelled.json()["status"] == "cancelled"
-    assert client.get(f"/agent-runs/{run_id}").json()["status"] == "cancelled"
-    assert client.post(f"/agent-runs/{run_id}/resume").json()["status"] == "cancelled"
-    assert client.post(f"/agent-runs/{run_id}/cancel").json()["status"] == "cancelled"
-    assert client.post(f"/agent-runs/{run_id}/cancel", params={"client_id": "other"}).status_code == 404
+    assert retried.status == "pending_approval"
+    assert retried.revision_version == definition.version
 
 
 def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
@@ -386,6 +428,7 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
     assert first.final_result["error_detail"] == "no local model provider is configured for this action"
     previous = service.store.get_agent_run(first.run_id, client_id="acme")
     assert previous is not None
+
     updated = service.update(
         definition,
         name=definition.name,
@@ -401,6 +444,7 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
     )
     with pytest.raises(AgentDefinitionError, match="definition changed"):
         service.retry(updated, previous, actor="requester")
+
     retry = service.retry(definition, previous, actor="requester")
     assert retry.status == "failed"
     retried_run = service.store.get_agent_run(retry.run_id, client_id="acme")
@@ -416,6 +460,7 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
         next_run = service.store.get_agent_run(current_result.run_id, client_id="acme")
         assert next_run is not None
         current = next_run
+
     with pytest.raises(AgentDefinitionError, match="retry limit"):
         service.retry(definition, current, actor="requester")
 
@@ -425,6 +470,7 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
     store = Store(scoped.data_path)
     _seed(store, client_id="acme")
     client = TestClient(create_app(scoped))
+
     created = client.post(
         "/agents",
         json={
@@ -441,6 +487,7 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
     assert failed.status_code == 200
     assert failed.json()["status"] == "failed"
     run_id = failed.json()["run_id"]
+
     retry = client.post(f"/agent-runs/{run_id}/retry")
     assert retry.status_code == 200
     assert retry.json()["status"] == "failed"
@@ -456,9 +503,8 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
             "client_id": "acme",
         },
     )
-    completed_run = client.post(
-        f"/agents/{successful.json()['id']}/run", json={"entity_id": "TCK-1001"}
-    )
+    assert successful.status_code == 200
+    completed_run = client.post(f"/agents/{successful.json()['id']}/run", json={"entity_id": "TCK-1001"})
     assert completed_run.json()["status"] == "completed"
     assert client.post(f"/agent-runs/{completed_run.json()['run_id']}/retry").status_code == 409
 
@@ -625,6 +671,223 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
     assert beta.json()["output"]["count"] == 0
     assert rmm.status_code == 200
     assert rmm.json()["output"]["count"] == 1
+
+
+def test_agent_retry_rejects_completed_runs(settings) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    completed = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert completed.status == "completed"
+    with pytest.raises(AgentDefinitionError, match="only failed"):
+        service.retry(
+            definition,
+            service.store.get_agent_run(completed.run_id, client_id="acme"),  # type: ignore[arg-type]
+            actor="requester",
+        )
+
+
+def test_agent_run_guards_reject_unsupported_and_malformed_states(settings) -> None:
+    service = _service(settings)
+    definition = _create(service)
+
+    completed = AgentRun(
+        id=1,
+        agent_id=definition.id,
+        entity_id="TCK-1001",
+        actor="requester",
+        status="completed",
+        current_step=1,
+        state_json="{}",
+        started_at="",
+        finished_at="",
+        revision_version=definition.version,
+        client_id="acme",
+    )
+    assert (
+        service.resume(definition, completed, approver="approver", approver_role=Role.TECHNICIAN).status
+        == "completed"
+    )
+
+    with pytest.raises(AgentDefinitionError, match="entity_type is not supported"):
+        service.run(
+            replace(definition, entity_type="user"),
+            entity_id="TCK-1001",
+            actor="requester",
+            input_payload={},
+        )
+
+    malformed = replace(
+        completed,
+        status="pending_approval",
+        state_json=json.dumps({"steps": [{"approval_id": "not-an-id"}], "pending_approval_step": 0}),
+    )
+    with pytest.raises(AgentDefinitionError, match="approval id is missing"):
+        service.resume(definition, malformed, approver="approver", approver_role=Role.TECHNICIAN)
+
+    missing = replace(
+        completed,
+        status="pending_approval",
+        state_json=json.dumps({"steps": [{"approval_id": 999999}], "pending_approval_step": 0}),
+    )
+    with pytest.raises(AgentDefinitionError, match="approval could not be found"):
+        service.resume(definition, missing, approver="approver", approver_role=Role.TECHNICIAN)
+
+
+def test_agent_runtime_fails_closed_for_malformed_disabled_and_missing_tools(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+
+    malformed = replace(definition, steps=[{"tool_id": None, "payload": {}}])
+    malformed_result = service.run(malformed, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert malformed_result.status == "failed"
+    assert malformed_result.error_detail == "agent step is malformed"
+
+    disabled_tool = replace(
+        definition,
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+    )
+    disabled_tool_result = service.run(
+        disabled_tool, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
+    assert disabled_tool_result.status == "failed"
+    assert "not enabled" in disabled_tool_result.error_detail
+
+    def missing_invoke(*args, **kwargs):
+        raise KeyError
+
+    monkeypatch.setattr(service.smart_actions, "invoke", missing_invoke)
+    missing_tool = replace(
+        definition,
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+    )
+    missing_tool_result = service.run(
+        missing_tool, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
+    assert missing_tool_result.status == "failed"
+    assert missing_tool_result.steps[0]["error_detail"] == "tool ticket-triage is not registered"
+
+
+def test_agent_runtime_timeout_and_rejected_approval_are_terminal(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(agents_module.time, "monotonic", lambda: next(clock))
+
+    timed_out = service.run(
+        replace(definition, execution_timeout_seconds=0.5),
+        entity_id="TCK-1001",
+        actor="requester",
+        input_payload={},
+    )
+    assert timed_out.status == "failed"
+    assert timed_out.error_detail == "agent execution timed out"
+
+    monkeypatch.undo()
+    approval_definition = service.update(
+        definition,
+        name="Approval agent",
+        description="",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+    )
+    pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.approval_id is not None
+    from wait_local_agent.smart_actions import ActionResult
+
+    monkeypatch.setattr(service.smart_actions, "update_approval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        service.smart_actions,
+        "complete_approval",
+        lambda *args, **kwargs: ActionResult(status="rejected", approval_id=pending.approval_id),
+    )
+    rejected = service.resume(
+        approval_definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert rejected.status == "rejected"
+
+
+def test_agent_revision_and_runtime_guards_fail_closed(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = _create(service)
+    base_run = AgentRun(
+        id=1,
+        agent_id=definition.id,
+        entity_id="TCK-1001",
+        actor="requester",
+        status="pending_approval",
+        current_step=0,
+        state_json=json.dumps({"steps": [{"approval_id": 1}], "pending_approval_step": 3}),
+        started_at="",
+        finished_at="",
+        revision_version=definition.version,
+        client_id="acme",
+    )
+    with pytest.raises(AgentDefinitionError, match="approval state is malformed"):
+        service.resume(definition, base_run, approver="approver", approver_role=Role.TECHNICIAN)
+
+    with pytest.raises(AgentDefinitionError, match="revision is no longer available"):
+        service._definition_for_run(definition, replace(base_run, revision_version=99))  # noqa: SLF001
+
+    def revision_with(payload: str) -> AgentDefinitionRevision:
+        return AgentDefinitionRevision(
+            id=1,
+            agent_id=definition.id,
+            version=0,
+            definition_json=payload,
+            created_at="",
+            client_id="acme",
+        )
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with("not-json"),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with("[]"),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with(json.dumps({"filters": []})),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with(json.dumps({"filters": {}, "enabled_tools": [], "steps": {}})),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
+    with pytest.raises(AgentDefinitionError, match="only queued or approval-paused"):
+        service.cancel(
+            definition,
+            replace(base_run, status="completed"),
+            actor="approver",
+            approver_role=Role.TECHNICIAN,
+        )
 
 
 def test_connector_read_tools_reuse_existing_clients_and_tenant_scope(settings, monkeypatch) -> None:
@@ -989,6 +1252,33 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
     assert detail.json()["state"]["final_result"]["status"] == "success"
     assert detail.json()["state"]["final_result"]["tool_id"] == "ticket-triage"
+    assert detail.json()["revision_version"] == 1
+    assert detail.json()["definition_revision"]["version"] == 1
+    assert client.post(f"/agent-runs/{run.json()['run_id']}/retry").status_code == 409
+    assert client.post(f"/agent-runs/{run.json()['run_id']}/cancel").status_code == 409
+
+    approval_agent = client.post(
+        "/agents",
+        json={
+            "name": "Approval agent",
+            "enabled_tools": ["dispatch-suggestion"],
+            "steps": [{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert approval_agent.status_code == 200
+    pending = client.post(
+        f"/agents/{approval_agent.json()['id']}/run",
+        json={"entity_id": "TCK-1001"},
+    )
+    assert pending.status_code == 200
+    cancelled = client.post(f"/agent-runs/{pending.json()['run_id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    retried = client.post(f"/agent-runs/{pending.json()['run_id']}/retry")
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "pending_approval"
 
     updated = client.put(
         f"/agents/{agent_id}",
