@@ -2,8 +2,8 @@
 
 The live connector is intentionally narrower than the cloud inventory adapter:
 it looks up bounded user, group, tenant license, mailbox, and Intune device context,
-and permits one explicit user-creation operation only after approval and the
-write-safety boundaries have passed.
+and permits explicitly approval-gated user lifecycle and group-membership
+operations only after the write-safety boundaries have passed.
 """
 
 from __future__ import annotations
@@ -147,6 +147,16 @@ class M365GraphUserDisableResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphGroupMembershipResult:
+    status: str
+    message: str
+    group_id: str = ""
+    user_id: str = ""
+    operation: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
@@ -271,7 +281,7 @@ class M365GraphClient:
             return ConnectorReadResult("not_configured", missing.message)
         return ConnectorReadResult(
             "ready",
-            "Microsoft Graph approved user lifecycle prerequisites are ready.",
+            "Microsoft Graph approved user lifecycle and group-membership prerequisites are ready.",
         )
 
     def create_user(
@@ -330,6 +340,48 @@ class M365GraphClient:
             "succeeded",
             "Microsoft Graph user disable succeeded.",
             user_identity=safe_identity,
+            status_code=status_code,
+        )
+
+    def change_group_membership(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        operation: str,
+    ) -> M365GraphGroupMembershipResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphGroupMembershipResult("blocked", health.message)
+        try:
+            safe_group_id = _safe_directory_object_id(group_id, "group_id")
+            safe_user_id = _safe_directory_object_id(user_id, "user_id")
+            if operation not in {"add", "remove"}:
+                raise M365GraphReadError("Microsoft Graph group membership operation is invalid.")
+            encoded_group_id = quote(safe_group_id, safe="")
+            encoded_user_id = quote(safe_user_id, safe="")
+            if operation == "add":
+                endpoint = f"groups/{encoded_group_id}/members/$ref"
+                payload: dict[str, object] = {
+                    "@odata.id": (
+                        f"{_api_base_url(self.settings.m365_graph_base_url)}"
+                        f"/directoryObjects/{encoded_user_id}"
+                    )
+                }
+                _, status_code = self._post(endpoint, payload)
+            else:
+                endpoint = (
+                    f"groups/{encoded_group_id}/members/{encoded_user_id}/$ref"
+                )
+                _, status_code = self._delete(endpoint)
+        except M365GraphReadError as exc:
+            return M365GraphGroupMembershipResult("failed", exc.message)
+        return M365GraphGroupMembershipResult(
+            "succeeded",
+            f"Microsoft Graph group membership {operation} succeeded.",
+            group_id=safe_group_id,
+            user_id=safe_user_id,
+            operation=operation,
             status_code=status_code,
         )
 
@@ -510,6 +562,8 @@ class M365GraphClient:
             raise M365GraphReadError(
                 _http_error_message(response.status_code, safe_endpoint, method="POST")
             )
+        if not response.content:
+            return {}, response.status_code
         try:
             return response.json(), response.status_code
         except ValueError as exc:
@@ -559,6 +613,40 @@ class M365GraphClient:
             raise M365GraphReadError(
                 f"Microsoft Graph PATCH {safe_endpoint} returned malformed JSON."
             ) from exc
+
+    def _delete(self, endpoint: str) -> tuple[object, int]:
+        if not self.settings.allow_http_probing:
+            raise M365GraphReadError(
+                "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
+        if not self.settings.allow_write_actions:
+            raise M365GraphReadError(
+                "Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            raise M365GraphReadError(missing.message)
+        try:
+            safe_endpoint = _safe_endpoint(endpoint)
+            with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
+                response = client.delete(
+                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.m365_access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise M365GraphReadError(
+                "Microsoft Graph request failed before receiving a response."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise M365GraphReadError("Microsoft Graph request failed.") from exc
+        if response.status_code >= 400:
+            raise M365GraphReadError(
+                _http_error_message(response.status_code, safe_endpoint, method="DELETE")
+            )
+        return {}, response.status_code
 
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
@@ -623,14 +711,40 @@ def _safe_endpoint(endpoint: str) -> str:
         and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_group_members_add_endpoint = (
+        len(endpoint_parts) == 4
+        and endpoint_parts[0] == "groups"
+        and endpoint_parts[2] == "members"
+        and endpoint_parts[3] == "$ref"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
+    is_group_members_remove_endpoint = (
+        len(endpoint_parts) == 5
+        and endpoint_parts[0] == "groups"
+        and endpoint_parts[2] == "members"
+        and endpoint_parts[4] == "$ref"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and _safe_encoded_segment(endpoint_parts[3])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     if endpoint not in {
         "users",
         "groups",
         "subscribedSkus",
         "deviceManagement/managedDevices",
-    } and not is_mail_folder_endpoint and not is_user_endpoint:
+    } and (
+        not is_mail_folder_endpoint
+        and not is_user_endpoint
+        and not is_group_members_add_endpoint
+        and not is_group_members_remove_endpoint
+    ):
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
+
+
+def _safe_encoded_segment(value: str) -> bool:
+    return bool(value) and quote(unquote(value), safe="") == value
 
 
 def _user_create_payload(
@@ -687,6 +801,17 @@ def _safe_user_target(value: str) -> str:
         or any(ord(character) < 32 or character.isspace() for character in stripped)
     ):
         raise M365GraphReadError("Microsoft Graph user identity is invalid.")
+    return stripped
+
+
+def _safe_directory_object_id(value: str, field: str) -> str:
+    stripped = value.strip()
+    if (
+        not stripped
+        or len(stripped) > MAX_IDENTITY_LENGTH
+        or any(ord(character) < 32 or character.isspace() for character in stripped)
+    ):
+        raise M365GraphReadError(f"Microsoft Graph {field} is invalid.")
     return stripped
 
 
@@ -950,6 +1075,7 @@ def _http_error_message(status_code: int, endpoint: str, *, method: str = "GET")
 __all__ = [
     "M365GraphClient",
     "M365GraphGroup",
+    "M365GraphGroupMembershipResult",
     "M365GraphGroupReadResponse",
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",

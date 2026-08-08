@@ -6,16 +6,21 @@ import pytest
 
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
+    draft_m365_group_membership,
     draft_m365_user_creation,
     draft_m365_user_disable,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     update_halopsa_approval_fields,
     validate_halopsa_action_fields,
+    validate_m365_group_membership_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
 )
-from wait_local_agent.m365_graph import M365GraphUserDisableResult
+from wait_local_agent.m365_graph import (
+    M365GraphGroupMembershipResult,
+    M365GraphUserDisableResult,
+)
 from wait_local_agent.models import HaloWriteResult
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
@@ -52,6 +57,17 @@ class FakeM365Client:
             "succeeded",
             "disabled",
             user_identity=str(kwargs["user_identity"]),
+            status_code=204,
+        )
+
+    def change_group_membership(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphGroupMembershipResult(
+            "succeeded",
+            "membership changed",
+            group_id=str(kwargs["group_id"]),
+            user_id=str(kwargs["user_id"]),
+            operation=str(kwargs["operation"]),
             status_code=204,
         )
 
@@ -158,6 +174,69 @@ def test_m365_user_disable_payload_validation_rejects_extra_or_unsafe_fields() -
     for payload in cases:
         with pytest.raises(ValueError):
             validate_m365_user_disable_payload(payload)
+
+
+def test_m365_group_membership_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_group_membership(
+        store,
+        group_id="group-1",
+        user_id="user-1",
+        operation="add",
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert persisted.client_id == "tenant-a"
+    assert persisted.payload_json == (
+        '{"action_type":"groups.members.add","connector":"m365",'
+        '"group_id":"group-1","user_id":"user-1"}'
+    )
+    assert "password" not in persisted.payload_json.lower()
+
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(
+        store,
+        cast(Any, client),
+        vault,
+        approval.id or 0,
+    )
+
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {"group_id": "group-1", "user_id": "user-1", "operation": "add"}
+    ]
+    assert "password" not in executed.execution_result_json.lower()
+
+
+def test_m365_group_membership_payload_validation_rejects_unsafe_shapes(settings) -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "groups.members.remove",
+        "group_id": "group-1",
+        "user_id": "user-1",
+    }
+    validate_m365_group_membership_payload(valid)
+    cases: tuple[dict[str, object], ...] = (
+        {**valid, "raw_endpoint": "groups/group-1"},
+        {**valid, "group_id": "group 1"},
+        {**valid, "user_id": "user\n1"},
+        {**valid, "action_type": "groups.delete"},
+        {**valid, "user_id": 7},
+    )
+    for payload in cases:
+        with pytest.raises(ValueError):
+            validate_m365_group_membership_payload(payload)
+
+    with pytest.raises(ValueError, match="add or remove"):
+        draft_m365_group_membership(
+            Store(settings.data_path),
+            group_id="group-1",
+            user_id="user-1",
+            operation="replace",
+        )
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:

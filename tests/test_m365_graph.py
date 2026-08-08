@@ -10,6 +10,7 @@ import pytest
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroup,
+    M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolder,
@@ -827,6 +828,148 @@ def test_m365_graph_user_disable_is_write_gated_and_sanitizes_failures(settings)
     invalid = M365GraphClient(active_settings).disable_user(user_identity="bad\nvalue")
     assert invalid.status == "failed"
     assert "identity is invalid" in invalid.message
+
+
+def test_m365_graph_group_membership_add_and_remove_use_ref_endpoints(settings) -> None:
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+    requests: list[tuple[str, str, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.content))
+        if request.method == "POST":
+            assert json.loads(request.content) == {
+                "@odata.id": "https://graph.microsoft.com/v1.0/directoryObjects/user-1"
+            }
+        else:
+            assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(204)
+
+    client = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(handler),
+    )
+    added = client.change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="add",
+    )
+    removed = client.change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+    )
+
+    assert added == M365GraphGroupMembershipResult(
+        "succeeded",
+        "Microsoft Graph group membership add succeeded.",
+        group_id="group-1",
+        user_id="user-1",
+        operation="add",
+        status_code=204,
+    )
+    assert removed == M365GraphGroupMembershipResult(
+        "succeeded",
+        "Microsoft Graph group membership remove succeeded.",
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+        status_code=204,
+    )
+    assert requests == [
+        ("POST", "/v1.0/groups/group-1/members/$ref", b'{"@odata.id":"https://graph.microsoft.com/v1.0/directoryObjects/user-1"}'),
+        ("DELETE", "/v1.0/groups/group-1/members/user-1/$ref", b""),
+    ]
+
+
+def test_m365_graph_group_membership_validates_ids_and_sanitizes_delete_failures(settings) -> None:
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+    invalid_operation = M365GraphClient(active_settings).change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="replace",
+    )
+    assert invalid_operation.status == "failed"
+    assert "operation is invalid" in invalid_operation.message
+
+    invalid_id = M365GraphClient(active_settings).change_group_membership(
+        group_id="group\n1",
+        user_id="user-1",
+        operation="add",
+    )
+    assert invalid_id.status == "failed"
+    assert "group_id is invalid" in invalid_id.message
+
+    forbidden = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403,
+                json={"error": {"message": "secret must not leak"}},
+            )
+        ),
+    ).change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+    )
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
+
+
+def test_m365_graph_group_membership_delete_guards_and_transport_failures(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+    )
+    assert blocked.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in blocked.message
+
+    with pytest.raises(M365GraphReadError, match="WAIT_ALLOW_HTTP_PROBING"):
+        M365GraphClient(settings)._delete("groups/group-1/members/user-1/$ref")
+
+    write_blocked = replace(_configured(settings), allow_write_actions=False)
+    with pytest.raises(M365GraphReadError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        M365GraphClient(write_blocked)._delete("groups/group-1/members/user-1/$ref")
+
+    missing = replace(settings, allow_http_probing=True, allow_write_actions=True)
+    with pytest.raises(M365GraphReadError, match="WAIT_M365_ACCESS_TOKEN"):
+        M365GraphClient(missing)._delete("groups/group-1/members/user-1/$ref")
+
+    active_settings = replace(_configured(settings), allow_write_actions=True)
+    timeout = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(
+            lambda _request: (_ for _ in ()).throw(httpx.ReadTimeout("timed out"))
+        ),
+    ).change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+    )
+    assert timeout.status == "failed"
+    assert "before receiving a response" in timeout.message
+
+    transport_error = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(
+            lambda _request: (_ for _ in ()).throw(httpx.WriteError("transport failed"))
+        ),
+    ).change_group_membership(
+        group_id="group-1",
+        user_id="user-1",
+        operation="remove",
+    )
+    assert transport_error.status == "failed"
+    assert transport_error.message == "Microsoft Graph request failed."
 
 
 def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(settings) -> None:

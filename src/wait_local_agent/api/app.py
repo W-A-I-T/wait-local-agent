@@ -58,6 +58,7 @@ from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_m365_group_membership,
     draft_m365_user_creation,
     draft_m365_user_disable,
     execute_halopsa_approval_request,
@@ -165,6 +166,13 @@ class M365UserDraftRequest(BaseModel):
 
 class M365UserDisableDraftRequest(BaseModel):
     user_identity: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
+class M365GroupMembershipDraftRequest(BaseModel):
+    group_id: str = Field(min_length=1, max_length=320)
+    user_id: str = Field(min_length=1, max_length=320)
+    operation: Literal["add", "remove"]
     client_id: str | None = None
 
 
@@ -2244,6 +2252,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             approval = draft_m365_user_disable(
                 store,
                 user_identity=payload.user_identity,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/groups/membership-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_group_membership_draft(
+        payload: M365GroupMembershipDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_group_membership(
+                store,
+                group_id=payload.group_id,
+                user_id=payload.user_id,
+                operation=payload.operation,
                 client_id=payload.client_id,
             )
         except ValueError as exc:

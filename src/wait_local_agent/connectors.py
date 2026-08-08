@@ -13,6 +13,7 @@ from wait_local_agent.hudu import HuduClient
 from wait_local_agent.itglue import ItGlueClient
 from wait_local_agent.m365_graph import (
     M365GraphClient,
+    M365GraphGroupMembershipResult,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
 )
@@ -42,6 +43,8 @@ HALOPSA_ACTION_TYPES = {
 
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
+M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
+M365_GROUP_MEMBERSHIP_REMOVE_ACTION = "groups.members.remove"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -273,13 +276,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="Microsoft 365 / Entra",
             status=m365_status,
             message=(
-                "Microsoft Graph is configured for read-only user, group, license, mailbox, and Intune context lookup."
+                "Microsoft Graph is configured for bounded context lookup plus "
+                "approved user lifecycle and group-membership writes."
                 if m365_status == "configured"
                 else "Microsoft Graph credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if m365_status == "blocked"
                 else (
                     "Set WAIT_M365_GRAPH_BASE_URL and WAIT_M365_ACCESS_TOKEN to enable "
-                    "live identity, group, license, mailbox-folder, and Intune managed-device reads."
+                    "live identity, group, license, mailbox-folder, and Intune managed-device context."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,
@@ -693,6 +697,36 @@ def draft_m365_user_disable(
     )
 
 
+def draft_m365_group_membership(
+    store: Store,
+    *,
+    group_id: str,
+    user_id: str,
+    operation: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    if operation not in {"add", "remove"}:
+        raise ValueError("M365 group membership operation must be add or remove")
+    action_type = (
+        M365_GROUP_MEMBERSHIP_ADD_ACTION
+        if operation == "add"
+        else M365_GROUP_MEMBERSHIP_REMOVE_ACTION
+    )
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": action_type,
+        "group_id": group_id,
+        "user_id": user_id,
+    }
+    validate_m365_group_membership_payload(payload)
+    return store.create_approval_request(
+        f"m365-group:{group_id.strip()}:member:{user_id.strip()}",
+        f"m365.{action_type}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -705,8 +739,10 @@ def execute_m365_approval_request(
     if approval.action_type not in {
         f"m365.{M365_USER_CREATE_ACTION}",
         f"m365.{M365_USER_DISABLE_ACTION}",
+        f"m365.{M365_GROUP_MEMBERSHIP_ADD_ACTION}",
+        f"m365.{M365_GROUP_MEMBERSHIP_REMOVE_ACTION}",
     }:
-        raise ValueError("approval request is not a supported M365 user action")
+        raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
         raise PermissionError("M365 writes require approved approval requests")
     if approval.execution_status == "succeeded":
@@ -718,9 +754,15 @@ def execute_m365_approval_request(
     if payload.get("connector") != "m365" or action_type not in {
         M365_USER_CREATE_ACTION,
         M365_USER_DISABLE_ACTION,
+        M365_GROUP_MEMBERSHIP_ADD_ACTION,
+        M365_GROUP_MEMBERSHIP_REMOVE_ACTION,
     }:
-        raise ValueError("approval payload does not match M365 user action")
-    result: M365GraphUserCreateResult | M365GraphUserDisableResult
+        raise ValueError("approval payload does not match M365 action")
+    result: (
+        M365GraphUserCreateResult
+        | M365GraphUserDisableResult
+        | M365GraphGroupMembershipResult
+    )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
         validate_m365_user_creation_payload(payload)
@@ -745,11 +787,25 @@ def execute_m365_approval_request(
             "account_enabled": result.account_enabled,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_USER_DISABLE_ACTION:
         validate_m365_user_disable_payload(payload)
         result = client.disable_user(user_identity=str(payload["user_identity"]))
         result_payload = {
             "user_identity": result.user_identity,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_group_membership_payload(payload)
+        operation = "add" if action_type == M365_GROUP_MEMBERSHIP_ADD_ACTION else "remove"
+        result = client.change_group_membership(
+            group_id=str(payload["group_id"]),
+            user_id=str(payload["user_id"]),
+            operation=operation,
+        )
+        result_payload = {
+            "group_id": result.group_id,
+            "user_id": result.user_id,
+            "operation": result.operation,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -828,6 +884,25 @@ def validate_m365_user_disable_payload(payload: dict[str, object]) -> None:
         or any(ord(character) < 32 or character.isspace() for character in user_identity)
     ):
         raise ValueError("M365 user_identity is invalid")
+
+
+def validate_m365_group_membership_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "group_id", "user_id"}:
+        raise ValueError("M365 group membership payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") not in {
+        M365_GROUP_MEMBERSHIP_ADD_ACTION,
+        M365_GROUP_MEMBERSHIP_REMOVE_ACTION,
+    }:
+        raise ValueError("M365 group membership payload is invalid")
+    for field in ("group_id", "user_id"):
+        value = payload.get(field)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field} is invalid")
 
 
 def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:

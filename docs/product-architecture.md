@@ -222,7 +222,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Autotask | Phase 4 | ✓ | ✓ gated | MSP Pack |
 | NinjaOne RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
-| M365 / Entra | Phase 4 | ✓ read-only | — first | MSP Pack |
+| M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership actions | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able | Phase 5 | ✓ | — | MSP Pack |
 | Kaseya VSA | Phase 5 | ✓ | — | MSP Pack |
@@ -319,7 +319,7 @@ All must be explicitly set `true` by the operator. Even then, writes require an 
 | Accidental cloud upload | Explicit user trigger + diff preview; no background sync ever |
 | Poisoned documentation | Path validation (`_validate_allowed_path`); no code execution from KB |
 | Bad model output | All model outputs are drafts; human approval required before execution |
-| Destructive M365/RMM action | Read-only first in all new connectors; writes only after Phase 4 + approval |
+| Destructive M365/RMM action | M365 writes are bounded and approval-gated; RMM remains read-only until separately reviewed |
 | Malicious local user | Immutable audit trail; Phase 2: approver identity logged in events |
 | Plaintext connector secrets | Phase 1: Fernet-encrypted vault replaces env-only secret storage |
 
