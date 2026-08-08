@@ -144,6 +144,67 @@ def test_store_template_gallery_persists_provenance_and_scope(tmp_path: Path) ->
     assert [item.id for item in store.list_template_gallery_entries(client_id="acme")] == [entry.id]
 
 
+def test_store_template_gallery_updates_and_restores_revisions(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    template = get_workflow_template("ticket-triage")
+    assert template is not None
+
+    entry = store.create_template_gallery_entry(
+        template,
+        provenance="Reviewed local core template",
+        client_id="acme",
+        name="Acme triage",
+        instructions="Use local policy",
+    )
+    updated = store.update_template_gallery_entry(
+        entry.id,
+        name="Acme triage disabled",
+        instructions="Do not post externally",
+        enabled=False,
+        client_id="acme",
+    )
+    assert updated.version == 2
+    assert updated.enabled is False
+    assert updated.instructions == "Do not post externally"
+    assert [revision.version for revision in store.list_template_gallery_revisions(entry.id, "acme")] == [2, 1]
+
+    restored = store.restore_template_gallery_revision(entry.id, 1, "acme")
+    assert restored.version == 3
+    assert restored.name == "Acme triage"
+    assert restored.instructions == "Use local policy"
+    assert restored.enabled is True
+
+
+def test_store_template_gallery_revision_lookup_and_validation_edges(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    template = get_workflow_template("ticket-triage")
+    assert template is not None
+
+    with pytest.raises(ValueError, match="provenance"):
+        store.create_template_gallery_entry(template, provenance="", client_id="acme")
+    entry = store.create_template_gallery_entry(template, provenance="review", client_id="acme")
+
+    assert store.get_template_gallery_revision("missing", 1, "acme") is None
+    assert store.list_template_gallery_revisions("missing", "acme") == []
+    with pytest.raises(KeyError):
+        store.restore_template_gallery_revision("missing", 1, "acme")
+    with pytest.raises(KeyError):
+        store.restore_template_gallery_revision(entry.id, 999, "acme")
+    with pytest.raises(KeyError):
+        store.update_template_gallery_entry("missing", name="Missing", client_id="acme")
+    assert store.update_template_gallery_entry(entry.id, client_id="acme") == entry
+    with pytest.raises(ValueError, match="name"):
+        store.update_template_gallery_entry(entry.id, name="", client_id="acme")
+    with pytest.raises(ValueError, match="instructions"):
+        store.update_template_gallery_entry(entry.id, instructions="x" * 4001, client_id="acme")
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("delete from template_gallery_revisions where gallery_id = ?", (entry.id,))
+    migrated = Store(tmp_path / "state.db")
+    backfilled = migrated.list_template_gallery_revisions(entry.id, "acme")
+    assert [revision.version for revision in backfilled] == [1]
+
+
 def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
 

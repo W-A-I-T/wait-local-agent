@@ -1541,6 +1541,164 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
     ).status_code == 403
 
 
+def test_template_gallery_instances_are_editable_versioned_and_disableable(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "provenance": "operator review",
+            "display_name": "Acme triage v1",
+            "instructions": "Use the local triage policy.",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    entry_id = created.json()["id"]
+    assert created.json()["version"] == 1
+    assert created.json()["enabled"] is True
+
+    updated = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={
+            "name": "Acme triage disabled",
+            "description": "A locally maintained triage definition.",
+            "instructions": "Do not post externally.",
+            "enabled": False,
+            "client_id": "acme",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["version"] == 2
+    assert updated.json()["enabled"] is False
+    assert updated.json()["instructions"] == "Do not post externally."
+
+    disabled_run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    revisions = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions",
+        params={"client_id": "acme"},
+    )
+    assert disabled_run.status_code == 409
+    assert revisions.status_code == 200
+    assert [revision["version"] for revision in revisions.json()] == [2, 1]
+    assert revisions.json()[0]["definition"]["enabled"] is False
+
+    restored = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["version"] == 3
+    assert restored.json()["name"] == "Acme triage v1"
+    assert restored.json()["enabled"] is True
+
+    run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert run.status_code == 200
+    assert run.json()["template_version"] == 3
+    assert "local triage policy" in run.json()["message"]
+
+    foreign_update = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={"name": "cross-tenant", "client_id": "beta"},
+    )
+    assert foreign_update.status_code == 404
+
+    missing_revisions = client.get("/workflow-templates/gallery/missing/revisions")
+    missing_update = client.patch(
+        "/workflow-templates/gallery/missing",
+        json={"name": "Missing"},
+    )
+    invalid_update = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={"name": "   ", "client_id": "acme"},
+    )
+    missing_restore = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/999/restore",
+        json={"client_id": "acme"},
+    )
+    assert missing_revisions.status_code == 200
+    assert missing_revisions.json() == []
+    assert missing_update.status_code == 404
+    assert invalid_update.status_code == 422
+    assert missing_restore.status_code == 404
+
+    missing_restore_entry = client.post(
+        "/workflow-templates/gallery/missing/revisions/1/restore",
+        json={},
+    )
+    assert missing_restore_entry.status_code == 404
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update template_gallery_revisions set definition_json = ? where gallery_id = ? and version = 1",
+            ('{"name":""}', entry_id),
+        )
+    invalid_restore = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert invalid_restore.status_code == 409
+
+    monkeypatch.setattr(app_module, "get_workflow_template", lambda _template_id: None)
+    unavailable_source = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert unavailable_source.status_code == 409
+
+
+def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure.data_path)
+    template = app_module.get_workflow_template("ticket-triage")
+    assert template is not None
+    entry = store.create_template_gallery_entry(template, provenance="operator review", client_id="acme")
+    client = TestClient(create_app(secure))
+
+    patch = client.patch(
+        f"/workflow-templates/gallery/{entry.id}",
+        headers=_auth("tech-token"),
+        json={"name": "No tenant"},
+    )
+    revisions = client.get(
+        f"/workflow-templates/gallery/{entry.id}/revisions",
+        headers=_auth("viewer-token"),
+    )
+    restore = client.post(
+        f"/workflow-templates/gallery/{entry.id}/revisions/1/restore",
+        headers=_auth("tech-token"),
+        json={},
+    )
+    run = client.post(
+        f"/workflow-templates/gallery/{entry.id}/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert patch.status_code == 403
+    assert revisions.status_code == 200 and revisions.json() == []
+    assert restore.status_code == 404
+    assert run.status_code == 403
+
+
 def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

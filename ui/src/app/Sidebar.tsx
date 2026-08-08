@@ -9,6 +9,7 @@ import {
   FileSearch,
   GitBranch,
   LayoutDashboard,
+  Files,
   ShieldCheck,
   Sparkles,
   Workflow
@@ -23,6 +24,7 @@ const navigation = [
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
+  { to: "/templates", label: "Templates", icon: Files },
   { to: "/collectors", label: "Collectors", icon: Database },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/audit", label: "Audit", icon: FileSearch },

@@ -393,9 +393,42 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     connectors = runner.invoke(app, ["connectors", "list"])
     secrets = runner.invoke(app, ["connectors", "secrets"])
     templates = runner.invoke(app, ["workflows", "templates"])
+    gallery_add = runner.invoke(
+        app,
+        [
+            "workflows",
+            "gallery-add",
+            "ticket-triage",
+            "cli review",
+            "--display-name",
+            "CLI triage",
+            "--instructions",
+            "Use local policy",
+        ],
+    )
+    gallery_id = gallery_add.output.split("id=", 1)[1].split()[0] if gallery_add.exit_code == 0 else ""
+    gallery_update = runner.invoke(
+        app,
+        ["workflows", "gallery-update", gallery_id, "--display-name", "CLI triage updated"],
+    )
+    gallery = runner.invoke(app, ["workflows", "gallery"])
+    gallery_revisions = runner.invoke(app, ["workflows", "gallery-revisions", gallery_id])
+    gallery_disable = runner.invoke(app, ["workflows", "gallery-disable", gallery_id])
+    gallery_enable = runner.invoke(app, ["workflows", "gallery-enable", gallery_id])
+    gallery_restore = runner.invoke(app, ["workflows", "gallery-restore", gallery_id, "1"])
+    missing_gallery_update = runner.invoke(
+        app, ["workflows", "gallery-update", "missing-gallery", "--display-name", "Missing"]
+    )
+    missing_gallery_revisions = runner.invoke(
+        app, ["workflows", "gallery-revisions", "missing-gallery"]
+    )
+    missing_gallery_restore = runner.invoke(
+        app, ["workflows", "gallery-restore", gallery_id, "999"]
+    )
     run = runner.invoke(app, ["workflows", "run", "assign-technician", "TCK-1001"])
     completed = runner.invoke(app, ["workflows", "run", "ticket-triage", "TCK-1001"])
     quality = runner.invoke(app, ["workflows", "run", "ticket-quality-review", "TCK-1001"])
+    gallery_run = runner.invoke(app, ["workflows", "gallery-run", gallery_id, "TCK-1001"])
     draft = runner.invoke(
         app,
         [
@@ -418,12 +451,24 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert "WAIT_HALOPSA_BASE_URL configured=False" in secrets.output
     assert templates.exit_code == 0
     assert "assign-technician" in templates.output
+    assert gallery_add.exit_code == 0
+    assert gallery_update.exit_code == 0
+    assert gallery.exit_code == 0 and "CLI triage updated" in gallery.output
+    assert gallery_revisions.exit_code == 0 and "version=2" in gallery_revisions.output
+    assert gallery_disable.exit_code == 0 and "enabled=False" in gallery_disable.output
+    assert gallery_enable.exit_code == 0 and "enabled=True" in gallery_enable.output
+    assert gallery_restore.exit_code == 0 and "version=5" in gallery_restore.output
+    assert missing_gallery_update.exit_code != 0
+    assert missing_gallery_revisions.exit_code != 0
+    assert missing_gallery_restore.exit_code != 0
     assert run.exit_code == 0
     assert "status=pending_approval" in run.output
     assert completed.exit_code == 0
     assert "status=completed" in completed.output
     assert quality.exit_code == 0
     assert "status=completed" in quality.output
+    assert gallery_run.exit_code == 0
+    assert "template_version=5" in gallery_run.output
     assert draft.exit_code == 0
     assert "approval_request_id=" in draft.output
     assert approvals.exit_code == 0

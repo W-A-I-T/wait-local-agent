@@ -219,6 +219,19 @@ class TemplateGalleryCreateRequest(BaseModel):
     source_template_id: str
     provenance: str = Field(min_length=1, max_length=1000)
     display_name: str | None = Field(default=None, max_length=120)
+    instructions: str = Field(default="", max_length=4000)
+    client_id: str | None = None
+
+
+class TemplateGalleryUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=4000)
+    enabled: bool | None = None
+    client_id: str | None = None
+
+
+class TemplateGalleryRestoreRequest(BaseModel):
     client_id: str | None = None
 
 
@@ -2642,6 +2655,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 provenance=payload.provenance,
                 client_id=scoped_client_id,
                 name=payload.display_name,
+                instructions=payload.instructions,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2657,6 +2671,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         return _template_gallery_view(entry)
 
+    @app.patch("/workflow-templates/gallery/{entry_id}")
+    def update_template_gallery_entry(
+        entry_id: str,
+        payload: TemplateGalleryUpdateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        try:
+            updated = store.update_template_gallery_entry(
+                entry_id,
+                name=payload.name,
+                description=payload.description,
+                instructions=payload.instructions,
+                enabled=payload.enabled,
+                client_id=entry.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _template_gallery_view(updated)
+
+    @app.get("/workflow-templates/gallery/{entry_id}/revisions")
+    def template_gallery_revisions(
+        entry_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            return []
+        return [
+            _template_gallery_revision_view(revision)
+            for revision in store.list_template_gallery_revisions(entry_id, entry.client_id)
+        ]
+
+    @app.post("/workflow-templates/gallery/{entry_id}/revisions/{version}/restore")
+    def restore_template_gallery_revision(
+        entry_id: str,
+        version: int,
+        payload: TemplateGalleryRestoreRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="template gallery entry not found")
+        try:
+            restored = store.restore_template_gallery_revision(entry_id, version, entry.client_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="template gallery revision not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="template gallery revision is no longer valid") from exc
+        return _template_gallery_view(restored)
+
     @app.post("/workflow-templates/gallery/{entry_id}/runs")
     def run_template_gallery_entry(
         entry_id: str,
@@ -2669,8 +2746,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
+        if not entry.enabled:
+            raise HTTPException(status_code=409, detail="template gallery entry is disabled")
         if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
+        source_template = get_workflow_template(entry.source_template_id)
+        if source_template is None:
+            raise HTTPException(status_code=409, detail="source workflow template is unavailable")
         run = run_workflow_template(
             store,
             entry.source_template_id,
@@ -2679,6 +2761,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             actor=context.approver_id or "api",
             trigger_source="template_gallery",
             tool_executor=smart_action_service,
+            template_override=replace(
+                source_template,
+                name=entry.name,
+                description=entry.description,
+            ),
+            operator_instructions=entry.instructions,
+            template_version=entry.version,
         )
         _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
         return asdict(run)
@@ -3339,10 +3428,23 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "risk_level": entry.risk_level,
         "preview_fields": _safe_json_values(entry.preview_fields_json),
         "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
         "version": entry.version,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
         "client_id": entry.client_id,
+    }
+
+
+def _template_gallery_revision_view(revision) -> dict[str, object]:
+    return {
+        "id": revision.id,
+        "gallery_id": revision.gallery_id,
+        "version": revision.version,
+        "definition": _safe_redacted_json_object(revision.definition_json),
+        "created_at": revision.created_at,
+        "client_id": revision.client_id,
     }
 
 

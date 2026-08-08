@@ -137,8 +137,11 @@ def run_workflow_template(
     actor: str = "",
     trigger_source: str = "workflow",
     tool_executor: WorkflowToolExecutor | None = None,
+    template_override: WorkflowTemplate | None = None,
+    operator_instructions: str = "",
+    template_version: int | None = None,
 ) -> WorkflowRun:
-    template = get_workflow_template(template_id)
+    template = template_override or get_workflow_template(template_id)
     if template is None:
         raise KeyError(template_id)
     ticket = store.get_ticket(ticket_id)
@@ -154,6 +157,9 @@ def run_workflow_template(
         client_id=effective_client_id,
     )
     message = _workflow_message(template, ticket, tool_result)
+    safe_instructions = redact_text(operator_instructions).strip()
+    if safe_instructions:
+        message = f"{message} Operator instructions: {safe_instructions}"
     approval_request_id = None
     status = "completed"
     if tool_result is not None:
@@ -180,6 +186,7 @@ def run_workflow_template(
         message=message,
         approval_request_id=approval_request_id,
         client_id=effective_client_id,
+        template_version=template_version,
     )
     _record_workflow_execution(store, run, actor=actor, trigger_source=trigger_source)
     return run
@@ -201,6 +208,7 @@ def _record_workflow_execution(
         output={
             "message": run.message,
             "approval_request_id": run.approval_request_id,
+            "template_version": run.template_version,
         },
     )
     ExecutionRecorder(store).record_execution(

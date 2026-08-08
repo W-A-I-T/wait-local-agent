@@ -13,6 +13,7 @@ const apiProxyRoutes = [
   "/events",
   "/knowledge",
   "/workflows",
+  "/workflow-templates",
   "/workflow-runs",
   "/analytics",
   "/connectors",

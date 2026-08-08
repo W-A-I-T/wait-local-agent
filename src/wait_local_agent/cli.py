@@ -107,7 +107,11 @@ from wait_local_agent.technician_chat import TechnicianChatParseError, parse_tec
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
-from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
+from wait_local_agent.workflows import (
+    get_workflow_template,
+    list_workflow_templates,
+    run_workflow_template,
+)
 
 app = typer.Typer(help="WAIT Local Agent command line interface.")
 tickets_app = typer.Typer(help="Ticket intelligence commands.")
@@ -1577,6 +1581,138 @@ def list_workflows() -> None:
         typer.echo(
             f"{template.id} {template.trigger} approval_required={template.approval_required}"
         )
+
+
+@workflows_app.command("gallery")
+def list_workflow_gallery(client_id: str | None = None) -> None:
+    store = Store(load_settings().data_path)
+    for entry in store.list_template_gallery_entries(client_id=client_id):
+        typer.echo(
+            f"{entry.id} source={entry.source_template_id} version={entry.version} "
+            f"enabled={entry.enabled} client_id={entry.client_id or '-'} name={entry.name}"
+        )
+
+
+@workflows_app.command("gallery-add")
+def add_workflow_gallery(
+    source_template_id: str,
+    provenance: str,
+    display_name: str | None = None,
+    instructions: str = "",
+    client_id: str | None = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    template = get_workflow_template(source_template_id)
+    if template is None:
+        raise typer.BadParameter("workflow template not found", param_hint="source_template_id")
+    entry = store.create_template_gallery_entry(
+        template,
+        provenance=provenance,
+        name=display_name,
+        instructions=instructions,
+        client_id=client_id,
+    )
+    typer.echo(
+        f"id={entry.id} source={entry.source_template_id} version={entry.version} "
+        f"enabled={entry.enabled} client_id={entry.client_id or '-'}"
+    )
+
+
+@workflows_app.command("gallery-update")
+def update_workflow_gallery(
+    entry_id: str,
+    display_name: str | None = None,
+    description: str | None = None,
+    instructions: str | None = None,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.update_template_gallery_entry(
+            entry_id,
+            name=display_name,
+            description=description,
+            instructions=instructions,
+            client_id=client_id,
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled} name={entry.name}")
+
+
+@workflows_app.command("gallery-enable")
+def enable_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    _set_workflow_gallery_enabled(entry_id, True, client_id)
+
+
+@workflows_app.command("gallery-disable")
+def disable_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    _set_workflow_gallery_enabled(entry_id, False, client_id)
+
+
+def _set_workflow_gallery_enabled(entry_id: str, enabled: bool, client_id: str | None) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.update_template_gallery_entry(entry_id, enabled=enabled, client_id=client_id)
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled}")
+
+
+@workflows_app.command("gallery-revisions")
+def list_workflow_gallery_revisions(entry_id: str, client_id: str | None = None) -> None:
+    store = Store(load_settings().data_path)
+    revisions = store.list_template_gallery_revisions(entry_id, client_id)
+    if not revisions:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    for revision in revisions:
+        typer.echo(f"version={revision.version} created_at={revision.created_at}")
+
+
+@workflows_app.command("gallery-restore")
+def restore_workflow_gallery_revision(
+    entry_id: str,
+    version: int,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.restore_template_gallery_revision(entry_id, version, client_id)
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery revision not found") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled} name={entry.name}")
+
+
+@workflows_app.command("gallery-run")
+def run_workflow_gallery(entry_id: str, ticket_id: str) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    entry = store.get_template_gallery_entry(entry_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    if not entry.enabled:
+        raise typer.BadParameter("template gallery entry is disabled", param_hint="entry_id")
+    source_template = get_workflow_template(entry.source_template_id)
+    if source_template is None:
+        raise typer.BadParameter("source workflow template is unavailable", param_hint="entry_id")
+    run = run_workflow_template(
+        store,
+        entry.source_template_id,
+        ticket_id,
+        client_id=entry.client_id,
+        actor="cli",
+        trigger_source="cli_gallery",
+        tool_executor=SmartActionService(store, settings),
+        template_override=replace(source_template, name=entry.name, description=entry.description),
+        operator_instructions=entry.instructions,
+        template_version=entry.version,
+    )
+    _dispatch_cli_workflow_completion(store, settings, run)
+    typer.echo(
+        f"run_id={run.id} status={run.status} ticket_id={run.ticket_id} "
+        f"template_version={run.template_version}"
+    )
 
 
 @workflows_app.command("run")

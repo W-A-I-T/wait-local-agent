@@ -143,10 +143,12 @@ infer historical resolution timestamps or measured time saved.
 
 ## Template gallery
 
-The local gallery stores provenance-bearing copies of the fixed core workflow
-catalog. Gallery entries retain the source template identity and tenant scope;
-execution resolves back to the reviewed core implementation, so the gallery
-does not create an unrestricted code or prompt execution surface.
+The local gallery stores provenance-bearing, tenant-scoped instances of the
+fixed core workflow catalog. Operators can edit bounded metadata and operator
+instructions, enable or disable an instance, inspect redacted revisions, and
+restore an earlier definition as a new version. Execution retains the source
+template identity and runs through the reviewed core implementation; gallery
+metadata cannot introduce arbitrary code, tools, write permissions, or prompts.
 
 ## Backfills
 

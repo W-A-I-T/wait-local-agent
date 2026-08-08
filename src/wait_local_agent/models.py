@@ -270,9 +270,21 @@ class TemplateGalleryEntry:
     risk_level: str
     preview_fields_json: str
     provenance: str
+    instructions: str
+    enabled: bool
     version: int
     created_at: str
     updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TemplateGalleryRevision:
+    id: int
+    gallery_id: str
+    version: int
+    definition_json: str
+    created_at: str
     client_id: str | None = None
 
 
@@ -287,6 +299,7 @@ class WorkflowRun:
     created_at: str
     updated_at: str
     client_id: str | None = None
+    template_version: int | None = None
 
 
 @dataclass(frozen=True)

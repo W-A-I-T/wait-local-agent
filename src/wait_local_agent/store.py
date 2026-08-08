@@ -33,6 +33,7 @@ from wait_local_agent.models import (
     ScheduledJob,
     SmartActionRun,
     TemplateGalleryEntry,
+    TemplateGalleryRevision,
     Ticket,
     TicketNote,
     WorkflowRun,
@@ -253,6 +254,19 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists template_gallery_revisions (
+                    id integer primary key autoincrement,
+                    gallery_id text not null,
+                    version integer not null,
+                    definition_json text not null,
+                    created_at text not null,
+                    client_id text,
+                    unique(gallery_id, version)
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists scheduled_jobs (
                     id integer primary key autoincrement,
                     template_id text not null,
@@ -373,6 +387,7 @@ class Store:
             self._ensure_column(connection, "approval_requests", "client_id", "text")
             self._ensure_column(connection, "approval_requests", "approver_id", "text")
             self._ensure_column(connection, "workflow_runs", "client_id", "text")
+            self._ensure_column(connection, "workflow_runs", "template_version", "integer")
             self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
             self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
@@ -402,6 +417,9 @@ class Store:
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
+            self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
+            self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
+            self._backfill_template_gallery_revisions(connection)
             connection.execute(
                 """
                 create table if not exists knowledge_chunks (
@@ -742,6 +760,39 @@ class Store:
                     _agent_definition_snapshot(definition),
                     definition.updated_at,
                     _normalize_client_id(definition.client_id),
+                ),
+            )
+
+    @staticmethod
+    def _backfill_template_gallery_revisions(connection: sqlite3.Connection) -> None:
+        rows = connection.execute("select * from template_gallery_entries").fetchall()
+        for row in rows:
+            exists = connection.execute(
+                """
+                select 1 from template_gallery_revisions
+                where gallery_id = ? and version = ?
+                """,
+                (str(row["id"]), int(row["version"])),
+            ).fetchone()
+            if exists is not None:
+                continue
+            connection.execute(
+                """
+                insert into template_gallery_revisions
+                  (gallery_id, version, definition_json, created_at, client_id)
+                values (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row["id"]),
+                    int(row["version"]),
+                    _template_gallery_definition_json(
+                        name=_redact_text(str(row["name"])),
+                        description=_redact_text(str(row["description"])),
+                        instructions=_redact_text(str(row["instructions"])),
+                        enabled=bool(row["enabled"]),
+                    ),
+                    str(row["created_at"]),
+                    _normalize_client_id(row["client_id"]),
                 ),
             )
 
@@ -1535,6 +1586,7 @@ class Store:
         approval_request_id: int | None = None,
         *,
         client_id: str | None = None,
+        template_version: int | None = None,
     ) -> WorkflowRun:
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
@@ -1549,10 +1601,11 @@ class Store:
                     message,
                     approval_request_id,
                     client_id,
+                    template_version,
                     created_at,
                     updated_at
                   )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -1561,6 +1614,7 @@ class Store:
                     message,
                     approval_request_id,
                     normalized_client_id,
+                    template_version,
                     now,
                     now,
                 ),
@@ -1580,6 +1634,7 @@ class Store:
                     "template_id": template_id,
                     "ticket_id": ticket_id,
                     "approval_request_id": approval_request_id,
+                    "template_version": template_version,
                 },
                 sort_keys=True,
             )
@@ -1622,36 +1677,56 @@ class Store:
         provenance: str,
         client_id: str | None = None,
         name: str | None = None,
+        instructions: str = "",
     ) -> TemplateGalleryEntry:
         entry_id = f"gallery-{uuid.uuid4().hex}"
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         template_id = template.id
+        safe_name = _gallery_text(name or template.name, field="name", limit=120)
+        safe_description = _gallery_text(template.description, field="description", limit=2000)
+        safe_instructions = _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
+        safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
         with self._connect() as connection:
             connection.execute(
                 """
                 insert into template_gallery_entries
                   (id, source_template_id, name, trigger, description, action_type,
                    approval_required, risk_level, preview_fields_json, provenance,
-                   version, created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   instructions, enabled, version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
                     template_id,
-                    _redact_text(name or template.name),
+                    safe_name,
                     template.trigger,
-                    _redact_text(template.description),
+                    safe_description,
                     template.action_type,
                     int(template.approval_required),
                     template.risk_level,
                     _json_dumps_value(template.preview_fields),
-                    _redact_text(provenance),
+                    safe_provenance,
+                    safe_instructions,
+                    1,
                     1,
                     now,
                     now,
                     normalized_client_id,
                 ),
+            )
+            self._insert_template_gallery_revision(
+                connection,
+                entry_id,
+                1,
+                _template_gallery_definition_json(
+                    name=safe_name,
+                    description=safe_description,
+                    instructions=safe_instructions,
+                    enabled=True,
+                ),
+                now,
+                normalized_client_id,
             )
             self._add_audit_event(
                 connection,
@@ -1664,6 +1739,108 @@ class Store:
         if entry is None:
             raise RuntimeError("template gallery entry was not persisted")
         return entry
+
+    def update_template_gallery_entry(
+        self,
+        entry_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        enabled: bool | None = None,
+        client_id: str | None = None,
+    ) -> TemplateGalleryEntry:
+        existing = self.get_template_gallery_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        next_name = (
+            _gallery_text(name, field="name", limit=120)
+            if name is not None
+            else existing.name
+        )
+        next_description = (
+            _gallery_text(description, field="description", limit=2000)
+            if description is not None
+            else existing.description
+        )
+        next_instructions = (
+            _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
+            if instructions is not None
+            else existing.instructions
+        )
+        next_enabled = existing.enabled if enabled is None else bool(enabled)
+        if (
+            next_name == existing.name
+            and next_description == existing.description
+            and next_instructions == existing.instructions
+            and next_enabled == existing.enabled
+        ):
+            return existing
+        next_version = existing.version + 1
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(existing.client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update template_gallery_entries
+                set name = ?, description = ?, instructions = ?, enabled = ?,
+                    version = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    next_name,
+                    next_description,
+                    next_instructions,
+                    int(next_enabled),
+                    next_version,
+                    now,
+                    entry_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(entry_id)
+            self._insert_template_gallery_revision(
+                connection,
+                entry_id,
+                next_version,
+                _template_gallery_definition_json(
+                    name=next_name,
+                    description=next_description,
+                    instructions=next_instructions,
+                    enabled=next_enabled,
+                ),
+                now,
+                normalized_client_id,
+            )
+            self._add_audit_event(
+                connection,
+                "template_gallery.updated",
+                entry_id,
+                f"template {existing.source_template_id} updated to version {next_version}",
+                client_id=normalized_client_id,
+            )
+        updated = self.get_template_gallery_entry(entry_id, normalized_client_id)
+        if updated is None:
+            raise RuntimeError("template gallery entry was not persisted")
+        return updated
+
+    @staticmethod
+    def _insert_template_gallery_revision(
+        connection: sqlite3.Connection,
+        gallery_id: str,
+        version: int,
+        definition_json: str,
+        created_at: str,
+        client_id: str | None,
+    ) -> None:
+        connection.execute(
+            """
+            insert into template_gallery_revisions
+              (gallery_id, version, definition_json, created_at, client_id)
+            values (?, ?, ?, ?, ?)
+            """,
+            (gallery_id, version, definition_json, created_at, _normalize_client_id(client_id)),
+        )
 
     def get_template_gallery_entry(
         self,
@@ -1706,6 +1883,66 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [_template_gallery_entry_from_row(row) for row in rows]
+
+    def get_template_gallery_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> TemplateGalleryRevision | None:
+        entry = self.get_template_gallery_entry(entry_id, client_id)
+        if entry is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from template_gallery_revisions
+                where gallery_id = ? and version = ?
+                """,
+                (entry_id, version),
+            ).fetchone()
+        return _template_gallery_revision_from_row(row) if row else None
+
+    def list_template_gallery_revisions(
+        self,
+        entry_id: str,
+        client_id: str | None = None,
+    ) -> list[TemplateGalleryRevision]:
+        entry = self.get_template_gallery_entry(entry_id, client_id)
+        if entry is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from template_gallery_revisions
+                where gallery_id = ? order by version desc
+                """,
+                (entry_id,),
+            ).fetchall()
+        return [_template_gallery_revision_from_row(row) for row in rows]
+
+    def restore_template_gallery_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> TemplateGalleryEntry:
+        existing = self.get_template_gallery_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        revision = self.get_template_gallery_revision(entry_id, version, existing.client_id)
+        if revision is None:
+            raise KeyError(f"{entry_id}:{version}")
+        definition = _json_object_or_empty(revision.definition_json)
+        enabled_value = definition.get("enabled")
+        return self.update_template_gallery_entry(
+            entry_id,
+            name=_gallery_string_or_none(definition.get("name")),
+            description=_gallery_string_or_none(definition.get("description")),
+            instructions=_gallery_string_or_none(definition.get("instructions")),
+            enabled=enabled_value if isinstance(enabled_value, bool) else None,
+            client_id=existing.client_id,
+        )
 
     def create_agent_definition(
         self,
@@ -4611,10 +4848,55 @@ def _agent_definition_revision_from_row(row: sqlite3.Row) -> AgentDefinitionRevi
 def _template_gallery_entry_from_row(row: sqlite3.Row) -> TemplateGalleryEntry:
     payload = dict(row)
     payload["approval_required"] = bool(payload["approval_required"])
+    payload["enabled"] = bool(payload["enabled"])
     payload["preview_fields_json"] = _redact_json_text(str(payload["preview_fields_json"]))
     payload["provenance"] = _redact_text(str(payload["provenance"]))
+    payload["instructions"] = _redact_text(str(payload["instructions"]))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return TemplateGalleryEntry(**payload)
+
+
+def _template_gallery_revision_from_row(row: sqlite3.Row) -> TemplateGalleryRevision:
+    payload = dict(row)
+    payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return TemplateGalleryRevision(**payload)
+
+
+def _template_gallery_definition_json(
+    *,
+    name: str,
+    description: str,
+    instructions: str,
+    enabled: bool,
+) -> str:
+    return _json_dumps_value(
+        {
+            "name": name,
+            "description": description,
+            "instructions": instructions,
+            "enabled": enabled,
+        }
+    )
+
+
+def _gallery_text(
+    value: str,
+    *,
+    field: str,
+    limit: int,
+    allow_empty: bool = False,
+) -> str:
+    normalized = _redact_text(value.strip())
+    if not normalized and not allow_empty:
+        raise ValueError(f"template gallery {field} must not be empty")
+    if len(normalized) > limit:
+        raise ValueError(f"template gallery {field} must be at most {limit} characters")
+    return normalized
+
+
+def _gallery_string_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _agent_definition_snapshot(definition: AgentDefinition) -> str:

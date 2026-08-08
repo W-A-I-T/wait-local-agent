@@ -84,6 +84,34 @@ export type WorkflowTemplate = {
   tool_id?: string | null;
 };
 
+export type TemplateGalleryEntry = {
+  id: string;
+  source_template_id: string;
+  name: string;
+  trigger: string;
+  description: string;
+  action_type: string;
+  approval_required: boolean;
+  risk_level: string;
+  preview_fields: string[];
+  provenance: string;
+  instructions: string;
+  enabled: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  client_id?: string | null;
+};
+
+export type TemplateGalleryRevision = {
+  id: number;
+  gallery_id: string;
+  version: number;
+  definition: Record<string, unknown>;
+  created_at: string;
+  client_id?: string | null;
+};
+
 export type WorkflowRun = {
   id: string | number;
   status: string;
@@ -95,6 +123,7 @@ export type WorkflowRun = {
   template_id?: string;
   ticket_id?: string;
   client_id?: string | null;
+  template_version?: number | null;
 };
 
 export type AnalyticsSummary = {

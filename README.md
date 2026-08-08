@@ -80,7 +80,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   smart-action contract. These are read-only analyses and do not mutate PSA
   records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
-  into tenant-scoped records and run them through the existing approval path.
+  into tenant-scoped editable records, enable or disable them, restore prior
+  versions, and run them through the existing approval path. The gallery never
+  permits arbitrary code, tools, or write permissions.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
   failures, pause/cancel state, and failed-item reruns.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
@@ -171,6 +173,8 @@ wait-local-agent ingest examples/sample_tickets
 wait-local-agent tickets summarize TCK-1002
 wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
+wait-local-agent workflows gallery
+wait-local-agent workflows gallery-add ticket-triage "local operator review"
 wait-local-agent agents list
 wait-local-agent approvals list
 wait-local-agent events list

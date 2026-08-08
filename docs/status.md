@@ -77,8 +77,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   deterministic, tenant-scoped `workflow.completed` event that can trigger
   matching event agents with idempotency and audit history; pending-approval
   runs do not emit completion. A
-  provenance-bearing tenant-scoped template gallery can run reviewed core
-  workflows through the existing approval path. Persisted sequential agent
+  provenance-bearing tenant-scoped template gallery can create, edit,
+  enable/disable, version, restore, and run reviewed core workflows through
+  the existing approval path. Gallery runs retain the local template version
+  used for execution. Persisted sequential agent
   backfills now expose progress counts, pause/cancel state, and failed-item
   reruns under `/agent-backfills`, plus a non-persisting dry-run estimate and
   bounded parallel execution with a sequential default.
