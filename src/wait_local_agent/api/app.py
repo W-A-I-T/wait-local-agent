@@ -388,6 +388,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store,
         enabled=active_settings.scheduler_enabled,
         agent_service=agent_service,
+        event_dispatcher=event_dispatcher,
     )
 
     @asynccontextmanager
