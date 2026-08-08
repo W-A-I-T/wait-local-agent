@@ -18,7 +18,12 @@ ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 RiskLevel = Literal["low", "medium", "high"]
 AgentRunStatus = Literal[
-    "queued", "pending_approval", "completed", "failed", "rejected", "cancelled"
+    "queued",
+    "pending_approval",
+    "completed",
+    "failed",
+    "rejected",
+    "cancelled",
 ]
 
 
