@@ -3509,8 +3509,8 @@ class Store:
         self,
         job_id: int,
         *,
-        cron: str,
         schedule_type: str,
+        cron: str,
         interval_seconds: int | None,
         run_at: str | None,
         timezone: str = "UTC",
@@ -3532,12 +3532,12 @@ class Store:
                 (cron, schedule_type, interval_seconds, run_at, timezone, now, job_id),
             )
             client_id = str(row["client_id"]) if row["client_id"] is not None else None
-            detail = f"{schedule_type} schedule updated"
+            detail = f"{row['template_id']} {schedule_type} schedule updated"
             self._add_audit_event(
                 connection,
                 "scheduled_job.rescheduled",
                 str(job_id),
-                f"{row['template_id']} {detail}",
+                detail,
                 client_id=client_id,
             )
             self._add_event_history(
@@ -3545,8 +3545,16 @@ class Store:
                 "scheduled_job.rescheduled",
                 str(job_id),
                 "rescheduled",
-                f"{row['template_id']} {detail}",
-                str(row["params_json"]),
+                detail,
+                json.dumps(
+                    {
+                        "cron": cron,
+                        "schedule_type": schedule_type,
+                        "interval_seconds": interval_seconds,
+                        "run_at": run_at,
+                    },
+                    sort_keys=True,
+                ),
                 client_id,
             )
         job = self.get_scheduled_job(job_id)

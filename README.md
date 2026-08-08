@@ -34,10 +34,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `WAIT_ALLOW_WRITE_ACTIONS=true` and `WAIT_ALLOW_HTTP_PROBING=true`.
 - Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `connectwise`, or `syncro`.
 - Encrypted backup and restore with `wait-local-agent backup create --encrypt` and `wait-local-agent backup restore --encrypted`.
-- Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`.
-- Scheduled jobs support cron, interval, and future one-time schedules with
-  pause, resume, tenant-scoped reschedule, cancel/delete, linked ticket or
-  agent targets, and auditable schedule history.
+- Scheduled workflow and ticket-agent APIs under `/scheduled-jobs`, including
+  UTC cron, interval, and future one-time schedules plus pause, resume,
+  tenant-scoped reschedule, cancel/delete, linked ticket or agent targets, and
+  auditable schedule history.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
   `/tools` including read-only local knowledge search, ticket-quality and
   deterministic sentiment/escalation checks, collector previews, a
@@ -76,6 +76,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Workflow run history supports tenant-scoped redacted comparisons through
   `/workflow-runs/{run_id}/compare/{other_run_id}`, `workflows compare-runs`,
   and the React workflow dashboard.
+  Agent run history also exposes the exact revision snapshot and supports
+  approval-safe cancel and bounded retry controls under `/agent-runs`.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.

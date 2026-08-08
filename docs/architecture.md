@@ -70,6 +70,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
+- UTC cron, interval, and future one-time schedules with pause, resume,
+  tenant-scoped reschedule, delete, and audit tracking
 - Pause, resume, tenant-scoped reschedule, delete, and audit tracking for
   scheduled jobs
 - Agent definitions may gate execution with validated `HH:MM` windows in an
@@ -146,7 +148,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   run-once-per-entity protection. Definition changes create immutable redacted
   revision snapshots; rollback validates a prior snapshot and persists it as a
   new version. Revision diffs are field-level and redacted, and each run records
-  the definition version used. Event agents can depend on same-tenant agents; the dispatcher
+  the definition version used. Approval-paused runs can be cancelled through
+  the same approval path, and terminal failed/rejected/cancelled runs can be
+  retried. Event agents can depend on same-tenant agents; the dispatcher
   applies cycle prevention at definition time and waits for upstream completion
   with a bounded sequential pass. Each run also persists and returns a
   redacted operational final result containing the last tool status, output,
