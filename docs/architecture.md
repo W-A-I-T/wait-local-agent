@@ -130,9 +130,11 @@ does not create an unrestricted code or prompt execution surface.
 
 ## Backfills
 
-Backfills are persisted, sequential batches of existing bounded agent runs. The
-controller caps a request at 100 ticket IDs, records each run and failure, and
-supports queued/paused/completed/cancelled state plus failed-item reruns. The
+Backfills are persisted batches of existing bounded agent runs. The controller
+caps a request at 100 ticket IDs, defaults to sequential execution, and allows
+up to four bounded workers with deterministic result accounting. It records each
+run and failure and supports queued/paused/completed/cancelled state plus
+failed-item reruns. The
 `POST /agent-backfills/preview` endpoint validates the same agent, ticket, input,
 and tenant scope without persisting or executing anything, and reports the
 bounded sequential run estimate. Backfills do not bypass the normal agent,

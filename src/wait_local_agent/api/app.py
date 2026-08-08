@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -93,7 +94,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
-from wait_local_agent.models import AgentDefinition
+from wait_local_agent.models import AGENT_BACKFILL_MAX_CONCURRENCY, AgentDefinition
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
     build_analytics_summary,
@@ -256,6 +257,7 @@ class AgentBackfillCreateRequest(BaseModel):
     agent_id: str
     entity_ids: list[str] = Field(min_length=1, max_length=100)
     input: dict[str, object] = Field(default_factory=dict)
+    max_concurrency: int = Field(default=1, ge=1, le=AGENT_BACKFILL_MAX_CONCURRENCY)
     client_id: str | None = None
 
 
@@ -263,6 +265,7 @@ class AgentBackfillPreviewRequest(BaseModel):
     agent_id: str
     entity_ids: list[str] = Field(min_length=1, max_length=100)
     input: dict[str, object] = Field(default_factory=dict)
+    max_concurrency: int = Field(default=1, ge=1, le=AGENT_BACKFILL_MAX_CONCURRENCY)
     client_id: str | None = None
 
 
@@ -800,8 +803,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         processed_count = backfill.processed_count
         succeeded_count = backfill.succeeded_count
         failed_count = backfill.failed_count
-        for index in range(backfill.next_index, len(entity_ids)):
-            entity_id = entity_ids[index]
+        def run_entity(entity_id: str):
             try:
                 result = agent_service.run(
                     definition,
@@ -809,30 +811,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     actor=backfill.actor or context.approver_id or "api",
                     input_payload=input_payload,
                 )
-                if result.run_id:
-                    run_ids.append(result.run_id)
                 if result.status in {"completed", "pending_approval"}:
-                    succeeded_count += 1
+                    return result, None
+                return result, f"{entity_id}: agent run status {result.status}"
+            except Exception as exc:  # noqa: BLE001 - continue independent entities
+                return None, redact_text(f"{entity_id}: {exc}")
+
+        max_concurrency = min(
+            max(1, backfill.max_concurrency), AGENT_BACKFILL_MAX_CONCURRENCY
+        )
+        for batch_start in range(backfill.next_index, len(entity_ids), max_concurrency):
+            batch = entity_ids[batch_start : batch_start + max_concurrency]
+            if max_concurrency == 1:
+                outcomes = [run_entity(batch[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+                    outcomes = list(executor.map(run_entity, batch))
+            for offset, (result, error_detail) in enumerate(outcomes):
+                index = batch_start + offset
+                entity_id = entity_ids[index]
+                if result is not None:
+                    if result.run_id:
+                        run_ids.append(result.run_id)
+                    if error_detail is None:
+                        succeeded_count += 1
+                    else:
+                        failed_count += 1
+                        failed_entity_ids.append(entity_id)
+                        errors.append(error_detail)
                 else:
                     failed_count += 1
                     failed_entity_ids.append(entity_id)
-                    errors.append(f"{entity_id}: agent run status {result.status}")
-            except Exception as exc:  # noqa: BLE001 - continue independent entities
-                failed_count += 1
-                failed_entity_ids.append(entity_id)
-                errors.append(redact_text(f"{entity_id}: {exc}"))
-            processed_count += 1
-            store.update_agent_backfill(
-                backfill.id or 0,
-                status="running",
-                next_index=index + 1,
-                processed_count=processed_count,
-                succeeded_count=succeeded_count,
-                failed_count=failed_count,
-                run_ids=run_ids,
-                failed_entity_ids=failed_entity_ids,
-                error_detail="; ".join(errors),
-            )
+                    errors.append(error_detail or f"{entity_id}: agent run failed")
+                processed_count += 1
+                store.update_agent_backfill(
+                    backfill.id or 0,
+                    status="running",
+                    next_index=index + 1,
+                    processed_count=processed_count,
+                    succeeded_count=succeeded_count,
+                    failed_count=failed_count,
+                    run_ids=run_ids,
+                    failed_entity_ids=failed_entity_ids,
+                    error_detail="; ".join(errors),
+                )
         final_status = "completed_with_errors" if failed_entity_ids else "completed"
         return store.update_agent_backfill(
             backfill.id or 0,
@@ -865,6 +887,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload.entity_ids,
             payload.input,
             actor=context.approver_id or "api",
+            max_concurrency=payload.max_concurrency,
             client_id=scoped_client_id,
         )
         return _agent_backfill_view(backfill)
@@ -890,12 +913,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=404,
                 detail=f"ticket not found: {missing_entity_ids[0]}",
             )
+        execution_mode = "sequential" if payload.max_concurrency == 1 else "bounded_parallel"
         return {
             "dry_run": True,
             "agent_id": payload.agent_id,
             "entity_count": len(payload.entity_ids),
             "estimated_runs": len(payload.entity_ids),
-            "execution_mode": "sequential",
+            "max_concurrency": payload.max_concurrency,
+            "execution_mode": execution_mode,
             "will_persist": False,
             "input": _redact_payload(payload.input),
             "client_id": scoped_client_id,
@@ -3271,6 +3296,7 @@ def _agent_backfill_view(backfill) -> dict[str, object]:
         "agent_id": backfill.agent_id,
         "entity_ids": _safe_json_values(backfill.entity_ids_json),
         "input": _safe_redacted_json_object(backfill.input_json),
+        "max_concurrency": backfill.max_concurrency,
         "status": backfill.status,
         "next_index": backfill.next_index,
         "processed_count": backfill.processed_count,

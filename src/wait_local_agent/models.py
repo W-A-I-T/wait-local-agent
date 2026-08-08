@@ -25,6 +25,7 @@ AgentRunStatus = Literal[
     "rejected",
     "cancelled",
 ]
+AGENT_BACKFILL_MAX_CONCURRENCY = 4
 
 
 @dataclass(frozen=True)
@@ -602,6 +603,7 @@ class AgentBackfill:
     agent_id: str
     entity_ids_json: str
     input_json: str
+    max_concurrency: int
     status: str
     next_index: int
     processed_count: int

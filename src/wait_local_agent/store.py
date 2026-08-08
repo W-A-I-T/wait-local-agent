@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
+    AGENT_BACKFILL_MAX_CONCURRENCY,
     AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
@@ -319,6 +320,7 @@ class Store:
                     agent_id text not null,
                     entity_ids_json text not null,
                     input_json text not null,
+                    max_concurrency integer not null default 1,
                     status text not null,
                     next_index integer not null default 0,
                     processed_count integer not null default 0,
@@ -334,6 +336,7 @@ class Store:
                 )
                 """
             )
+            self._ensure_column(connection, "agent_backfills", "max_concurrency", "integer not null default 1")
             connection.execute(
                 """
                 create table if not exists knowledge_documents (
@@ -1742,24 +1745,30 @@ class Store:
         input_payload: dict[str, object],
         *,
         actor: str,
+        max_concurrency: int = 1,
         client_id: str | None = None,
     ) -> AgentBackfill:
+        if not 1 <= max_concurrency <= AGENT_BACKFILL_MAX_CONCURRENCY:
+            raise ValueError(
+                f"agent backfill max_concurrency must be between 1 and {AGENT_BACKFILL_MAX_CONCURRENCY}"
+            )
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 insert into agent_backfills
-                  (agent_id, entity_ids_json, input_json, status, next_index,
+                  (agent_id, entity_ids_json, input_json, max_concurrency, status, next_index,
                    processed_count, succeeded_count, failed_count, run_ids_json,
                    failed_entity_ids_json, actor, error_detail, created_at,
                    updated_at, client_id)
-                values (?, ?, ?, 'queued', 0, 0, 0, 0, '[]', '[]', ?, '', ?, ?, ?)
+                values (?, ?, ?, ?, 'queued', 0, 0, 0, 0, '[]', '[]', ?, '', ?, ?, ?)
                 """,
                 (
                     agent_id,
                     _json_dumps_value(entity_ids),
                     _json_dumps(input_payload),
+                    max_concurrency,
                     _redact_text(actor),
                     now,
                     now,
@@ -4211,6 +4220,9 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
 
 def _agent_backfill_from_row(row: sqlite3.Row) -> AgentBackfill:
     payload = dict(row)
+    payload["max_concurrency"] = min(
+        max(1, int(payload.get("max_concurrency") or 1)), AGENT_BACKFILL_MAX_CONCURRENCY
+    )
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["entity_ids_json"] = _redact_json_text(str(payload["entity_ids_json"]))
     payload["input_json"] = _redact_json_text(str(payload["input_json"]))
