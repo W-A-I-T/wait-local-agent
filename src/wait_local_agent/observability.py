@@ -442,6 +442,17 @@ def build_analytics_summary(
         started_from, started_to, client_id
     )
     minutes = sum(estimates.get(action_id, 0) * count for action_id, count in success_counts)
+    activity_breakdown = [
+        {
+            "run_kind": run_kind,
+            "trigger_source": trigger_source,
+            "status": status,
+            "count": count,
+        }
+        for run_kind, trigger_source, status, count in store.execution_activity_counts(
+            started_from, started_to, client_id
+        )
+    ]
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": client_id,
@@ -452,6 +463,7 @@ def build_analytics_summary(
             "rate": (succeeded / total) if total else 0.0,
         },
         "failures_by_status": failures_by_status,
+        "activity_breakdown": activity_breakdown,
         "estimated_minutes_saved": {
             "minutes": minutes,
             "estimate": True,

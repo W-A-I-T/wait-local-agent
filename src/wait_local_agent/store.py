@@ -248,7 +248,10 @@ class Store:
                     client_id text,
                     job_kind text not null default 'workflow',
                     agent_id text,
-                    entity_id text
+                    entity_id text,
+                    schedule_type text not null default 'cron',
+                    interval_seconds integer,
+                    run_at text
                 )
                 """
             )
@@ -353,6 +356,9 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
             self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
+            self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
+            self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
+            self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -2222,6 +2228,9 @@ class Store:
         job_kind: str = "workflow",
         agent_id: str | None = None,
         entity_id: str | None = None,
+        schedule_type: str = "cron",
+        interval_seconds: int | None = None,
+        run_at: str | None = None,
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -2240,9 +2249,12 @@ class Store:
                     client_id,
                     job_kind,
                     agent_id,
-                    entity_id
+                    entity_id,
+                    schedule_type,
+                    interval_seconds,
+                    run_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -2255,6 +2267,9 @@ class Store:
                     job_kind,
                     agent_id,
                     entity_id,
+                    schedule_type,
+                    interval_seconds,
+                    run_at,
                 ),
             )
             if cursor.lastrowid is None:
@@ -2337,6 +2352,62 @@ class Store:
                 f"{template_id} {detail}",
                 str(row["params_json"]),
                 str(row["client_id"]) if row["client_id"] is not None else None,
+            )
+        job = self.get_scheduled_job(job_id)
+        if job is None:
+            raise RuntimeError("scheduled job was not persisted")
+        return job
+
+    def update_scheduled_job_schedule(
+        self,
+        job_id: int,
+        *,
+        schedule_type: str,
+        cron: str,
+        interval_seconds: int | None,
+        run_at: str | None,
+    ) -> ScheduledJob:
+        now = utc_now()
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from scheduled_jobs where id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            connection.execute(
+                """
+                update scheduled_jobs
+                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, updated_at = ?
+                where id = ?
+                """,
+                (cron, schedule_type, interval_seconds, run_at, now, job_id),
+            )
+            client_id = str(row["client_id"]) if row["client_id"] is not None else None
+            detail = f"{schedule_type} schedule updated"
+            self._add_audit_event(
+                connection,
+                "scheduled_job.rescheduled",
+                str(job_id),
+                detail,
+                client_id=client_id,
+            )
+            self._add_event_history(
+                connection,
+                "scheduled_job.rescheduled",
+                str(job_id),
+                "rescheduled",
+                detail,
+                json.dumps(
+                    {
+                        "cron": cron,
+                        "schedule_type": schedule_type,
+                        "interval_seconds": interval_seconds,
+                        "run_at": run_at,
+                    },
+                    sort_keys=True,
+                ),
+                client_id,
             )
         job = self.get_scheduled_job(job_id)
         if job is None:
@@ -3763,6 +3834,47 @@ class Store:
                 params,
             ).fetchall()
         return [(str(row["action_id"]), int(row["count"])) for row in rows]
+
+    def execution_activity_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str, str, int]]:
+        """Return explainable activity counts without double-counting recorded runs."""
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at,
+                           er.client_id, er.trigger_source
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at,
+                           sr.client_id, sr.trigger_source
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.run_kind, er.trigger_source, er.status, count(*) as count
+                from all_runs er{clauses}
+                group by er.run_kind, er.trigger_source, er.status
+                order by er.run_kind, er.trigger_source, er.status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [
+            (str(row["run_kind"]), str(row["trigger_source"]), str(row["status"]), int(row["count"]))
+            for row in rows
+        ]
 
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
