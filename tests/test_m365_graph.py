@@ -20,6 +20,7 @@ from wait_local_agent.m365_graph import (
     M365GraphSubscribedSku,
     M365GraphUser,
     M365GraphUserCreateResult,
+    M365GraphUserDisableResult,
     _api_base_url,
     _bounded_page_size,
     _group_list_params,
@@ -30,6 +31,8 @@ from wait_local_agent.m365_graph import (
     _next_cursor,
     _normalize_group,
     _normalize_mail_folder,
+    _normalize_managed_device,
+    _normalize_subscribed_sku,
     _normalize_user,
     _payload_rows,
     _safe_cursor,
@@ -724,6 +727,8 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         "folder-1", "", "", None, None, None, None
     )
     assert _normalize_mail_folder({}) is None
+    assert _normalize_managed_device({}) is None
+    assert _normalize_subscribed_sku({}) is None
     assert _payload_rows(None) == []
     assert _next_cursor(None) == ""
     with pytest.raises(M365GraphReadError):
@@ -743,7 +748,7 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         (_safe_identity, ""),
         (_safe_identity, "bad\nvalue"),
         (_safe_cursor, "bad\nvalue"),
-        (_safe_endpoint, "users/other"),
+        (_safe_endpoint, "users/other/extra"),
         (_safe_endpoint, "//host"),
         (_safe_endpoint, "users/bad\nvalue/mailFolders"),
     ):
@@ -757,3 +762,100 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert _safe_endpoint("users/user%40example.test/mailFolders") == (
         "users/user%40example.test/mailFolders"
     )
+    assert _safe_endpoint("users/user%40example.test") == "users/user%40example.test"
+
+
+def test_m365_graph_user_disable_patches_only_account_enabled(settings) -> None:
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.raw_path == b"/v1.0/users/adele.vance%40example.test"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert json.loads(request.content) == {"accountEnabled": False}
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(handler),
+    ).disable_user(user_identity="adele.vance@example.test")
+
+    assert response == M365GraphUserDisableResult(
+        "succeeded",
+        "Microsoft Graph user disable succeeded.",
+        user_identity="adele.vance@example.test",
+        status_code=204,
+    )
+
+
+def test_m365_graph_user_disable_is_write_gated_and_sanitizes_failures(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).disable_user(
+        user_identity="adele.vance@example.test"
+    )
+    assert blocked.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in blocked.message
+
+    active_settings = replace(
+        _configured(settings),
+        allow_write_actions=True,
+    )
+    forbidden = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403,
+                json={"error": {"message": "secret must not leak"}},
+            )
+        ),
+    ).disable_user(user_identity="adele.vance@example.test")
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
+
+    malformed = M365GraphClient(
+        active_settings,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, content=b"not-json")
+        ),
+    ).disable_user(user_identity="adele.vance@example.test")
+    assert malformed.status == "failed"
+    assert "malformed JSON" in malformed.message
+
+    invalid = M365GraphClient(active_settings).disable_user(user_identity="bad\nvalue")
+    assert invalid.status == "failed"
+    assert "identity is invalid" in invalid.message
+
+
+def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(settings) -> None:
+    with pytest.raises(M365GraphReadError, match="WAIT_ALLOW_HTTP_PROBING"):
+        M365GraphClient(settings)._patch("users/user-1", {})
+
+    write_blocked = replace(_configured(settings), allow_write_actions=False)
+    with pytest.raises(M365GraphReadError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        M365GraphClient(write_blocked)._patch("users/user-1", {})
+
+    missing = replace(settings, allow_http_probing=True, allow_write_actions=True)
+    with pytest.raises(M365GraphReadError, match="WAIT_M365_ACCESS_TOKEN"):
+        M365GraphClient(missing)._patch("users/user-1", {})
+
+    timeout = replace(_configured(settings), allow_write_actions=True)
+    timeout_result = M365GraphClient(
+        timeout,
+        transport=httpx.MockTransport(
+            lambda _request: (_ for _ in ()).throw(httpx.ReadTimeout("timed out"))
+        ),
+    ).disable_user(user_identity="user-1")
+    assert timeout_result.status == "failed"
+    assert "before receiving a response" in timeout_result.message
+
+    http_error_result = M365GraphClient(
+        timeout,
+        transport=httpx.MockTransport(
+            lambda _request: (_ for _ in ()).throw(httpx.WriteError("transport failed"))
+        ),
+    ).disable_user(user_identity="user-1")
+    assert http_error_result.status == "failed"
+    assert http_error_result.message == "Microsoft Graph request failed."

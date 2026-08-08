@@ -139,6 +139,14 @@ class M365GraphUserCreateResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphUserDisableResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
@@ -263,7 +271,7 @@ class M365GraphClient:
             return ConnectorReadResult("not_configured", missing.message)
         return ConnectorReadResult(
             "ready",
-            "Microsoft Graph approved user creation prerequisites are ready.",
+            "Microsoft Graph approved user lifecycle prerequisites are ready.",
         )
 
     def create_user(
@@ -305,6 +313,23 @@ class M365GraphClient:
             user_principal_name=user.user_principal_name,
             display_name=user.display_name,
             account_enabled=user.account_enabled,
+            status_code=status_code,
+        )
+
+    def disable_user(self, *, user_identity: str) -> M365GraphUserDisableResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphUserDisableResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            endpoint = f"users/{quote(safe_identity, safe='')}"
+            _, status_code = self._patch(endpoint, {"accountEnabled": False})
+        except M365GraphReadError as exc:
+            return M365GraphUserDisableResult("failed", exc.message)
+        return M365GraphUserDisableResult(
+            "succeeded",
+            "Microsoft Graph user disable succeeded.",
+            user_identity=safe_identity,
             status_code=status_code,
         )
 
@@ -492,6 +517,49 @@ class M365GraphClient:
                 f"Microsoft Graph POST {safe_endpoint} returned malformed JSON."
             ) from exc
 
+    def _patch(self, endpoint: str, payload: dict[str, object]) -> tuple[object, int]:
+        if not self.settings.allow_http_probing:
+            raise M365GraphReadError(
+                "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
+        if not self.settings.allow_write_actions:
+            raise M365GraphReadError(
+                "Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            raise M365GraphReadError(missing.message)
+        try:
+            safe_endpoint = _safe_endpoint(endpoint)
+            with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
+                response = client.patch(
+                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.m365_access_token}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise M365GraphReadError(
+                "Microsoft Graph request failed before receiving a response."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise M365GraphReadError("Microsoft Graph request failed.") from exc
+        if response.status_code >= 400:
+            raise M365GraphReadError(
+                _http_error_message(response.status_code, safe_endpoint, method="PATCH")
+            )
+        if not response.content:
+            return {}, response.status_code
+        try:
+            return response.json(), response.status_code
+        except ValueError as exc:
+            raise M365GraphReadError(
+                f"Microsoft Graph PATCH {safe_endpoint} returned malformed JSON."
+            ) from exc
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
@@ -548,12 +616,19 @@ def _safe_endpoint(endpoint: str) -> str:
         and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_user_endpoint = (
+        len(endpoint_parts) == 2
+        and endpoint_parts[0] == "users"
+        and bool(endpoint_parts[1])
+        and quote(unquote(endpoint_parts[1]), safe="") == endpoint_parts[1]
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     if endpoint not in {
         "users",
         "groups",
         "subscribedSkus",
         "deviceManagement/managedDevices",
-    } and not is_mail_folder_endpoint:
+    } and not is_mail_folder_endpoint and not is_user_endpoint:
         raise M365GraphReadError("Microsoft Graph endpoint is invalid.")
     return endpoint
 
@@ -601,6 +676,17 @@ def _safe_user_principal_name(value: str) -> str:
     stripped = _safe_required_text(value, "user_principal_name", 320)
     if stripped.count("@") != 1 or any(character.isspace() for character in stripped):
         raise M365GraphReadError("Microsoft Graph user_principal_name is invalid.")
+    return stripped
+
+
+def _safe_user_target(value: str) -> str:
+    stripped = value.strip()
+    if (
+        not stripped
+        or len(stripped) > MAX_IDENTITY_LENGTH
+        or any(ord(character) < 32 or character.isspace() for character in stripped)
+    ):
+        raise M365GraphReadError("Microsoft Graph user identity is invalid.")
     return stripped
 
 
@@ -871,6 +957,7 @@ __all__ = [
     "M365GraphManagedDevice",
     "M365GraphManagedDeviceReadResponse",
     "M365GraphUserCreateResult",
+    "M365GraphUserDisableResult",
     "M365GraphReadError",
     "M365GraphReadResponse",
     "M365GraphSubscribedSku",

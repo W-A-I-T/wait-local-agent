@@ -85,8 +85,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,
   and Intune managed-device reads with operator-supplied credentials, plus an
   approval-gated user creation path that resolves a temporary password only
-  from the local vault at execution time. Credentials never enter action or
-  approval payloads, and no other M365 writes are exposed.
+  from the local vault at execution time, plus an approval-gated disable path
+  that only sets `accountEnabled=false`. Credentials never enter action or
+  approval payloads; session revocation, license/group changes, mailbox
+  mutations, and Intune actions remain separate capabilities.
 - The read-only RMM boundary currently normalizes tenant-scoped
   `endpoint-agent` collector assets through a local adapter. It exposes device
   lookup without remote control, remediation, or credential-bearing payloads.

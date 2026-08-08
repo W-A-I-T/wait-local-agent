@@ -409,7 +409,7 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
-context plus one explicitly approval-gated user-creation operation.
+context plus explicitly approval-gated user lifecycle operations.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -446,9 +446,13 @@ an encrypted-vault reference to the temporary password. Create a draft through
 execute it through `POST /connectors/m365/approval-requests/{id}/execute` (or
 the matching `draft-m365-user` and `execute-m365-user` CLI commands). The
 password itself is never accepted in the approval payload or returned by the
-API. Disable/offboarding, group membership changes, license assignments,
-mailbox mutations, and Intune device mutations remain absent until separately
-permissioned and approval-gated. Managed-device reads return
+API. Approved disable/offboarding is exposed through
+`POST /connectors/m365/users/disable-drafts`, the same approval queue, and
+`draft-m365-user-disable` / `execute-m365` CLI commands. It issues only
+`PATCH /users/{id | userPrincipalName}` with `accountEnabled=false`; it does
+not revoke sign-in sessions, remove group memberships or licenses, delete
+mailbox data, or mutate Intune devices. Those remain separate future actions.
+Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads
 return bounded group metadata only; members and owners are not expanded.

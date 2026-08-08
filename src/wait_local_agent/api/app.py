@@ -59,6 +59,7 @@ from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_user_creation,
+    draft_m365_user_disable,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
@@ -160,6 +161,11 @@ class M365UserDraftRequest(BaseModel):
     temporary_vault_name: str = Field(min_length=14, max_length=128)
     account_enabled: bool = True
     force_change_password_next_sign_in: bool = True
+    client_id: str | None = None
+
+
+class M365UserDisableDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -1214,6 +1220,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
+            if payload.status == "approved" and approval.action_type.startswith("m365."):
+                try:
+                    approval = execute_m365_approval_request(
+                        store,
+                        m365_client,
+                        SecretVault(active_settings.vault_path),
+                        request_id,
+                    )
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
             return _approval_view(approval)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
@@ -2247,6 +2263,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _approval_view(approval)
 
+    @app.post("/connectors/m365/users/disable-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_user_disable_draft(
+        payload: M365UserDisableDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_user_disable(
+                store,
+                user_identity=payload.user_identity,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
     @app.post("/connectors/m365/approval-requests/{request_id}/execute")
     @limiter.limit(active_settings.rate_limit_connector)
     def execute_m365_user_creation(
@@ -2864,7 +2897,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
-        if request.action_type == "m365.users.create":
+        if request.action_type.startswith("m365."):
             if request.status != "approved":
                 return False, "Approval must be approved before execution."
             if request.execution_status == "succeeded":

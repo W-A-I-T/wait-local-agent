@@ -56,6 +56,7 @@ from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_user_creation,
+    draft_m365_user_disable,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
@@ -666,7 +667,7 @@ def update_approval_request(
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
-    if status == "approved" and approval.action_type == "m365.users.create":
+    if status == "approved" and approval.action_type.startswith("m365."):
         try:
             approval = execute_m365_approval_request(
                 store,
@@ -794,6 +795,25 @@ def draft_m365_user(
     )
 
 
+@connectors_app.command("draft-m365-user-disable")
+def draft_m365_user_disable_command(
+    user_identity: str,
+    client_id: str | None = None,
+) -> None:
+    try:
+        approval = draft_m365_user_disable(
+            _store(),
+            user_identity=user_identity,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
 @connectors_app.command("execute-halopsa")
 def execute_halopsa(request_id: int) -> None:
     try:
@@ -811,6 +831,26 @@ def execute_halopsa(request_id: int) -> None:
 
 @connectors_app.command("execute-m365-user")
 def execute_m365_user(request_id: int) -> None:
+    try:
+        approval = execute_m365_approval_request(
+            _store(),
+            _m365_client(),
+            SecretVault(load_settings().vault_path),
+            request_id,
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"{approval.id} {approval.action_type} subject_id={approval.subject_id} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
+
+
+@connectors_app.command("execute-m365")
+def execute_m365(request_id: int) -> None:
     try:
         approval = execute_m365_approval_request(
             _store(),
