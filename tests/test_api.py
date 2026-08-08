@@ -1084,6 +1084,14 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert once.json()["schedule_type"] == "once"
         assert once.json()["run_at"] == "2099-01-01T00:00:00+00:00"
 
+        rescheduled = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"schedule_type": "interval", "interval_seconds": 120},
+        )
+        assert rescheduled.status_code == 200
+        assert rescheduled.json()["schedule_type"] == "interval"
+        assert rescheduled.json()["interval_seconds"] == 120
         paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
         resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
         rescheduled = client.post(
