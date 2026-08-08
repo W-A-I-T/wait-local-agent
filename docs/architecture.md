@@ -95,7 +95,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   reads, plus Hudu article and IT Glue document reads, are exposed through the
   same tool contract. The actions reuse the guarded connector clients, require
   an explicit local tenant scope, and never accept connector credentials in
-  action payloads.
+  action payloads. Confluence and SharePoint tools return metadata only; they
+  do not expose page bodies or file contents.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,

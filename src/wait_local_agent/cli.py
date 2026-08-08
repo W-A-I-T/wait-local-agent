@@ -2100,6 +2100,8 @@ def invoke_smart_action(
         servicenow_client=_servicenow_client(),
         autotask_client=_autotask_client(),
         itglue_client=_itglue_client(),
+        confluence_client=_confluence_client(),
+        sharepoint_client=_sharepoint_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:

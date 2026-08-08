@@ -46,8 +46,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution until a reviewed
   vendor adapter is installed. This is alongside tenant-scoped HaloPSA ticket and Hudu
-  documentation read tools for Hudu and IT Glue, and ticket lookup tools for
-  ConnectWise PSA, Syncro, ServiceNow, and Autotask,
+  documentation read tools for Hudu, IT Glue, Confluence, and SharePoint, and
+  ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity

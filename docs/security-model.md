@@ -166,6 +166,11 @@ organization identifier matching the caller's tenant scope, bounds the
 organization document query and local result filter, and rejects returned
 documents that identify a different organization.
 
+Confluence and SharePoint documentation tools are read-only metadata surfaces.
+They require a space/site identifier matching the caller's tenant scope, bound
+the provider page or drive-item query, and do not return page bodies or file
+contents.
+
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write
 flag, a persisted approval request, and explicit approval. The adapter rejects

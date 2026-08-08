@@ -44,6 +44,16 @@ class ConfluenceClientProtocol(Protocol):
     def health(self) -> ConnectorReadResult:
         ...
 
+    def list_pages(
+        self,
+        *,
+        space_id: str | None = None,
+        title: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> ConfluenceReadResponse:
+        ...
+
 
 class ConfluenceReadError(Exception):
     def __init__(self, message: str) -> None:

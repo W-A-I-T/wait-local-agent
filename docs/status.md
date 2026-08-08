@@ -141,8 +141,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   lookup, script metadata, script preview, and approval-aware execution. The
   local adapter remains inventory-only and blocks execution until a reviewed
   vendor adapter is installed. Existing HaloPSA ticket reads and
-  Hudu and IT Glue documentation search, and ConnectWise PSA, Syncro,
-  ServiceNow, and Autotask ticket lookup are available as
+  Hudu, IT Glue, Confluence, and SharePoint documentation search, and
+  ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients; connector
   credentials are never action payloads.
 - Signed update-channel client checks with pinned public keys.

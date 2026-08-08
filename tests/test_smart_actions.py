@@ -7,17 +7,20 @@ from types import SimpleNamespace
 import pytest
 
 from wait_local_agent.collectors import CollectorPreview
+from wait_local_agent.confluence import ConfluencePage
 from wait_local_agent.itglue import ItGlueDocument
 from wait_local_agent.models import HaloTicket, HuduArticle, SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import LocalCollectorRmmAdapter
+from wait_local_agent.sharepoint import SharePointDocument
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
     AutotaskTicketLookupAction,
     CollectorPreviewAction,
+    ConfluenceDocumentationSearchAction,
     ConnectWiseTicketLookupAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
@@ -28,6 +31,7 @@ from wait_local_agent.smart_actions import (
     M365IdentityLookupAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
+    SharePointDocumentationSearchAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
@@ -270,6 +274,28 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 items=[ItGlueDocument("doc-1", "VPN runbook", organization_id, "folder-1", "today", "https://itglue")],
             )
         ),
+        confluence_client=SimpleNamespace(
+            list_pages=lambda space_id, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    ConfluencePage(
+                        "page-1", "VPN runbook", space_id, "current", "3", "today",
+                        "https://confluence", "secret body",
+                    )
+                ],
+            )
+        ),
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda site_id, parent_item_id=None, cursor=None, page_size=20: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    SharePointDocument(
+                        "doc-1", "VPN runbook", site_id, "root", 10, "today",
+                        "https://sharepoint", False,
+                    )
+                ],
+            )
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -291,6 +317,14 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     itglue = ItGlueDocumentationSearchAction().run(
         replace(connector_context, client_id="org-1"),
         {"query": "vpn", "organization_id": "org-1"},
+    )
+    confluence = ConfluenceDocumentationSearchAction().run(
+        replace(connector_context, client_id="space-1"),
+        {"query": "vpn", "space_id": "space-1"},
+    )
+    sharepoint = SharePointDocumentationSearchAction().run(
+        replace(connector_context, client_id="site-1"),
+        {"query": "vpn", "site_id": "site-1"},
     )
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
@@ -318,6 +352,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == servicenow.status
         == autotask.status
         == itglue.status
+        == confluence.status
+        == sharepoint.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -339,6 +375,16 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
     assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert itglue.output["documents"][0]["name"] == "VPN runbook"  # type: ignore[index]
+    confluence_pages = confluence.output["pages"]
+    assert isinstance(confluence_pages, list)
+    confluence_page = confluence_pages[0]
+    assert isinstance(confluence_page, dict)
+    assert confluence_page["title"] == "VPN runbook"
+    assert "body" not in confluence_page
+    sharepoint_documents = sharepoint.output["documents"]
+    assert isinstance(sharepoint_documents, list)
+    assert isinstance(sharepoint_documents[0], dict)
+    assert sharepoint_documents[0]["name"] == "VPN runbook"
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
@@ -375,6 +421,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         ServiceNowIncidentLookupAction(),
         AutotaskTicketLookupAction(),
         ItGlueDocumentationSearchAction(),
+        ConfluenceDocumentationSearchAction(),
+        SharePointDocumentationSearchAction(),
         HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
@@ -645,6 +693,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "collector-preview",
         "communication-draft",
         "communication-send",
+        "confluence-documentation-search",
         "connectwise-ticket-lookup",
         "dispatch-suggestion",
         "find-similar-tickets",
@@ -660,6 +709,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execution-lookup",
         "rmm-script-preview",
         "servicenow-incident-lookup",
+        "sharepoint-documentation-search",
         "suggest-resolution",
         "syncro-ticket-lookup",
         "ticket-escalation",
@@ -768,6 +818,24 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
             )
         ),
     )
+    blocked_confluence = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda space_id, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    blocked_sharepoint = replace(
+        context,
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda site_id, parent_item_id=None, cursor=None, page_size=20: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
     malformed_halo = replace(
         context,
         halopsa_client=SimpleNamespace(
@@ -848,6 +916,12 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     assert mismatched.output["connector_status"] == "scope_mismatch"
     assert ItGlueDocumentationSearchAction().run(
         blocked_itglue, {"query": "vpn", "organization_id": "acme"}
+    ).status == "failed"
+    assert ConfluenceDocumentationSearchAction().run(
+        blocked_confluence, {"query": "vpn", "space_id": "acme"}
+    ).status == "failed"
+    assert SharePointDocumentationSearchAction().run(
+        blocked_sharepoint, {"query": "vpn", "site_id": "acme"}
     ).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,

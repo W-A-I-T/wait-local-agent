@@ -78,8 +78,10 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "communication-draft",
         "communication-send",
         "connectwise-ticket-lookup",
+        "confluence-documentation-search",
         "syncro-ticket-lookup",
         "servicenow-incident-lookup",
+        "sharepoint-documentation-search",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True

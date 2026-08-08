@@ -17,6 +17,7 @@ from wait_local_agent.communication import (
     PreviewCommunicationProvider,
 )
 from wait_local_agent.config import Settings
+from wait_local_agent.confluence import ConfluenceClientProtocol
 from wait_local_agent.connectwise import ConnectWiseReadProvider
 from wait_local_agent.itglue import ItGlueClientProtocol
 from wait_local_agent.models import (
@@ -43,6 +44,7 @@ from wait_local_agent.rmm import (
 )
 from wait_local_agent.servicenow import ServiceNowReadProvider
 from wait_local_agent.services import classify_ticket
+from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.syncro import SyncroReadProvider
 
@@ -122,6 +124,8 @@ class ActionContext:
     servicenow_client: ServiceNowReadProvider | None = None
     autotask_client: AutotaskReadProvider | None = None
     itglue_client: ItGlueClientProtocol | None = None
+    confluence_client: ConfluenceClientProtocol | None = None
+    sharepoint_client: SharePointClientProtocol | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -1331,6 +1335,199 @@ class ItGlueDocumentationSearchAction:
         )
 
 
+class ConfluenceDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="confluence-documentation-search",
+        title="Confluence documentation search",
+        description="Search tenant-scoped Confluence page metadata through the existing read-only connector.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "space_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "space_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"pages": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        space_id = payload.get("space_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(space_id, str) or not space_id.strip() or len(space_id.strip()) > 64:
+            return _failed("space_id must be a non-empty string of at most 64 characters")
+        scoped_space_id = space_id.strip()
+        if context.client_id is not None and scoped_space_id != context.client_id:
+            return _failed("space_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.confluence import ConfluenceClient
+
+        provider = context.confluence_client or ConfluenceClient(context.settings)
+        try:
+            response = provider.list_pages(space_id=scoped_space_id, page_size=limit)
+        except Exception:
+            return _failed("Confluence documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Confluence read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Confluence returned malformed page data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"space_id": scoped_space_id, "connector_status": status, "pages": [], "count": 0},
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        pages = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "title": str(getattr(item, "title", "")),
+                "space_id": str(getattr(item, "space_id", "")),
+                "status": str(getattr(item, "status", "")),
+                "version": str(getattr(item, "version", "")),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "url": str(getattr(item, "url", "")),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "space_id", "")) in {"", scoped_space_id}
+            and query_value in str(getattr(item, "title", "")).casefold()
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "space_id": scoped_space_id,
+                "connector_status": status,
+                "pages": cast(list[dict[str, object]], redact_value(pages)),
+                "count": len(pages),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "confluence",
+                    "operation": "pages.list",
+                    "space_id": scoped_space_id,
+                }
+            ],
+        )
+
+
+class SharePointDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="sharepoint-documentation-search",
+        title="SharePoint documentation search",
+        description="Search tenant-scoped SharePoint drive-item metadata through Microsoft Graph.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "site_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "site_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "parent_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"documents": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        site_id = payload.get("site_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(site_id, str) or not site_id.strip() or len(site_id.strip()) > 256:
+            return _failed("site_id must be a non-empty string of at most 256 characters")
+        scoped_site_id = site_id.strip()
+        if context.client_id is not None and scoped_site_id != context.client_id:
+            return _failed("site_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        parent_item_id = payload.get("parent_item_id")
+        if parent_item_id is not None and (
+            not isinstance(parent_item_id, str)
+            or not parent_item_id.strip()
+            or len(parent_item_id.strip()) > 256
+        ):
+            return _failed("parent_item_id must be a non-empty string of at most 256 characters")
+        from wait_local_agent.sharepoint import SharePointClient
+
+        provider = context.sharepoint_client or SharePointClient(context.settings)
+        try:
+            response = provider.list_documents(
+                scoped_site_id,
+                parent_item_id=parent_item_id.strip() if isinstance(parent_item_id, str) else None,
+                page_size=limit,
+            )
+        except Exception:
+            return _failed("SharePoint documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "SharePoint read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("SharePoint returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"site_id": scoped_site_id, "connector_status": status, "documents": [], "count": 0},
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        documents = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "name": str(getattr(item, "name", "")),
+                "site_id": str(getattr(item, "site_id", "")),
+                "parent_id": str(getattr(item, "parent_id", "")),
+                "size": getattr(item, "size", 0),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "web_url": str(getattr(item, "web_url", "")),
+                "is_folder": bool(getattr(item, "is_folder", False)),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "site_id", "")) in {"", scoped_site_id}
+            and query_value in str(getattr(item, "name", "")).casefold()
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "site_id": scoped_site_id,
+                "connector_status": status,
+                "documents": cast(list[dict[str, object]], redact_value(documents)),
+                "count": len(documents),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "sharepoint",
+                    "operation": "drive.items.list",
+                    "site_id": scoped_site_id,
+                }
+            ],
+        )
+
+
 class TicketQualityAction:
     manifest = SmartActionManifest(
         action_id="ticket-quality",
@@ -1644,6 +1841,8 @@ def _build_default_registry() -> SmartActionRegistry:
         AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
         ItGlueDocumentationSearchAction(),
+        ConfluenceDocumentationSearchAction(),
+        SharePointDocumentationSearchAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
@@ -1679,6 +1878,8 @@ class SmartActionService:
         servicenow_client: ServiceNowReadProvider | None = None,
         autotask_client: AutotaskReadProvider | None = None,
         itglue_client: ItGlueClientProtocol | None = None,
+        confluence_client: ConfluenceClientProtocol | None = None,
+        sharepoint_client: SharePointClientProtocol | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1693,6 +1894,8 @@ class SmartActionService:
         self.servicenow_client = servicenow_client
         self.autotask_client = autotask_client
         self.itglue_client = itglue_client
+        self.confluence_client = confluence_client
+        self.sharepoint_client = sharepoint_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -2041,6 +2244,8 @@ class SmartActionService:
             servicenow_client=self.servicenow_client,
             autotask_client=self.autotask_client,
             itglue_client=self.itglue_client,
+            confluence_client=self.confluence_client,
+            sharepoint_client=self.sharepoint_client,
         )
 
     def _persist_result(
