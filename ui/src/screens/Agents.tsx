@@ -18,6 +18,7 @@ export function Agents() {
   const [clientId, setClientId] = useState("");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
+  const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [runDetails, setRunDetails] = useState<Record<string, AgentRunDetail>>({});
   const [message, setMessage] = useState("");
@@ -50,6 +51,16 @@ export function Agents() {
       setMessage("Provide a name and select at least one tool.");
       return;
     }
+    const parsedApprovalExpiryHours = approvalExpiryHours.trim()
+      ? Number(approvalExpiryHours)
+      : undefined;
+    if (
+      parsedApprovalExpiryHours !== undefined &&
+      (!Number.isInteger(parsedApprovalExpiryHours) || parsedApprovalExpiryHours < 1 || parsedApprovalExpiryHours > 720)
+    ) {
+      setMessage("Approval deadline must be a whole number of hours from 1 to 720.");
+      return;
+    }
     try {
       await apiFetch<AgentDefinition>("/agents", {
         method: "POST",
@@ -66,6 +77,9 @@ export function Agents() {
           max_steps: boundedTools.length,
           execution_timeout_seconds: 30,
           context_sources: contextSources,
+          approval_expiry_seconds: parsedApprovalExpiryHours === undefined
+            ? undefined
+            : parsedApprovalExpiryHours * 60 * 60,
           client_id: clientId || undefined
         })
       });
@@ -123,6 +137,7 @@ export function Agents() {
             <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
           </div>
           <label>Description<textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+          <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>
           <fieldset className="agent-option-group"><legend>Context sources</legend>{contextOptions.map(([value, label]) => <label key={value}><input type="checkbox" checked={contextSources.includes(value)} onChange={() => setContextSources((current) => toggleValue(current, value))} />{label}</label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Enabled tools (maximum 8 steps)</legend>{tools.map((tool) => {
             const selected = selectedTools.includes(tool.id);
@@ -149,6 +164,7 @@ export function Agents() {
             <p className="screen-note">{agent.description || "No description"}</p>
             <p className="screen-note">Context: {agent.context_sources.join(", ") || "none"}</p>
             <p className="screen-note">Tools: {agent.enabled_tools.join(", ")}</p>
+            <p className="screen-note">Approval deadline: {agent.approval_expiry_seconds ? `${agent.approval_expiry_seconds / 3600} hours maximum` : "tool default"}</p>
             <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button></div>
             {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}
           </article>;

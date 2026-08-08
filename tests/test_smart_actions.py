@@ -450,6 +450,13 @@ def test_service_guards_registry_and_unauthorized_paths(settings) -> None:
 
     unauthorized = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, None)
     assert unauthorized.status == "not_authorized" and unauthorized.run_id is not None
+    with pytest.raises(ValueError, match="approval expiry"):
+        service.invoke(
+            "dispatch-suggestion",
+            {"ticket_id": "TCK-1001"},
+            "requester",
+            approval_expiry_seconds=0,
+        )
     assert service.complete_approval(9999) is None
     legacy = store.create_approval_request("TCK-1", "ticket.assign", {})
     assert service.complete_approval(legacy.id or 0, approver="tech", approver_role=Role.TECHNICIAN) is None

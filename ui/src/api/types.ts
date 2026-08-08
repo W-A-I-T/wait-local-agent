@@ -434,6 +434,7 @@ export type AgentDefinition = {
   execution_window_end?: string | null;
   execution_window_timezone?: string;
   context_sources: string[];
+  approval_expiry_seconds?: number | null;
 };
 
 export type ProviderSettings = {

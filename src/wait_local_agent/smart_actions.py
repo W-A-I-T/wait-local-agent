@@ -1371,9 +1371,25 @@ class SmartActionService:
         *,
         confirm: bool = False,
         client_id: str | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> ActionResult:
         action = self.registry.get(action_id)
         normalized_id = action.manifest.action_id
+        if approval_expiry_seconds is not None and (
+            isinstance(approval_expiry_seconds, bool)
+            or not isinstance(approval_expiry_seconds, int)
+            or approval_expiry_seconds < 1
+            or approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise ValueError(
+                "approval expiry must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
+        effective_approval_expiry_seconds = (
+            min(approval_expiry_seconds, action.manifest.approval_expiry_seconds)
+            if approval_expiry_seconds is not None
+            else action.manifest.approval_expiry_seconds
+        )
         normalized_payload = dict(payload)
         digest = _payload_digest(normalized_payload)
         effective_client_id = _effective_client_id(self.store, normalized_payload, client_id)
@@ -1438,7 +1454,7 @@ class SmartActionService:
                     "payload": normalized_payload,
                 },
                 client_id=effective_client_id,
-                expires_in_seconds=action.manifest.approval_expiry_seconds,
+                expires_in_seconds=effective_approval_expiry_seconds,
             )
             if approval.id is None:
                 raise RuntimeError("smart action approval was not persisted")

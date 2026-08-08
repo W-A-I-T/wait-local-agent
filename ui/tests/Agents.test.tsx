@@ -25,7 +25,8 @@ describe("Agents", () => {
     run_once_per_entity: true,
     depends_on_agent_ids: [],
     execution_window_timezone: "UTC",
-    context_sources: ["ticket"]
+    context_sources: ["ticket"],
+    approval_expiry_seconds: null
   };
 
   beforeEach(() => {
@@ -71,6 +72,7 @@ describe("Agents", () => {
 
     expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New triage" } });
+    fireEvent.change(screen.getByLabelText("Approval deadline (hours, optional)"), { target: { value: "4" } });
     fireEvent.click(screen.getByLabelText("Local knowledge"));
     fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
     fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
@@ -83,6 +85,9 @@ describe("Agents", () => {
     await waitFor(() => expect(screen.getByText("Context loaded: ticket, knowledge")).toBeInTheDocument());
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("knowledge")
+    )).toBe(true);
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("14400")
     )).toBe(true);
   });
 });

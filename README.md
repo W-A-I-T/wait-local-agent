@@ -57,7 +57,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   output, evidence, and error detail, without persisting hidden reasoning.
   Definitions can select bounded ticket, client, and local-knowledge context;
   selected context is tenant-scoped, redacted, capped, and recorded with each
-  run.
+  run. Agents may also shorten approval deadlines for approval-required tools;
+  the policy cannot bypass or extend the tool-level approval requirement.
 - Event-triggered agent APIs under `/automation/events` and
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
   tenant checks, and auditable delivery history.

@@ -415,6 +415,84 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.final_result["status"] == "success"
 
 
+def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Short approval dispatch",
+        description="Use a one-hour approval policy for dispatch proposals.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_expiry_seconds=60 * 60,
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert pending.status == "pending_approval"
+    approval = service.store.get_approval_request(pending.approval_id or 0)
+    assert approval is not None
+    assert approval.expires_at is not None
+    assert (
+        datetime.fromisoformat(approval.expires_at)
+        - datetime.fromisoformat(approval.created_at)
+        == timedelta(hours=1)
+    )
+
+    extended_definition = service.create(
+        name="Capped approval dispatch",
+        description="A policy cannot extend the dispatch tool deadline.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_expiry_seconds=2 * 24 * 60 * 60,
+    )
+    extended_pending = service.run(
+        extended_definition,
+        entity_id="TCK-1001",
+        actor="requester-2",
+        input_payload={},
+    )
+    extended_approval = service.store.get_approval_request(extended_pending.approval_id or 0)
+    assert extended_approval is not None and extended_approval.expires_at is not None
+    assert (
+        datetime.fromisoformat(extended_approval.expires_at)
+        - datetime.fromisoformat(extended_approval.created_at)
+        == timedelta(days=1)
+    )
+
+
+def test_agent_approval_policy_bounds_are_enforced(settings) -> None:
+    service = _service(settings)
+
+    with pytest.raises(AgentDefinitionError, match="approval_expiry_seconds"):
+        service.create(
+            name="Invalid approval policy",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["dispatch-suggestion"],
+            steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            approval_expiry_seconds=0,
+        )
+
+
 def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
     service = _service(settings)
     definition = service.create(
@@ -474,9 +552,11 @@ def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -
             "steps": [{"tool_id": "dispatch-suggestion", "payload": {}}],
             "max_steps": 1,
             "client_id": "acme",
+            "approval_expiry_seconds": 1800,
         },
     )
     assert created.status_code == 200
+    assert created.json()["approval_expiry_seconds"] == 1800
     agent_id = created.json()["id"]
     pending = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
     assert pending.status_code == 200

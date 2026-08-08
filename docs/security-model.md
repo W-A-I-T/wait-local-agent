@@ -104,6 +104,10 @@ action run, and blocks edits, approval, and connector execution. Existing
 pending rows are assigned the same deadline during schema migration; expiration
 is intentionally not operator-disableable in this release.
 
+An agent definition may shorten that deadline for its approval-required tools;
+the override is validated, capped at 30 days, and never extends the tool-level
+approval policy.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

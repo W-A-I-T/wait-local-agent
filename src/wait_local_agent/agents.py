@@ -18,7 +18,12 @@ from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import AgentDefinition, AgentRun, utc_now
+from wait_local_agent.models import (
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    AgentDefinition,
+    AgentRun,
+    utc_now,
+)
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
@@ -142,6 +147,7 @@ class AgentService:
         execution_window_end: str | None = None,
         execution_window_timezone: str = "UTC",
         context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -161,6 +167,7 @@ class AgentService:
             execution_window_end=execution_window_end,
             execution_window_timezone=execution_window_timezone,
             context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -190,6 +197,7 @@ class AgentService:
             execution_window_end=window_end,
             execution_window_timezone=window_timezone,
             context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.create_agent_definition(definition)
 
@@ -213,6 +221,7 @@ class AgentService:
         execution_window_end: str | None = None,
         execution_window_timezone: str = "UTC",
         context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -231,6 +240,7 @@ class AgentService:
             execution_window_end=execution_window_end,
             execution_window_timezone=execution_window_timezone,
             context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -259,6 +269,7 @@ class AgentService:
             execution_window_end=window_end,
             execution_window_timezone=window_timezone,
             context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.update_agent_definition(updated)
 
@@ -507,6 +518,7 @@ class AgentService:
                     payload,
                     actor,
                     client_id=definition.client_id,
+                    approval_expiry_seconds=definition.approval_expiry_seconds,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -681,6 +693,7 @@ class AgentService:
         execution_window_end: str | None,
         execution_window_timezone: str,
         context_sources: list[str],
+        approval_expiry_seconds: int | None,
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -719,6 +732,16 @@ class AgentService:
             execution_window_timezone,
         )
         _validate_context_sources(context_sources)
+        if approval_expiry_seconds is not None and (
+            isinstance(approval_expiry_seconds, bool)
+            or not isinstance(approval_expiry_seconds, int)
+            or approval_expiry_seconds < 1
+            or approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise AgentDefinitionError(
+                "approval_expiry_seconds must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
         for step in steps:
             if set(step) - {"tool_id", "payload"}:
                 raise AgentDefinitionError("agent steps may only contain tool_id and payload")

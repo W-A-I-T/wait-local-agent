@@ -1783,7 +1783,8 @@ def list_agents() -> None:
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
             f"enabled={definition.enabled} version={definition.version}{window} "
-            f"context={','.join(definition.context_sources) or '-'}"
+            f"context={','.join(definition.context_sources) or '-'} "
+            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'}"
         )
 
 

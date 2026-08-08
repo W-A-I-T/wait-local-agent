@@ -598,6 +598,7 @@ class AgentDefinition:
     execution_window_end: str | None = None
     execution_window_timezone: str = "UTC"
     context_sources: list[str] = field(default_factory=list)
+    approval_expiry_seconds: int | None = None
 
 
 @dataclass(frozen=True)

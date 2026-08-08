@@ -312,7 +312,8 @@ class Store:
                     execution_window_start text,
                     execution_window_end text,
                     execution_window_timezone text not null default 'UTC',
-                    context_sources_json text not null default '[]'
+                    context_sources_json text not null default '[]',
+                    approval_expiry_seconds integer
                 )
                 """
             )
@@ -428,6 +429,7 @@ class Store:
                 "execution_window_timezone",
                 "text not null default 'UTC'",
             )
+            self._ensure_column(connection, "agent_definitions", "approval_expiry_seconds", "integer")
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
@@ -2081,8 +2083,8 @@ class Store:
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
                    run_once_per_entity, depends_on_agent_ids_json,
                    execution_window_start, execution_window_end, execution_window_timezone,
-                   context_sources_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   context_sources_json, approval_expiry_seconds)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -2106,6 +2108,7 @@ class Store:
                     definition.execution_window_end,
                     definition.execution_window_timezone,
                     _json_dumps_value(definition.context_sources),
+                    definition.approval_expiry_seconds,
                 ),
             )
             self._add_audit_event(
@@ -2160,7 +2163,8 @@ class Store:
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
                     run_once_per_entity = ?, depends_on_agent_ids_json = ?,
                     execution_window_start = ?, execution_window_end = ?,
-                    execution_window_timezone = ?, context_sources_json = ?
+                    execution_window_timezone = ?, context_sources_json = ?,
+                    approval_expiry_seconds = ?
                 where id = ?
                 """,
                 (
@@ -2183,6 +2187,7 @@ class Store:
                     definition.execution_window_end,
                     definition.execution_window_timezone,
                     _json_dumps_value(definition.context_sources),
+                    definition.approval_expiry_seconds,
                     definition.id,
                 ),
             )
@@ -4979,6 +4984,10 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["execution_window_start"] = _optional_text(payload.get("execution_window_start"))
     payload["execution_window_end"] = _optional_text(payload.get("execution_window_end"))
     payload["execution_window_timezone"] = str(payload.get("execution_window_timezone") or "UTC")
+    raw_approval_expiry = payload.get("approval_expiry_seconds")
+    payload["approval_expiry_seconds"] = (
+        int(raw_approval_expiry) if raw_approval_expiry is not None else None
+    )
     payload["context_sources"] = cast(
         list[str], _json_list_or_empty(payload.pop("context_sources_json"))
     )
@@ -5080,6 +5089,7 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "execution_window_end": definition.execution_window_end,
             "execution_window_timezone": definition.execution_window_timezone,
             "context_sources": definition.context_sources,
+            "approval_expiry_seconds": definition.approval_expiry_seconds,
         }
     )
 
