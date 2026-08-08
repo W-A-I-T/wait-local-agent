@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -327,6 +328,51 @@ def test_scheduler_disabled_mode_and_failed_run_are_audited(tmp_path: Path) -> N
         manager.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_scheduler_skips_agent_when_execution_window_is_closed(settings, tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    _seed_tickets(db_path)
+    store = Store(db_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    agent_service = AgentService(store, settings, SmartActionService(store, settings))
+    now = datetime.now(UTC)
+    definition = agent_service.create(
+        name="Closed scheduled agent",
+        description="Wait for the configured execution window.",
+        enabled=True,
+        trigger="scheduled",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        execution_window_start=(now + timedelta(hours=2)).strftime("%H:%M"),
+        execution_window_end=(now + timedelta(hours=3)).strftime("%H:%M"),
+        execution_window_timezone="UTC",
+    )
+    manager = SchedulerManager(store, enabled=False, agent_service=agent_service)
+    scheduled_job = manager.register(
+        "",
+        "0 9 * * *",
+        {"client_id": "acme", "input": {}},
+        job_kind="agent",
+        agent_id=definition.id,
+        entity_id="TCK-1001",
+    )
+
+    async def scenario() -> None:
+        await manager._build_job_callable(scheduled_job)()
+
+    asyncio.run(scenario())
+
+    assert store.list_agent_runs(client_id="acme") == []
+    events = store.list_audit_events(client_id="acme")
+    assert any(event.event_type == "scheduled_job.window_closed" for event in events)
+    assert not any(event.event_type == "scheduled_job.trigger_failed" for event in events)
 
 
 def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tmp_path: Path) -> None:

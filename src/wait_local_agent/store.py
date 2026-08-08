@@ -274,7 +274,10 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     run_once_per_entity integer not null default 1,
-                    depends_on_agent_ids_json text not null default '[]'
+                    depends_on_agent_ids_json text not null default '[]',
+                    execution_window_start text,
+                    execution_window_end text,
+                    execution_window_timezone text not null default 'UTC'
                 )
                 """
             )
@@ -370,6 +373,14 @@ class Store:
                 "agent_definitions",
                 "depends_on_agent_ids_json",
                 "text not null default '[]'",
+            )
+            self._ensure_column(connection, "agent_definitions", "execution_window_start", "text")
+            self._ensure_column(connection, "agent_definitions", "execution_window_end", "text")
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "execution_window_timezone",
+                "text not null default 'UTC'",
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
@@ -1534,8 +1545,9 @@ class Store:
                   (id, name, description, enabled, trigger, entity_type,
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
-                   run_once_per_entity, depends_on_agent_ids_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   run_once_per_entity, depends_on_agent_ids_json,
+                   execution_window_start, execution_window_end, execution_window_timezone)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1555,6 +1567,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_window_timezone,
                 ),
             )
             self._add_audit_event(
@@ -1607,7 +1622,9 @@ class Store:
                 set name = ?, description = ?, enabled = ?, trigger = ?, entity_type = ?,
                     filters_json = ?, enabled_tools_json = ?, steps_json = ?, max_steps = ?,
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
-                    run_once_per_entity = ?, depends_on_agent_ids_json = ?
+                    run_once_per_entity = ?, depends_on_agent_ids_json = ?,
+                    execution_window_start = ?, execution_window_end = ?,
+                    execution_window_timezone = ?
                 where id = ?
                 """,
                 (
@@ -1626,6 +1643,9 @@ class Store:
                     definition.updated_at,
                     int(definition.run_once_per_entity),
                     _json_dumps_value(definition.depends_on_agent_ids),
+                    definition.execution_window_start,
+                    definition.execution_window_end,
+                    definition.execution_window_timezone,
                     definition.id,
                 ),
             )
@@ -4153,6 +4173,10 @@ def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     return ScheduledJob(**payload)
 
 
+def _optional_text(value: object) -> str | None:
+    return str(value) if isinstance(value, str) and value else None
+
+
 def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload = dict(row)
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
@@ -4179,6 +4203,9 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["enabled_tools"] = cast(list[str], _json_list_or_empty(payload.pop("enabled_tools_json")))
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    payload["execution_window_start"] = _optional_text(payload.get("execution_window_start"))
+    payload["execution_window_end"] = _optional_text(payload.get("execution_window_end"))
+    payload["execution_window_timezone"] = str(payload.get("execution_window_timezone") or "UTC")
     return AgentDefinition(**payload)
 
 
@@ -4225,6 +4252,9 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "client_id": definition.client_id,
             "run_once_per_entity": definition.run_once_per_entity,
             "depends_on_agent_ids": definition.depends_on_agent_ids,
+            "execution_window_start": definition.execution_window_start,
+            "execution_window_end": definition.execution_window_end,
+            "execution_window_timezone": definition.execution_window_timezone,
         }
     )
 

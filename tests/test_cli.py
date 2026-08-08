@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
+from wait_local_agent.agents import AgentService
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.cli import app
 from wait_local_agent.collectors import (
@@ -47,6 +48,35 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "timeout_seconds=20" in result.output
     assert "llm_inference_enabled=False" in result.output
     assert "write_actions_enabled=False" in result.output
+
+
+def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    service.create(
+        name="Business-hours triage",
+        description="",
+        enabled=True,
+        trigger="scheduled",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id=None,
+        execution_window_start="09:00",
+        execution_window_end="17:00",
+        execution_window_timezone="America/Vancouver",
+    )
+
+    result = CliRunner().invoke(app, ["agents", "list"])
+
+    assert result.exit_code == 0
+    assert "Business-hours triage" in result.output
+    assert "window=09:00-17:00 timezone=America/Vancouver" in result.output
 
 
 def test_m365_group_command_is_available_and_safe_by_default(monkeypatch, tmp_path) -> None:

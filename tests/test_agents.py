@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -105,6 +106,121 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     assert len(executions) == 1
     assert executions[0].source_run_id == result.run_id
     assert len(service.store.list_execution_steps(executions[0].id or 0)) == 2
+
+
+def test_agent_execution_windows_normalize_timezones_and_support_overnight_ranges(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Business-hours triage",
+        description="Run during the tenant's local business hours.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        execution_window_start="09:00",
+        execution_window_end="17:00",
+        execution_window_timezone=" America/Vancouver ",
+    )
+
+    assert definition.execution_window_start == "09:00"
+    assert definition.execution_window_end == "17:00"
+    assert definition.execution_window_timezone == "America/Vancouver"
+    assert AgentService.execution_window_open(
+        definition,
+        now=datetime(2026, 8, 7, 16, 0, tzinfo=UTC),
+    )
+    assert not AgentService.execution_window_open(
+        definition,
+        now=datetime(2026, 8, 8, 1, 0, tzinfo=UTC),
+    )
+
+    overnight = service.update(
+        definition,
+        name=definition.name,
+        description=definition.description,
+        enabled=True,
+        trigger=definition.trigger,
+        entity_type=definition.entity_type,
+        filters=definition.filters,
+        enabled_tools=definition.enabled_tools,
+        steps=definition.steps,
+        max_steps=definition.max_steps,
+        execution_timeout_seconds=definition.execution_timeout_seconds,
+        execution_window_start="22:00",
+        execution_window_end="06:00",
+        execution_window_timezone="UTC",
+    )
+    assert AgentService.execution_window_open(
+        overnight,
+        now=datetime(2026, 8, 7, 23, 30, tzinfo=UTC),
+    )
+    assert AgentService.execution_window_open(
+        overnight,
+        now=datetime(2026, 8, 8, 5, 59, tzinfo=UTC),
+    )
+    assert not AgentService.execution_window_open(
+        overnight,
+        now=datetime(2026, 8, 8, 6, 0, tzinfo=UTC),
+    )
+
+
+def test_agent_execution_windows_reject_malformed_definitions(settings) -> None:
+    service = _service(settings)
+    for start, end, timezone, message in [
+        ("09:00", None, "UTC", "provided together"),
+        ("9:00", "17:00", "UTC", "HH:MM"),
+        ("09:00", "17:00", "Mars/Olympus", "IANA"),
+        ("09:00", "09:00", "UTC", "must differ"),
+    ]:
+        with pytest.raises(AgentDefinitionError, match=message):
+            service.create(
+                name="Window validation",
+                description="",
+                enabled=True,
+                trigger="manual",
+                entity_type="ticket",
+                filters={},
+                enabled_tools=["ticket-triage"],
+                steps=[{"tool_id": "ticket-triage", "payload": {}}],
+                max_steps=1,
+                execution_timeout_seconds=30,
+                client_id="acme",
+                execution_window_start=start,
+                execution_window_end=end,
+                execution_window_timezone=timezone,
+            )
+
+
+def test_agent_run_does_not_persist_when_execution_window_is_closed(settings) -> None:
+    service = _service(settings)
+    now = datetime.now(UTC)
+    start = (now + timedelta(hours=2)).strftime("%H:%M")
+    end = (now + timedelta(hours=3)).strftime("%H:%M")
+    definition = service.create(
+        name="Closed-window triage",
+        description="Should wait until its execution window opens.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        execution_window_start=start,
+        execution_window_end=end,
+        execution_window_timezone="UTC",
+    )
+
+    with pytest.raises(AgentDefinitionError, match="window is closed"):
+        service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert service.store.list_agent_runs(client_id="acme") == []
 
 
 def test_agent_final_result_redacts_action_output(settings, monkeypatch) -> None:
@@ -1114,11 +1230,17 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "enabled_tools": ["ticket-triage"],
             "steps": [{"tool_id": "ticket-triage", "payload": {}}],
             "max_steps": 1,
+            "execution_window_start": "00:00",
+            "execution_window_end": "23:59",
+            "execution_window_timezone": "America/Vancouver",
             "client_id": "acme",
         },
     )
     assert created.status_code == 200
     agent_id = created.json()["id"]
+    assert created.json()["execution_window_start"] == "00:00"
+    assert created.json()["execution_window_end"] == "23:59"
+    assert created.json()["execution_window_timezone"] == "America/Vancouver"
     assert client.get("/tools").json()[0]["access_mode"] == "read"
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
@@ -1167,6 +1289,9 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "steps": [{"tool_id": "ticket-triage", "payload": {}}],
             "max_steps": 1,
             "execution_timeout_seconds": 45,
+            "execution_window_start": "01:00",
+            "execution_window_end": "23:59",
+            "execution_window_timezone": "America/Vancouver",
             "client_id": "acme",
         },
     )
@@ -1186,6 +1311,9 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert restored.status_code == 200
     assert restored.json()["version"] == 3
     assert restored.json()["name"] == "Triage agent"
+    assert restored.json()["execution_window_start"] == "00:00"
+    assert restored.json()["execution_window_end"] == "23:59"
+    assert restored.json()["execution_window_timezone"] == "America/Vancouver"
     missing_revision = client.post(f"/agents/{agent_id}/revisions/99/restore")
     assert missing_revision.status_code == 404
     missing_agent_revision = client.post("/agents/no-such-agent/revisions/1/restore")

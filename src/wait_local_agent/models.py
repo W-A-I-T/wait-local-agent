@@ -566,6 +566,9 @@ class AgentDefinition:
     updated_at: str
     run_once_per_entity: bool = True
     depends_on_agent_ids: list[str] = field(default_factory=list)
+    execution_window_start: str | None = None
+    execution_window_end: str | None = None
+    execution_window_timezone: str = "UTC"
 
 
 @dataclass(frozen=True)

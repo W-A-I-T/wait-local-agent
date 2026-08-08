@@ -48,7 +48,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   protection. Active runs can be cancelled through `/agent-runs/{id}/cancel`,
   which also revokes a pending smart-action approval. Failed and cancelled
   runs can be retried with a persisted three-retry cap; conversational and
-  unrestricted execution remain outside this slice. Run responses include a
+  unrestricted execution remain outside this slice. Definitions may also set
+  a validated local execution window using `HH:MM` bounds and an IANA timezone;
+  scheduled runs outside that window are skipped and audited. Run responses include a
   redacted operational final result for the last tool, including status,
   output, evidence, and error detail, without persisting hidden reasoning.
 - Event-triggered agent APIs under `/automation/events` and
@@ -147,6 +149,7 @@ wait-local-agent ingest examples/sample_tickets
 wait-local-agent tickets summarize TCK-1002
 wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
+wait-local-agent agents list
 wait-local-agent approvals list
 wait-local-agent events list
 wait-local-agent connectors validate halopsa
@@ -572,7 +575,9 @@ Workflow runs and scheduled jobs are available over API routes, including:
 
 Use `template_id` for a workflow schedule. Use `agent_id` plus `entity_id` for
 an agent schedule; the agent definition must use the `scheduled` trigger and
-the job's `params.input` object is passed to the bounded executor.
+the job's `params.input` object is passed to the bounded executor. An agent's
+optional execution window is evaluated in its configured IANA timezone before
+the run is created.
 
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 
