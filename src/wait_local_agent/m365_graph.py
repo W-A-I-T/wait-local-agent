@@ -9,7 +9,8 @@ operations only after the write-safety boundaries have passed.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
@@ -180,6 +181,15 @@ class M365GraphManagedDeviceRetireResult:
     status: str
     message: str
     device_id: str = ""
+    status_code: int | None = None
+
+
+@dataclass(frozen=True)
+class M365GraphMailboxSettingsUpdateResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    settings: dict[str, str] = field(default_factory=dict)
     status_code: int | None = None
 
 
@@ -481,6 +491,30 @@ class M365GraphClient:
             "succeeded",
             "Microsoft Graph Intune managed-device retirement succeeded.",
             device_id=safe_device_id,
+            status_code=status_code,
+        )
+
+    def update_mailbox_settings(
+        self,
+        *,
+        user_identity: str,
+        settings: Mapping[str, str],
+    ) -> M365GraphMailboxSettingsUpdateResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphMailboxSettingsUpdateResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            payload = cast(dict[str, object], _mailbox_settings_payload(settings))
+            endpoint = f"users/{quote(safe_identity, safe='')}/mailboxSettings"
+            _, status_code = self._patch(endpoint, payload)
+        except M365GraphReadError as exc:
+            return M365GraphMailboxSettingsUpdateResult("failed", exc.message)
+        return M365GraphMailboxSettingsUpdateResult(
+            "succeeded",
+            "Microsoft Graph mailbox settings update succeeded.",
+            user_identity=safe_identity,
+            settings=cast(dict[str, str], payload),
             status_code=status_code,
         )
 
@@ -844,6 +878,13 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[2])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_mailbox_settings_endpoint = (
+        len(endpoint_parts) == 3
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "mailboxSettings"
+        and _safe_encoded_segment(endpoint_parts[1])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_group_members_add_endpoint = (
         len(endpoint_parts) == 4
         and endpoint_parts[0] == "groups"
@@ -872,6 +913,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_user_license_endpoint
         and not is_user_session_revoke_endpoint
         and not is_managed_device_retire_endpoint
+        and not is_mailbox_settings_endpoint
         and not is_group_members_add_endpoint
         and not is_group_members_remove_endpoint
     ):
@@ -949,6 +991,30 @@ def _safe_directory_object_id(value: str, field: str) -> str:
     ):
         raise M365GraphReadError(f"Microsoft Graph {field} is invalid.")
     return stripped
+
+
+def _mailbox_settings_payload(settings: Mapping[str, str]) -> dict[str, str]:
+    field_names = {
+        "time_zone": "timeZone",
+        "locale": "locale",
+        "date_format": "dateFormat",
+        "time_format": "timeFormat",
+    }
+    if not isinstance(settings, Mapping) or not settings:
+        raise M365GraphReadError("Microsoft Graph mailbox settings must contain at least one setting.")
+    if set(settings) - set(field_names):
+        raise M365GraphReadError("Microsoft Graph mailbox settings contain an unsupported field.")
+    payload: dict[str, str] = {}
+    for field_name, value in settings.items():
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value.strip()) > 128
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise M365GraphReadError(f"Microsoft Graph mailbox setting {field_name} is invalid.")
+        payload[field_names[field_name]] = value.strip()
+    return payload
 
 
 def _safe_sku_ids(values: list[str]) -> list[str]:
@@ -1238,6 +1304,7 @@ __all__ = [
     "M365GraphGroupReadResponse",
     "M365GraphLicenseChangeResult",
     "M365GraphManagedDeviceRetireResult",
+    "M365GraphMailboxSettingsUpdateResult",
     "M365GraphSessionRevokeResult",
     "M365GraphLicenseReadResponse",
     "M365GraphMailFolder",

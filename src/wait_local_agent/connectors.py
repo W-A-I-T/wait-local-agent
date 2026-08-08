@@ -16,6 +16,7 @@ from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
+    M365GraphMailboxSettingsUpdateResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
@@ -53,6 +54,7 @@ M365_LICENSE_ADD_ACTION = "users.licenses.add"
 M365_LICENSE_REMOVE_ACTION = "users.licenses.remove"
 M365_SESSION_REVOKE_ACTION = "users.sessions.revoke"
 M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
+M365_MAILBOX_SETTINGS_UPDATE_ACTION = "users.mailbox-settings.update"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -801,6 +803,28 @@ def draft_m365_managed_device_retirement(
     )
 
 
+def draft_m365_mailbox_settings_update(
+    store: Store,
+    *,
+    user_identity: str,
+    settings: dict[str, str],
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAILBOX_SETTINGS_UPDATE_ACTION,
+        "settings": settings,
+        "user_identity": user_identity,
+    }
+    validate_m365_mailbox_settings_update_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:mailbox-settings",
+        f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -819,6 +843,7 @@ def execute_m365_approval_request(
         f"m365.{M365_LICENSE_REMOVE_ACTION}",
         f"m365.{M365_SESSION_REVOKE_ACTION}",
         f"m365.{M365_DEVICE_RETIRE_ACTION}",
+        f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -838,6 +863,7 @@ def execute_m365_approval_request(
         M365_LICENSE_REMOVE_ACTION,
         M365_SESSION_REVOKE_ACTION,
         M365_DEVICE_RETIRE_ACTION,
+        M365_MAILBOX_SETTINGS_UPDATE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -847,6 +873,7 @@ def execute_m365_approval_request(
         | M365GraphLicenseChangeResult
         | M365GraphSessionRevokeResult
         | M365GraphManagedDeviceRetireResult
+        | M365GraphMailboxSettingsUpdateResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -914,11 +941,22 @@ def execute_m365_approval_request(
             "user_id": result.user_id,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_DEVICE_RETIRE_ACTION:
         validate_m365_managed_device_retirement_payload(payload)
         result = client.retire_managed_device(device_id=str(payload["device_id"]))
         result_payload = {
             "device_id": result.device_id,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_mailbox_settings_update_payload(payload)
+        result = client.update_mailbox_settings(
+            user_identity=str(payload["user_identity"]),
+            settings=cast(dict[str, str], payload["settings"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "settings": result.settings,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -1070,6 +1108,33 @@ def validate_m365_managed_device_retirement_payload(payload: dict[str, object]) 
         or any(ord(character) < 32 or character.isspace() for character in device_id)
     ):
         raise ValueError("M365 device_id is invalid")
+
+
+def validate_m365_mailbox_settings_update_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", "settings", "user_identity"}:
+        raise ValueError("M365 mailbox settings payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_MAILBOX_SETTINGS_UPDATE_ACTION:
+        raise ValueError("M365 mailbox settings payload is invalid")
+    user_identity = payload.get("user_identity")
+    if (
+        not isinstance(user_identity, str)
+        or not user_identity.strip()
+        or len(user_identity) > 320
+        or any(ord(character) < 32 or character.isspace() for character in user_identity)
+    ):
+        raise ValueError("M365 user_identity is invalid")
+    settings = payload.get("settings")
+    allowed_fields = {"time_zone", "locale", "date_format", "time_format"}
+    if not isinstance(settings, dict) or not settings or set(settings) - allowed_fields:
+        raise ValueError("M365 mailbox settings must contain supported fields")
+    for field_name, value in settings.items():
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value.strip()) > 128
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise ValueError(f"M365 mailbox setting {field_name} is invalid")
 
 
 def _canonical_uuid(value: object, field: str) -> str:

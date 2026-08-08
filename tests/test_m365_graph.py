@@ -14,6 +14,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseChangeResult,
     M365GraphLicenseReadResponse,
+    M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
     M365GraphManagedDevice,
@@ -58,6 +59,12 @@ def _configured(settings, *, allow_http_probing: bool = True):
 def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     assert M365GraphClient(settings).list_users().result.status == "blocked"
     assert M365GraphClient(settings).list_groups().result.status == "blocked"
+    assert (
+        M365GraphClient(settings)
+        .update_mailbox_settings(user_identity="user-1", settings={"locale": "en-US"})
+        .status
+        == "blocked"
+    )
     assert M365GraphClient(settings).health().status == "blocked"
     missing = M365GraphClient(replace(settings, allow_http_probing=True)).health()
     assert missing.status == "not_configured"
@@ -1144,6 +1151,53 @@ def test_m365_graph_managed_device_retirement_is_write_gated_and_sanitized(setti
     assert forbidden.status == "failed"
     assert "access denied" in forbidden.message
     assert "secret must not leak" not in forbidden.message
+
+
+def test_m365_graph_mailbox_settings_update_patches_only_allowlisted_fields(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == "/v1.0/users/alice@example.test/mailboxSettings"
+        assert json.loads(request.content) == {
+            "timeZone": "Pacific Standard Time",
+            "locale": "en-US",
+        }
+        return httpx.Response(200, json={})
+
+    response = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    ).update_mailbox_settings(
+        user_identity="alice@example.test",
+        settings={"time_zone": "Pacific Standard Time", "locale": "en-US"},
+    )
+
+    assert response == M365GraphMailboxSettingsUpdateResult(
+        "succeeded",
+        "Microsoft Graph mailbox settings update succeeded.",
+        user_identity="alice@example.test",
+        settings={"timeZone": "Pacific Standard Time", "locale": "en-US"},
+        status_code=200,
+    )
+
+
+def test_m365_graph_mailbox_settings_update_rejects_unsafe_fields(settings) -> None:
+    client = M365GraphClient(replace(_configured(settings), allow_write_actions=True))
+    for values in (
+        {},
+        {"forwarding_address": "attacker@example.test"},
+        {"locale": ""},
+        {"locale": "en\nUS"},
+    ):
+        response = client.update_mailbox_settings(
+            user_identity="alice@example.test",
+            settings=values,
+        )
+        assert response.status == "failed"
+    invalid_identity = client.update_mailbox_settings(
+        user_identity="alice\n@example.test",
+        settings={"locale": "en-US"},
+    )
+    assert invalid_identity.status == "failed"
 
 
 def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(settings) -> None:

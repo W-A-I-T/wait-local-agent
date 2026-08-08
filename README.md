@@ -437,6 +437,7 @@ wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
 wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
+wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
 ```
 
 Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
@@ -457,7 +458,10 @@ not remove group memberships or licenses or delete mailbox data. Approved
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
-does not expose wipe or delete. Approved group membership changes are
+does not expose wipe or delete. Approved mailbox-settings updates are exposed
+through `POST /connectors/m365/users/mailbox-settings-drafts` or the
+`draft-m365-mailbox-settings` CLI command; only timezone, locale, date-format,
+and time-format fields are accepted. Approved group membership changes are
 exposed through `POST /connectors/m365/groups/membership-drafts` with an
 explicit `add` or `remove` operation using immutable group and user IDs. The
 matching CLI command is `draft-m365-group-membership`; execution uses the
@@ -466,7 +470,7 @@ changes are exposed through `POST /connectors/m365/users/license-drafts` or
 `draft-m365-license-change`; only explicit add/remove operations using immutable
 user IDs and SKU GUIDs are supported. Approved session revocation is exposed
 through `POST /connectors/m365/users/session-revocation-drafts` or
-`draft-m365-session-revocation`; mailbox settings and other Intune mutations
+`draft-m365-session-revocation`; message actions and other Intune mutations
 remain separate future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
