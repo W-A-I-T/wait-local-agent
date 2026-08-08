@@ -105,7 +105,7 @@ export function Workflows() {
                 <span>{template.description || template.trigger}</span>
               </div>
               <span>{template.approval_required ? "requires approval" : "no approval"}</span>
-              <em>{template.risk_level}</em>
+              <em>{template.tool_id ? `tool: ${template.tool_id}` : template.risk_level}</em>
             </article>
           ))}
         </div>

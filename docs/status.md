@@ -97,6 +97,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   grouped activity by workflow, agent, or smart action. Resolution is a
   current-status aggregate and does not infer historical resolution time. The
   React dashboard exposes these local metrics at `/analytics`.
+- The public workflow catalog now includes four executable, low-risk review
+  templates for ticket quality, sentiment, escalation, and similar-ticket
+  analysis. They reuse the existing smart-action registry and persist both the
+  workflow run and the tenant-scoped smart-action execution; no write action is
+  implied by these review templates.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
   read-only local knowledge search, ticket-quality, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
   and read/write classification. The catalog also exposes a technician-gated,

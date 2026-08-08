@@ -62,7 +62,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 
 ## Workflow and Scheduler
 
-- Fixed workflow template catalog in the public core
+- Fixed workflow template catalog in the public core, including tool-backed
+  ticket-quality, sentiment, escalation, and similar-ticket review templates
+- Tool-backed templates call the existing smart-action registry through a small
+  executor contract, so workflow runs do not create a second tool engine
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`

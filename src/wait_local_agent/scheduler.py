@@ -13,6 +13,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import ScheduledJob
 from wait_local_agent.reports.renderers import redact_text
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
 
@@ -27,11 +28,13 @@ class SchedulerManager:
         *,
         enabled: bool = True,
         agent_service: AgentService | None = None,
+        smart_action_service: SmartActionService | None = None,
         event_dispatcher: EventDispatcher | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
         self._agent_service = agent_service
+        self._smart_action_service = smart_action_service
         self._event_dispatcher = event_dispatcher
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
@@ -156,6 +159,7 @@ class SchedulerManager:
                 client_id=client_id,
                 actor="scheduler",
                 trigger_source="scheduler",
+                tool_executor=self._smart_action_service,
             )
         except Exception as exc:
             self._store.add_audit_event(

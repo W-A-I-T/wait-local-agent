@@ -395,6 +395,7 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     templates = runner.invoke(app, ["workflows", "templates"])
     run = runner.invoke(app, ["workflows", "run", "assign-technician", "TCK-1001"])
     completed = runner.invoke(app, ["workflows", "run", "ticket-triage", "TCK-1001"])
+    quality = runner.invoke(app, ["workflows", "run", "ticket-quality-review", "TCK-1001"])
     draft = runner.invoke(
         app,
         [
@@ -421,6 +422,8 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert "status=pending_approval" in run.output
     assert completed.exit_code == 0
     assert "status=completed" in completed.output
+    assert quality.exit_code == 0
+    assert "status=completed" in quality.output
     assert draft.exit_code == 0
     assert "approval_request_id=" in draft.output
     assert approvals.exit_code == 0

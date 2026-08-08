@@ -12,6 +12,10 @@ ActionKind = Literal[
     "ticket.follow_up",
     "ticket.alert",
     "ticket.draft_response",
+    "ticket.quality",
+    "ticket.sentiment",
+    "ticket.escalation",
+    "ticket.similar",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
@@ -251,6 +255,7 @@ class WorkflowTemplate:
     approval_required: bool
     risk_level: RiskLevel = "low"
     preview_fields: tuple[str, ...] = ()
+    tool_id: str | None = None
 
 
 @dataclass(frozen=True)

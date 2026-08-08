@@ -646,7 +646,8 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 5
+    assert len(templates.json()) == 9
+    assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert run.status_code == 200
     assert run.json()["status"] == "pending_approval"
     assert draft.status_code == 200
@@ -660,6 +661,27 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert workflow_runs.status_code == 200
     assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
     assert workflow_runs.json()[0]["status"] == "pending_approval"
+
+
+def test_tool_backed_workflow_runs_existing_action_and_preserves_tenant_scope(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    run = client.post(
+        "/workflows/templates/ticket-quality-review/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    actions = client.get("/smart-actions/runs", params={"client_id": "acme"})
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert "ticket quality review" in run.json()["message"].lower()
+    assert actions.status_code == 200
+    assert actions.json()[0]["action_id"] == "ticket-quality"
+    assert actions.json()[0]["client_id"] == "acme"
 
 
 def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) -> None:

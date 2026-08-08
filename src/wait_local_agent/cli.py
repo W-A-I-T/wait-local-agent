@@ -1583,7 +1583,15 @@ def list_workflows() -> None:
 def run_workflow(template_id: str, ticket_id: str) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
-    run = run_workflow_template(store, template_id, ticket_id, actor="cli", trigger_source="cli")
+    smart_action_service = SmartActionService(store, settings)
+    run = run_workflow_template(
+        store,
+        template_id,
+        ticket_id,
+        actor="cli",
+        trigger_source="cli",
+        tool_executor=smart_action_service,
+    )
     _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 

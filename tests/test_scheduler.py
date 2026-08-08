@@ -18,7 +18,7 @@ from wait_local_agent.scheduler import (
     validate_schedule,
 )
 from wait_local_agent.security import require_bearer_authorization
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
 
@@ -471,6 +471,69 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         run_workflow_template(store, "missing-template", "TCK-1001")
     with pytest.raises(LookupError):
         run_workflow_template(store, "ticket-triage", "NOPE")
+
+
+def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    service = SmartActionService(store, settings)
+
+    run = run_workflow_template(
+        store,
+        "ticket-quality-review",
+        "TCK-1001",
+        actor="technician",
+        client_id="acme",
+        tool_executor=service,
+    )
+
+    assert run.status == "completed"
+    assert "ticket quality review" in run.message.lower()
+    action_runs = store.list_smart_action_runs(client_id="acme")
+    assert len(action_runs) == 1
+    assert action_runs[0].action_id == "ticket-quality"
+    assert action_runs[0].status == "success"
+
+
+def test_tool_backed_workflow_requires_executor(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+
+    with pytest.raises(RuntimeError, match="workflow tool ticket-quality is not configured"):
+        run_workflow_template(store, "ticket-quality-review", "TCK-1001")
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_status"),
+    [
+        (ActionResult(status="failed", error_detail="token=should-not-leak"), "failed"),
+        (ActionResult(status="pending_approval", approval_id=91), "pending_approval"),
+    ],
+)
+def test_tool_backed_workflow_maps_non_success_tool_results(settings, result, expected_status) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+
+    class StubExecutor:
+        def invoke(self, *_args, **_kwargs):
+            return result
+
+    run = run_workflow_template(
+        store,
+        "ticket-quality-review",
+        "TCK-1001",
+        actor="technician",
+        tool_executor=StubExecutor(),
+    )
+
+    assert run.status == expected_status
+    if expected_status == "failed":
+        assert "should-not-leak" not in run.message
+        assert "[redacted]" in run.message
+    else:
+        assert run.approval_request_id == 91
 
 
 def test_security_and_store_error_edges(settings) -> None:

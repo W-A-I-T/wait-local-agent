@@ -75,6 +75,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   lifecycle or wall-clock measurements.
 - The React dashboard exposes the same local analytics at `/analytics`, with
   role-scoped metric cards, workflow activity, and outcome details.
+- The workflow catalog includes executable ticket-quality, sentiment,
+  escalation, and similar-ticket review templates backed by the existing
+  smart-action contract. These are read-only analyses and do not mutate PSA
+  records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
   into tenant-scoped records and run them through the existing approval path.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,

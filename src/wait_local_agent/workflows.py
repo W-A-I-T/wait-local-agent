@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from wait_local_agent.models import Ticket, WorkflowRun, WorkflowTemplate
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
+from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.services import classify_ticket
+from wait_local_agent.smart_actions import ActionResult
 from wait_local_agent.store import Store
+
+
+class WorkflowToolExecutor(Protocol):
+    def invoke(
+        self,
+        action_id: str,
+        payload: dict[str, object],
+        actor: str | None,
+        *,
+        confirm: bool = False,
+        client_id: str | None = None,
+    ) -> ActionResult:
+        """Run one existing smart action inside a workflow boundary."""
 
 WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
     WorkflowTemplate(
@@ -56,6 +73,50 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         risk_level="medium",
         preview_fields=("ticket_id", "response", "sources"),
     ),
+    WorkflowTemplate(
+        id="ticket-quality-review",
+        name="Ticket Quality Review",
+        trigger="ticket.created",
+        description="Check required ticket fields and controlled priority/status values.",
+        action_type="ticket.quality",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "quality_score", "issues"),
+        tool_id="ticket-quality",
+    ),
+    WorkflowTemplate(
+        id="ticket-sentiment-review",
+        name="Ticket Sentiment Review",
+        trigger="ticket.updated",
+        description="Assess customer-facing language and flag bounded escalation signals.",
+        action_type="ticket.sentiment",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "sentiment", "score", "escalation_signal"),
+        tool_id="ticket-sentiment",
+    ),
+    WorkflowTemplate(
+        id="ticket-escalation-review",
+        name="Ticket Escalation Review",
+        trigger="ticket.priority_changed",
+        description="Recommend a bounded urgency and next step without changing the ticket.",
+        action_type="ticket.escalation",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "urgency", "recommendation"),
+        tool_id="ticket-escalation",
+    ),
+    WorkflowTemplate(
+        id="similar-ticket-review",
+        name="Similar Ticket Review",
+        trigger="ticket.created",
+        description="Rank local tickets by deterministic subject and body overlap for technician review.",
+        action_type="ticket.similar",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "matches"),
+        tool_id="find-similar-tickets",
+    ),
 )
 
 
@@ -75,6 +136,7 @@ def run_workflow_template(
     client_id: str | None = None,
     actor: str = "",
     trigger_source: str = "workflow",
+    tool_executor: WorkflowToolExecutor | None = None,
 ) -> WorkflowRun:
     template = get_workflow_template(template_id)
     if template is None:
@@ -84,10 +146,20 @@ def run_workflow_template(
         raise LookupError(ticket_id)
     effective_client_id = client_id if client_id is not None else ticket.client_id
 
-    message = _workflow_message(template, ticket)
+    tool_result = _run_template_tool(
+        template,
+        ticket,
+        tool_executor,
+        actor=actor,
+        client_id=effective_client_id,
+    )
+    message = _workflow_message(template, ticket, tool_result)
     approval_request_id = None
     status = "completed"
-    if template.approval_required:
+    if tool_result is not None:
+        status = _workflow_status_for_tool(tool_result)
+        approval_request_id = tool_result.approval_id
+    elif template.approval_required:
         approval = store.create_approval_request(
             ticket_id,
             template.action_type,
@@ -142,7 +214,17 @@ def _record_workflow_execution(
     )
 
 
-def _workflow_message(template: WorkflowTemplate, ticket: Ticket) -> str:
+def _workflow_message(
+    template: WorkflowTemplate,
+    ticket: Ticket,
+    tool_result: ActionResult | None = None,
+) -> str:
+    if tool_result is not None:
+        if tool_result.status == "success":
+            return f"Completed {template.name.lower()} for {ticket.id}."
+        detail = redact_text(tool_result.error_detail).strip()
+        suffix = f": {detail}" if detail else "."
+        return f"{template.name} for {ticket.id} {tool_result.status}{suffix}"
     if template.id == "ticket-triage":
         return f"Classified {ticket.id} as {classify_ticket(ticket.subject, ticket.body)}."
     if template.id == "assign-technician":
@@ -161,3 +243,31 @@ def _workflow_message(template: WorkflowTemplate, ticket: Ticket) -> str:
         f"Drafted documentation-assisted response for {ticket.id}; "
         "approval required before posting."
     )
+
+
+def _run_template_tool(
+    template: WorkflowTemplate,
+    ticket: Ticket,
+    tool_executor: WorkflowToolExecutor | None,
+    *,
+    actor: str,
+    client_id: str | None,
+) -> ActionResult | None:
+    if template.tool_id is None:
+        return None
+    if tool_executor is None:
+        raise RuntimeError(f"workflow tool {template.tool_id} is not configured")
+    return tool_executor.invoke(
+        template.tool_id,
+        {"ticket_id": ticket.id},
+        actor or "workflow",
+        client_id=client_id,
+    )
+
+
+def _workflow_status_for_tool(result: ActionResult) -> str:
+    if result.status == "success":
+        return "completed"
+    if result.status == "pending_approval":
+        return "pending_approval"
+    return "failed"

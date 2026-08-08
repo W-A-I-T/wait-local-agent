@@ -390,6 +390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store,
         enabled=active_settings.scheduler_enabled,
         agent_service=agent_service,
+        smart_action_service=smart_action_service,
         event_dispatcher=event_dispatcher,
     )
 
@@ -2677,6 +2678,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client_id=scoped_client_id,
             actor=context.approver_id or "api",
             trigger_source="template_gallery",
+            tool_executor=smart_action_service,
         )
         _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
         return asdict(run)
@@ -2844,6 +2846,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 client_id=scoped_client_id,
                 actor=context.approver_id or "api",
                 trigger_source="api",
+                tool_executor=smart_action_service,
             )
             _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
             return asdict(run)

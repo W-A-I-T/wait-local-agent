@@ -81,6 +81,7 @@ export type WorkflowTemplate = {
   approval_required: boolean;
   risk_level: string;
   preview_fields: string[];
+  tool_id?: string | null;
 };
 
 export type WorkflowRun = {
