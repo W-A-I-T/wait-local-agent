@@ -2122,6 +2122,8 @@ def show_execution(
             for artifact in store.list_execution_artifacts(run.id)
         ],
     }
+    payload.pop("metadata_json", None)
+    payload["metadata"] = _execution_cli_metadata_view(run)
     typer.echo(json.dumps(payload, sort_keys=True, indent=2))
 
 
@@ -2172,6 +2174,14 @@ def _execution_cli_step_view(step) -> dict[str, object]:
         "output": redact_value(step_output),
         "error_detail": redact_text(step.error_detail),
     }
+
+
+def _execution_cli_metadata_view(run) -> dict[str, object]:
+    try:
+        metadata = json.loads(run.metadata_json)
+    except json.JSONDecodeError:
+        metadata = {}
+    return cast(dict[str, object], redact_value(metadata)) if isinstance(metadata, dict) else {}
 
 
 @collectors_app.command("list")

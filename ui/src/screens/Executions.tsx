@@ -62,6 +62,7 @@ export function Executions() {
       {selected ? <section className="panel">
         <div className="panel-heading"><h2>Run #{selected.id}</h2><span>{selected.status}</span></div>
         <p className="screen-note">{selected.run_kind} · trigger {selected.trigger_source} · actor {selected.actor}</p>
+        {Object.keys(selected.metadata ?? {}).length ? <p className="screen-note">Provider metadata: {displayValue(selected.metadata)}</p> : null}
         <h3>Steps</h3>
         {selected.steps.length === 0 ? <p>No steps recorded.</p> : null}
         <div className="stack-list">{selected.steps.map((step) => <article className="panel" key={step.id}>

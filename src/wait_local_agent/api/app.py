@@ -3746,6 +3746,7 @@ def _execution_run_view(run) -> dict[str, object]:
         "finished_at": run.finished_at,
         "trigger_source": run.trigger_source,
         "client_id": run.client_id,
+        "metadata": _safe_redacted_json_object(run.metadata_json),
     }
 
 

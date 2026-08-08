@@ -28,6 +28,7 @@ describe("Executions", () => {
         finished_at: "2026-08-08T00:00:02Z",
         trigger_source: "manual",
         client_id: "acme",
+        metadata: { provider: "deterministic", model: "local" },
         steps: [{ id: 8, ordinal: 0, kind: "tool.invoke", name: "Ticket triage", status: "success", started_at: "", finished_at: "", output: { classification: "network" }, error_detail: "" }],
         artifacts: [{ id: 2, step_ordinal: 0, name: "summary.json", media_type: "application/json", byte_size: 42, sha256: "abc123" }]
       }), { status: 200 }));
@@ -43,6 +44,7 @@ describe("Executions", () => {
     expect(await screen.findByRole("heading", { name: "Run #4" })).toBeInTheDocument();
     expect(screen.getByText(/Ticket triage/)).toBeInTheDocument();
     expect(screen.getByText(/classification/)).toBeInTheDocument();
+    expect(screen.getByText(/Provider metadata/)).toBeInTheDocument();
     expect(screen.getByText("summary.json")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Run kind"), { target: { value: "agent" } });
     await waitFor(() => expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.some(([input]) => String(input) === "/executions?kind=agent")).toBe(true));

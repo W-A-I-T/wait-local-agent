@@ -138,6 +138,10 @@ authenticated tenant scope, and create the copy disabled so an operator must
 review it before enabling execution. Imported artifacts cannot supply arbitrary
 tools, source metadata, or authorization scope.
 
+Execution metadata is stored through the same redacting JSON path as execution
+steps. Smart-action records may include only configured provider/model labels;
+credentials, prompts, and hidden reasoning are not added to execution metadata.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

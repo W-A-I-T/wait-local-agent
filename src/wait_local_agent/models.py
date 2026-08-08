@@ -554,6 +554,7 @@ class ExecutionRun:
     finished_at: str
     trigger_source: str
     client_id: str | None = None
+    metadata_json: str = "{}"
 
 
 @dataclass(frozen=True)

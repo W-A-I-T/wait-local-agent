@@ -1776,6 +1776,10 @@ class SmartActionService:
             status=result.status,
             trigger_source=trigger_source,
             client_id=client_id,
+            metadata={
+                "provider": self.settings.local_model_provider or "deterministic",
+                "model": self.settings.local_model_name,
+            },
             steps=(step,),
             artifacts=artifacts,
         )

@@ -710,7 +710,8 @@ class Store:
                     status text not null,
                     started_at text not null,
                     finished_at text not null,
-                    trigger_source text not null default ''
+                    trigger_source text not null default '',
+                    metadata_json text not null default '{}'
                 )
                 """
             )
@@ -723,6 +724,7 @@ class Store:
                 ("started_at", "text not null default ''"),
                 ("finished_at", "text not null default ''"),
                 ("trigger_source", "text not null default ''"),
+                ("metadata_json", "text not null default '{}'"),
             ):
                 self._ensure_column(connection, "execution_runs", column_name, definition)
             connection.execute(
@@ -4275,14 +4277,15 @@ class Store:
         trigger_source: str,
         *,
         client_id: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> ExecutionRun:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 insert into execution_runs
                   (run_kind, source_run_id, actor, client_id, status,
-                   started_at, finished_at, trigger_source)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                   started_at, finished_at, trigger_source, metadata_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_kind,
@@ -4293,6 +4296,7 @@ class Store:
                     started_at,
                     finished_at,
                     trigger_source,
+                    _json_dumps_value(metadata or {}),
                 ),
             )
             if cursor.lastrowid is None:

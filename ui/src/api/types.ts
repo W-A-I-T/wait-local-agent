@@ -232,6 +232,7 @@ export type ExecutionRun = {
   finished_at: string;
   trigger_source: string;
   client_id?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type ExecutionDetail = ExecutionRun & {

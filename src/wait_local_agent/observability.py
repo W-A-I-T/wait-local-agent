@@ -98,6 +98,7 @@ class ExecutionRecorder:
         status: str,
         trigger_source: str,
         client_id: str | None = None,
+        metadata: dict[str, object] | None = None,
         steps: tuple[StepRecord, ...] = (),
         artifacts: tuple[ArtifactRecord, ...] = (),
     ) -> int | None:
@@ -119,6 +120,7 @@ class ExecutionRecorder:
                     status=status,
                     trigger_source=trigger_source,
                     client_id=client_id,
+                    metadata=metadata,
                     steps=steps,
                     artifacts=artifacts,
                 )
@@ -149,6 +151,7 @@ class ExecutionRecorder:
         status: str,
         trigger_source: str,
         client_id: str | None,
+        metadata: dict[str, object] | None,
         steps: tuple[StepRecord, ...],
         artifacts: tuple[ArtifactRecord, ...],
     ) -> int:
@@ -171,6 +174,7 @@ class ExecutionRecorder:
                 now,
                 trigger_source,
                 client_id=client_id,
+                metadata=metadata,
             )
             ordinal = 0
         if run.id is None:

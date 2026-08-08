@@ -101,7 +101,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   reruns without creating a second execution engine.
 - The React dashboard exposes `/executions` history with run-kind/status
   filters, redacted step detail, and generated artifact metadata using the
-  existing observability API.
+  existing observability API. Smart-action runs also retain the configured
+  provider/model labels as redacted operational metadata; credentials and
+  hidden reasoning are never persisted.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
   redacted dry-run estimate without persisting or executing it.
 - Backfills default to sequential execution and may opt into up to four

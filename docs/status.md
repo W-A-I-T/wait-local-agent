@@ -118,7 +118,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   React dashboard exposes these local metrics at `/analytics`.
 - The React dashboard exposes `/executions` history with run-kind/status
   filters, redacted step detail, and generated artifact metadata through the
-  existing tenant-scoped observability API.
+  existing tenant-scoped observability API. Smart-action records include
+  configured provider/model labels as redacted operational metadata; credentials
+  and hidden reasoning are not persisted.
 - The public workflow catalog now includes four executable, low-risk review
   templates for ticket quality, sentiment, escalation, and similar-ticket
   analysis. They reuse the existing smart-action registry and persist both the
