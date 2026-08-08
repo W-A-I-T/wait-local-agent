@@ -75,6 +75,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "dispatch-suggestion",
         "communication-draft",
         "communication-send",
+        "connectwise-ticket-lookup",
     }
     assert tools["ticket-triage"].access_mode == "read"
     assert tools["dispatch-suggestion"].approval_required is True

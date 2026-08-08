@@ -686,6 +686,7 @@ def update_approval_request(
             store,
             settings,
             collector_service=CollectorService(store),
+            connectwise_client=_connectwise_client(),
         )
         try:
             approval = service.update_approval(
@@ -2094,6 +2095,7 @@ def invoke_smart_action(
         store,
         settings,
         collector_service=CollectorService(store),
+        connectwise_client=_connectwise_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:

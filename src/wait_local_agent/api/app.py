@@ -427,6 +427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         collector_service=collector_service,
         halopsa_client=halopsa_client,
         hudu_client=hudu_client,
+        connectwise_client=connectwise_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)

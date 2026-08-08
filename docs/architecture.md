@@ -91,7 +91,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   existing tool call as data; it is never treated as executable instructions.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
-- Existing HaloPSA ticket reads and Hudu article reads are also exposed through
+- Existing HaloPSA and ConnectWise PSA ticket reads and Hudu article reads are also exposed through
   the same tool contract. The actions reuse the guarded connector clients,
   require an explicit local tenant scope, and never accept connector
   credentials in action payloads.

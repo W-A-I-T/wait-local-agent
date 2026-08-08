@@ -16,6 +16,7 @@ from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
     CollectorPreviewAction,
+    ConnectWiseTicketLookupAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     HaloPSATicketLookupAction,
@@ -228,6 +229,18 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 items=[HaloTicket(ticket_id, "Remote ticket", "Open", "P2", "acme", "Acme")],
             )
         ),
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    {
+                        "id": ticket_id,
+                        "summary": "Remote ticket",
+                        "company_id": "acme-company",
+                    }
+                ],
+            )
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -236,6 +249,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         ),
     )
     halopsa = HaloPSATicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    connectwise = ConnectWiseTicketLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
         {"query": "vpn", "company_id": "acme"},
@@ -257,6 +273,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == identity.status
         == rmm.status
         == halopsa.status
+        == connectwise.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -273,6 +290,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert rmm.output["count"] == 1
     assert rmm.output["devices"][0]["device_id"] == "agent:sentinelone"  # type: ignore[index]
     assert halopsa.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert connectwise.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
@@ -574,6 +592,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "collector-preview",
         "communication-draft",
         "communication-send",
+        "connectwise-ticket-lookup",
         "dispatch-suggestion",
         "find-similar-tickets",
         "halopsa-ticket-lookup",
@@ -617,6 +636,37 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
                 items=[HuduArticle("article-1", "Foreign", "beta", "folder-1", "", "")],
+            )
+        ),
+    )
+    blocked_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    malformed_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1), items={}
+            )
+        ),
+    )
+    unavailable_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: (_ for _ in ()).throw(RuntimeError("offline"))
+        ),
+    )
+    empty_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=0), items=[]
             )
         ),
     )
@@ -672,6 +722,18 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     monkeypatch.setattr(store, "list_canonical_assets", lambda *, client_id=None: malformed_assets)
 
     assert HaloPSATicketLookupAction().run(foreign_halo, {"ticket_id": "TCK-1001"}).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        blocked_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        malformed_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        unavailable_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        empty_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},

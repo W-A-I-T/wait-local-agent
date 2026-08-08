@@ -16,6 +16,7 @@ from wait_local_agent.communication import (
     PreviewCommunicationProvider,
 )
 from wait_local_agent.config import Settings
+from wait_local_agent.connectwise import ConnectWiseReadProvider
 from wait_local_agent.models import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
@@ -112,6 +113,7 @@ class ActionContext:
     provider_available: bool = False
     collector_service: CollectorPreviewProvider | None = None
     rmm_provider: RmmInventoryProvider | None = None
+    connectwise_client: ConnectWiseReadProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -910,6 +912,69 @@ class HaloPSATicketLookupAction:
         )
 
 
+class ConnectWiseTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="connectwise-ticket-lookup",
+        title="ConnectWise PSA ticket lookup",
+        description="Read one tenant-scoped local ticket through the guarded ConnectWise PSA connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket in the tenant scope")
+        from wait_local_agent.connectwise import ConnectWiseClient
+
+        provider = context.connectwise_client or ConnectWiseClient(context.settings)
+        try:
+            response = provider.get_ticket(ticket.id)
+        except Exception:
+            return _failed("ConnectWise PSA ticket lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "ConnectWise PSA read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("ConnectWise PSA returned malformed ticket data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": status, "ticket": {}},
+                error_detail=message,
+            )
+        if not items or not isinstance(items[0], dict):
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": "empty", "ticket": {}},
+                error_detail="ConnectWise PSA returned no matching ticket",
+            )
+        normalized = cast(dict[str, object], redact_value(items[0]))
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "connector_status": status,
+                "ticket": normalized,
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "connectwise",
+                    "operation": "tickets.get",
+                    "ticket_id": ticket.id,
+                }
+            ],
+        )
+
+
 class HuduDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="hudu-documentation-search",
@@ -1302,6 +1367,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptExecuteAction(),
         RmmScriptExecutionLookupAction(),
         HaloPSATicketLookupAction(),
+        ConnectWiseTicketLookupAction(),
         HuduDocumentationSearchAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
@@ -1333,6 +1399,7 @@ class SmartActionService:
         communication_provider: CommunicationProvider | None = None,
         communication_sender: CommunicationSender | None = None,
         rmm_provider: RmmInventoryProvider | None = None,
+        connectwise_client: ConnectWiseReadProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1342,6 +1409,7 @@ class SmartActionService:
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
         self.rmm_provider = rmm_provider or rmm_provider_from_settings(settings, store)
+        self.connectwise_client = connectwise_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -1685,6 +1753,7 @@ class SmartActionService:
             communication_provider=self.communication_provider,
             communication_sender=self.communication_sender,
             rmm_provider=self.rmm_provider,
+            connectwise_client=self.connectwise_client,
         )
 
     def _persist_result(
