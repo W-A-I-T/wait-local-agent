@@ -434,6 +434,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         itglue_client=itglue_client,
         confluence_client=confluence_client,
         sharepoint_client=sharepoint_client,
+        m365_client=m365_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)

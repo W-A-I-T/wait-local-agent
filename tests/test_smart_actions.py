@@ -9,7 +9,19 @@ import pytest
 from wait_local_agent.collectors import CollectorPreview
 from wait_local_agent.confluence import ConfluencePage
 from wait_local_agent.itglue import ItGlueDocument
-from wait_local_agent.models import HaloTicket, HuduArticle, SourceReference, Ticket
+from wait_local_agent.m365_graph import (
+    M365GraphGroup,
+    M365GraphGroupReadResponse,
+    M365GraphLicenseReadResponse,
+    M365GraphMailFolder,
+    M365GraphMailFolderReadResponse,
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
+    M365GraphReadResponse,
+    M365GraphSubscribedSku,
+    M365GraphUser,
+)
+from wait_local_agent.models import ConnectorReadResult, HaloTicket, HuduArticle, SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
@@ -29,6 +41,7 @@ from wait_local_agent.smart_actions import (
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
     M365IdentityLookupAction,
+    M365LiveContextAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
     SharePointDocumentationSearchAction,
@@ -296,6 +309,34 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 ],
             )
         ),
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: M365GraphReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphUser("user-1", "Alice", identity, "alice@example.test", True, "IT", "Ops")],
+            ),
+            list_groups=lambda identity, page_size: M365GraphGroupReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphGroup("group-1", "IT", "it@example.test", "it", "", True, True, ())],
+            ),
+            list_subscribed_skus=lambda: M365GraphLicenseReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphSubscribedSku("sku-1", "sku-1", "BUSINESS", "Enabled", "User", 1, 2, 0, 0, 0)],
+            ),
+            list_mail_folders=lambda identity, page_size: M365GraphMailFolderReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphMailFolder("folder-1", "Inbox", "", 0, 1, 0, False)],
+            ),
+            list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [
+                    M365GraphManagedDevice(
+                        "device-1", "user-1", "Laptop", "company", "", "", "Windows",
+                        "compliant", "mdm", "11", True, "registered", True,
+                        "alice@example.test", "Alice", "Model", "Maker",
+                    )
+                ],
+            ),
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -326,6 +367,19 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         replace(connector_context, client_id="site-1"),
         {"query": "vpn", "site_id": "site-1"},
     )
+    m365_user = M365LiveContextAction().run(
+        connector_context, {"resource": "user", "identity": "alice@example.test"}
+    )
+    m365_group = M365LiveContextAction().run(
+        connector_context, {"resource": "group", "identity": "it"}
+    )
+    m365_license = M365LiveContextAction().run(connector_context, {"resource": "licenses"})
+    m365_mail = M365LiveContextAction().run(
+        connector_context, {"resource": "mailbox_folders", "identity": "alice@example.test"}
+    )
+    m365_device = M365LiveContextAction().run(
+        connector_context, {"resource": "managed_devices"}
+    )
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
         {"query": "vpn", "company_id": "acme"},
@@ -354,6 +408,11 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == itglue.status
         == confluence.status
         == sharepoint.status
+        == m365_user.status
+        == m365_group.status
+        == m365_license.status
+        == m365_mail.status
+        == m365_device.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -385,6 +444,11 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert isinstance(sharepoint_documents, list)
     assert isinstance(sharepoint_documents[0], dict)
     assert sharepoint_documents[0]["name"] == "VPN runbook"
+    assert m365_user.output["count"] == 1
+    assert m365_group.output["count"] == 1
+    assert m365_license.output["count"] == 1
+    assert m365_mail.output["count"] == 1
+    assert m365_device.output["count"] == 1
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
@@ -423,6 +487,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),
         SharePointDocumentationSearchAction(),
+        M365LiveContextAction(),
         HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
@@ -702,6 +767,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "itglue-documentation-search",
         "knowledge-search",
         "m365-identity-lookup",
+        "m365-live-context",
         "rmm-alert-lookup",
         "rmm-device-lookup",
         "rmm-script-catalog",
@@ -836,6 +902,15 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
             )
         ),
     )
+    blocked_m365 = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
     malformed_halo = replace(
         context,
         halopsa_client=SimpleNamespace(
@@ -923,6 +998,10 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     assert SharePointDocumentationSearchAction().run(
         blocked_sharepoint, {"query": "vpn", "site_id": "acme"}
     ).status == "failed"
+    assert M365LiveContextAction().run(
+        blocked_m365, {"resource": "user", "identity": "alice@example.test"}
+    ).status == "failed"
+    assert M365LiveContextAction().run(context, {"resource": "user"}).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},

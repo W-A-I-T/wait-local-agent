@@ -100,7 +100,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,
-  and Intune managed-device reads with operator-supplied credentials, plus an
+  and Intune managed-device reads with operator-supplied credentials. The
+  `m365-live-context` tool exposes those fixed read resources without accepting
+  credentials in its payload, while an
   approval-gated user creation path that resolves a temporary password only
   from the local vault at execution time, plus an approval-gated disable path
   that only sets `accountEnabled=false`. Credentials never enter action or

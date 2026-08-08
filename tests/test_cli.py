@@ -1234,6 +1234,7 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     assert "itglue-documentation-search" in listed.output
     assert "confluence-documentation-search" in listed.output
     assert "sharepoint-documentation-search" in listed.output
+    assert "m365-live-context" in listed.output
     assert described.exit_code == 0 and '"action_id": "ticket-triage"' in described.output
     assert invoked.exit_code == 0 and json.loads(invoked.output)["status"] == "success"
     assert collector_preview.exit_code == 0 and json.loads(collector_preview.output)["status"] == "success"

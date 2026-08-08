@@ -171,6 +171,11 @@ They require a space/site identifier matching the caller's tenant scope, bound
 the provider page or drive-item query, and do not return page bodies or file
 contents.
 
+The `m365-live-context` tool accepts only a fixed read-resource enum and bounded
+identity/page-size inputs. It never accepts a Graph token or tenant identifier;
+the existing configured-provider gates enforce outbound access, while all M365
+mutations remain on the separate approval-draft and execution paths.
+
 ConnectWise PSA ticket writes are restricted to three named actions and a
 closed field-to-JSON-patch map. They require HTTP probing, the global write
 flag, a persisted approval request, and explicit approval. The adapter rejects

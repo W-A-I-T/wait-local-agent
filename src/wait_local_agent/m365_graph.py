@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Protocol, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
@@ -191,6 +191,46 @@ class M365GraphMailboxSettingsUpdateResult:
     user_identity: str = ""
     settings: dict[str, str] = field(default_factory=dict)
     status_code: int | None = None
+
+
+class M365GraphReadProvider(Protocol):
+    def list_users(
+        self,
+        *,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphReadResponse:
+        ...
+
+    def list_groups(
+        self,
+        *,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphGroupReadResponse:
+        ...
+
+    def list_subscribed_skus(self, *, cursor: str | None = None) -> M365GraphLicenseReadResponse:
+        ...
+
+    def list_mail_folders(
+        self,
+        *,
+        identity: str | None = None,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphMailFolderReadResponse:
+        ...
+
+    def list_managed_devices(
+        self,
+        *,
+        cursor: str | None = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> M365GraphManagedDeviceReadResponse:
+        ...
 
 
 class M365GraphReadError(Exception):

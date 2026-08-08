@@ -20,6 +20,7 @@ from wait_local_agent.config import Settings
 from wait_local_agent.confluence import ConfluenceClientProtocol
 from wait_local_agent.connectwise import ConnectWiseReadProvider
 from wait_local_agent.itglue import ItGlueClientProtocol
+from wait_local_agent.m365_graph import M365GraphReadProvider
 from wait_local_agent.models import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
@@ -126,6 +127,7 @@ class ActionContext:
     itglue_client: ItGlueClientProtocol | None = None
     confluence_client: ConfluenceClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
+    m365_client: M365GraphReadProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -604,6 +606,103 @@ class M365IdentityLookupAction:
             evidence=[
                 {"type": "canonical_asset", "asset_id": str(item["asset_id"])}
                 for item in matches[:limit]
+            ],
+        )
+
+
+class M365LiveContextAction:
+    manifest = SmartActionManifest(
+        action_id="m365-live-context",
+        title="Microsoft 365 live context",
+        description="Read a bounded Microsoft Graph user, group, license, mailbox-folder, or Intune device context.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["resource"],
+            "properties": {
+                "resource": {
+                    "type": "string",
+                    "enum": ["user", "group", "licenses", "mailbox_folders", "managed_devices"],
+                },
+                "identity": {"type": "string", "minLength": 1, "maxLength": 200},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"resource": "string", "items": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        resource = payload.get("resource")
+        resources = {"user", "group", "licenses", "mailbox_folders", "managed_devices"}
+        if not isinstance(resource, str) or resource not in resources:
+            return _failed(
+                "resource must be one of user, group, licenses, mailbox_folders, or managed_devices"
+            )
+        identity = payload.get("identity")
+        if identity is not None and (
+            not isinstance(identity, str) or not identity.strip() or len(identity.strip()) > 200
+        ):
+            return _failed("identity must be a non-empty string of at most 200 characters")
+        normalized_identity = identity.strip() if isinstance(identity, str) else None
+        if resource in {"user", "group", "mailbox_folders"} and normalized_identity is None:
+            return _failed("identity is required for user, group, and mailbox_folders resources")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = context.m365_client or M365GraphClient(context.settings)
+        try:
+            response: object
+            if resource == "user":
+                response = provider.list_users(identity=normalized_identity, page_size=limit)
+            elif resource == "group":
+                response = provider.list_groups(identity=normalized_identity, page_size=limit)
+            elif resource == "licenses":
+                response = provider.list_subscribed_skus()
+            elif resource == "mailbox_folders":
+                response = provider.list_mail_folders(identity=normalized_identity, page_size=limit)
+            else:
+                response = provider.list_managed_devices(page_size=limit)
+        except Exception:
+            return _failed("Microsoft Graph context lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Microsoft Graph read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Microsoft Graph returned malformed context data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"resource": resource, "connector_status": status, "items": [], "count": 0},
+                error_detail=message,
+            )
+        normalized = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items[:limit]
+            if hasattr(item, "__dataclass_fields__")
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "resource": resource,
+                "connector_status": status,
+                "items": normalized,
+                "count": len(normalized),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "m365",
+                    "operation": f"{resource}.list",
+                    "client_id": context.client_id,
+                }
             ],
         )
 
@@ -1843,6 +1942,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),
         SharePointDocumentationSearchAction(),
+        M365LiveContextAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
@@ -1880,6 +1980,7 @@ class SmartActionService:
         itglue_client: ItGlueClientProtocol | None = None,
         confluence_client: ConfluenceClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
+        m365_client: M365GraphReadProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1896,6 +1997,7 @@ class SmartActionService:
         self.itglue_client = itglue_client
         self.confluence_client = confluence_client
         self.sharepoint_client = sharepoint_client
+        self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -2246,6 +2348,7 @@ class SmartActionService:
             itglue_client=self.itglue_client,
             confluence_client=self.confluence_client,
             sharepoint_client=self.sharepoint_client,
+            m365_client=self.m365_client,
         )
 
     def _persist_result(

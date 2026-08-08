@@ -2102,6 +2102,7 @@ def invoke_smart_action(
         itglue_client=_itglue_client(),
         confluence_client=_confluence_client(),
         sharepoint_client=_sharepoint_client(),
+        m365_client=_m365_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:
