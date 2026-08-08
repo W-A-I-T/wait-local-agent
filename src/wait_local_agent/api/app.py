@@ -259,6 +259,13 @@ class AgentBackfillCreateRequest(BaseModel):
     client_id: str | None = None
 
 
+class AgentBackfillPreviewRequest(BaseModel):
+    agent_id: str
+    entity_ids: list[str] = Field(min_length=1, max_length=100)
+    input: dict[str, object] = Field(default_factory=dict)
+    client_id: str | None = None
+
+
 class EventIngestRequest(BaseModel):
     event_type: str
     entity_type: Literal["ticket"] = "ticket"
@@ -861,6 +868,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client_id=scoped_client_id,
         )
         return _agent_backfill_view(backfill)
+
+    @app.post("/agent-backfills/preview")
+    def preview_agent_backfill(
+        payload: AgentBackfillPreviewRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _backfill_scope(context, payload.client_id)
+        if len(set(payload.entity_ids)) != len(payload.entity_ids):
+            raise HTTPException(status_code=422, detail="entity_ids must not contain duplicates")
+        definition = agent_service.get(payload.agent_id, scoped_client_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        missing_entity_ids = [
+            entity_id
+            for entity_id in payload.entity_ids
+            if store.get_ticket(entity_id, client_id=scoped_client_id) is None
+        ]
+        if missing_entity_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ticket not found: {missing_entity_ids[0]}",
+            )
+        return {
+            "dry_run": True,
+            "agent_id": payload.agent_id,
+            "entity_count": len(payload.entity_ids),
+            "estimated_runs": len(payload.entity_ids),
+            "execution_mode": "sequential",
+            "will_persist": False,
+            "input": _redact_payload(payload.input),
+            "client_id": scoped_client_id,
+        }
 
     @app.get("/agent-backfills")
     def agent_backfills(

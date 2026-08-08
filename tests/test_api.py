@@ -1373,6 +1373,24 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     assert agent.status_code == 200
     agent_id = agent.json()["id"]
 
+    preview = client.post(
+        "/agent-backfills/preview",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "backfill-secret"},
+            "client_id": "acme",
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["dry_run"] is True
+    assert preview.json()["entity_count"] == 2
+    assert preview.json()["estimated_runs"] == 2
+    assert preview.json()["execution_mode"] == "sequential"
+    assert preview.json()["will_persist"] is False
+    assert preview.json()["input"]["api_token"] == "[redacted]"
+    assert store.list_agent_backfills() == []
+
     created = client.post(
         "/agent-backfills",
         json={
@@ -1452,6 +1470,21 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
     assert duplicate.status_code == 422
     assert missing_ticket.status_code == 404
     assert unknown_agent.status_code == 404
+    preview_duplicate = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001", "TCK-1001"], "client_id": "acme"},
+    )
+    preview_missing_ticket = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": agent_id, "entity_ids": ["NOPE"], "client_id": "acme"},
+    )
+    preview_unknown_agent = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": "no-such-agent", "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    assert preview_duplicate.status_code == 422
+    assert preview_missing_ticket.status_code == 404
+    assert preview_unknown_agent.status_code == 404
     assert client.get("/agent-backfills/99999").status_code == 404
     assert client.post("/agent-backfills/99999/run").status_code == 404
     assert client.post("/agent-backfills/99999/pause").status_code == 404
