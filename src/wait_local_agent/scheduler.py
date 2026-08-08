@@ -110,6 +110,27 @@ class SchedulerManager:
                 self._scheduler.remove_job(self._job_identity(job_id))
         return self._with_runtime_state(scheduled_job)
 
+    def reschedule(
+        self,
+        job_id: int,
+        *,
+        schedule_type: str,
+        cron: str,
+        interval_seconds: int | None,
+        run_at: str | None,
+    ) -> ScheduledJob:
+        validate_schedule(schedule_type, cron, interval_seconds, run_at)
+        scheduled_job = self._store.update_scheduled_job_schedule(
+            job_id,
+            schedule_type=schedule_type,
+            cron=cron,
+            interval_seconds=interval_seconds,
+            run_at=run_at,
+        )
+        if self._scheduler is not None:
+            self._register_live_job(scheduled_job)
+        return self._with_runtime_state(scheduled_job)
+
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
         params = _safe_json_object(scheduled_job.params_json)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
