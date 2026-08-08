@@ -47,6 +47,9 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "job_kind" in scheduled_columns
     assert "agent_id" in scheduled_columns
     assert "entity_id" in scheduled_columns
+    assert "schedule_type" in scheduled_columns
+    assert "interval_seconds" in scheduled_columns
+    assert "run_at" in scheduled_columns
     assert "idempotency_key" in event_delivery_columns
     assert "processed_at" in event_delivery_columns
     assert "definition_json" in revision_columns
