@@ -13,6 +13,7 @@ export function ScheduledJobs() {
   const [agentId, setAgentId] = useState("");
   const [entityId, setEntityId] = useState("HALO-1");
   const [cron, setCron] = useState("0 */6 * * *");
+  const [timezone, setTimezone] = useState("UTC");
   const [paramsText, setParamsText] = useState("{\n  \"ticket_id\": \"HALO-1\"\n}");
   const [selectedJob, setSelectedJob] = useState<ScheduledJob | null>(null);
   const [message, setMessage] = useState("");
@@ -65,8 +66,8 @@ export function ScheduledJobs() {
 
     try {
       const body: ScheduledJobRequestBody = scheduleKind === "agent"
-        ? { agent_id: agentId, entity_id: entityId.trim(), cron, params }
-        : { template_id: templateId, cron, params };
+        ? { agent_id: agentId, entity_id: entityId.trim(), cron, timezone: timezone.trim(), params }
+        : { template_id: templateId, cron, timezone: timezone.trim(), params };
       await apiFetch<ScheduledJob>("/scheduled-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,6 +156,10 @@ export function ScheduledJobs() {
               <input value={cron} onChange={(event) => setCron(event.target.value)} />
             </label>
             <label>
+              Schedule timezone (IANA)
+              <input value={timezone} onChange={(event) => setTimezone(event.target.value)} placeholder="America/Vancouver" />
+            </label>
+            <label>
               Params JSON
               <textarea rows={5} value={paramsText} onChange={(event) => setParamsText(event.target.value)} />
             </label>
@@ -169,7 +174,7 @@ export function ScheduledJobs() {
             <article className="table-row" key={job.id}>
               <div>
                 <strong>{job.job_kind === "agent" ? `Agent ${job.agent_id}` : job.template_id}</strong>
-                <span>{job.cron}</span>
+                <span>{job.cron} ({job.timezone})</span>
               </div>
               <span>{job.paused ? "paused" : "running"}</span>
               <div>

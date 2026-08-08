@@ -18,10 +18,16 @@ from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import AgentDefinition, AgentRun, utc_now
+from wait_local_agent.models import (
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    AgentDefinition,
+    AgentRun,
+    utc_now,
+)
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 
@@ -52,6 +58,8 @@ EVENT_FILTER_FIELDS = frozenset(
         "workflow_run_id",
     }
 )
+SUPPORTED_CONTEXT_SOURCES = frozenset({"ticket", "client", "knowledge"})
+MAX_CONTEXT_SOURCES = 3
 EXECUTION_WINDOW_TIME_FORMAT = "%H:%M"
 
 
@@ -66,6 +74,7 @@ class ToolDefinition:
     required_role: str
     approval_required: bool
     access_mode: str
+    approval_expiry_seconds: int
 
 
 @dataclass(frozen=True)
@@ -108,6 +117,7 @@ class AgentService:
                 required_role=manifest.required_role,
                 approval_required=manifest.requires_approval,
                 access_mode=manifest.access_mode,
+                approval_expiry_seconds=manifest.approval_expiry_seconds,
             )
             for manifest in self.smart_actions.list()
         ]
@@ -137,6 +147,8 @@ class AgentService:
         execution_window_start: str | None = None,
         execution_window_end: str | None = None,
         execution_window_timezone: str = "UTC",
+        context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -155,6 +167,8 @@ class AgentService:
             execution_window_start=execution_window_start,
             execution_window_end=execution_window_end,
             execution_window_timezone=execution_window_timezone,
+            context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -183,6 +197,8 @@ class AgentService:
             execution_window_start=window_start,
             execution_window_end=window_end,
             execution_window_timezone=window_timezone,
+            context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.create_agent_definition(definition)
 
@@ -205,6 +221,8 @@ class AgentService:
         execution_window_start: str | None = None,
         execution_window_end: str | None = None,
         execution_window_timezone: str = "UTC",
+        context_sources: list[str] | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -222,6 +240,8 @@ class AgentService:
             execution_window_start=execution_window_start,
             execution_window_end=execution_window_end,
             execution_window_timezone=execution_window_timezone,
+            context_sources=context_sources or [],
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -249,6 +269,8 @@ class AgentService:
             execution_window_start=window_start,
             execution_window_end=window_end,
             execution_window_timezone=window_timezone,
+            context_sources=list(context_sources or []),
+            approval_expiry_seconds=approval_expiry_seconds,
         )
         return self.store.update_agent_definition(updated)
 
@@ -271,9 +293,11 @@ class AgentService:
         client_id = _normalize_client_id(definition.client_id)
         if self.store.get_ticket(entity_id, client_id=client_id) is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
+        execution_context = self._build_context(definition, entity_id)
         state: dict[str, object] = {
             "entity_id": entity_id,
             "input": redact_value(input_payload),
+            "context": execution_context,
             "steps": [],
             "pending_approval_step": None,
             "retry_count": retry_count,
@@ -535,6 +559,8 @@ class AgentService:
             payload = dict(input_payload)
             payload.update(configured_payload)
             payload.setdefault("ticket_id", run.entity_id)
+            if state.get("context"):
+                payload["_agent_context"] = state["context"]
             if tool_id not in definition.enabled_tools:
                 return self._finish(
                     definition,
@@ -550,6 +576,7 @@ class AgentService:
                     payload,
                     actor,
                     client_id=definition.client_id,
+                    approval_expiry_seconds=definition.approval_expiry_seconds,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -584,6 +611,57 @@ class AgentService:
             state,
             actor=actor,
         )
+
+    def _build_context(self, definition: AgentDefinition, entity_id: str) -> dict[str, object]:
+        if not definition.context_sources:
+            return {}
+        ticket = self.store.get_ticket(entity_id, client_id=definition.client_id)
+        if ticket is None:
+            raise AgentDefinitionError("ticket was not found in the agent scope")
+        context: dict[str, object] = {}
+        if "ticket" in definition.context_sources:
+            context["ticket"] = {
+                "id": ticket.id,
+                "client": _bounded_context_text(ticket.client, 200),
+                "subject": _bounded_context_text(ticket.subject, 500),
+                "body": _bounded_context_text(ticket.body, 4000),
+                "priority": _bounded_context_text(ticket.priority, 40),
+                "status": _bounded_context_text(ticket.status, 40),
+                "requester_id": _bounded_context_text(ticket.requester_id or "", 200),
+            }
+        if "client" in definition.context_sources:
+            context["client"] = {
+                "id": _normalize_client_id(ticket.client_id),
+                "name": _bounded_context_text(ticket.client, 200),
+            }
+        if "knowledge" in definition.context_sources:
+            knowledge_status = "ready"
+            try:
+                sources = retrieve_sources(
+                    ticket,
+                    self.settings.allowed_doc_root,
+                    self.store,
+                    self.settings,
+                    client_id=ticket.client_id,
+                )
+            except Exception:
+                sources = []
+                knowledge_status = "unavailable"
+            context["knowledge"] = {
+                "status": knowledge_status,
+                "sources": [
+                    {
+                        "title": _bounded_context_text(source.title, 200),
+                        "path": _bounded_context_text(source.path, 500),
+                        "excerpt": _bounded_context_text(source.excerpt, 1000),
+                        "document_id": source.document_id,
+                        "chunk_id": source.chunk_id,
+                    }
+                    for source in sources[:3]
+                ],
+                "count": min(len(sources), 3),
+            }
+        return cast(dict[str, object], redact_value(context))
 
     def _finish(
         self,
@@ -673,6 +751,8 @@ class AgentService:
         execution_window_start: str | None,
         execution_window_end: str | None,
         execution_window_timezone: str,
+        context_sources: list[str],
+        approval_expiry_seconds: int | None,
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -710,6 +790,17 @@ class AgentService:
             execution_window_end,
             execution_window_timezone,
         )
+        _validate_context_sources(context_sources)
+        if approval_expiry_seconds is not None and (
+            isinstance(approval_expiry_seconds, bool)
+            or not isinstance(approval_expiry_seconds, int)
+            or approval_expiry_seconds < 1
+            or approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise AgentDefinitionError(
+                "approval_expiry_seconds must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
         for step in steps:
             if set(step) - {"tool_id", "payload"}:
                 raise AgentDefinitionError("agent steps may only contain tool_id and payload")
@@ -836,6 +927,24 @@ def _validate_event_filters(filters: dict[str, object]) -> None:
             continue
         if not isinstance(value, str) or not value.strip():
             raise AgentDefinitionError(f"event filter {filter_name} must be a non-empty string")
+
+
+def _validate_context_sources(context_sources: list[str]) -> None:
+    if not isinstance(context_sources, list) or len(context_sources) > MAX_CONTEXT_SOURCES:
+        raise AgentDefinitionError(
+            f"context_sources must contain 0-{MAX_CONTEXT_SOURCES} sources"
+        )
+    if any(not isinstance(source, str) or not source.strip() for source in context_sources):
+        raise AgentDefinitionError("context_sources must contain non-empty strings")
+    if len(set(context_sources)) != len(context_sources):
+        raise AgentDefinitionError("context_sources must not contain duplicates")
+    unknown = sorted(set(context_sources) - SUPPORTED_CONTEXT_SOURCES)
+    if unknown:
+        raise AgentDefinitionError(f"unsupported context sources: {', '.join(unknown)}")
+
+
+def _bounded_context_text(value: str, limit: int) -> str:
+    return value[:limit]
 
 
 def _state_steps(state: dict[str, object]) -> list[dict[str, object]]:

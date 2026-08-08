@@ -55,14 +55,17 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     tools = {tool.id: tool for tool in service.list_tools()}
 
     assert set(tools) == {
+        "autotask-ticket-lookup",
         "ticket-triage",
         "ticket-summary",
         "suggest-resolution",
         "find-similar-tickets",
         "knowledge-search",
         "m365-identity-lookup",
+        "m365-live-context",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
+        "itglue-documentation-search",
         "rmm-device-lookup",
         "rmm-alert-lookup",
         "rmm-script-catalog",
@@ -74,6 +77,12 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-sentiment",
         "communication-draft",
         "communication-send",
+        "connectwise-ticket-lookup",
+        "confluence-documentation-search",
+        "syncro-ticket-lookup",
+        "servicenow-incident-lookup",
+        "sharepoint-document-content",
+        "sharepoint-documentation-search",
         "dispatch-suggestion",
         "collector-preview",
     }
@@ -112,6 +121,131 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     assert len(executions) == 1
     assert executions[0].source_run_id == result.run_id
     assert len(service.store.list_execution_steps(executions[0].id or 0)) == 2
+
+
+def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> None:
+    service = _service(settings)
+    service.store.upsert_knowledge_document(
+        path="examples/sample_docs/mfa-runbook.md",
+        title="MFA Runbook",
+        kind="markdown",
+        checksum="mfa-checksum",
+        modified_at="2026-08-08T00:00:00+00:00",
+        chunks=["MFA phone replacement requires identity verification and a new authenticator registration."],
+        client_id="acme",
+    )
+    definition = service.create(
+        name="Context-aware triage",
+        description="Pass selected ticket and knowledge context to bounded tools.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        context_sources=["ticket", "client", "knowledge"],
+    )
+
+    result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    persisted = service.store.get_agent_run(result.run_id, client_id="acme")
+    assert persisted is not None
+    state = json.loads(persisted.state_json)
+    assert set(state["context"]) == {"ticket", "client", "knowledge"}
+    assert state["context"]["knowledge"]["status"] == "ready"
+    assert state["context"]["ticket"]["id"] == "TCK-1001"
+    assert state["context"]["client"] == {"id": "acme", "name": "Northwind Dental"}
+    assert state["context"]["knowledge"]["count"] == 1
+    assert state["steps"][0]["input"]["_agent_context"] == state["context"]
+
+    with pytest.raises(AgentDefinitionError, match="unsupported context sources"):
+        service.create(
+            name="Invalid context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["secrets"],
+        )
+    with pytest.raises(AgentDefinitionError, match="duplicates"):
+        service.create(
+            name="Duplicate context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["ticket", "ticket"],
+        )
+    with pytest.raises(AgentDefinitionError, match="contain 0-3"):
+        service.create(
+            name="Too much context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=["ticket", "client", "knowledge", "extra"],
+        )
+    with pytest.raises(AgentDefinitionError, match="non-empty strings"):
+        service.create(
+            name="Empty context",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            context_sources=[""],
+        )
+
+
+def test_agent_context_reports_knowledge_unavailable(settings, monkeypatch) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Unavailable knowledge context",
+        description="Surface retrieval failure without treating it as no matches.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        context_sources=["knowledge"],
+    )
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(agents_module, "retrieve_sources", unavailable)
+
+    context = service._build_context(definition, "TCK-1001")  # noqa: SLF001
+
+    assert context["knowledge"] == {"status": "unavailable", "sources": [], "count": 0}
 
 
 def test_agent_execution_windows_normalize_timezones_and_support_overnight_ranges(settings) -> None:
@@ -291,6 +425,131 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.final_result["status"] == "success"
 
 
+def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Short approval dispatch",
+        description="Use a one-hour approval policy for dispatch proposals.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_expiry_seconds=60 * 60,
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert pending.status == "pending_approval"
+    approval = service.store.get_approval_request(pending.approval_id or 0)
+    assert approval is not None
+    assert approval.expires_at is not None
+    assert (
+        datetime.fromisoformat(approval.expires_at)
+        - datetime.fromisoformat(approval.created_at)
+        == timedelta(hours=1)
+    )
+
+    extended_definition = service.create(
+        name="Capped approval dispatch",
+        description="A policy cannot extend the dispatch tool deadline.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {"technicians": []}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_expiry_seconds=2 * 24 * 60 * 60,
+    )
+    extended_pending = service.run(
+        extended_definition,
+        entity_id="TCK-1001",
+        actor="requester-2",
+        input_payload={},
+    )
+    extended_approval = service.store.get_approval_request(extended_pending.approval_id or 0)
+    assert extended_approval is not None and extended_approval.expires_at is not None
+    assert (
+        datetime.fromisoformat(extended_approval.expires_at)
+        - datetime.fromisoformat(extended_approval.created_at)
+        == timedelta(days=1)
+    )
+
+
+def test_agent_approval_policy_bounds_are_enforced(settings) -> None:
+    service = _service(settings)
+
+    with pytest.raises(AgentDefinitionError, match="approval_expiry_seconds"):
+        service.create(
+            name="Invalid approval policy",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["dispatch-suggestion"],
+            steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            approval_expiry_seconds=0,
+        )
+
+
+def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Dispatch cancellation",
+        description="Prepare a dispatch proposal that can be cancelled.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    cancelled = service.cancel(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        actor="requester",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.error_detail == "agent run cancelled"
+    assert cancelled.final_result["status"] == "cancelled"
+    assert cancelled.final_result["error_detail"] == "agent run cancelled"
+    assert cancelled.approval_id is None
+    approval = service.store.get_approval_request(pending.approval_id or 0)
+    assert approval is not None
+    assert approval.status == "rejected"
+    action_run = next(
+        action
+        for action in service.store.list_smart_action_runs(client_id="acme")
+        if action.approval_id == pending.approval_id
+    )
+    assert action_run is not None
+    assert action_run.status == "rejected"
+    assert service.resume(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    ).status == "cancelled"
+
+
 def test_pending_run_continues_from_its_revision_after_definition_update(settings) -> None:
     service = _service(settings)
     definition = service.create(
@@ -405,6 +664,37 @@ def test_agent_run_can_cancel_pending_approval_and_retry(settings) -> None:
     )
     assert retried.status == "pending_approval"
     assert retried.revision_version == definition.version
+
+def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -> None:
+    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
+    store = Store(scoped.data_path)
+    _seed(store, client_id="acme")
+    client = TestClient(create_app(scoped))
+    created = client.post(
+        "/agents",
+        json={
+            "name": "Cancellable dispatch agent",
+            "enabled_tools": ["dispatch-suggestion"],
+            "steps": [{"tool_id": "dispatch-suggestion", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+            "approval_expiry_seconds": 1800,
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["approval_expiry_seconds"] == 1800
+    agent_id = created.json()["id"]
+    pending = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
+    assert pending.status_code == 200
+    run_id = pending.json()["run_id"]
+
+    cancelled = client.post(f"/agent-runs/{run_id}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert client.get(f"/agent-runs/{run_id}").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/resume").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/cancel").json()["status"] == "cancelled"
+    assert client.post(f"/agent-runs/{run_id}/cancel", params={"client_id": "other"}).status_code == 404
 
 
 def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
@@ -1239,6 +1529,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "execution_window_start": "00:00",
             "execution_window_end": "23:59",
             "execution_window_timezone": "America/Vancouver",
+            "context_sources": ["ticket", "client"],
             "client_id": "acme",
         },
     )
@@ -1247,7 +1538,12 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_start"] == "00:00"
     assert created.json()["execution_window_end"] == "23:59"
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
-    assert client.get("/tools").json()[0]["access_mode"] == "read"
+    assert created.json()["context_sources"] == ["ticket", "client"]
+    tools_response = client.get("/tools")
+    assert tools_response.status_code == 200
+    tool_ids = {tool["id"] for tool in tools_response.json()}
+    assert {"syncro-ticket-lookup", "servicenow-incident-lookup", "autotask-ticket-lookup"} <= tool_ids
+    assert tools_response.json()[0]["access_mode"] == "read"
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
     run = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
@@ -1258,6 +1554,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
     assert detail.json()["state"]["final_result"]["status"] == "success"
     assert detail.json()["state"]["final_result"]["tool_id"] == "ticket-triage"
+    assert set(detail.json()["state"]["context"]) == {"ticket", "client"}
     assert detail.json()["revision_version"] == 1
     assert detail.json()["definition_revision"]["version"] == 1
     assert client.post(f"/agent-runs/{run.json()['run_id']}/retry").status_code == 409

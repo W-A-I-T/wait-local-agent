@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 import uvicorn
@@ -55,22 +55,31 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
+    draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_delete,
+    draft_m365_mail_message_move,
+    draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
+    draft_m365_managed_device_reboot,
     draft_m365_managed_device_retirement,
+    draft_m365_managed_device_sync,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
+    execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
+    update_connectwise_approval_fields,
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
+from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -80,6 +89,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupReadResponse,
     M365GraphLicenseReadResponse,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessageReadResponse,
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
@@ -106,7 +116,11 @@ from wait_local_agent.technician_chat import TechnicianChatParseError, parse_tec
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
-from wait_local_agent.workflows import list_workflow_templates, run_workflow_template
+from wait_local_agent.workflows import (
+    get_workflow_template,
+    list_workflow_templates,
+    run_workflow_template,
+)
 
 app = typer.Typer(help="WAIT Local Agent command line interface.")
 tickets_app = typer.Typer(help="Ticket intelligence commands.")
@@ -553,17 +567,114 @@ def technician_chat(
     message: str,
     ticket_id: Annotated[str | None, typer.Option("--ticket-id")] = None,
     client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    session_id: Annotated[str | None, typer.Option("--session-id")] = None,
+    new_session: Annotated[bool, typer.Option("--new-session")] = False,
 ) -> None:
+    if session_id and new_session:
+        raise typer.BadParameter("--session-id and --new-session cannot be combined")
+    settings = load_settings() if session_id or new_session else None
+    store = Store(settings.data_path) if settings is not None else None
+    session = None
+    if settings is not None:
+        if store is None:
+            raise RuntimeError("technician chat store was not initialized")
+        if not client_id:
+            raise typer.BadParameter("--client-id is required for persisted technician chat")
+        persisted_client_id = client_id
+        if new_session:
+            if ticket_id and store.get_ticket(ticket_id, persisted_client_id) is None:
+                raise typer.BadParameter("ticket not found in client scope")
+            session = store.create_technician_chat_session(
+                client_id=persisted_client_id,
+                principal_id="cli",
+                ticket_id=ticket_id,
+            )
+        else:
+            session = store.get_technician_chat_session(
+                session_id or "",
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
+            if session is None:
+                raise typer.BadParameter("technician chat session not found")
+            if session.status != "active":
+                raise typer.BadParameter("technician chat session is closed")
+            ticket_id = ticket_id or session.ticket_id
+        store.add_technician_chat_message(
+            session.id,
+            role="user",
+            message=message,
+            status="received",
+            ticket_id=ticket_id,
+            client_id=persisted_client_id,
+            principal_id="cli",
+        )
     try:
         command = parse_technician_message(message, ticket_id=ticket_id)
     except TechnicianChatParseError as exc:
+        if session is not None:
+            if store is None:
+                raise RuntimeError("technician chat store was not initialized") from exc
+            store.add_technician_chat_message(
+                session.id,
+                role="assistant",
+                message=str(exc),
+                status="failed",
+                ticket_id=ticket_id,
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
         raise typer.BadParameter(str(exc)) from exc
+    resolved_ticket_id = command.payload.get("ticket_id")
+    if session is not None and isinstance(resolved_ticket_id, str):
+        if store is None:
+            raise RuntimeError("technician chat store was not initialized")
+        if (
+            store.update_technician_chat_session_ticket(
+                session.id,
+                client_id=persisted_client_id,
+                ticket_id=resolved_ticket_id,
+                principal_id="cli",
+            )
+            is None
+        ):
+            raise typer.BadParameter("ticket not found in client scope")
     if command.action_id is None:
+        if session is not None:
+            if store is None:
+                raise RuntimeError("technician chat store was not initialized")
+            store.add_technician_chat_message(
+                session.id,
+                role="assistant",
+                message=command.reply,
+                status="help",
+                ticket_id=ticket_id,
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
+            typer.echo(f"session_id={session.id}")
         typer.echo(command.reply)
         return
-    settings = load_settings()
-    service = SmartActionService(Store(settings.data_path), settings)
+    if command.action_id in {"rmm-script-preview", "rmm-script-execute"} and not client_id:
+        raise typer.BadParameter("RMM script requests require --client-id for tenant scoping")
+    if settings is None:
+        settings = load_settings()
+        store = Store(settings.data_path)
+    if store is None:
+        raise RuntimeError("technician chat store was not initialized")
+    service = SmartActionService(store, settings)
     result = service.invoke(command.action_id, command.payload, "cli", client_id=client_id)
+    if session is not None:
+        store.add_technician_chat_message(
+            session.id,
+            role="assistant",
+            message=command.reply,
+            action_id=command.action_id,
+            status=result.status,
+            ticket_id=resolved_ticket_id if isinstance(resolved_ticket_id, str) else ticket_id,
+            client_id=persisted_client_id,
+            principal_id="cli",
+        )
     typer.echo(
         json.dumps(
             {
@@ -571,6 +682,7 @@ def technician_chat(
                 "message": command.reply,
                 "action_id": command.action_id,
                 "result": asdict(result),
+                **({"session_id": session.id} if session is not None else {}),
             },
             sort_keys=True,
         )
@@ -621,7 +733,8 @@ def list_approval_requests() -> None:
     for approval in _store().list_approval_requests():
         typer.echo(
             f"{approval.id} {approval.status} {approval.subject_id} "
-            f"{approval.action_type} {redact_text(approval.comment)}"
+            f"{approval.action_type} expires={approval.expires_at or '-'} "
+            f"{redact_text(approval.comment)}"
         )
 
 
@@ -650,7 +763,10 @@ def edit_approval_field(request_id: int, assignment: str) -> None:
         fields = {}
     fields[key.strip()] = value
     try:
-        updated = update_halopsa_approval_fields(store, request_id, fields)
+        if approval.action_type.startswith("connectwise."):
+            updated = update_connectwise_approval_fields(store, request_id, fields)
+        else:
+            updated = update_halopsa_approval_fields(store, request_id, fields)
     except (PermissionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"{updated.id} {updated.status} {updated.action_type} payload_updated=True")
@@ -674,6 +790,7 @@ def update_approval_request(
             store,
             settings,
             collector_service=CollectorService(store),
+            connectwise_client=_connectwise_client(),
         )
         try:
             approval = service.update_approval(
@@ -703,6 +820,13 @@ def update_approval_request(
     if status == "approved" and approval.action_type.startswith("halopsa."):
         try:
             approval = execute_halopsa_approval_request(store, _halopsa_client(), request_id)
+        except RuntimeError:
+            approval = store.get_approval_request(request_id) or approval
+    if status == "approved" and approval.action_type.startswith("connectwise."):
+        try:
+            approval = execute_connectwise_approval_request(
+                store, _connectwise_client(), request_id
+            )
         except RuntimeError:
             approval = store.get_approval_request(request_id) or approval
     if status == "approved" and approval.action_type.startswith("m365."):
@@ -936,6 +1060,44 @@ def draft_m365_managed_device_retirement_command(
     )
 
 
+@connectors_app.command("draft-m365-managed-device-sync")
+def draft_m365_managed_device_sync_command(
+    device_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_managed_device_sync(
+            _store(),
+            device_id=device_id,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-managed-device-reboot")
+def draft_m365_managed_device_reboot_command(
+    device_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_managed_device_reboot(
+            _store(),
+            device_id=device_id,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
 @connectors_app.command("draft-m365-mailbox-settings")
 def draft_m365_mailbox_settings_command(
     user_identity: str,
@@ -956,6 +1118,81 @@ def draft_m365_mailbox_settings_command(
             _store(),
             user_identity=user_identity,
             settings=parsed,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-mail-message-move")
+def draft_m365_mail_message_move_command(
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    destination_folder_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_mail_message_move(
+            _store(),
+            user_identity=user_identity,
+            source_folder_id=source_folder_id,
+            message_id=message_id,
+            destination_folder_id=destination_folder_id,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-mail-message-read-state")
+def draft_m365_mail_message_read_state_command(
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    is_read: Annotated[
+        bool, typer.Option("--is-read/--unread", help="Set the message read state.")
+    ] = True,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_mail_message_read_state(
+            _store(),
+            user_identity=user_identity,
+            source_folder_id=source_folder_id,
+            message_id=message_id,
+            is_read=is_read,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-mail-message-delete")
+def draft_m365_mail_message_delete_command(
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_mail_message_delete(
+            _store(),
+            user_identity=user_identity,
+            source_folder_id=source_folder_id,
+            message_id=message_id,
             client_id=client_id,
         )
     except ValueError as exc:
@@ -1114,6 +1351,58 @@ def connectwise_health() -> None:
     result = _connectwise_client().health()
     _audit_connectwise_cli_read("health", result.status, result.count)
     typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("connectwise-write-health")
+def connectwise_write_health() -> None:
+    result = _connectwise_client().write_health()
+    _store().add_audit_event("connectwise.write_health", "connectwise", result.status)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("draft-connectwise")
+def draft_connectwise(
+    ticket_id: str,
+    action_type: str,
+    field: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--field",
+            help="Field assignment as key=value. Repeat for multiple fields.",
+        ),
+    ] = None,
+) -> None:
+    fields: dict[str, object] = {}
+    for item in field or []:
+        key, separator, value = item.partition("=")
+        if not separator:
+            raise typer.BadParameter("fields must use key=value")
+        fields[key] = value
+    try:
+        draft = draft_connectwise_ticket_action(_store(), ticket_id, action_type, fields)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={draft.approval_request_id} "
+        f"ticket_id={draft.ticket_id} action_type={draft.action_type} status={draft.status}"
+    )
+
+
+@connectors_app.command("execute-connectwise")
+def execute_connectwise(request_id: int) -> None:
+    try:
+        approval = execute_connectwise_approval_request(
+            _store(), _connectwise_client(), request_id
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"{approval.id} {approval.action_type} ticket_id={approval.subject_id} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
 
 
 @connectors_app.command("connectwise-tickets")
@@ -1493,6 +1782,14 @@ def sharepoint_document(site_id: str, item_id: str) -> None:
     )
 
 
+@connectors_app.command("sharepoint-document-content")
+def sharepoint_document_content(site_id: str, item_id: str) -> None:
+    _print_sharepoint_response(
+        "documents.content",
+        _sharepoint_client().get_document_content(site_id, item_id),
+    )
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -1556,6 +1853,24 @@ def m365_mail_folders(
     )
 
 
+@connectors_app.command("m365-mail-messages")
+def m365_mail_messages(
+    identity: str,
+    folder_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    _print_m365_mail_message_response(
+        "mail-messages.list",
+        _m365_client().list_mail_messages(
+            identity=identity,
+            folder_id=folder_id,
+            cursor=cursor,
+            page_size=page_size if page_size is not None else load_settings().m365_page_size,
+        ),
+    )
+
+
 @connectors_app.command("m365-managed-devices")
 def m365_managed_devices(
     cursor: str | None = None,
@@ -1578,10 +1893,347 @@ def list_workflows() -> None:
         )
 
 
+@workflows_app.command("gallery")
+def list_workflow_gallery(client_id: str | None = None) -> None:
+    store = Store(load_settings().data_path)
+    for entry in store.list_template_gallery_entries(client_id=client_id):
+        typer.echo(
+            f"{entry.id} source={entry.source_template_id} version={entry.version} "
+            f"enabled={entry.enabled} client_id={entry.client_id or '-'} name={entry.name}"
+        )
+
+
+@workflows_app.command("gallery-add")
+def add_workflow_gallery(
+    source_template_id: str,
+    provenance: str,
+    display_name: str | None = None,
+    instructions: str = "",
+    client_id: str | None = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    template = get_workflow_template(source_template_id)
+    if template is None:
+        raise typer.BadParameter("workflow template not found", param_hint="source_template_id")
+    entry = store.create_template_gallery_entry(
+        template,
+        provenance=provenance,
+        name=display_name,
+        instructions=instructions,
+        client_id=client_id,
+    )
+    typer.echo(
+        f"id={entry.id} source={entry.source_template_id} version={entry.version} "
+        f"enabled={entry.enabled} client_id={entry.client_id or '-'}"
+    )
+
+
+@workflows_app.command("gallery-export")
+def export_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    entry = _store().get_template_gallery_entry(entry_id, client_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    typer.echo(json.dumps(_gallery_export_payload(entry), sort_keys=True, indent=2))
+
+
+@workflows_app.command("gallery-import")
+def import_workflow_gallery(
+    artifact_path: Path,
+    client_id: str | None = None,
+) -> None:
+    try:
+        if artifact_path.stat().st_size > 1_000_000:
+            raise ValueError("template artifact is too large")
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise typer.BadParameter(f"invalid template artifact: {exc}", param_hint="artifact_path") from exc
+    if (
+        not isinstance(artifact, dict)
+        or artifact.get("format") != "wait-local-agent.workflow-template"
+        or artifact.get("format_version") != 1
+    ):
+        raise typer.BadParameter("unsupported template artifact", param_hint="artifact_path")
+    source_template_id = artifact.get("source_template_id")
+    if not isinstance(source_template_id, str) or get_workflow_template(source_template_id) is None:
+        raise typer.BadParameter("workflow template source is unavailable", param_hint="artifact_path")
+    name = artifact.get("name")
+    description = artifact.get("description")
+    provenance = artifact.get("provenance")
+    instructions = artifact.get("instructions")
+    if not all(isinstance(value, str) for value in (name, description, provenance, instructions)):
+        raise typer.BadParameter("template artifact is missing editable fields", param_hint="artifact_path")
+    name = cast(str, name)
+    description = cast(str, description)
+    provenance = cast(str, provenance)
+    instructions = cast(str, instructions)
+    entry = _store().create_template_gallery_entry(
+        get_workflow_template(source_template_id),  # type: ignore[arg-type]
+        provenance=provenance,
+        client_id=client_id,
+        name=name,
+        description=description,
+        instructions=instructions,
+        enabled=False,
+    )
+    result = _gallery_export_payload(entry) | {"id": entry.id, "client_id": entry.client_id}
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+def _gallery_export_payload(entry) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.workflow-template",
+        "format_version": 1,
+        "source_template_id": entry.source_template_id,
+        "name": redact_text(entry.name),
+        "description": redact_text(entry.description),
+        "provenance": redact_text(entry.provenance),
+        "instructions": redact_text(entry.instructions),
+        "enabled": entry.enabled,
+    }
+
+
+@workflows_app.command("gallery-update")
+def update_workflow_gallery(
+    entry_id: str,
+    display_name: str | None = None,
+    description: str | None = None,
+    instructions: str | None = None,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.update_template_gallery_entry(
+            entry_id,
+            name=display_name,
+            description=description,
+            instructions=instructions,
+            client_id=client_id,
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled} name={entry.name}")
+
+
+@workflows_app.command("gallery-enable")
+def enable_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    _set_workflow_gallery_enabled(entry_id, True, client_id)
+
+
+@workflows_app.command("gallery-disable")
+def disable_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
+    _set_workflow_gallery_enabled(entry_id, False, client_id)
+
+
+def _set_workflow_gallery_enabled(entry_id: str, enabled: bool, client_id: str | None) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.update_template_gallery_entry(entry_id, enabled=enabled, client_id=client_id)
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled}")
+
+
+@workflows_app.command("gallery-revisions")
+def list_workflow_gallery_revisions(entry_id: str, client_id: str | None = None) -> None:
+    store = Store(load_settings().data_path)
+    revisions = store.list_template_gallery_revisions(entry_id, client_id)
+    if not revisions:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    for revision in revisions:
+        typer.echo(f"version={revision.version} created_at={revision.created_at}")
+
+
+@workflows_app.command("gallery-diff")
+def diff_workflow_gallery(
+    entry_id: str,
+    from_version: int,
+    to_version: int,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    entry = store.get_template_gallery_entry(entry_id, client_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    left = store.get_template_gallery_revision(entry_id, from_version, entry.client_id)
+    right = store.get_template_gallery_revision(entry_id, to_version, entry.client_id)
+    if left is None or right is None:
+        raise typer.BadParameter("template gallery revision not found")
+    left_definition = _safe_revision_definition(left.definition_json)
+    right_definition = _safe_revision_definition(right.definition_json)
+    changes = [
+        {
+            "field": field,
+            "before": left_definition.get(field),
+            "after": right_definition.get(field),
+        }
+        for field in sorted(set(left_definition) | set(right_definition))
+        if left_definition.get(field) != right_definition.get(field)
+    ]
+    typer.echo(
+        json.dumps(
+            {
+                "gallery_id": entry_id,
+                "from_version": left.version,
+                "to_version": right.version,
+                "changed": bool(changes),
+                "changes": changes,
+                "client_id": entry.client_id,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _safe_revision_definition(definition_json: str) -> dict[str, object]:
+    try:
+        value = json.loads(definition_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return redact_value(value)
+
+
+@workflows_app.command("gallery-restore")
+def restore_workflow_gallery_revision(
+    entry_id: str,
+    version: int,
+    client_id: str | None = None,
+) -> None:
+    store = Store(load_settings().data_path)
+    try:
+        entry = store.restore_template_gallery_revision(entry_id, version, client_id)
+    except KeyError as exc:
+        raise typer.BadParameter("template gallery revision not found") from exc
+    typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled} name={entry.name}")
+
+
+@workflows_app.command("gallery-run")
+def run_workflow_gallery(entry_id: str, ticket_id: str) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    entry = store.get_template_gallery_entry(entry_id)
+    if entry is None:
+        raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
+    if not entry.enabled:
+        raise typer.BadParameter("template gallery entry is disabled", param_hint="entry_id")
+    source_template = get_workflow_template(entry.source_template_id)
+    if source_template is None:
+        raise typer.BadParameter("source workflow template is unavailable", param_hint="entry_id")
+    run = run_workflow_template(
+        store,
+        entry.source_template_id,
+        ticket_id,
+        client_id=entry.client_id,
+        actor="cli",
+        trigger_source="cli_gallery",
+        tool_executor=SmartActionService(store, settings),
+        template_override=replace(source_template, name=entry.name, description=entry.description),
+        operator_instructions=entry.instructions,
+        template_version=entry.version,
+    )
+    _dispatch_cli_workflow_completion(store, settings, run)
+    typer.echo(
+        f"run_id={run.id} status={run.status} ticket_id={run.ticket_id} "
+        f"template_version={run.template_version}"
+    )
+
+
 @workflows_app.command("run")
 def run_workflow(template_id: str, ticket_id: str) -> None:
-    run = run_workflow_template(_store(), template_id, ticket_id, actor="cli", trigger_source="cli")
+    settings = load_settings()
+    store = Store(settings.data_path)
+    smart_action_service = SmartActionService(store, settings)
+    run = run_workflow_template(
+        store,
+        template_id,
+        ticket_id,
+        actor="cli",
+        trigger_source="cli",
+        tool_executor=smart_action_service,
+    )
+    _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
+
+
+@workflows_app.command("compare-runs")
+def compare_workflow_runs(
+    from_run_id: int,
+    to_run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    left = store.get_workflow_run(from_run_id, client_id=scoped_client_id)
+    right = store.get_workflow_run(to_run_id, client_id=scoped_client_id)
+    if left is None or right is None:
+        raise typer.BadParameter("workflow run not found")
+    typer.echo(json.dumps(_workflow_run_comparison_payload(left, right), sort_keys=True, indent=2))
+
+
+def _workflow_run_comparison_payload(left, right) -> dict[str, object]:
+    fields = (
+        "template_id",
+        "ticket_id",
+        "status",
+        "message",
+        "approval_request_id",
+        "template_version",
+        "client_id",
+    )
+    left_view = asdict(left)
+    right_view = asdict(right)
+    left_view["message"] = redact_text(left.message)
+    right_view["message"] = redact_text(right.message)
+    changes = [
+        {"field": field, "before": left_view[field], "after": right_view[field]}
+        for field in fields
+        if left_view[field] != right_view[field]
+    ]
+    return {
+        "from_run": left_view,
+        "to_run": right_view,
+        "changed": bool(changes),
+        "changes": changes,
+    }
+
+
+def _dispatch_cli_workflow_completion(store: Store, settings, run) -> None:
+    if run.status != "completed" or run.id is None or not run.ticket_id.strip():
+        return
+    agent_service = AgentService(store, settings, SmartActionService(store, settings))
+    dispatcher = EventDispatcher(store, agent_service)
+    payload: dict[str, object] = {
+        "workflow_run_id": str(run.id),
+        "workflow_template_id": run.template_id,
+        "status": run.status,
+    }
+    try:
+        dispatcher.dispatch(
+            event_type="workflow.completed",
+            entity_type="ticket",
+            entity_id=run.ticket_id,
+            payload=payload,
+            idempotency_key=f"workflow-completed:{run.id}",
+            client_id=run.client_id,
+            actor="cli",
+        )
+        store.add_audit_event(
+            "workflow.completion_dispatched",
+            str(run.id),
+            "workflow.completed event dispatched",
+            client_id=run.client_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+        store.add_audit_event(
+            "workflow.completion_dispatch_failed",
+            str(run.id),
+            redact_text(f"workflow.completed dispatch failed: {exc}"),
+            client_id=run.client_id,
+        )
 
 
 @agents_app.command("list")
@@ -1598,7 +2250,9 @@ def list_agents() -> None:
         )
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
-            f"enabled={definition.enabled} version={definition.version}{window}"
+            f"enabled={definition.enabled} version={definition.version}{window} "
+            f"context={','.join(definition.context_sources) or '-'} "
+            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'}"
         )
 
 
@@ -1684,6 +2338,14 @@ def invoke_smart_action(
         store,
         settings,
         collector_service=CollectorService(store),
+        connectwise_client=_connectwise_client(),
+        syncro_client=_syncro_client(),
+        servicenow_client=_servicenow_client(),
+        autotask_client=_autotask_client(),
+        itglue_client=_itglue_client(),
+        confluence_client=_confluence_client(),
+        sharepoint_client=_sharepoint_client(),
+        m365_client=_m365_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:
@@ -1777,6 +2439,8 @@ def show_execution(
             for artifact in store.list_execution_artifacts(run.id)
         ],
     }
+    payload.pop("metadata_json", None)
+    payload["metadata"] = _execution_cli_metadata_view(run)
     typer.echo(json.dumps(payload, sort_keys=True, indent=2))
 
 
@@ -1827,6 +2491,14 @@ def _execution_cli_step_view(step) -> dict[str, object]:
         "output": redact_value(step_output),
         "error_detail": redact_text(step.error_detail),
     }
+
+
+def _execution_cli_metadata_view(run) -> dict[str, object]:
+    try:
+        metadata = json.loads(run.metadata_json)
+    except json.JSONDecodeError:
+        metadata = {}
+    return cast(dict[str, object], redact_value(metadata)) if isinstance(metadata, dict) else {}
 
 
 @collectors_app.command("list")
@@ -2200,7 +2872,7 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
     _audit_hudu_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
     for item in response.items:
-        typer.echo(asdict(item))
+        typer.echo(redact_value(asdict(item)))
 
 
 def _print_connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> None:
@@ -2269,7 +2941,7 @@ def _print_itglue_response(read_type: str, response: ItGlueReadResponse) -> None
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
             },
             sort_keys=True,
             indent=2,
@@ -2287,7 +2959,7 @@ def _print_confluence_response(read_type: str, response: ConfluenceReadResponse)
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
                 "next_cursor": response.next_cursor,
             },
             sort_keys=True,
@@ -2306,7 +2978,7 @@ def _print_sharepoint_response(read_type: str, response: SharePointReadResponse)
         json.dumps(
             {
                 "result": asdict(response.result),
-                "items": [asdict(item) for item in response.items],
+                "items": [redact_value(asdict(item)) for item in response.items],
                 "next_cursor": response.next_cursor,
             },
             sort_keys=True,
@@ -2371,6 +3043,24 @@ def _print_m365_license_response(read_type: str, response: M365GraphLicenseReadR
 def _print_m365_mail_folder_response(
     read_type: str,
     response: M365GraphMailFolderReadResponse,
+) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_m365_mail_message_response(
+    read_type: str,
+    response: M365GraphMailMessageReadResponse,
 ) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(

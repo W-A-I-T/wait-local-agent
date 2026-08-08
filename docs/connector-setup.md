@@ -7,10 +7,10 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 | Gate | Default | Effect |
 | --- | --- | --- |
 | `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound PSA and documentation connector HTTP calls |
-| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
-| Approval request | pending | Required before any HaloPSA draft can execute |
+| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA and ConnectWise PSA write execution |
+| Approval request | pending | Required before any HaloPSA or ConnectWise PSA draft can execute |
 
-A fresh install can create HaloPSA drafts but cannot mutate HaloPSA until the operator enables both the write gate and the approval flow.
+A fresh install can create PSA drafts but cannot mutate HaloPSA or ConnectWise PSA until the operator enables both the write gate and the approval flow.
 
 ## API Authentication
 
@@ -175,6 +175,59 @@ execution, response sanitization, blocked HTTP, malformed responses, timeouts,
 and unauthorized/error responses. Live NinjaOne credentials are not required
 for the test suite.
 
+## Datto RMM
+
+The public Datto RMM adapter implements the shared RMM contract for bounded,
+tenant-scoped device and open-alert inventory plus component metadata. It uses
+the documented OAuth bearer API and requires a local client-to-site map.
+Component/device validation, approval-gated quick-job execution, and bounded
+job-status lookup are available through the shared RMM contract. Quick-job
+execution still requires a completed technician approval and
+`WAIT_ALLOW_WRITE_ACTIONS=true`. See the [Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
+
+Required settings:
+
+```text
+WAIT_DATTORMM_BASE_URL=https://your-datto-api-host/api
+WAIT_DATTORMM_ACCESS_TOKEN=
+WAIT_DATTORMM_SITE_MAP_JSON={"acme":"site-uid"}
+WAIT_DATTORMM_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_DATTORMM_SITE_MAP_JSON` maps each WAIT client ID to exactly one Datto
+site UID. Datto API responses are bounded to the configured page size and
+conflicting returned site identifiers are ignored. Credentials and provider
+site IDs never come from smart-action payloads. The adapter has mocked
+coverage for tenant mapping, scope filtering, bounded pagination parameters,
+safe errors, blocked HTTP, malformed responses, and approval-gated quick-job
+and status paths.
+
+## N-able N-central
+
+The N-central adapter is read-only and implements bounded tenant-scoped device,
+active-issue, and scheduled-task metadata reads through the shared RMM contract.
+It uses bearer authentication and an explicit WAIT client-to-organization-unit
+map. N-central task execution and execution-status lookup are unavailable.
+
+Required settings:
+
+```text
+WAIT_NCENTRAL_BASE_URL=https://your-ncentral-host
+WAIT_NCENTRAL_ACCESS_TOKEN=
+WAIT_NCENTRAL_ORG_UNIT_MAP_JSON={"acme":[100,101]}
+WAIT_NCENTRAL_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Every request requires a WAIT client ID whose organization-unit mapping is
+configured locally. Responses are filtered to the mapped IDs and requests are
+bounded to one GET page per endpoint. Credentials and provider IDs never come
+from smart-action payloads. The adapter does not issue writes, even when
+`WAIT_ALLOW_WRITE_ACTIONS=true`. See the [N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
+[active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
+and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
+
 ## Hudu
 
 ### Required settings
@@ -315,7 +368,9 @@ obtained through the operator's Microsoft identity flow. Token acquisition is
 outside the local agent and the token is never placed in URLs, query values, or
 action payloads. Its read surface issues only bounded `GET /users` and
 `GET /groups` requests plus selected-field `GET /subscribedSkus` and
-`GET /users/{id}/mailFolders` and `GET /deviceManagement/managedDevices`
+`GET /users/{id}/mailFolders`, selected-field
+`GET /users/{id}/mailFolders/{folder}/messages`, and
+`GET /deviceManagement/managedDevices`
 requests. User creation is a separate `POST /users` action and is disabled
 unless the write flag is enabled and an admin approves the request. Store its
 temporary password under a vault name beginning with `WAIT_M365_TEMP_`; the
@@ -328,6 +383,9 @@ mailbox data, or act on Intune devices. Approved group membership changes are
 a separate action using immutable group and user IDs; they require
 `GroupMember.ReadWrite.All` and support only explicit `add` or `remove`
 operations through the approval queue.
+Approved mailbox message moves are a separate admin-approved action using
+explicit mailbox, source-folder, message, and destination-folder IDs. They
+require `Mail.ReadWrite` and send only `destinationId` to Graph.
 User lookup accepts a user ID or user principal name; group lookup accepts a
 group ID, SMTP address, mail nickname, or exact display name. License context
 is tenant-level subscribed-SKU metadata with aggregate counts; per-user license
@@ -360,13 +418,39 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
+wait-local-agent connectors draft-m365-managed-device-sync device-1
+wait-local-agent connectors draft-m365-managed-device-reboot device-1
+wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
+wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
+wait-local-agent connectors draft-m365-mail-message-delete user-1 inbox-id message-id
 ```
 
 The API mirrors these commands under `/connectors/m365/health` and
 `/connectors/m365/users`, `/connectors/m365/groups`,
-`/connectors/m365/licenses`, `/connectors/m365/mail-folders`, and
-`/connectors/m365/managed-devices`.
+`/connectors/m365/licenses`, `/connectors/m365/mail-folders`,
+`/connectors/m365/mail-messages`, and `/connectors/m365/managed-devices`.
+Message moves are exposed through
+`POST /connectors/m365/mail-messages/move-drafts` with
+`user_identity`, `source_folder_id`, `message_id`, and
+`destination_folder_id`.
+Read-state changes are exposed through
+`POST /connectors/m365/mail-messages/read-state-drafts` with
+`user_identity`, `source_folder_id`, `message_id`, and the boolean `is_read`.
+Both actions require administrator approval before execution.
+Message deletion is exposed through
+`POST /connectors/m365/mail-messages/delete-drafts` with
+`user_identity`, `source_folder_id`, and `message_id`; it is also
+administrator-approved and does not expose permanent deletion.
+Managed-device sync is exposed through
+`POST /connectors/m365/managed-devices/sync-drafts` with `device_id`; it is
+administrator-approved, sends no request body, and does not expose wipe or
+delete.
+Managed-device reboot is exposed through
+`POST /connectors/m365/managed-devices/reboot-drafts` with `device_id`; it is
+administrator-approved, sends no request body, and does not expose wipe or
+delete. It requires the privileged managed-device Graph permission.
 Approved user creation is exposed through `POST /connectors/m365/users/drafts`
 and `POST /connectors/m365/approval-requests/{id}/execute`, or the CLI commands
 `connectors draft-m365-user` and `connectors execute-m365-user`. Approved
@@ -400,9 +484,10 @@ WAIT_CONNECTWISE_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The adapter uses the documented ConnectWise PSA REST read endpoints for tickets
-and companies. It normalizes only the fields needed by the local agent and has
-no mutation or credential-in-request-payload path.
+The adapter uses the ConnectWise PSA REST ticket and company surfaces. It
+normalizes only the fields needed by the local agent. Ticket writes use a
+bounded JSON-patch map and never accept arbitrary endpoints, fields, company
+identifiers, or credentials in request payloads.
 
 ### Validate and read
 
@@ -412,11 +497,27 @@ wait-local-agent connectors connectwise-health
 wait-local-agent connectors connectwise-tickets
 wait-local-agent connectors connectwise-ticket <ticket-id>
 wait-local-agent connectors connectwise-companies
+wait-local-agent connectors connectwise-write-health
 ```
 
 The API mirrors these commands under `/connectors/connectwise/health`,
 `/connectors/connectwise/tickets`, and `/connectors/connectwise/companies`.
 All routes remain viewer-authenticated and rate-limited.
+
+### Approved ticket updates
+
+```bash
+wait-local-agent connectors draft-connectwise CW-1002 update_status --field status_id=42
+wait-local-agent approvals show <request-id>
+wait-local-agent approvals update <request-id> approved 'approved by technician'
+wait-local-agent connectors execute-connectwise <request-id>
+```
+
+Live updates require both `WAIT_ALLOW_HTTP_PROBING=true` and
+`WAIT_ALLOW_WRITE_ACTIONS=true`. Supported action types are `update_status`,
+`assign_technician` (`owner_id` or `team_id`), and `update_ticket_fields`
+(`summary`, `description`, `status_id`, `priority_id`, `board_id`, `owner_id`,
+or `team_id`).
 
 ## Syncro
 

@@ -4,11 +4,15 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
+    DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    DEFAULT_EVENT_MAX_RETRIES,
+    MAX_APPROVAL_EXPIRY_SECONDS,
     AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
@@ -30,9 +34,13 @@ from wait_local_agent.models import (
     KnowledgeDocument,
     KnowledgeDocumentWrite,
     RestoreExercise,
+    RmmExecutionScope,
     ScheduledJob,
     SmartActionRun,
+    TechnicianChatMessage,
+    TechnicianChatSession,
     TemplateGalleryEntry,
+    TemplateGalleryRevision,
     Ticket,
     TicketNote,
     WorkflowRun,
@@ -54,6 +62,7 @@ if TYPE_CHECKING:
     from wait_local_agent.reports.models import GeneratedReport
 
 MAX_SEARCH_LIMIT = 25
+MAX_TECHNICIAN_CHAT_MESSAGES = 200
 
 
 class Store:
@@ -122,6 +131,45 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists technician_chat_sessions (
+                    id text primary key,
+                    client_id text not null,
+                    principal_id text not null,
+                    status text not null default 'active',
+                    ticket_id text,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists technician_chat_messages (
+                    id integer primary key autoincrement,
+                    session_id text not null,
+                    role text not null,
+                    message text not null,
+                    action_id text,
+                    status text not null,
+                    ticket_id text,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_technician_chat_sessions_scope
+                on technician_chat_sessions (client_id, principal_id, updated_at)
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_technician_chat_messages_session
+                on technician_chat_messages (session_id, id)
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists approval_requests (
                     id integer primary key autoincrement,
                     subject_id text not null,
@@ -136,7 +184,8 @@ class Store:
                     executed_at text not null default '',
                     execution_result_json text not null default '{}',
                     client_id text,
-                    approver_id text
+                    approver_id text,
+                    expires_at text
                 )
                 """
             )
@@ -195,7 +244,11 @@ class Store:
                     error_detail text not null default '',
                     received_at text not null,
                     processed_at text not null default '',
-                    client_id text
+                    client_id text,
+                    agent_attempts_json text not null default '{}',
+                    retry_count integer not null default 0,
+                    max_retries integer not null default 3,
+                    next_retry_at text not null default ''
                 )
                 """
             )
@@ -233,6 +286,19 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists rmm_execution_scopes (
+                    execution_id text not null,
+                    provider_id text not null,
+                    script_id text not null,
+                    device_id text not null,
+                    client_id text not null,
+                    created_at text not null,
+                    primary key (execution_id, provider_id, client_id)
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists template_gallery_entries (
                     id text primary key,
                     source_template_id text not null,
@@ -253,6 +319,19 @@ class Store:
             )
             connection.execute(
                 """
+                create table if not exists template_gallery_revisions (
+                    id integer primary key autoincrement,
+                    gallery_id text not null,
+                    version integer not null,
+                    definition_json text not null,
+                    created_at text not null,
+                    client_id text,
+                    unique(gallery_id, version)
+                )
+                """
+            )
+            connection.execute(
+                """
                 create table if not exists scheduled_jobs (
                     id integer primary key autoincrement,
                     template_id text not null,
@@ -267,7 +346,8 @@ class Store:
                     entity_id text,
                     schedule_type text not null default 'cron',
                     interval_seconds integer,
-                    run_at text
+                    run_at text,
+                    timezone text not null default 'UTC'
                 )
                 """
             )
@@ -293,9 +373,17 @@ class Store:
                     depends_on_agent_ids_json text not null default '[]',
                     execution_window_start text,
                     execution_window_end text,
-                    execution_window_timezone text not null default 'UTC'
+                    execution_window_timezone text not null default 'UTC',
+                    context_sources_json text not null default '[]',
+                    approval_expiry_seconds integer
                 )
                 """
+            )
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "context_sources_json",
+                "text not null default '[]'",
             )
             connection.execute(
                 """
@@ -372,7 +460,10 @@ class Store:
             self._ensure_column(connection, "audit_events", "approver_id", "text")
             self._ensure_column(connection, "approval_requests", "client_id", "text")
             self._ensure_column(connection, "approval_requests", "approver_id", "text")
+            self._ensure_column(connection, "approval_requests", "expires_at", "text")
+            self._backfill_approval_expiry(connection)
             self._ensure_column(connection, "workflow_runs", "client_id", "text")
+            self._ensure_column(connection, "workflow_runs", "template_version", "integer")
             self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
             self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
             self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
@@ -380,6 +471,36 @@ class Store:
             self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
             self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
             self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
+            self._ensure_column(
+                connection,
+                "scheduled_jobs",
+                "timezone",
+                "text not null default 'UTC'",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "agent_attempts_json",
+                "text not null default '{}'",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "retry_count",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "max_retries",
+                f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "next_retry_at",
+                "text not null default ''",
+            )
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -400,8 +521,12 @@ class Store:
                 "execution_window_timezone",
                 "text not null default 'UTC'",
             )
+            self._ensure_column(connection, "agent_definitions", "approval_expiry_seconds", "integer")
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
+            self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
+            self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
+            self._backfill_template_gallery_revisions(connection)
             connection.execute(
                 """
                 create table if not exists knowledge_chunks (
@@ -641,7 +766,8 @@ class Store:
                     status text not null,
                     started_at text not null,
                     finished_at text not null,
-                    trigger_source text not null default ''
+                    trigger_source text not null default '',
+                    metadata_json text not null default '{}'
                 )
                 """
             )
@@ -654,6 +780,7 @@ class Store:
                 ("started_at", "text not null default ''"),
                 ("finished_at", "text not null default ''"),
                 ("trigger_source", "text not null default ''"),
+                ("metadata_json", "text not null default '{}'"),
             ):
                 self._ensure_column(connection, "execution_runs", column_name, definition)
             connection.execute(
@@ -727,6 +854,92 @@ class Store:
             connection.execute(f"alter table {table_name} add column {column_name} {definition}")
 
     @staticmethod
+    def _backfill_approval_expiry(connection: sqlite3.Connection) -> None:
+        for row in connection.execute(
+            "select id, created_at from approval_requests where status = 'pending' and expires_at is null"
+        ).fetchall():
+            try:
+                created_at = datetime.fromisoformat(str(row["created_at"]))
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=UTC)
+                expires_at = (
+                    created_at.astimezone(UTC) + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)
+                ).isoformat()
+            except ValueError:
+                expires_at = (
+                    datetime.now(UTC) + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)
+                ).isoformat()
+            connection.execute(
+                "update approval_requests set expires_at = ? where id = ?",
+                (expires_at, int(row["id"])),
+            )
+
+    @staticmethod
+    def _expire_approval_request(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> sqlite3.Row:
+        if str(row["status"]) != "pending" or not _approval_expired(row["expires_at"]):
+            return row
+        now = utc_now()
+        request_id = int(row["id"])
+        subject_id = str(row["subject_id"])
+        action_type = str(row["action_type"])
+        approver_id = "system:approval-expiry"
+        connection.execute(
+            """
+            update approval_requests
+            set status = 'expired', comment = ?, updated_at = ?, approver_id = ?
+            where id = ? and status = 'pending'
+            """,
+            ("Approval expired", now, approver_id, request_id),
+        )
+        connection.execute(
+            """
+            update workflow_runs
+            set status = 'rejected', updated_at = ?
+            where approval_request_id = ?
+            """,
+            (now, request_id),
+        )
+        if action_type.startswith("smart_action:"):
+            connection.execute(
+                """
+                update smart_action_runs
+                set status = 'rejected', updated_at = ?
+                where approval_id = ? and status = 'pending_approval'
+                """,
+                (now, request_id),
+            )
+            self_audit_type = "smart_action.completed"
+            self_audit_detail = f"{action_type.removeprefix('smart_action:')} expired"
+        else:
+            self_audit_type = "approval_request.expired"
+            self_audit_detail = f"{action_type} approval expired"
+        client_id = str(row["client_id"]) if row["client_id"] is not None else None
+        Store._add_audit_event(
+            connection,
+            self_audit_type,
+            subject_id,
+            self_audit_detail,
+            client_id=client_id,
+            approver_id=approver_id,
+        )
+        Store._add_event_history(
+            connection,
+            "approval_request.expired",
+            subject_id,
+            "expired",
+            "Approval expired before execution",
+            _redact_json_text(str(row["payload_json"])),
+            client_id,
+        )
+        refreshed = connection.execute(
+            "select * from approval_requests where id = ?", (request_id,)
+        ).fetchone()
+        return refreshed or row
+
+    @staticmethod
     def _backfill_agent_revisions(connection: sqlite3.Connection) -> None:
         for row in connection.execute("select * from agent_definitions").fetchall():
             definition = _agent_definition_from_row(row)
@@ -742,6 +955,39 @@ class Store:
                     _agent_definition_snapshot(definition),
                     definition.updated_at,
                     _normalize_client_id(definition.client_id),
+                ),
+            )
+
+    @staticmethod
+    def _backfill_template_gallery_revisions(connection: sqlite3.Connection) -> None:
+        rows = connection.execute("select * from template_gallery_entries").fetchall()
+        for row in rows:
+            exists = connection.execute(
+                """
+                select 1 from template_gallery_revisions
+                where gallery_id = ? and version = ?
+                """,
+                (str(row["id"]), int(row["version"])),
+            ).fetchone()
+            if exists is not None:
+                continue
+            connection.execute(
+                """
+                insert into template_gallery_revisions
+                  (gallery_id, version, definition_json, created_at, client_id)
+                values (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row["id"]),
+                    int(row["version"]),
+                    _template_gallery_definition_json(
+                        name=_redact_text(str(row["name"])),
+                        description=_redact_text(str(row["description"])),
+                        instructions=_redact_text(str(row["instructions"])),
+                        enabled=bool(row["enabled"]),
+                    ),
+                    str(row["created_at"]),
+                    _normalize_client_id(row["client_id"]),
                 ),
             )
 
@@ -872,6 +1118,285 @@ class Store:
                 (ticket_id, normalized_client_id),
             ).fetchall()
         return [TicketNote(**dict(row)) for row in rows]
+
+    def create_technician_chat_session(
+        self,
+        *,
+        client_id: str,
+        principal_id: str,
+        ticket_id: str | None = None,
+    ) -> TechnicianChatSession:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip())
+        safe_ticket_id = ticket_id.strip() if isinstance(ticket_id, str) and ticket_id.strip() else None
+        if not normalized_client_id:
+            raise ValueError("technician chat sessions require a client scope")
+        if not safe_principal_id:
+            raise ValueError("technician chat sessions require a principal identity")
+        if safe_ticket_id and self.get_ticket(safe_ticket_id, normalized_client_id) is None:
+            raise LookupError(safe_ticket_id)
+        session_id = f"TCS-{uuid.uuid4().hex[:24].upper()}"
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into technician_chat_sessions
+                  (id, client_id, principal_id, status, ticket_id, created_at, updated_at)
+                values (?, ?, ?, 'active', ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_ticket_id,
+                    now,
+                    now,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.session.created",
+                session_id,
+                "Technician chat session created",
+                client_id=normalized_client_id,
+            )
+        session = self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=safe_principal_id,
+        )
+        if session is None:
+            raise RuntimeError("technician chat session was not persisted")
+        return session
+
+    def get_technician_chat_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from technician_chat_sessions
+                where id = ?
+                  and (? is null or client_id = ?)
+                  and (? is null or principal_id = ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_principal_id,
+                ),
+            ).fetchone()
+        return _technician_chat_session_from_row(row) if row else None
+
+    def list_technician_chat_sessions(
+        self,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[TechnicianChatSession]:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from technician_chat_sessions
+                where (? is null or client_id = ?)
+                  and (? is null or principal_id = ?)
+                order by updated_at desc, id desc
+                """,
+                (
+                    normalized_client_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_principal_id,
+                ),
+            ).fetchall()
+        return [_technician_chat_session_from_row(row) for row in rows]
+
+    def update_technician_chat_session_ticket(
+        self,
+        session_id: str,
+        *,
+        client_id: str,
+        ticket_id: str,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id or self.get_ticket(ticket_id, normalized_client_id) is None:
+            return None
+        existing = self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+        if existing is None or existing.status != "active":
+            return None
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update technician_chat_sessions
+                set ticket_id = ?, updated_at = ?
+                where id = ? and client_id = ?
+                """,
+                (ticket_id, now, session_id, normalized_client_id),
+            )
+        return self.get_technician_chat_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+
+    def close_technician_chat_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatSession | None:
+        existing = self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+        if existing is None:
+            return None
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update technician_chat_sessions
+                set status = 'closed', updated_at = ?
+                where id = ?
+                """,
+                (now, session_id),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.session.closed",
+                session_id,
+                "Technician chat session closed",
+                client_id=existing.client_id,
+            )
+        return self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+
+    def add_technician_chat_message(
+        self,
+        session_id: str,
+        *,
+        role: Literal["user", "assistant"],
+        message: str,
+        status: str,
+        action_id: str | None = None,
+        ticket_id: str | None = None,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> TechnicianChatMessage:
+        session = self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise LookupError(session_id)
+        if session.status != "active":
+            raise ValueError("technician chat session is closed")
+        if role not in {"user", "assistant"}:
+            raise ValueError("technician chat message role is invalid")
+        safe_message = _redact_text(message.strip())
+        safe_status = _redact_text(status.strip())
+        safe_action_id = _redact_text(action_id.strip()) if action_id else None
+        safe_ticket_id = ticket_id.strip() if isinstance(ticket_id, str) and ticket_id.strip() else None
+        if not safe_message or not safe_status:
+            raise ValueError("technician chat messages require message and status")
+        if len(safe_message) > 4000 or len(safe_status) > 80 or (
+            safe_action_id is not None and len(safe_action_id) > 120
+        ):
+            raise ValueError("technician chat message fields are too long")
+        now = utc_now()
+        with self._connect() as connection:
+            count = connection.execute(
+                "select count(*) from technician_chat_messages where session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+            if int(count) >= MAX_TECHNICIAN_CHAT_MESSAGES:
+                raise ValueError("technician chat session message limit reached")
+            cursor = connection.execute(
+                """
+                insert into technician_chat_messages
+                  (session_id, role, message, action_id, status, ticket_id, created_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    role,
+                    safe_message,
+                    safe_action_id,
+                    safe_status,
+                    safe_ticket_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                "update technician_chat_sessions set updated_at = ? where id = ?",
+                (now, session_id),
+            )
+            self._add_audit_event(
+                connection,
+                "technician_chat.message.recorded",
+                session_id,
+                f"Technician chat {role} message recorded",
+                client_id=session.client_id,
+            )
+            message_id = cursor.lastrowid
+        return TechnicianChatMessage(
+            id=message_id,
+            session_id=session_id,
+            role=role,
+            message=safe_message,
+            action_id=safe_action_id,
+            status=safe_status,
+            ticket_id=safe_ticket_id,
+            created_at=now,
+        )
+
+    def list_technician_chat_messages(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[TechnicianChatMessage]:
+        if self.get_technician_chat_session(
+            session_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        ) is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, session_id, role, message, action_id, status, ticket_id, created_at
+                from technician_chat_messages
+                where session_id = ?
+                order by id
+                limit ?
+                """,
+                (session_id, MAX_TECHNICIAN_CHAT_MESSAGES),
+            ).fetchall()
+        return [_technician_chat_message_from_row(row) for row in rows]
 
     def create_end_user_ticket(
         self,
@@ -1011,8 +1536,10 @@ class Store:
         payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_in_seconds: int = DEFAULT_APPROVAL_EXPIRY_SECONDS,
     ) -> ApprovalRequest:
         now = utc_now()
+        expires_at = _approval_expiry_at(now, expires_in_seconds)
         payload_json = _json_dumps(payload)
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
@@ -1027,11 +1554,22 @@ class Store:
                     comment,
                     created_at,
                     updated_at,
-                    client_id
+                    client_id,
+                    expires_at
                   )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject_id, action_type, payload_json, "pending", "", now, now, normalized_client_id),
+                (
+                    subject_id,
+                    action_type,
+                    payload_json,
+                    "pending",
+                    "",
+                    now,
+                    now,
+                    normalized_client_id,
+                    expires_at,
+                ),
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("approval request insert did not return an id")
@@ -1074,12 +1612,15 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            row = self._expire_approval_request(connection, row)
             current_status = str(row["status"])
             is_smart_action = str(row["action_type"]).startswith("smart_action:")
             if is_smart_action and _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
                 raise PermissionError("smart-action approvals must be updated through SmartActionService")
             if status not in {"pending", "approved", "rejected"}:
                 raise ValueError("approval status must be pending, approved, or rejected")
+            if current_status == "expired":
+                raise PermissionError("approval request has expired")
             if current_status != "pending" and not allow_completed:
                 raise PermissionError("approval request has already completed")
             connection.execute(
@@ -1132,6 +1673,9 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            row = self._expire_approval_request(connection, row)
+            if str(row["status"]) == "expired":
+                raise PermissionError("approval request has expired")
             if str(row["status"]) != "pending":
                 raise PermissionError("approval payload can only be edited while pending")
             connection.execute(
@@ -1173,6 +1717,7 @@ class Store:
         status: str,
         message: str,
         result: dict[str, object],
+        audit_event_type: str = "halopsa.write",
     ) -> ApprovalRequest:
         now = utc_now()
         result_json = _json_dumps(result)
@@ -1182,6 +1727,9 @@ class Store:
             ).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            row = self._expire_approval_request(connection, row)
+            if str(row["status"]) == "expired":
+                raise PermissionError("approval request has expired")
             connection.execute(
                 """
                 update approval_requests
@@ -1196,7 +1744,7 @@ class Store:
             detail = f"{action_type} execution {status}: {message}"
             self._add_audit_event(
                 connection,
-                "halopsa.write",
+                audit_event_type,
                 subject_id,
                 detail,
                 client_id=str(row["client_id"]) if row["client_id"] is not None else None,
@@ -1204,7 +1752,7 @@ class Store:
             )
             self._add_event_history(
                 connection,
-                "halopsa.write",
+                audit_event_type,
                 subject_id,
                 status,
                 message,
@@ -1221,6 +1769,8 @@ class Store:
             row = connection.execute(
                 "select * from approval_requests where id = ?", (request_id,)
             ).fetchone()
+            if row is not None:
+                row = self._expire_approval_request(connection, row)
         if row is None:
             return None
         payload = dict(row)
@@ -1231,6 +1781,7 @@ class Store:
 
     def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
         normalized_client_id = _normalize_client_id(client_id)
+        requests: list[ApprovalRequest] = []
         with self._connect() as connection:
             if normalized_client_id is None:
                 rows = connection.execute(
@@ -1241,13 +1792,13 @@ class Store:
                     "select * from approval_requests where client_id = ? order by id desc",
                     (normalized_client_id,),
                 ).fetchall()
-        requests: list[ApprovalRequest] = []
-        for row in rows:
-            payload = dict(row)
-            payload["comment"] = _redact_text(str(payload["comment"]))
-            payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
-            payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
-            requests.append(ApprovalRequest(**payload))
+            for row in rows:
+                row = self._expire_approval_request(connection, row)
+                payload = dict(row)
+                payload["comment"] = _redact_text(str(payload["comment"]))
+                payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
+                payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
+                requests.append(ApprovalRequest(**payload))
         return requests
 
     def add_audit_event(
@@ -1375,8 +1926,9 @@ class Store:
                 insert or ignore into event_deliveries
                   (idempotency_key, event_type, entity_type, entity_id, payload_json,
                    status, matched_agent_count, agent_ids_json, run_ids_json,
-                   error_detail, received_at, processed_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   error_detail, received_at, processed_at, client_id,
+                   agent_attempts_json, retry_count, max_retries, next_retry_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idempotency_key,
@@ -1392,6 +1944,10 @@ class Store:
                     received_at,
                     "",
                     normalized_client_id,
+                    "{}",
+                    0,
+                    DEFAULT_EVENT_MAX_RETRIES,
+                    "",
                 ),
             )
             created = cursor.rowcount == 1
@@ -1429,6 +1985,9 @@ class Store:
         agent_ids: list[str],
         run_ids: list[int],
         error_detail: str = "",
+        agent_attempts: dict[str, dict[str, object]] | None = None,
+        retry_count: int | None = None,
+        next_retry_at: str | None = None,
     ) -> EventDelivery:
         processed_at = utc_now()
         safe_error = _redact_text(error_detail)
@@ -1437,7 +1996,10 @@ class Store:
                 """
                 update event_deliveries
                 set status = ?, matched_agent_count = ?, agent_ids_json = ?,
-                    run_ids_json = ?, error_detail = ?, processed_at = ?
+                    run_ids_json = ?, error_detail = ?, processed_at = ?,
+                    agent_attempts_json = coalesce(?, agent_attempts_json),
+                    retry_count = coalesce(?, retry_count),
+                    next_retry_at = coalesce(?, next_retry_at)
                 where id = ?
                 """,
                 (
@@ -1447,6 +2009,9 @@ class Store:
                     _json_dumps_value(run_ids),
                     safe_error,
                     processed_at,
+                    _json_dumps_value(agent_attempts) if agent_attempts is not None else None,
+                    retry_count,
+                    next_retry_at,
                     delivery_id,
                 ),
             )
@@ -1456,6 +2021,91 @@ class Store:
         if delivery is None:
             raise RuntimeError("event delivery was not persisted")
         return delivery
+
+    def claim_event_delivery_retry(
+        self,
+        delivery_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> EventDelivery:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is not None:
+                claimed = connection.execute(
+                    """
+                    update event_deliveries
+                    set status = 'retrying', retry_count = retry_count + 1,
+                        error_detail = '', next_retry_at = ''
+                    where id = ? and client_id = ?
+                      and status = 'failed'
+                      and retry_count < max_retries
+                    """,
+                    (delivery_id, normalized_client_id),
+                )
+                lookup = connection.execute(
+                    """
+                    select status, retry_count, max_retries
+                    from event_deliveries
+                    where id = ? and client_id = ?
+                    """,
+                    (delivery_id, normalized_client_id),
+                )
+            else:
+                claimed = connection.execute(
+                    """
+                    update event_deliveries
+                    set status = 'retrying', retry_count = retry_count + 1,
+                        error_detail = '', next_retry_at = ''
+                    where id = ?
+                      and status = 'failed'
+                      and retry_count < max_retries
+                    """,
+                    (delivery_id,),
+                )
+                lookup = connection.execute(
+                    """
+                    select status, retry_count, max_retries
+                    from event_deliveries
+                    where id = ?
+                    """,
+                    (delivery_id,),
+                )
+            if claimed.rowcount != 1:
+                row = lookup.fetchone()
+                if row is None:
+                    raise KeyError(delivery_id)
+                if str(row["status"]) != "failed":
+                    raise ValueError("only failed event deliveries can be retried")
+                raise ValueError("event delivery retry limit reached")
+        delivery = self.get_event_delivery(delivery_id, normalized_client_id)
+        if delivery is None:
+            raise RuntimeError("event delivery was not persisted")
+        return delivery
+
+    def get_event_delivery_payload(
+        self,
+        delivery_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select payload_json from event_deliveries where id = ?",
+                    (delivery_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select payload_json from event_deliveries where id = ? and client_id = ?",
+                    (delivery_id, normalized_client_id),
+                ).fetchone()
+        if row is None:
+            raise KeyError(delivery_id)
+        payload = json.loads(str(row["payload_json"]))
+        if not isinstance(payload, dict):
+            raise ValueError("event delivery payload must be an object")
+        return cast(dict[str, object], payload)
 
     def get_event_delivery(self, delivery_id: int, client_id: str | None = None) -> EventDelivery | None:
         normalized_client_id = _normalize_client_id(client_id)
@@ -1484,6 +2134,36 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [_event_delivery_from_row(row) for row in rows]
+
+    def list_due_event_delivery_ids(
+        self,
+        *,
+        now: str | None = None,
+        limit: int = 10,
+        client_id: str | None = None,
+    ) -> list[int]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError("event delivery retry limit must be between 1 and 100")
+        due_at = now or utc_now()
+        normalized_client_id = _normalize_client_id(client_id)
+        clauses = [
+            "status = 'failed'",
+            "retry_count < max_retries",
+            "next_retry_at != ''",
+            "next_retry_at <= ?",
+        ]
+        params: list[object] = [due_at]
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select id from event_deliveries where {' and '.join(clauses)} "
+                "order by next_retry_at, id limit ?",  # nosec B608: static predicates only
+                params,
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     def has_event_agent_run(
         self,
@@ -1535,6 +2215,7 @@ class Store:
         approval_request_id: int | None = None,
         *,
         client_id: str | None = None,
+        template_version: int | None = None,
     ) -> WorkflowRun:
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
@@ -1549,10 +2230,11 @@ class Store:
                     message,
                     approval_request_id,
                     client_id,
+                    template_version,
                     created_at,
                     updated_at
                   )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -1561,6 +2243,7 @@ class Store:
                     message,
                     approval_request_id,
                     normalized_client_id,
+                    template_version,
                     now,
                     now,
                 ),
@@ -1580,6 +2263,7 @@ class Store:
                     "template_id": template_id,
                     "ticket_id": ticket_id,
                     "approval_request_id": approval_request_id,
+                    "template_version": template_version,
                 },
                 sort_keys=True,
             )
@@ -1596,11 +2280,18 @@ class Store:
             raise RuntimeError("workflow run was not persisted")
         return run
 
-    def get_workflow_run(self, run_id: int) -> WorkflowRun | None:
+    def get_workflow_run(self, run_id: int, client_id: str | None = None) -> WorkflowRun | None:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from workflow_runs where id = ?", (run_id,)
-            ).fetchone()
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from workflow_runs where id = ?", (run_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from workflow_runs where id = ? and client_id = ?",
+                    (run_id, normalized_client_id),
+                ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
 
     def list_workflow_runs(self, client_id: str | None = None) -> list[WorkflowRun]:
@@ -1622,36 +2313,62 @@ class Store:
         provenance: str,
         client_id: str | None = None,
         name: str | None = None,
+        instructions: str = "",
+        description: str | None = None,
+        enabled: bool = True,
     ) -> TemplateGalleryEntry:
         entry_id = f"gallery-{uuid.uuid4().hex}"
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         template_id = template.id
+        safe_name = _gallery_text(name or template.name, field="name", limit=120)
+        safe_description = _gallery_text(
+            description if description is not None else template.description,
+            field="description",
+            limit=2000,
+        )
+        safe_instructions = _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
+        safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
         with self._connect() as connection:
             connection.execute(
                 """
                 insert into template_gallery_entries
                   (id, source_template_id, name, trigger, description, action_type,
                    approval_required, risk_level, preview_fields_json, provenance,
-                   version, created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   instructions, enabled, version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
                     template_id,
-                    _redact_text(name or template.name),
+                    safe_name,
                     template.trigger,
-                    _redact_text(template.description),
+                    safe_description,
                     template.action_type,
                     int(template.approval_required),
                     template.risk_level,
                     _json_dumps_value(template.preview_fields),
-                    _redact_text(provenance),
+                    safe_provenance,
+                    safe_instructions,
+                    int(enabled),
                     1,
                     now,
                     now,
                     normalized_client_id,
                 ),
+            )
+            self._insert_template_gallery_revision(
+                connection,
+                entry_id,
+                1,
+                _template_gallery_definition_json(
+                    name=safe_name,
+                    description=safe_description,
+                    instructions=safe_instructions,
+                    enabled=bool(enabled),
+                ),
+                now,
+                normalized_client_id,
             )
             self._add_audit_event(
                 connection,
@@ -1664,6 +2381,108 @@ class Store:
         if entry is None:
             raise RuntimeError("template gallery entry was not persisted")
         return entry
+
+    def update_template_gallery_entry(
+        self,
+        entry_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        enabled: bool | None = None,
+        client_id: str | None = None,
+    ) -> TemplateGalleryEntry:
+        existing = self.get_template_gallery_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        next_name = (
+            _gallery_text(name, field="name", limit=120)
+            if name is not None
+            else existing.name
+        )
+        next_description = (
+            _gallery_text(description, field="description", limit=2000)
+            if description is not None
+            else existing.description
+        )
+        next_instructions = (
+            _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
+            if instructions is not None
+            else existing.instructions
+        )
+        next_enabled = existing.enabled if enabled is None else bool(enabled)
+        if (
+            next_name == existing.name
+            and next_description == existing.description
+            and next_instructions == existing.instructions
+            and next_enabled == existing.enabled
+        ):
+            return existing
+        next_version = existing.version + 1
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(existing.client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update template_gallery_entries
+                set name = ?, description = ?, instructions = ?, enabled = ?,
+                    version = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    next_name,
+                    next_description,
+                    next_instructions,
+                    int(next_enabled),
+                    next_version,
+                    now,
+                    entry_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(entry_id)
+            self._insert_template_gallery_revision(
+                connection,
+                entry_id,
+                next_version,
+                _template_gallery_definition_json(
+                    name=next_name,
+                    description=next_description,
+                    instructions=next_instructions,
+                    enabled=next_enabled,
+                ),
+                now,
+                normalized_client_id,
+            )
+            self._add_audit_event(
+                connection,
+                "template_gallery.updated",
+                entry_id,
+                f"template {existing.source_template_id} updated to version {next_version}",
+                client_id=normalized_client_id,
+            )
+        updated = self.get_template_gallery_entry(entry_id, normalized_client_id)
+        if updated is None:
+            raise RuntimeError("template gallery entry was not persisted")
+        return updated
+
+    @staticmethod
+    def _insert_template_gallery_revision(
+        connection: sqlite3.Connection,
+        gallery_id: str,
+        version: int,
+        definition_json: str,
+        created_at: str,
+        client_id: str | None,
+    ) -> None:
+        connection.execute(
+            """
+            insert into template_gallery_revisions
+              (gallery_id, version, definition_json, created_at, client_id)
+            values (?, ?, ?, ?, ?)
+            """,
+            (gallery_id, version, definition_json, created_at, _normalize_client_id(client_id)),
+        )
 
     def get_template_gallery_entry(
         self,
@@ -1707,6 +2526,66 @@ class Store:
                 ).fetchall()
         return [_template_gallery_entry_from_row(row) for row in rows]
 
+    def get_template_gallery_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> TemplateGalleryRevision | None:
+        entry = self.get_template_gallery_entry(entry_id, client_id)
+        if entry is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from template_gallery_revisions
+                where gallery_id = ? and version = ?
+                """,
+                (entry_id, version),
+            ).fetchone()
+        return _template_gallery_revision_from_row(row) if row else None
+
+    def list_template_gallery_revisions(
+        self,
+        entry_id: str,
+        client_id: str | None = None,
+    ) -> list[TemplateGalleryRevision]:
+        entry = self.get_template_gallery_entry(entry_id, client_id)
+        if entry is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from template_gallery_revisions
+                where gallery_id = ? order by version desc
+                """,
+                (entry_id,),
+            ).fetchall()
+        return [_template_gallery_revision_from_row(row) for row in rows]
+
+    def restore_template_gallery_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> TemplateGalleryEntry:
+        existing = self.get_template_gallery_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        revision = self.get_template_gallery_revision(entry_id, version, existing.client_id)
+        if revision is None:
+            raise KeyError(f"{entry_id}:{version}")
+        definition = _json_object_or_empty(revision.definition_json)
+        enabled_value = definition.get("enabled")
+        return self.update_template_gallery_entry(
+            entry_id,
+            name=_gallery_string_or_none(definition.get("name")),
+            description=_gallery_string_or_none(definition.get("description")),
+            instructions=_gallery_string_or_none(definition.get("instructions")),
+            enabled=enabled_value if isinstance(enabled_value, bool) else None,
+            client_id=existing.client_id,
+        )
+
     def create_agent_definition(
         self,
         definition: AgentDefinition,
@@ -1719,8 +2598,9 @@ class Store:
                    filters_json, enabled_tools_json, steps_json, max_steps,
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
                    run_once_per_entity, depends_on_agent_ids_json,
-                   execution_window_start, execution_window_end, execution_window_timezone)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   execution_window_start, execution_window_end, execution_window_timezone,
+                   context_sources_json, approval_expiry_seconds)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -1743,6 +2623,8 @@ class Store:
                     definition.execution_window_start,
                     definition.execution_window_end,
                     definition.execution_window_timezone,
+                    _json_dumps_value(definition.context_sources),
+                    definition.approval_expiry_seconds,
                 ),
             )
             self._add_audit_event(
@@ -1797,7 +2679,8 @@ class Store:
                     execution_timeout_seconds = ?, client_id = ?, version = ?, updated_at = ?,
                     run_once_per_entity = ?, depends_on_agent_ids_json = ?,
                     execution_window_start = ?, execution_window_end = ?,
-                    execution_window_timezone = ?
+                    execution_window_timezone = ?, context_sources_json = ?,
+                    approval_expiry_seconds = ?
                 where id = ?
                 """,
                 (
@@ -1819,6 +2702,8 @@ class Store:
                     definition.execution_window_start,
                     definition.execution_window_end,
                     definition.execution_window_timezone,
+                    _json_dumps_value(definition.context_sources),
+                    definition.approval_expiry_seconds,
                     definition.id,
                 ),
             )
@@ -2215,9 +3100,11 @@ class Store:
         approval_payload: dict[str, object],
         *,
         client_id: str | None = None,
+        expires_in_seconds: int = DEFAULT_APPROVAL_EXPIRY_SECONDS,
     ) -> tuple[SmartActionRun, ApprovalRequest]:
         """Create a pending run, approval, and audit trail in one transaction."""
         now = utc_now()
+        expires_at = _approval_expiry_at(now, expires_in_seconds)
         normalized_client_id = _normalize_client_id(client_id)
         output_json = _json_dumps(output)
         evidence_json = _json_dumps_value(evidence)
@@ -2253,8 +3140,8 @@ class Store:
                 """
                 insert into approval_requests
                   (subject_id, action_type, payload_json, status, comment,
-                   created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                   created_at, updated_at, client_id, expires_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(run_id),
@@ -2265,6 +3152,7 @@ class Store:
                     now,
                     now,
                     normalized_client_id,
+                    expires_at,
                 ),
             )
             if approval_cursor.lastrowid is None:
@@ -2408,6 +3296,63 @@ class Store:
                 ).fetchall()
         return [SmartActionRun(**dict(row)) for row in rows]
 
+    def record_rmm_execution_scope(
+        self,
+        execution_id: str,
+        provider_id: str,
+        script_id: str,
+        device_id: str,
+        client_id: str,
+    ) -> RmmExecutionScope:
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            raise ValueError("RMM execution scope requires a tenant")
+        scope = RmmExecutionScope(
+            execution_id=execution_id,
+            provider_id=provider_id,
+            script_id=script_id,
+            device_id=device_id,
+            client_id=normalized_client_id,
+            created_at=utc_now(),
+        )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or replace into rmm_execution_scopes
+                  (execution_id, provider_id, script_id, device_id, client_id, created_at)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scope.execution_id,
+                    scope.provider_id,
+                    scope.script_id,
+                    scope.device_id,
+                    scope.client_id,
+                    scope.created_at,
+                ),
+            )
+        return scope
+
+    def get_rmm_execution_scope(
+        self,
+        execution_id: str,
+        provider_id: str,
+        client_id: str,
+    ) -> RmmExecutionScope | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select execution_id, provider_id, script_id, device_id, client_id, created_at
+                from rmm_execution_scopes
+                where execution_id = ? and provider_id = ? and client_id = ?
+                """,
+                (execution_id, provider_id, normalized_client_id),
+            ).fetchone()
+        return RmmExecutionScope(**dict(row)) if row else None
+
     def get_workflow_run_for_approval(self, approval_request_id: int) -> WorkflowRun | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -2430,6 +3375,7 @@ class Store:
         schedule_type: str = "cron",
         interval_seconds: int | None = None,
         run_at: str | None = None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         params_json = json.dumps(params, sort_keys=True)
@@ -2451,9 +3397,10 @@ class Store:
                     entity_id,
                     schedule_type,
                     interval_seconds,
-                    run_at
+                    run_at,
+                    timezone
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_id,
@@ -2469,6 +3416,7 @@ class Store:
                     schedule_type,
                     interval_seconds,
                     run_at,
+                    timezone,
                 ),
             )
             if cursor.lastrowid is None:
@@ -2565,6 +3513,7 @@ class Store:
         cron: str,
         interval_seconds: int | None,
         run_at: str | None,
+        timezone: str = "UTC",
     ) -> ScheduledJob:
         now = utc_now()
         with self._connect() as connection:
@@ -2577,10 +3526,10 @@ class Store:
             connection.execute(
                 """
                 update scheduled_jobs
-                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, updated_at = ?
+                set cron = ?, schedule_type = ?, interval_seconds = ?, run_at = ?, timezone = ?, updated_at = ?
                 where id = ?
                 """,
-                (cron, schedule_type, interval_seconds, run_at, now, job_id),
+                (cron, schedule_type, interval_seconds, run_at, timezone, now, job_id),
             )
             client_id = str(row["client_id"]) if row["client_id"] is not None else None
             detail = f"{row['template_id']} {schedule_type} schedule updated"
@@ -3729,14 +4678,15 @@ class Store:
         trigger_source: str,
         *,
         client_id: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> ExecutionRun:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 insert into execution_runs
                   (run_kind, source_run_id, actor, client_id, status,
-                   started_at, finished_at, trigger_source)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                   started_at, finished_at, trigger_source, metadata_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_kind,
@@ -3747,6 +4697,7 @@ class Store:
                     started_at,
                     finished_at,
                     trigger_source,
+                    _json_dumps_value(metadata or {}),
                 ),
             )
             if cursor.lastrowid is None:
@@ -4075,6 +5026,213 @@ class Store:
             for row in rows
         ]
 
+    def approval_activity_counts(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, int]]:
+        """Return approval request counts by current decision status."""
+        clauses, params = _approval_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select status, count(*) as count
+                from approval_requests
+                {clauses}
+                group by status
+                order by status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [(str(row["status"]), int(row["count"])) for row in rows]
+
+    def execution_ticket_activity(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """Return distinct tickets referenced by scoped execution records.
+
+        Workflow and agent source rows provide normalized ticket/entity IDs.
+        Smart-action payloads are inspected only from redacted execution-step
+        inputs, and only the explicit ``ticket_id`` field is retained. The
+        current ticket status is returned so callers can label resolved tickets
+        without claiming when resolution occurred.
+        """
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        smart_prefix = " where" if not clauses else f"{clauses} and"
+        source_rows: list[sqlite3.Row]
+        with self._connect() as connection:
+            source_rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                    union all
+                    select 'agent', id, status, started_at, client_id, 'source' from agent_runs
+                ), all_runs as (
+                    select er.id as execution_run_id, er.run_kind, er.source_run_id,
+                           er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select null as execution_run_id, sr.run_kind, sr.source_run_id,
+                           sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       w.ticket_id as ticket_id
+                from all_runs er
+                join workflow_runs w
+                  on er.run_kind = 'workflow'
+                 and w.id = er.source_run_id
+                 and w.client_id is er.client_id
+                {clauses}
+                union all
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       a.entity_id as ticket_id
+                from all_runs er
+                join agent_runs a
+                  on er.run_kind = 'agent'
+                 and a.id = er.source_run_id
+                 and a.client_id is er.client_id
+                {clauses}
+                union all
+                select er.execution_run_id, er.run_kind, er.source_run_id, er.client_id,
+                       null as ticket_id
+                from all_runs er
+                {smart_prefix} er.run_kind = 'smart_action'
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params + params + params,
+            ).fetchall()
+            execution_ids = [
+                int(row["execution_run_id"])
+                for row in source_rows
+                if row["run_kind"] == "smart_action" and row["execution_run_id"] is not None
+            ]
+            if execution_ids:
+                placeholders = ", ".join("?" for _ in execution_ids)
+                step_rows = connection.execute(
+                    f"""
+                    select es.input_json, er.client_id
+                    from execution_steps es
+                    join execution_runs er on er.id = es.execution_run_id
+                    where es.execution_run_id in ({placeholders})
+                    """,  # nosec B608: placeholders are generated from integer IDs
+                    execution_ids,
+                ).fetchall()
+            else:
+                step_rows = []
+
+            candidates: set[tuple[str, str | None]] = {
+                (str(row["ticket_id"]), str(row["client_id"]) if row["client_id"] is not None else None)
+                for row in source_rows
+                if row["ticket_id"] is not None and str(row["ticket_id"]).strip()
+            }
+            for row in step_rows:
+                for ticket_id in _ticket_ids_from_json(str(row["input_json"])):
+                    candidates.add(
+                        (
+                            ticket_id,
+                            str(row["client_id"]) if row["client_id"] is not None else None,
+                        )
+                    )
+
+            if not candidates:
+                return []
+            resolved: set[tuple[str, str]] = set()
+            for ticket_id, candidate_client_id in candidates:
+                if candidate_client_id is None:
+                    ticket_row = connection.execute(
+                        "select id, status from tickets where id = ?",
+                        (ticket_id,),
+                    ).fetchone()
+                else:
+                    ticket_row = connection.execute(
+                        """
+                        select id, status from tickets
+                        where id = ? and client_id = ?
+                        """,
+                        (ticket_id, candidate_client_id),
+                    ).fetchone()
+                if ticket_row is not None:
+                    resolved.add((str(ticket_row["id"]), str(ticket_row["status"])))
+        return sorted(resolved)
+
+    def execution_workflow_activity(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> list[tuple[str, str, str, int]]:
+        """Return execution counts grouped by workflow/action identifier."""
+        clauses, params = _execution_range_filters(started_from, started_to, client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                with source_runs(run_kind, source_run_id, status, started_at, client_id, trigger_source) as (
+                    select 'workflow', id, status, created_at, client_id, 'source' from workflow_runs
+                    union all
+                    select 'smart_action', id, status, created_at, client_id, 'source' from smart_action_runs
+                    union all
+                    select 'agent', id, status, started_at, client_id, 'source' from agent_runs
+                ), all_runs as (
+                    select er.run_kind, er.source_run_id, er.status, er.started_at, er.client_id
+                    from execution_runs er
+                    union all
+                    select sr.run_kind, sr.source_run_id, sr.status, sr.started_at, sr.client_id
+                    from source_runs sr
+                    where not exists (
+                        select 1 from execution_runs recorded
+                        where recorded.run_kind = sr.run_kind
+                          and recorded.source_run_id = sr.source_run_id
+                    )
+                )
+                select er.run_kind,
+                       case er.run_kind
+                         when 'workflow' then w.template_id
+                         when 'smart_action' then sa.action_id
+                         when 'agent' then a.agent_id
+                         else 'unattributed'
+                       end as workflow_id,
+                       er.status,
+                       count(*) as count
+                from all_runs er
+                left join workflow_runs w
+                  on er.run_kind = 'workflow'
+                 and w.id = er.source_run_id
+                 and w.client_id is er.client_id
+                left join smart_action_runs sa
+                  on er.run_kind = 'smart_action'
+                 and sa.id = er.source_run_id
+                 and sa.client_id is er.client_id
+                left join agent_runs a
+                  on er.run_kind = 'agent'
+                 and a.id = er.source_run_id
+                 and a.client_id is er.client_id
+                {clauses}
+                group by er.run_kind, workflow_id, er.status
+                order by er.run_kind, workflow_id, er.status
+                """,  # nosec B608: static clause strings only; values are parameterized
+                params,
+            ).fetchall()
+        return [
+            (
+                str(row["run_kind"]),
+                str(row["workflow_id"] or "unattributed"),
+                str(row["status"]),
+                int(row["count"]),
+            )
+            for row in rows
+        ]
+
     def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
         if not canonical_id:
             return None
@@ -4346,9 +5504,38 @@ def _workflow_status_for_approval(status: str) -> str:
     return "pending_approval"
 
 
+def _approval_expiry_at(created_at: str, expires_in_seconds: int) -> str:
+    if (
+        isinstance(expires_in_seconds, bool)
+        or not isinstance(expires_in_seconds, int)
+        or expires_in_seconds < 1
+        or expires_in_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+    ):
+        raise ValueError(
+            f"approval expiry must be between 1 and {MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+        )
+    created = datetime.fromisoformat(created_at)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return (created.astimezone(UTC) + timedelta(seconds=expires_in_seconds)).isoformat()
+
+
+def _approval_expired(expires_at: object) -> bool:
+    if not isinstance(expires_at, str) or not expires_at.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC) <= datetime.now(UTC)
+
+
 def _scheduled_job_from_row(row: sqlite3.Row) -> ScheduledJob:
     payload = dict(row)
     payload["paused"] = bool(payload["paused"])
+    payload["timezone"] = str(payload.get("timezone") or "UTC")
     return ScheduledJob(**payload)
 
 
@@ -4359,6 +5546,9 @@ def _optional_text(value: object) -> str | None:
 def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload = dict(row)
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
+    payload["retry_count"] = int(payload.get("retry_count") or 0)
+    payload["max_retries"] = int(payload.get("max_retries") or DEFAULT_EVENT_MAX_RETRIES)
+    payload["next_retry_at"] = _optional_text(payload.get("next_retry_at"))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     payload["error_detail"] = _redact_text(str(payload["error_detail"]))
@@ -4385,6 +5575,13 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["execution_window_start"] = _optional_text(payload.get("execution_window_start"))
     payload["execution_window_end"] = _optional_text(payload.get("execution_window_end"))
     payload["execution_window_timezone"] = str(payload.get("execution_window_timezone") or "UTC")
+    raw_approval_expiry = payload.get("approval_expiry_seconds")
+    payload["approval_expiry_seconds"] = (
+        int(raw_approval_expiry) if raw_approval_expiry is not None else None
+    )
+    payload["context_sources"] = cast(
+        list[str], _json_list_or_empty(payload.pop("context_sources_json"))
+    )
     return AgentDefinition(**payload)
 
 
@@ -4412,10 +5609,55 @@ def _agent_definition_revision_from_row(row: sqlite3.Row) -> AgentDefinitionRevi
 def _template_gallery_entry_from_row(row: sqlite3.Row) -> TemplateGalleryEntry:
     payload = dict(row)
     payload["approval_required"] = bool(payload["approval_required"])
+    payload["enabled"] = bool(payload["enabled"])
     payload["preview_fields_json"] = _redact_json_text(str(payload["preview_fields_json"]))
     payload["provenance"] = _redact_text(str(payload["provenance"]))
+    payload["instructions"] = _redact_text(str(payload["instructions"]))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return TemplateGalleryEntry(**payload)
+
+
+def _template_gallery_revision_from_row(row: sqlite3.Row) -> TemplateGalleryRevision:
+    payload = dict(row)
+    payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return TemplateGalleryRevision(**payload)
+
+
+def _template_gallery_definition_json(
+    *,
+    name: str,
+    description: str,
+    instructions: str,
+    enabled: bool,
+) -> str:
+    return _json_dumps_value(
+        {
+            "name": name,
+            "description": description,
+            "instructions": instructions,
+            "enabled": enabled,
+        }
+    )
+
+
+def _gallery_text(
+    value: str,
+    *,
+    field: str,
+    limit: int,
+    allow_empty: bool = False,
+) -> str:
+    normalized = _redact_text(value.strip())
+    if not normalized and not allow_empty:
+        raise ValueError(f"template gallery {field} must not be empty")
+    if len(normalized) > limit:
+        raise ValueError(f"template gallery {field} must be at most {limit} characters")
+    return normalized
+
+
+def _gallery_string_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _agent_definition_snapshot(definition: AgentDefinition) -> str:
@@ -4437,6 +5679,8 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "execution_window_start": definition.execution_window_start,
             "execution_window_end": definition.execution_window_end,
             "execution_window_timezone": definition.execution_window_timezone,
+            "context_sources": definition.context_sources,
+            "approval_expiry_seconds": definition.approval_expiry_seconds,
         }
     )
 
@@ -4499,6 +5743,24 @@ def _event_history_from_row(row: sqlite3.Row) -> EventHistoryEntry:
     return EventHistoryEntry(**payload)
 
 
+def _technician_chat_session_from_row(row: sqlite3.Row) -> TechnicianChatSession:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id")) or ""
+    payload["principal_id"] = _redact_text(str(payload.get("principal_id") or ""))
+    payload["ticket_id"] = _optional_text(payload.get("ticket_id"))
+    payload["status"] = _redact_text(str(payload.get("status") or ""))
+    return TechnicianChatSession(**payload)
+
+
+def _technician_chat_message_from_row(row: sqlite3.Row) -> TechnicianChatMessage:
+    payload = dict(row)
+    payload["message"] = _redact_text(str(payload.get("message") or ""))
+    payload["action_id"] = _optional_text(payload.get("action_id"))
+    payload["ticket_id"] = _optional_text(payload.get("ticket_id"))
+    payload["status"] = _redact_text(str(payload.get("status") or ""))
+    return TechnicianChatMessage(**payload)
+
+
 def _execution_run_from_row(row: sqlite3.Row) -> ExecutionRun:
     return ExecutionRun(**dict(row))
 
@@ -4536,6 +5798,49 @@ def _execution_range_filters(
         params.append(started_to)
     where = f" where {' and '.join(clauses)}" if clauses else ""
     return where, params
+
+
+def _approval_range_filters(
+    started_from: str | None,
+    started_to: str | None,
+    client_id: str | None,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    normalized_client_id = _normalize_client_id(client_id)
+    if normalized_client_id is not None:
+        clauses.append("client_id = ?")
+        params.append(normalized_client_id)
+    if started_from:
+        clauses.append("date(created_at) >= date(?)")
+        params.append(started_from)
+    if started_to:
+        clauses.append("date(created_at) <= date(?)")
+        params.append(started_to)
+    return (f"where {' and '.join(clauses)}" if clauses else ""), params
+
+
+def _ticket_ids_from_json(payload: str) -> set[str]:
+    try:
+        value = json.loads(payload)
+    except json.JSONDecodeError:
+        return set()
+
+    ticket_ids: set[str] = set()
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            candidate = node.get("ticket_id")
+            if isinstance(candidate, str) and candidate.strip():
+                ticket_ids.add(candidate.strip())
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return ticket_ids
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

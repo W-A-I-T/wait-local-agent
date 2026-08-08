@@ -19,6 +19,7 @@ from wait_local_agent.models import ConnectorReadResult
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 MAX_PAGE = 1_000_000
+MAX_DOCUMENT_CONTENT_LENGTH = 20_000
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ItGlueDocument:
     folder_id: str
     updated_at: str
     url: str
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,16 @@ Normalizer = Callable[
 
 class ItGlueClientProtocol(Protocol):
     def health(self) -> ConnectorReadResult:
+        ...
+
+    def list_documents(
+        self,
+        organization_id: str,
+        *,
+        folder_id: str | None = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> ItGlueReadResponse:
         ...
 
 
@@ -328,6 +340,7 @@ def _normalize_document(row: Mapping[str, object]) -> ItGlueDocument | None:
     if not item_id:
         return None
     attributes = _attributes(row)
+    content = _string_value(attributes, "content")[:MAX_DOCUMENT_CONTENT_LENGTH]
     return ItGlueDocument(
         id=item_id,
         name=_string_value(attributes, "name", "title"),
@@ -335,6 +348,7 @@ def _normalize_document(row: Mapping[str, object]) -> ItGlueDocument | None:
         folder_id=_string_value(attributes, "document-folder-id", "document_folder_id"),
         updated_at=_string_value(attributes, "updated-at", "updated_at"),
         url=_string_value(attributes, "resource-url", "resource_url", "url"),
+        content=content,
     )
 
 

@@ -7,26 +7,52 @@ from types import SimpleNamespace
 import pytest
 
 from wait_local_agent.collectors import CollectorPreview
-from wait_local_agent.models import HaloTicket, HuduArticle, SourceReference, Ticket
+from wait_local_agent.confluence import ConfluencePage
+from wait_local_agent.itglue import ItGlueDocument
+from wait_local_agent.m365_graph import (
+    M365GraphGroup,
+    M365GraphGroupReadResponse,
+    M365GraphLicenseReadResponse,
+    M365GraphMailFolder,
+    M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageReadResponse,
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
+    M365GraphReadResponse,
+    M365GraphSubscribedSku,
+    M365GraphUser,
+)
+from wait_local_agent.models import ConnectorReadResult, HaloTicket, HuduArticle, SourceReference, Ticket
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import LocalCollectorRmmAdapter
+from wait_local_agent.sharepoint import SharePointDocument
 from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
+    AutotaskTicketLookupAction,
     CollectorPreviewAction,
+    ConfluenceDocumentationSearchAction,
+    ConnectWiseTicketLookupAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     HaloPSATicketLookupAction,
     HuduDocumentationSearchAction,
+    ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
     M365IdentityLookupAction,
+    M365LiveContextAction,
     RmmDeviceLookupAction,
+    ServiceNowIncidentLookupAction,
+    SharePointDocumentationContentAction,
+    SharePointDocumentationSearchAction,
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
     SuggestResolutionAction,
+    SyncroTicketLookupAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
@@ -228,17 +254,190 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
                 items=[HaloTicket(ticket_id, "Remote ticket", "Open", "P2", "acme", "Acme")],
             )
         ),
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    {
+                        "id": ticket_id,
+                        "summary": "Remote ticket",
+                        "company_id": "acme-company",
+                    }
+                ],
+            )
+        ),
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": ticket_id, "subject": "Remote ticket", "customer_id": "acme"}],
+            )
+        ),
+        servicenow_client=SimpleNamespace(
+            get_incident=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"sys_id": ticket_id, "short_description": "Remote incident"}],
+            )
+        ),
+        autotask_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": ticket_id, "title": "Remote ticket", "company_id": "acme"}],
+            )
+        ),
+        itglue_client=SimpleNamespace(
+            list_documents=lambda organization_id, folder_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[ItGlueDocument(
+                    "doc-1",
+                    "VPN runbook",
+                    organization_id,
+                    "folder-1",
+                    "today",
+                    "https://itglue",
+                    "MFA reset token=secret",
+                )],
+            )
+        ),
+        confluence_client=SimpleNamespace(
+            list_pages=lambda space_id, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    ConfluencePage(
+                        "page-1", "VPN runbook", space_id, "current", "3", "today",
+                        "https://confluence", "MFA reset token=secret",
+                    )
+                ],
+            )
+        ),
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda site_id, parent_item_id=None, cursor=None, page_size=20: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[
+                    SharePointDocument(
+                        "doc-1", "VPN runbook", site_id, "root", 10, "today",
+                        "https://sharepoint", False,
+                    )
+                ],
+            ),
+            get_document_content=lambda site_id, item_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[SharePointDocument(
+                    item_id, "VPN runbook", site_id, "root", 10, "today",
+                    "https://sharepoint", False, True, "MFA reset token=secret",
+                )],
+            ),
+        ),
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: M365GraphReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphUser("user-1", "Alice", identity, "alice@example.test", True, "IT", "Ops")],
+            ),
+            list_groups=lambda identity, page_size: M365GraphGroupReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphGroup("group-1", "IT", "it@example.test", "it", "", True, True, ())],
+            ),
+            list_subscribed_skus=lambda: M365GraphLicenseReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphSubscribedSku("sku-1", "sku-1", "BUSINESS", "Enabled", "User", 1, 2, 0, 0, 0)],
+            ),
+            list_mail_folders=lambda identity, page_size: M365GraphMailFolderReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [M365GraphMailFolder("folder-1", "Inbox", "", 0, 1, 0, False)],
+            ),
+            list_mail_messages=lambda identity, folder_id, page_size: M365GraphMailMessageReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [
+                    M365GraphMailMessage(
+                        "message-1", "VPN issue", "Adele", "adele@example.test",
+                        "today", False, True, "high",
+                    )
+                ],
+            ),
+            list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [
+                    M365GraphManagedDevice(
+                        "device-1", "user-1", "Laptop", "company", "", "", "Windows",
+                        "compliant", "mdm", "11", True, "registered", True,
+                        "alice@example.test", "Alice", "Model", "Maker",
+                    )
+                ],
+            ),
+        ),
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
-                items=[HuduArticle("article-1", "VPN setup", company_id, "folder-1", "2026-08-01", "https://hudu")],
+                items=[HuduArticle(
+                    "article-1",
+                    "VPN setup",
+                    company_id,
+                    "folder-1",
+                    "2026-08-01",
+                    "https://hudu",
+                    "MFA reset instructions token=secret",
+                )],
             )
         ),
     )
     halopsa = HaloPSATicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    connectwise = ConnectWiseTicketLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
+    syncro = SyncroTicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    servicenow = ServiceNowIncidentLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
+    autotask = AutotaskTicketLookupAction().run(
+        connector_context, {"ticket_id": "TCK-1001"}
+    )
+    itglue = ItGlueDocumentationSearchAction().run(
+        replace(connector_context, client_id="org-1"),
+        {"query": "vpn", "organization_id": "org-1"},
+    )
+    itglue_content = ItGlueDocumentationSearchAction().run(
+        replace(connector_context, client_id="org-1"),
+        {"query": "mfa", "organization_id": "org-1"},
+    )
+    confluence = ConfluenceDocumentationSearchAction().run(
+        replace(connector_context, client_id="space-1"),
+        {"query": "vpn", "space_id": "space-1"},
+    )
+    confluence_content = ConfluenceDocumentationSearchAction().run(
+        connector_context,
+        {"query": "mfa", "space_id": "acme"},
+    )
+    sharepoint = SharePointDocumentationSearchAction().run(
+        replace(connector_context, client_id="site-1"),
+        {"query": "vpn", "site_id": "site-1"},
+    )
+    sharepoint_content = SharePointDocumentationContentAction().run(
+        replace(connector_context, client_id="site-1"),
+        {"site_id": "site-1", "item_id": "doc-1"},
+    )
+    m365_user = M365LiveContextAction().run(
+        connector_context, {"resource": "user", "identity": "alice@example.test"}
+    )
+    m365_group = M365LiveContextAction().run(
+        connector_context, {"resource": "group", "identity": "it"}
+    )
+    m365_license = M365LiveContextAction().run(connector_context, {"resource": "licenses"})
+    m365_mail = M365LiveContextAction().run(
+        connector_context, {"resource": "mailbox_folders", "identity": "alice@example.test"}
+    )
+    m365_messages = M365LiveContextAction().run(
+        connector_context,
+        {"resource": "mail_messages", "identity": "alice@example.test", "folder_id": "inbox"},
+    )
+    m365_device = M365LiveContextAction().run(
+        connector_context, {"resource": "managed_devices"}
+    )
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
         {"query": "vpn", "company_id": "acme"},
+    )
+    hudu_content = HuduDocumentationSearchAction().run(
+        connector_context,
+        {"query": "mfa", "company_id": "acme"},
     )
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
@@ -257,6 +456,20 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == identity.status
         == rmm.status
         == halopsa.status
+        == connectwise.status
+        == syncro.status
+        == servicenow.status
+        == autotask.status
+        == itglue.status
+        == confluence.status
+        == sharepoint.status
+        == sharepoint_content.status
+        == m365_user.status
+        == m365_group.status
+        == m365_license.status
+        == m365_mail.status
+        == m365_messages.status
+        == m365_device.status
         == hudu.status
         == quality.status
         == sentiment.status
@@ -273,7 +486,35 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert rmm.output["count"] == 1
     assert rmm.output["devices"][0]["device_id"] == "agent:sentinelone"  # type: ignore[index]
     assert halopsa.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert connectwise.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert syncro.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
+    assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert itglue.output["documents"][0]["name"] == "VPN runbook"  # type: ignore[index]
+    assert itglue_content.status == "success"
+    assert itglue_content.output["documents"][0]["content"] == "MFA reset token=[redacted]"  # type: ignore[index]
+    confluence_pages = confluence.output["pages"]
+    assert isinstance(confluence_pages, list)
+    confluence_page = confluence_pages[0]
+    assert isinstance(confluence_page, dict)
+    assert confluence_page["title"] == "VPN runbook"
+    assert confluence_page["body"] == "MFA reset token=[redacted]"
+    assert confluence_content.status == "success"
+    assert confluence_content.output["pages"][0]["body"] == "MFA reset token=[redacted]"  # type: ignore[index]
+    sharepoint_documents = sharepoint.output["documents"]
+    assert isinstance(sharepoint_documents, list)
+    assert isinstance(sharepoint_documents[0], dict)
+    assert sharepoint_documents[0]["name"] == "VPN runbook"
+    assert sharepoint_content.output["document"]["content"] == "MFA reset token=[redacted]"  # type: ignore[index]
+    assert m365_user.output["count"] == 1
+    assert m365_group.output["count"] == 1
+    assert m365_license.output["count"] == 1
+    assert m365_mail.output["count"] == 1
+    assert m365_messages.output["count"] == 1
+    assert m365_device.output["count"] == 1
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
+    assert hudu_content.status == "success"
+    assert hudu_content.output["articles"][0]["content"] == "MFA reset instructions token=[redacted]"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"
@@ -305,6 +546,13 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
         HaloPSATicketLookupAction(),
+        SyncroTicketLookupAction(),
+        ServiceNowIncidentLookupAction(),
+        AutotaskTicketLookupAction(),
+        ItGlueDocumentationSearchAction(),
+        ConfluenceDocumentationSearchAction(),
+        SharePointDocumentationSearchAction(),
+        M365LiveContextAction(),
         HuduDocumentationSearchAction(),
         TicketQualityAction(),
         TicketSentimentAction(),
@@ -450,6 +698,13 @@ def test_service_guards_registry_and_unauthorized_paths(settings) -> None:
 
     unauthorized = service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, None)
     assert unauthorized.status == "not_authorized" and unauthorized.run_id is not None
+    with pytest.raises(ValueError, match="approval expiry"):
+        service.invoke(
+            "dispatch-suggestion",
+            {"ticket_id": "TCK-1001"},
+            "requester",
+            approval_expiry_seconds=0,
+        )
     assert service.complete_approval(9999) is None
     legacy = store.create_approval_request("TCK-1", "ticket.assign", {})
     assert service.complete_approval(legacy.id or 0, approver="tech", approver_role=Role.TECHNICIAN) is None
@@ -472,6 +727,26 @@ def test_service_guards_registry_and_unauthorized_paths(settings) -> None:
 
     with pytest.raises(ValueError, match="lowercase"):
         duplicate.register(BadAction())
+    invalid_expiry = SmartActionManifest(
+        action_id="needs-approval",
+        title="Needs approval",
+        description="",
+        kind="deterministic",
+        input_schema={},
+        output_schema={},
+        requires_approval=True,
+        estimated_minutes_saved=0,
+        approval_expiry_seconds=0,
+    )
+
+    class InvalidExpiryAction:
+        manifest = invalid_expiry
+
+        def run(self, context, payload):
+            return ActionResult(status="success")
+
+    with pytest.raises(ValueError, match="approval expiry"):
+        duplicate.register(InvalidExpiryAction())
     duplicate.clear()
     assert duplicate.list() == []
 
@@ -544,22 +819,31 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "autotask-ticket-lookup",
         "collector-preview",
         "communication-draft",
         "communication-send",
+        "confluence-documentation-search",
+        "connectwise-ticket-lookup",
         "dispatch-suggestion",
         "find-similar-tickets",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
+        "itglue-documentation-search",
         "knowledge-search",
         "m365-identity-lookup",
+        "m365-live-context",
         "rmm-alert-lookup",
         "rmm-device-lookup",
         "rmm-script-catalog",
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "servicenow-incident-lookup",
+        "sharepoint-document-content",
+        "sharepoint-documentation-search",
         "suggest-resolution",
+        "syncro-ticket-lookup",
         "ticket-escalation",
         "ticket-quality",
         "ticket-sentiment",
@@ -590,6 +874,106 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
                 items=[HuduArticle("article-1", "Foreign", "beta", "folder-1", "", "")],
+            )
+        ),
+    )
+    blocked_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    malformed_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1), items={}
+            )
+        ),
+    )
+    unavailable_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: (_ for _ in ()).throw(RuntimeError("offline"))
+        ),
+    )
+    empty_connectwise = replace(
+        context,
+        connectwise_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=0), items=[]
+            )
+        ),
+    )
+    blocked_syncro = replace(
+        context,
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    malformed_servicenow = replace(
+        context,
+        servicenow_client=SimpleNamespace(
+            get_incident=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items={},
+            )
+        ),
+    )
+    unavailable_autotask = replace(
+        context,
+        autotask_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    mismatched_syncro = replace(
+        context,
+        syncro_client=SimpleNamespace(
+            get_ticket=lambda ticket_id: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": "different-ticket", "subject": "Unexpected"}],
+            )
+        ),
+    )
+    blocked_itglue = replace(
+        context,
+        itglue_client=SimpleNamespace(
+            list_documents=lambda organization_id, folder_id, page, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    blocked_confluence = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda space_id, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    blocked_sharepoint = replace(
+        context,
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda site_id, parent_item_id=None, cursor=None, page_size=20: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
+            )
+        ),
+    )
+    blocked_m365 = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="reads disabled", count=0),
+                items=[],
             )
         ),
     )
@@ -645,6 +1029,49 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
     monkeypatch.setattr(store, "list_canonical_assets", lambda *, client_id=None: malformed_assets)
 
     assert HaloPSATicketLookupAction().run(foreign_halo, {"ticket_id": "TCK-1001"}).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        blocked_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        malformed_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        unavailable_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ConnectWiseTicketLookupAction().run(
+        empty_connectwise, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert SyncroTicketLookupAction().run(
+        blocked_syncro, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert ServiceNowIncidentLookupAction().run(
+        malformed_servicenow, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    assert AutotaskTicketLookupAction().run(
+        unavailable_autotask, {"ticket_id": "TCK-1001"}
+    ).status == "failed"
+    mismatched = SyncroTicketLookupAction().run(
+        mismatched_syncro, {"ticket_id": "TCK-1001"}
+    )
+    assert mismatched.status == "failed"
+    assert mismatched.output["connector_status"] == "scope_mismatch"
+    assert ItGlueDocumentationSearchAction().run(
+        blocked_itglue, {"query": "vpn", "organization_id": "acme"}
+    ).status == "failed"
+    assert ConfluenceDocumentationSearchAction().run(
+        blocked_confluence, {"query": "vpn", "space_id": "acme"}
+    ).status == "failed"
+    assert SharePointDocumentationSearchAction().run(
+        blocked_sharepoint, {"query": "vpn", "site_id": "acme"}
+    ).status == "failed"
+    assert M365LiveContextAction().run(
+        blocked_m365, {"resource": "user", "identity": "alice@example.test"}
+    ).status == "failed"
+    assert M365LiveContextAction().run(context, {"resource": "user"}).status == "failed"
+    assert M365LiveContextAction().run(
+        context,
+        {"resource": "mail_messages", "identity": "alice@example.test"},
+    ).status == "failed"
     assert HuduDocumentationSearchAction().run(
         foreign_hudu,
         {"query": "foreign", "company_id": "acme"},
@@ -663,6 +1090,7 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         malformed_hudu,
         {"query": "vpn", "company_id": "acme"},
     ).status == "failed"
+
     assert RmmDeviceLookupAction().run(unavailable_rmm, {"query": "agent"}).status == "failed"
     assert M365IdentityLookupAction().run(
         replace(context, client_id="acme"),
@@ -676,6 +1104,114 @@ def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monk
         context,
         {"query": "vpn", "company_id": 1},
     ).status == "failed"
+
+
+def test_m365_context_action_rejects_invalid_and_malformed_provider_results(settings) -> None:
+    store = Store(settings.data_path)
+    context = _action_context(store, settings, client_id="acme")
+    action = M365LiveContextAction()
+
+    assert action.run(context, {"resource": "unknown"}).status == "failed"
+    assert action.run(context, {"resource": "user", "identity": 42}).status == "failed"
+    assert action.run(context, {"resource": "user", "identity": "alice", "limit": True}).status == "failed"
+    assert action.run(
+        context,
+        {"resource": "mail_messages", "identity": "alice", "folder_id": "bad folder"},
+    ).status == "failed"
+
+    unavailable = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert action.run(unavailable, {"resource": "user", "identity": "alice"}).status == "failed"
+
+    malformed = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"), items={}
+            ),
+        ),
+    )
+    assert action.run(malformed, {"resource": "user", "identity": "alice"}).status == "failed"
+
+    blocked = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="blocked", message="access denied token=secret"), items=[]
+            ),
+        ),
+    )
+    blocked_result = action.run(blocked, {"resource": "user", "identity": "alice"})
+    assert blocked_result.status == "failed"
+    assert blocked_result.output["items"] == []
+    assert "secret" not in (blocked_result.error_detail or "")
+
+    filtered = replace(
+        context,
+        m365_client=SimpleNamespace(
+            list_users=lambda identity, page_size: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"),
+                items=[SimpleNamespace(not_a_dataclass=True)],
+            ),
+        ),
+    )
+    filtered_result = action.run(filtered, {"resource": "user", "identity": "alice"})
+    assert filtered_result.status == "success"
+    assert filtered_result.output["items"] == []
+
+    itglue = ItGlueDocumentationSearchAction()
+    assert itglue.run(context, {"query": "vpn", "organization_id": "other"}).status == "failed"
+    assert itglue.run(context, {"query": "vpn", "organization_id": "acme", "limit": 0}).status == "failed"
+    assert itglue.run(
+        context,
+        {"query": "vpn", "organization_id": "acme", "folder_id": ""},
+    ).status == "failed"
+    itglue_error = replace(
+        context,
+        itglue_client=SimpleNamespace(
+            list_documents=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert itglue.run(itglue_error, {"query": "vpn", "organization_id": "acme"}).status == "failed"
+
+    confluence = ConfluenceDocumentationSearchAction()
+    assert confluence.run(context, {"query": "vpn", "space_id": "other"}).status == "failed"
+    assert confluence.run(context, {"query": "vpn", "space_id": "acme", "limit": 0}).status == "failed"
+    confluence_error = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert confluence.run(confluence_error, {"query": "vpn", "space_id": "acme"}).status == "failed"
+    confluence_malformed = replace(
+        context,
+        confluence_client=SimpleNamespace(
+            list_pages=lambda **kwargs: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok"), items={}
+            ),
+        ),
+    )
+    assert confluence.run(confluence_malformed, {"query": "vpn", "space_id": "acme"}).status == "failed"
+
+    sharepoint = SharePointDocumentationSearchAction()
+    assert sharepoint.run(context, {"query": "vpn", "site_id": "other"}).status == "failed"
+    assert sharepoint.run(context, {"query": "vpn", "site_id": "acme", "limit": 0}).status == "failed"
+    assert sharepoint.run(
+        context,
+        {"query": "vpn", "site_id": "acme", "parent_item_id": ""},
+    ).status == "failed"
+    sharepoint_error = replace(
+        context,
+        sharepoint_client=SimpleNamespace(
+            list_documents=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        ),
+    )
+    assert sharepoint.run(sharepoint_error, {"query": "vpn", "site_id": "acme"}).status == "failed"
 
 
 def test_local_rmm_adapter_skips_malformed_assets(settings, monkeypatch) -> None:
@@ -802,6 +1338,32 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert isinstance(completed.output["recommendation"], dict)
     assert completed.output["recommendation"]["technician_id"] == "tech-a"
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_expired_smart_action_approval_rejects_without_execution(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+    pending = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "technician")
+    assert pending.approval_id is not None and pending.run_id is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", pending.approval_id),
+        )
+
+    expired = store.get_approval_request(pending.approval_id)
+    result = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert expired is not None and expired.status == "expired"
+    assert result is not None
+    assert result.status == "rejected"
+    assert result.error_detail == "approval expired"
+    assert store.get_smart_action_run(pending.run_id).status == "rejected"  # type: ignore[union-attr]
 
 
 def test_approval_completion_requires_authorized_different_approver(settings) -> None:

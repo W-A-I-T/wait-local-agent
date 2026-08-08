@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from wait_local_agent.confluence import (
+    MAX_PAGE_BODY_LENGTH,
     ConfluenceClient,
     ConfluencePage,
     ConfluenceReadError,
@@ -52,6 +53,7 @@ def test_confluence_reads_use_v2_basic_auth_and_normalize_pages(settings) -> Non
         assert request.url.params["title"] == "Runbook"
         assert request.url.params["cursor"] == "next-token"
         assert request.url.params["limit"] == "2"
+        assert request.url.params["body-format"] == "storage"
         return httpx.Response(
             200,
             json={
@@ -84,11 +86,22 @@ def test_confluence_reads_use_v2_basic_auth_and_normalize_pages(settings) -> Non
 def test_confluence_page_detail_and_health(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/pages/9"):
-            return httpx.Response(200, json={"id": "9", "title": "Runbook"})
+            assert request.url.params["body-format"] == "storage"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "9",
+                    "title": "Runbook",
+                    "body": {"storage": {"value": "<p>Use MFA.</p>"}},
+                },
+            )
         return httpx.Response(200, json={"results": []})
 
     client = ConfluenceClient(_configured(settings), transport=httpx.MockTransport(handler))
-    assert client.get_page("9").items[0].title == "Runbook"
+    page = client.get_page("9").items[0]
+    assert isinstance(page, ConfluencePage)
+    assert page.title == "Runbook"
+    assert page.body == "<p>Use MFA.</p>"
     assert client.health().status == "ready"
 
 
@@ -161,6 +174,15 @@ def test_confluence_covers_http_statuses_transport_errors_and_normalization_edge
             "body": {"atlas_doc_format": {"value": "doc"}},
         }
     ) == ConfluencePage("9", "Page", "42", "", "", "yesterday", "https://acme.atlassian.net", "doc")
+    bounded = _normalize_page(
+        {
+            "id": "10",
+            "title": "Large",
+            "body": {"storage": {"value": "x" * (MAX_PAGE_BODY_LENGTH + 1)}},
+        }
+    )
+    assert bounded is not None
+    assert len(bounded.body) == MAX_PAGE_BODY_LENGTH
     assert _payload_rows([{"id": "1"}, "ignored"]) == [{"id": "1"}]
     assert _next_cursor({"_links": {"next": "/pages?cursor=" + "x" * 5000}}) == ""
 

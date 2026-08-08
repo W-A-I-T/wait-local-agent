@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+from wait_local_agent.autotask import AutotaskReadProvider
 from wait_local_agent.communication import (
     CommunicationChannel,
     CommunicationDeliveryError,
@@ -16,7 +17,17 @@ from wait_local_agent.communication import (
     PreviewCommunicationProvider,
 )
 from wait_local_agent.config import Settings
-from wait_local_agent.models import ApprovalRequest, SourceReference, Ticket
+from wait_local_agent.confluence import ConfluenceClientProtocol
+from wait_local_agent.connectwise import ConnectWiseReadProvider
+from wait_local_agent.itglue import ItGlueClientProtocol
+from wait_local_agent.m365_graph import M365GraphReadProvider
+from wait_local_agent.models import (
+    DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    MAX_APPROVAL_EXPIRY_SECONDS,
+    ApprovalRequest,
+    SourceReference,
+    Ticket,
+)
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
@@ -32,8 +43,11 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     rmm_provider_from_settings,
 )
+from wait_local_agent.servicenow import ServiceNowReadProvider
 from wait_local_agent.services import classify_ticket
+from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+from wait_local_agent.syncro import SyncroReadProvider
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorPreview
@@ -93,6 +107,7 @@ class SmartActionManifest:
     risk_level: str = "low"
     required_role: str = "technician"
     access_mode: str = "read"
+    approval_expiry_seconds: int = DEFAULT_APPROVAL_EXPIRY_SECONDS
 
 
 @dataclass
@@ -105,6 +120,14 @@ class ActionContext:
     provider_available: bool = False
     collector_service: CollectorPreviewProvider | None = None
     rmm_provider: RmmInventoryProvider | None = None
+    connectwise_client: ConnectWiseReadProvider | None = None
+    syncro_client: SyncroReadProvider | None = None
+    servicenow_client: ServiceNowReadProvider | None = None
+    autotask_client: AutotaskReadProvider | None = None
+    itglue_client: ItGlueClientProtocol | None = None
+    confluence_client: ConfluenceClientProtocol | None = None
+    sharepoint_client: SharePointClientProtocol | None = None
+    m365_client: M365GraphReadProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -339,6 +362,16 @@ class SmartActionRegistry:
             raise ValueError("smart action id must be lowercase id text")
         if action_id in self._actions:
             raise ValueError(f"smart action {action_id} is already registered")
+        if action.manifest.requires_approval and (
+            isinstance(action.manifest.approval_expiry_seconds, bool)
+            or not isinstance(action.manifest.approval_expiry_seconds, int)
+            or action.manifest.approval_expiry_seconds < 1
+            or action.manifest.approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise ValueError(
+                "approval expiry must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
         self._actions[action_id] = action
 
     def clear(self) -> None:
@@ -577,6 +610,118 @@ class M365IdentityLookupAction:
         )
 
 
+class M365LiveContextAction:
+    manifest = SmartActionManifest(
+        action_id="m365-live-context",
+        title="Microsoft 365 live context",
+        description="Read a bounded Microsoft Graph user, group, license, mailbox-folder, or Intune device context.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["resource"],
+            "properties": {
+                "resource": {
+                    "type": "string",
+                    "enum": [
+                        "user", "group", "licenses", "mailbox_folders", "mail_messages",
+                        "managed_devices",
+                    ],
+                },
+                "identity": {"type": "string", "minLength": 1, "maxLength": 200},
+                "folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"resource": "string", "items": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        resource = payload.get("resource")
+        resources = {"user", "group", "licenses", "mailbox_folders", "mail_messages", "managed_devices"}
+        if not isinstance(resource, str) or resource not in resources:
+            return _failed(
+                "resource must be one of user, group, licenses, mailbox_folders, mail_messages, or managed_devices"
+            )
+        identity = payload.get("identity")
+        if identity is not None and (
+            not isinstance(identity, str) or not identity.strip() or len(identity.strip()) > 200
+        ):
+            return _failed("identity must be a non-empty string of at most 200 characters")
+        normalized_identity = identity.strip() if isinstance(identity, str) else None
+        if resource in {"user", "group", "mailbox_folders", "mail_messages"} and normalized_identity is None:
+            return _failed("identity is required for user, group, mailbox_folders, and mail_messages resources")
+        folder_id = payload.get("folder_id")
+        if resource == "mail_messages" and (
+            not isinstance(folder_id, str) or not folder_id.strip() or len(folder_id.strip()) > 320
+        ):
+            return _failed("folder_id is required for mail_messages and must be at most 320 characters")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = context.m365_client or M365GraphClient(context.settings)
+        try:
+            response: object
+            if resource == "user":
+                response = provider.list_users(identity=normalized_identity, page_size=limit)
+            elif resource == "group":
+                response = provider.list_groups(identity=normalized_identity, page_size=limit)
+            elif resource == "licenses":
+                response = provider.list_subscribed_skus()
+            elif resource == "mailbox_folders":
+                response = provider.list_mail_folders(identity=normalized_identity, page_size=limit)
+            elif resource == "mail_messages":
+                response = provider.list_mail_messages(
+                    identity=normalized_identity,
+                    folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                    page_size=limit,
+                )
+            else:
+                response = provider.list_managed_devices(page_size=limit)
+        except Exception:
+            return _failed("Microsoft Graph context lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Microsoft Graph read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Microsoft Graph returned malformed context data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"resource": resource, "connector_status": status, "items": [], "count": 0},
+                error_detail=message,
+            )
+        normalized = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items[:limit]
+            if hasattr(item, "__dataclass_fields__")
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "resource": resource,
+                "connector_status": status,
+                "items": normalized,
+                "count": len(normalized),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "m365",
+                    "operation": f"{resource}.list",
+                    "client_id": context.client_id,
+                }
+            ],
+        )
+
+
 class RmmDeviceLookupAction:
     manifest = SmartActionManifest(
         action_id="rmm-device-lookup",
@@ -782,10 +927,10 @@ class RmmScriptExecuteAction:
         except Exception:
             return _failed("RMM script execution failed")
         return ActionResult(
-            status="success" if execution.status in {"queued", "succeeded"} else "failed",
+            status="success" if execution.status in {"queued", "completed", "succeeded"} else "failed",
             output={**asdict(execution), "approved": True},
             evidence=[{"type": "rmm_script_execution", "script_id": script_id, "device_id": device_id}],
-            error_detail="" if execution.status in {"queued", "succeeded"} else execution.message,
+            error_detail="" if execution.status in {"queued", "completed", "succeeded"} else execution.message,
         )
 
 
@@ -814,7 +959,7 @@ class RmmScriptExecutionLookupAction:
         except Exception:
             return _failed("RMM script execution lookup failed")
         return ActionResult(
-            status="success" if execution.status in {"queued", "succeeded", "failed"} else "failed",
+            status="success" if execution.status in {"queued", "completed", "succeeded", "failed"} else "failed",
             output=asdict(execution),
             evidence=[{"type": "rmm_script_execution", "execution_id": execution_id.strip()}],
             error_detail="" if execution.status != "blocked" else execution.message,
@@ -893,11 +1038,235 @@ class HaloPSATicketLookupAction:
         )
 
 
+class ConnectWiseTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="connectwise-ticket-lookup",
+        title="ConnectWise PSA ticket lookup",
+        description="Read one tenant-scoped local ticket through the guarded ConnectWise PSA connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket in the tenant scope")
+        from wait_local_agent.connectwise import ConnectWiseClient
+
+        provider = context.connectwise_client or ConnectWiseClient(context.settings)
+        try:
+            response = provider.get_ticket(ticket.id)
+        except Exception:
+            return _failed("ConnectWise PSA ticket lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "ConnectWise PSA read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("ConnectWise PSA returned malformed ticket data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": status, "ticket": {}},
+                error_detail=message,
+            )
+        if not items or not isinstance(items[0], dict):
+            return ActionResult(
+                status="failed",
+                output={"ticket_id": ticket.id, "connector_status": "empty", "ticket": {}},
+                error_detail="ConnectWise PSA returned no matching ticket",
+            )
+        normalized = cast(dict[str, object], redact_value(items[0]))
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "connector_status": status,
+                "ticket": normalized,
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "connectwise",
+                    "operation": "tickets.get",
+                    "ticket_id": ticket.id,
+                }
+            ],
+        )
+
+
+class SyncroTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="syncro-ticket-lookup",
+        title="Syncro ticket lookup",
+        description="Read one tenant-scoped ticket through the existing Syncro connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.syncro import SyncroClient
+
+        provider = context.syncro_client or SyncroClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_ticket,
+            connector="syncro",
+            operation="tickets.get",
+            failure_message="Syncro ticket lookup failed",
+            malformed_message="Syncro returned malformed ticket data",
+            empty_message="Syncro returned no matching ticket",
+        )
+
+
+class ServiceNowIncidentLookupAction:
+    manifest = SmartActionManifest(
+        action_id="servicenow-incident-lookup",
+        title="ServiceNow incident lookup",
+        description="Read one tenant-scoped incident through the existing ServiceNow connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.servicenow import ServiceNowClient
+
+        provider = context.servicenow_client or ServiceNowClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_incident,
+            connector="servicenow",
+            operation="incidents.get",
+            failure_message="ServiceNow incident lookup failed",
+            malformed_message="ServiceNow returned malformed incident data",
+            empty_message="ServiceNow returned no matching incident",
+        )
+
+
+class AutotaskTicketLookupAction:
+    manifest = SmartActionManifest(
+        action_id="autotask-ticket-lookup",
+        title="Autotask ticket lookup",
+        description="Read one tenant-scoped ticket through the existing Autotask connector.",
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={"ticket": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        from wait_local_agent.autotask import AutotaskClient
+
+        provider = context.autotask_client or AutotaskClient(context.settings)
+        return _run_psa_ticket_lookup(
+            context,
+            payload,
+            provider.get_ticket,
+            connector="autotask",
+            operation="tickets.get",
+            failure_message="Autotask ticket lookup failed",
+            malformed_message="Autotask returned malformed ticket data",
+            empty_message="Autotask returned no matching ticket",
+        )
+
+
+def _run_psa_ticket_lookup(
+    context: ActionContext,
+    payload: dict[str, object],
+    lookup: object,
+    *,
+    connector: str,
+    operation: str,
+    failure_message: str,
+    malformed_message: str,
+    empty_message: str,
+) -> ActionResult:
+    ticket = _ticket_from_payload(context.store, payload, context.client_id)
+    if ticket is None:
+        return _failed("ticket_id must identify an existing ticket in the tenant scope")
+    if not callable(lookup):
+        return _failed(failure_message)
+    try:
+        response = lookup(ticket.id)
+    except Exception:
+        return _failed(failure_message)
+    result = getattr(response, "result", None)
+    status = str(getattr(result, "status", "failed"))
+    message = redact_text(str(getattr(result, "message", f"{connector} read failed")))
+    items = getattr(response, "items", [])
+    if not isinstance(items, list):
+        return _failed(malformed_message)
+    if status != "ready":
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": status, "ticket": {}},
+            error_detail=message,
+        )
+    if not items or not isinstance(items[0], dict):
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": "empty", "ticket": {}},
+            error_detail=empty_message,
+        )
+    raw_record = items[0]
+    returned_id = raw_record.get("id", raw_record.get("sys_id"))
+    if returned_id not in (None, "") and str(returned_id) != ticket.id:
+        return ActionResult(
+            status="failed",
+            output={"ticket_id": ticket.id, "connector_status": "scope_mismatch", "ticket": {}},
+            error_detail="PSA returned a record outside the requested ticket scope",
+        )
+    normalized = cast(dict[str, object], redact_value(raw_record))
+    return ActionResult(
+        status="success",
+        output={
+            "ticket_id": ticket.id,
+            "connector_status": status,
+            "ticket": normalized,
+        },
+        evidence=[
+            {
+                "type": "connector_read",
+                "connector": connector,
+                "operation": operation,
+                "ticket_id": ticket.id,
+            }
+        ],
+    )
+
+
 class HuduDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="hudu-documentation-search",
         title="Hudu documentation search",
-        description="Search tenant-scoped Hudu article metadata through the existing read-only connector.",
+        description=(
+            "Search tenant-scoped Hudu article titles and bounded content "
+            "through the existing read-only connector."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -957,7 +1326,10 @@ class HuduDocumentationSearchAction:
                 or not getattr(item, "company_id", "")
                 or getattr(item, "company_id", "") == context.client_id
             )
-            and query_value in str(getattr(item, "name", "")).casefold()
+            and (
+                query_value in str(getattr(item, "name", "")).casefold()
+                or query_value in str(getattr(item, "content", "")).casefold()
+            )
         ][:limit]
         return ActionResult(
             status="success",
@@ -973,6 +1345,411 @@ class HuduDocumentationSearchAction:
                     "connector": "hudu",
                     "operation": "articles.list",
                     "company_id": company_id.strip(),
+                }
+            ],
+        )
+
+
+class ItGlueDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="itglue-documentation-search",
+        title="IT Glue documentation search",
+        description="Search tenant-scoped IT Glue document metadata through the existing read-only connector.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "organization_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "organization_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "folder_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"documents": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        organization_id = payload.get("organization_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if (
+            not isinstance(organization_id, str)
+            or not organization_id.strip()
+            or len(organization_id.strip()) > 64
+        ):
+            return _failed("organization_id must be a non-empty string of at most 64 characters")
+        scoped_organization_id = organization_id.strip()
+        if context.client_id is not None and scoped_organization_id != context.client_id:
+            return _failed("organization_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        folder_id = payload.get("folder_id")
+        if folder_id is not None and (
+            not isinstance(folder_id, str) or not folder_id.strip() or len(folder_id.strip()) > 64
+        ):
+            return _failed("folder_id must be a non-empty string of at most 64 characters")
+        from wait_local_agent.itglue import ItGlueClient
+
+        provider = context.itglue_client or ItGlueClient(context.settings)
+        try:
+            response = provider.list_documents(
+                scoped_organization_id,
+                folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                page=1,
+                page_size=limit,
+            )
+        except Exception:
+            return _failed("IT Glue documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "IT Glue read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("IT Glue returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "organization_id": scoped_organization_id,
+                    "connector_status": status,
+                    "documents": [],
+                    "count": 0,
+                },
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        documents = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and (
+                not getattr(item, "organization_id", "")
+                or getattr(item, "organization_id", "") == scoped_organization_id
+            )
+            and (
+                query_value in str(getattr(item, "name", "")).casefold()
+                or query_value in str(getattr(item, "content", "")).casefold()
+            )
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "organization_id": scoped_organization_id,
+                "connector_status": status,
+                "documents": documents,
+                "count": len(documents),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "itglue",
+                    "operation": "documents.list",
+                    "organization_id": scoped_organization_id,
+                }
+            ],
+        )
+
+
+class ConfluenceDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="confluence-documentation-search",
+        title="Confluence documentation search",
+        description=(
+            "Search tenant-scoped Confluence page titles and bounded body content "
+            "through the existing read-only connector."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "space_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "space_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"pages": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        space_id = payload.get("space_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(space_id, str) or not space_id.strip() or len(space_id.strip()) > 64:
+            return _failed("space_id must be a non-empty string of at most 64 characters")
+        scoped_space_id = space_id.strip()
+        if context.client_id is not None and scoped_space_id != context.client_id:
+            return _failed("space_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.confluence import ConfluenceClient
+
+        provider = context.confluence_client or ConfluenceClient(context.settings)
+        try:
+            response = provider.list_pages(space_id=scoped_space_id, page_size=limit)
+        except Exception:
+            return _failed("Confluence documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Confluence read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Confluence returned malformed page data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"space_id": scoped_space_id, "connector_status": status, "pages": [], "count": 0},
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        pages = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "title": str(getattr(item, "title", "")),
+                "space_id": str(getattr(item, "space_id", "")),
+                "status": str(getattr(item, "status", "")),
+                "version": str(getattr(item, "version", "")),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "url": str(getattr(item, "url", "")),
+                "body": str(getattr(item, "body", "")),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "space_id", "")) in {"", scoped_space_id}
+            and (
+                query_value in str(getattr(item, "title", "")).casefold()
+                or query_value in str(getattr(item, "body", "")).casefold()
+            )
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "space_id": scoped_space_id,
+                "connector_status": status,
+                "pages": cast(list[dict[str, object]], redact_value(pages)),
+                "count": len(pages),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "confluence",
+                    "operation": "pages.list",
+                    "space_id": scoped_space_id,
+                }
+            ],
+        )
+
+
+class SharePointDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="sharepoint-documentation-search",
+        title="SharePoint documentation search",
+        description="Search tenant-scoped SharePoint drive-item metadata through Microsoft Graph.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "site_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "site_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "parent_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={"documents": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        site_id = payload.get("site_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(site_id, str) or not site_id.strip() or len(site_id.strip()) > 256:
+            return _failed("site_id must be a non-empty string of at most 256 characters")
+        scoped_site_id = site_id.strip()
+        if context.client_id is not None and scoped_site_id != context.client_id:
+            return _failed("site_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        parent_item_id = payload.get("parent_item_id")
+        if parent_item_id is not None and (
+            not isinstance(parent_item_id, str)
+            or not parent_item_id.strip()
+            or len(parent_item_id.strip()) > 256
+        ):
+            return _failed("parent_item_id must be a non-empty string of at most 256 characters")
+        from wait_local_agent.sharepoint import SharePointClient
+
+        provider = context.sharepoint_client or SharePointClient(context.settings)
+        try:
+            response = provider.list_documents(
+                scoped_site_id,
+                parent_item_id=parent_item_id.strip() if isinstance(parent_item_id, str) else None,
+                page_size=limit,
+            )
+        except Exception:
+            return _failed("SharePoint documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "SharePoint read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("SharePoint returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"site_id": scoped_site_id, "connector_status": status, "documents": [], "count": 0},
+                error_detail=message,
+            )
+        query_value = query.strip().casefold()
+        documents = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "name": str(getattr(item, "name", "")),
+                "site_id": str(getattr(item, "site_id", "")),
+                "parent_id": str(getattr(item, "parent_id", "")),
+                "size": getattr(item, "size", 0),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "web_url": str(getattr(item, "web_url", "")),
+                "is_folder": bool(getattr(item, "is_folder", False)),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "site_id", "")) in {"", scoped_site_id}
+            and query_value in str(getattr(item, "name", "")).casefold()
+        ][:limit]
+        return ActionResult(
+            status="success",
+            output={
+                "site_id": scoped_site_id,
+                "connector_status": status,
+                "documents": cast(list[dict[str, object]], redact_value(documents)),
+                "count": len(documents),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "sharepoint",
+                    "operation": "drive.items.list",
+                    "site_id": scoped_site_id,
+                }
+            ],
+        )
+
+
+class SharePointDocumentationContentAction:
+    manifest = SmartActionManifest(
+        action_id="sharepoint-document-content",
+        title="SharePoint document content",
+        description="Retrieve one tenant-scoped SharePoint text document with a bounded content length.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["site_id", "item_id"],
+            "properties": {
+                "site_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            },
+        },
+        output_schema={"document": "object", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        site_id = payload.get("site_id")
+        item_id = payload.get("item_id")
+        if not isinstance(site_id, str) or not site_id.strip() or len(site_id.strip()) > 256:
+            return _failed("site_id must be a non-empty string of at most 256 characters")
+        if not isinstance(item_id, str) or not item_id.strip() or len(item_id.strip()) > 256:
+            return _failed("item_id must be a non-empty string of at most 256 characters")
+        scoped_site_id = site_id.strip()
+        scoped_item_id = item_id.strip()
+        if context.client_id is not None and scoped_site_id != context.client_id:
+            return _failed("site_id is outside the tenant scope")
+        from wait_local_agent.sharepoint import SharePointClient
+
+        provider = context.sharepoint_client or SharePointClient(context.settings)
+        try:
+            response = provider.get_document_content(scoped_site_id, scoped_item_id)
+        except Exception:
+            return _failed("SharePoint document content lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "SharePoint read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("SharePoint returned malformed document data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "site_id": scoped_site_id,
+                    "item_id": scoped_item_id,
+                    "connector_status": status,
+                    "document": {},
+                },
+                error_detail=message,
+            )
+        documents = [
+            {
+                "id": str(getattr(item, "id", "")),
+                "name": str(getattr(item, "name", "")),
+                "site_id": str(getattr(item, "site_id", "")),
+                "parent_id": str(getattr(item, "parent_id", "")),
+                "size": getattr(item, "size", 0),
+                "updated_at": str(getattr(item, "updated_at", "")),
+                "web_url": str(getattr(item, "web_url", "")),
+                "is_folder": bool(getattr(item, "is_folder", False)),
+                "is_file": bool(getattr(item, "is_file", False)),
+                "content": str(getattr(item, "content", "")),
+            }
+            for item in items
+            if hasattr(item, "__dataclass_fields__")
+            and str(getattr(item, "site_id", "")) == scoped_site_id
+            and str(getattr(item, "id", "")) == scoped_item_id
+        ]
+        if not documents:
+            return _failed("SharePoint returned no matching document")
+        return ActionResult(
+            status="success",
+            output={
+                "site_id": scoped_site_id,
+                "item_id": scoped_item_id,
+                "connector_status": status,
+                "document": cast(dict[str, object], redact_value(documents[0])),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "sharepoint",
+                    "operation": "drive.items.content.get",
+                    "site_id": scoped_site_id,
+                    "item_id": scoped_item_id,
                 }
             ],
         )
@@ -1285,7 +2062,16 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptExecuteAction(),
         RmmScriptExecutionLookupAction(),
         HaloPSATicketLookupAction(),
+        ConnectWiseTicketLookupAction(),
+        SyncroTicketLookupAction(),
+        ServiceNowIncidentLookupAction(),
+        AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
+        ItGlueDocumentationSearchAction(),
+        ConfluenceDocumentationSearchAction(),
+        SharePointDocumentationSearchAction(),
+        SharePointDocumentationContentAction(),
+        M365LiveContextAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
@@ -1316,6 +2102,14 @@ class SmartActionService:
         communication_provider: CommunicationProvider | None = None,
         communication_sender: CommunicationSender | None = None,
         rmm_provider: RmmInventoryProvider | None = None,
+        connectwise_client: ConnectWiseReadProvider | None = None,
+        syncro_client: SyncroReadProvider | None = None,
+        servicenow_client: ServiceNowReadProvider | None = None,
+        autotask_client: AutotaskReadProvider | None = None,
+        itglue_client: ItGlueClientProtocol | None = None,
+        confluence_client: ConfluenceClientProtocol | None = None,
+        sharepoint_client: SharePointClientProtocol | None = None,
+        m365_client: M365GraphReadProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -1325,6 +2119,14 @@ class SmartActionService:
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
         self.rmm_provider = rmm_provider or rmm_provider_from_settings(settings, store)
+        self.connectwise_client = connectwise_client
+        self.syncro_client = syncro_client
+        self.servicenow_client = servicenow_client
+        self.autotask_client = autotask_client
+        self.itglue_client = itglue_client
+        self.confluence_client = confluence_client
+        self.sharepoint_client = sharepoint_client
+        self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
         self.communication_sender: CommunicationSender | None = communication_sender or (
@@ -1354,9 +2156,25 @@ class SmartActionService:
         *,
         confirm: bool = False,
         client_id: str | None = None,
+        approval_expiry_seconds: int | None = None,
     ) -> ActionResult:
         action = self.registry.get(action_id)
         normalized_id = action.manifest.action_id
+        if approval_expiry_seconds is not None and (
+            isinstance(approval_expiry_seconds, bool)
+            or not isinstance(approval_expiry_seconds, int)
+            or approval_expiry_seconds < 1
+            or approval_expiry_seconds > MAX_APPROVAL_EXPIRY_SECONDS
+        ):
+            raise ValueError(
+                "approval expiry must be between 1 and "
+                f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
+            )
+        effective_approval_expiry_seconds = (
+            min(approval_expiry_seconds, action.manifest.approval_expiry_seconds)
+            if approval_expiry_seconds is not None
+            else action.manifest.approval_expiry_seconds
+        )
         normalized_payload = dict(payload)
         digest = _payload_digest(normalized_payload)
         effective_client_id = _effective_client_id(self.store, normalized_payload, client_id)
@@ -1421,6 +2239,7 @@ class SmartActionService:
                     "payload": normalized_payload,
                 },
                 client_id=effective_client_id,
+                expires_in_seconds=effective_approval_expiry_seconds,
             )
             if approval.id is None:
                 raise RuntimeError("smart action approval was not persisted")
@@ -1475,6 +2294,26 @@ class SmartActionService:
         if approver == run.actor:
             raise PermissionError("requesting actor cannot approve its own smart action")
         action_id = approval.action_type.removeprefix("smart_action:")
+        if approval.status == "expired":
+            expired_result = ActionResult(
+                status="rejected",
+                output=_json_object(run.output_json),
+                evidence=_json_list(run.evidence_json),
+                error_detail="approval expired",
+                run_id=run.id,
+                approval_id=approval_id,
+            )
+            self._record_execution(
+                action_id,
+                run.id,
+                {"approval_id": approval_id, "approval_status": approval.status},
+                expired_result,
+                actor=run.actor,
+                client_id=approval.client_id,
+                trigger_source="approval_expiry",
+                step_kind="smart_action.approval_expired",
+            )
+            return expired_result
         if approval.status == "rejected":
             self.store.complete_smart_action_run(
                 run.id,
@@ -1631,6 +2470,14 @@ class SmartActionService:
             communication_provider=self.communication_provider,
             communication_sender=self.communication_sender,
             rmm_provider=self.rmm_provider,
+            connectwise_client=self.connectwise_client,
+            syncro_client=self.syncro_client,
+            servicenow_client=self.servicenow_client,
+            autotask_client=self.autotask_client,
+            itglue_client=self.itglue_client,
+            confluence_client=self.confluence_client,
+            sharepoint_client=self.sharepoint_client,
+            m365_client=self.m365_client,
         )
 
     def _persist_result(
@@ -1722,6 +2569,10 @@ class SmartActionService:
             status=result.status,
             trigger_source=trigger_source,
             client_id=client_id,
+            metadata={
+                "provider": self.settings.local_model_provider or "deterministic",
+                "model": self.settings.local_model_name,
+            },
             steps=(step,),
             artifacts=artifacts,
         )

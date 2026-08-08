@@ -37,8 +37,10 @@ approval, and auditable local execution.
 
 - Keep the workflow engine minimal and inspectable: trigger, filter, action,
   approval policy, run state, and event log.
-- Ship five MSP templates first: ticket triage, assign technician, inactive
-  ticket follow-up, P1 alert, and documentation-assisted response.
+- The initial five MSP templates are shipped: ticket triage, assign technician,
+  inactive ticket follow-up, P1 alert, and documentation-assisted response.
+  The public catalog also includes quality, sentiment, escalation, and
+  similar-ticket review templates backed by existing deterministic tools.
 - Prefer deterministic rules for routing and gating. Use local model inference
   only for classification, summarization, drafting, and reasoning support.
 
@@ -92,7 +94,8 @@ approval, and auditable local execution.
 - HMAC-signed offline license key system.
 - Feature gating: paid features blocked without valid license.
 - White-label branding configuration.
-- N-able RMM connector (read-only).
+- Broader N-central remediation and additional RMM connectors beyond the
+  bounded read-only vendor surfaces already shipped.
 - Kaseya VSA connector (read-only).
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.
@@ -114,7 +117,7 @@ See `docs/commercial-model.md` for the full product tier breakdown:
 
 | Tier | Price | Contents |
 | --- | --- | --- |
-| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 5 templates, approval queue |
+| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 9 templates, approval queue |
 | WAIT MSP Pack | $99/month | + IT Glue, ConnectWise, Autotask, M365, RMM, QBR reports, ROI dashboard |
 | WAIT Founder Pack | $49/month | + Project scanner, evidence vault, LP preflight, LP bundle export |
 | WAIT Sync | $29/month | + Template marketplace, encrypted cloud backup, team sync |

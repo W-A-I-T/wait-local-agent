@@ -17,9 +17,16 @@ from wait_local_agent.m365_graph import (
     M365GraphMailboxSettingsUpdateResult,
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageDeleteResult,
+    M365GraphMailMessageMoveResult,
+    M365GraphMailMessageReadResponse,
+    M365GraphMailMessageReadStateResult,
     M365GraphManagedDevice,
     M365GraphManagedDeviceReadResponse,
+    M365GraphManagedDeviceRebootResult,
     M365GraphManagedDeviceRetireResult,
+    M365GraphManagedDeviceSyncResult,
     M365GraphReadError,
     M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
@@ -32,10 +39,13 @@ from wait_local_agent.m365_graph import (
     _list_params,
     _mail_folder_endpoint,
     _mail_folder_params,
+    _mail_message_endpoint,
+    _mail_message_params,
     _managed_device_params,
     _next_cursor,
     _normalize_group,
     _normalize_mail_folder,
+    _normalize_mail_message,
     _normalize_managed_device,
     _normalize_subscribed_sku,
     _normalize_user,
@@ -43,6 +53,7 @@ from wait_local_agent.m365_graph import (
     _safe_cursor,
     _safe_endpoint,
     _safe_identity,
+    _safe_mail_folder_id,
 )
 
 
@@ -493,6 +504,214 @@ def test_m365_graph_mail_folder_reads_use_user_path_and_metadata_only(settings) 
     )
 
 
+def test_m365_graph_mail_message_reads_select_metadata_without_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1.0/users/alice@example.test/mailFolders/inbox/messages"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.url.params["$top"] == "2"
+        assert request.url.params["$select"] == (
+            "id,subject,sender,receivedDateTime,isRead,hasAttachments,importance"
+        )
+        assert request.url.params["$skiptoken"] == "message-next"
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {
+                        "id": "message-1",
+                        "subject": "VPN issue",
+                        "sender": {
+                            "emailAddress": {
+                                "name": "Adele Vance",
+                                "address": "adele@example.test",
+                            }
+                        },
+                        "receivedDateTime": "2026-08-08T10:00:00Z",
+                        "isRead": False,
+                        "hasAttachments": True,
+                        "importance": "high",
+                        "body": {"content": "must not be returned"},
+                        "bodyPreview": "must not be returned",
+                    }
+                ],
+                "@odata.nextLink": (
+                    "https://graph.microsoft.com/v1.0/users/alice/mailFolders/inbox/messages"
+                    "?$skiptoken=message-next-2"
+                ),
+            },
+        )
+
+    client = M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.list_mail_messages(
+        identity="alice@example.test",
+        folder_id="inbox",
+        cursor="message-next",
+        page_size=2,
+    )
+
+    assert response == M365GraphMailMessageReadResponse(
+        result=response.result,
+        items=[
+            M365GraphMailMessage(
+                "message-1",
+                "VPN issue",
+                "Adele Vance",
+                "adele@example.test",
+                "2026-08-08T10:00:00Z",
+                False,
+                True,
+                "high",
+            )
+        ],
+        next_cursor="message-next-2",
+    )
+    assert _mail_message_endpoint("alice@example.test", "inbox").endswith(
+        "/mailFolders/inbox/messages"
+    )
+    assert _mail_message_params(2, "next")["$top"] == 2
+    assert _normalize_mail_message({"subject": "missing id"}) is None
+    assert M365GraphClient(_configured(settings)).list_mail_messages(
+        identity="alice@example.test"
+    ).result.message == "Microsoft Graph mail folder is required."
+
+
+def test_m365_graph_mail_message_move_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        destination_folder_id="archive",
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1/move"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["Content-Type"] == "application/json"
+        assert json.loads(request.content) == {"destinationId": "archive"}
+        return httpx.Response(201, json={})
+
+    moved = M365GraphClient(active, transport=httpx.MockTransport(handler)).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        destination_folder_id="archive",
+    )
+    assert moved == M365GraphMailMessageMoveResult(
+        "succeeded",
+        "Microsoft Graph mail message move succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        "archive",
+        201,
+    )
+    assert M365GraphClient(active).move_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
+        destination_folder_id="archive",
+    ).status == "failed"
+
+
+def test_m365_graph_mail_message_read_state_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=True,
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["Content-Type"] == "application/json"
+        assert json.loads(request.content) == {"isRead": False}
+        return httpx.Response(200, json={})
+
+    updated = M365GraphClient(
+        active, transport=httpx.MockTransport(handler)
+    ).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=False,
+    )
+    assert updated == M365GraphMailMessageReadStateResult(
+        "succeeded",
+        "Microsoft Graph mail message read-state update succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        False,
+        200,
+    )
+    assert M365GraphClient(active).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
+        is_read=True,
+    ).status == "failed"
+    assert M365GraphClient(active).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=cast(Any, "true"),
+    ).status == "failed"
+
+
+def test_m365_graph_mail_message_delete_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.content == b""
+        return httpx.Response(204)
+
+    deleted = M365GraphClient(
+        active, transport=httpx.MockTransport(handler)
+    ).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+    )
+    assert deleted == M365GraphMailMessageDeleteResult(
+        "succeeded",
+        "Microsoft Graph mail message deletion succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        204,
+    )
+    assert M365GraphClient(active).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
+    ).status == "failed"
+
+
 def test_m365_graph_managed_device_reads_select_safe_intune_context(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1.0/deviceManagement/managedDevices"
@@ -592,6 +811,11 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     ).list_mail_folders(identity="user@example.test")
     assert "HTTP 403" in folder_result.result.message
     assert "private body" not in folder_result.result.message
+    message_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(denied)
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox")
+    assert "HTTP 403" in message_result.result.message
+    assert "private body" not in message_result.result.message
     device_result = M365GraphClient(
         _configured(settings), transport=httpx.MockTransport(denied)
     ).list_managed_devices()
@@ -605,10 +829,26 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         _configured(settings), transport=httpx.MockTransport(malformed)
     ).list_users()
     assert "malformed JSON" in result.result.message
+    message_result = M365GraphClient(
+        _configured(settings), transport=httpx.MockTransport(malformed)
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox")
+    assert "malformed JSON" in message_result.result.message
     assert M365GraphClient(_configured(settings)).list_users(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_users(identity="bad\nvalue").result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(page_size=0).result.status == "failed"
     assert M365GraphClient(_configured(settings)).list_groups(identity="bad\nvalue").result.status == "failed"
+    assert (
+        M365GraphClient(_configured(settings))
+        .list_mail_messages(identity=None, folder_id="inbox")
+        .result.status
+        == "failed"
+    )
+    assert (
+        M365GraphClient(_configured(settings))
+        .list_mail_messages(identity="user@example.test", folder_id="bad folder")
+        .result.status
+        == "failed"
+    )
 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("private timeout")
@@ -668,6 +908,13 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
             allow_http_probing=True,
             m365_graph_base_url="https://graph.microsoft.com/v1.0",
         )
+    ).list_mail_messages(identity="user@example.test", folder_id="inbox").result.status == "not_configured"
+    assert M365GraphClient(
+        replace(
+            settings,
+            allow_http_probing=True,
+            m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        )
     ).list_managed_devices().result.status == "not_configured"
 
     for status_code, marker in (
@@ -685,6 +932,8 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
         assert marker in result.result.message
 
     assert _api_base_url("https://graph.microsoft.com/v1.0/") == "https://graph.microsoft.com/v1.0"
+    with pytest.raises(M365GraphReadError, match="mail folder is invalid"):
+        _safe_mail_folder_id("bad folder")
     assert _list_params(1000, "next") == {
         "$top": 200,
         "$select": "id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department",
@@ -779,6 +1028,9 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert _safe_endpoint("users/user-1/assignLicense") == "users/user-1/assignLicense"
     assert _safe_endpoint("users/user-1/revokeSignInSessions") == (
         "users/user-1/revokeSignInSessions"
+    )
+    assert _safe_endpoint("users/user-1/mailFolders/inbox/messages/message-1") == (
+        "users/user-1/mailFolders/inbox/messages/message-1"
     )
 
 
@@ -1145,6 +1397,94 @@ def test_m365_graph_managed_device_retirement_is_write_gated_and_sanitized(setti
             )
         ),
     ).retire_managed_device(device_id="device-1")
+
+    assert blocked.status == "blocked"
+    assert invalid.status == "failed"
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
+
+
+def test_m365_graph_managed_device_sync_posts_no_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            "/v1.0/deviceManagement/managedDevices/device-1/syncDevice"
+        )
+        assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    ).sync_managed_device(device_id="device-1")
+
+    assert response == M365GraphManagedDeviceSyncResult(
+        "succeeded",
+        "Microsoft Graph Intune managed-device sync succeeded.",
+        device_id="device-1",
+        status_code=204,
+    )
+
+
+def test_m365_graph_managed_device_sync_is_write_gated_and_sanitized(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).sync_managed_device(device_id="device-1")
+    invalid = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).sync_managed_device(device_id="device\n1")
+    forbidden = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403, json={"error": {"message": "secret must not leak"}}
+            )
+        ),
+    ).sync_managed_device(device_id="device-1")
+
+    assert blocked.status == "blocked"
+    assert invalid.status == "failed"
+    assert forbidden.status == "failed"
+    assert "access denied" in forbidden.message
+    assert "secret must not leak" not in forbidden.message
+
+
+def test_m365_graph_managed_device_reboot_posts_no_body(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            "/v1.0/deviceManagement/managedDevices/device-1/rebootNow"
+        )
+        assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    ).reboot_managed_device(device_id="device-1")
+
+    assert response == M365GraphManagedDeviceRebootResult(
+        "succeeded",
+        "Microsoft Graph Intune managed-device reboot succeeded.",
+        device_id="device-1",
+        status_code=204,
+    )
+
+
+def test_m365_graph_managed_device_reboot_is_write_gated_and_sanitized(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).reboot_managed_device(device_id="device-1")
+    invalid = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True)
+    ).reboot_managed_device(device_id="device\n1")
+    forbidden = M365GraphClient(
+        replace(_configured(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403, json={"error": {"message": "secret must not leak"}}
+            )
+        ),
+    ).reboot_managed_device(device_id="device-1")
 
     assert blocked.status == "blocked"
     assert invalid.status == "failed"

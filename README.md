@@ -20,10 +20,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - SQLite-backed tickets, approvals, workflow runs, audit events, knowledge documents, and scheduled jobs.
 - Client tenancy filters on stored surfaces such as `/tickets`, `/approval-requests`, `/audit`, `/audit-events/export`, `/workflow-runs`, `/knowledge/documents`, and `/scheduled-jobs`.
 - HaloPSA read paths, approval-gated write drafts, and execution history.
-- ConnectWise PSA read-only ticket and company lookup with explicit HTTP
-  probing opt-in; no ConnectWise mutation path is enabled.
+- ConnectWise PSA ticket and company lookup plus an allowlisted,
+  approval-gated ticket update path with explicit HTTP probing opt-in.
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
+- ServiceNow incident and Autotask ticket reads are available through the same
+  bounded, read-only connector and agent-tool surfaces; no mutation path is
+  enabled for either connector.
 - Hudu read-only documentation context.
 - A preview and approval-gated communication tool for local ticket notes,
   email, Microsoft Teams, Slack, and SMS. Local notes stay tenant-scoped;
@@ -39,11 +42,14 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `/tools` including read-only local knowledge search, ticket-quality and
   deterministic sentiment/escalation checks, collector previews, a
   technician-gated Microsoft 365 identity lookup over collected read-only
-  inventory plus a separate bounded live Graph user/group/license/mailbox-read connector, and a
+  inventory plus a separate bounded live Graph user/group/license/mailbox-read
+  connector and `m365-live-context` tool, and a
   bounded RMM device/alert/script lookup and script preview over the shared
-  provider contract; the local adapter blocks execution until a reviewed
-  vendor adapter is installed. This is alongside tenant-scoped HaloPSA ticket and Hudu
-  documentation read tools,
+  provider contract; the local adapter and read-only N-central adapter block
+  execution, while reviewed NinjaOne and Datto adapters expose their bounded
+  write paths. This is alongside tenant-scoped HaloPSA ticket and Hudu
+  documentation read tools for Hudu, IT Glue, Confluence, and SharePoint, and
+  ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity
@@ -55,31 +61,69 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   scheduled runs outside that window are skipped and audited. Run responses include a
   redacted operational final result for the last tool, including status,
   output, evidence, and error detail, without persisting hidden reasoning.
+  Definitions can select bounded ticket, client, and local-knowledge context;
+  selected context is tenant-scoped, redacted, capped, and recorded with each
+  run. Agents may also shorten approval deadlines for approval-required tools;
+  the policy cannot bypass or extend the tool-level approval requirement.
 - Event-triggered agent APIs under `/automation/events` and
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
-  tenant checks, and auditable delivery history.
+  tenant checks, auditable delivery history, a technician-only bounded retry
+  route for failed deliveries, and a local scheduler that automatically retries
+  due failures in batches of ten with a three-attempt cap and capped backoff.
 - Agent revision history, redacted revision diffs, run-to-version links, and
   bounded rollback under `/agents/{id}/revisions`, with immutable snapshots and
-  tenant-scoped restore-as-new-version. Agent run history also exposes the
-  exact revision snapshot and supports approval-safe cancel and bounded retry
-  controls under `/agent-runs`.
+  tenant-scoped restore-as-new-version.
+- Workflow run history supports tenant-scoped redacted comparisons through
+  `/workflow-runs/{run_id}/compare/{other_run_id}`, `workflows compare-runs`,
+  and the React workflow dashboard.
+  Agent run history also exposes the exact revision snapshot and supports
+  approval-safe cancel and bounded retry controls under `/agent-runs`.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.
-- Successful scheduled workflows and scheduled agents emit an idempotent,
-  tenant-scoped `workflow.completed` event. Event agents can filter it by
-  `workflow_template_id` or `workflow_run_id` to continue a bounded chain.
+- Successful CLI/API/gallery workflows, scheduled workflows, and scheduled
+  agents emit an idempotent, tenant-scoped `workflow.completed` event. Event
+  agents can filter it by `workflow_template_id` or `workflow_run_id` to
+  continue a bounded chain; pending-approval runs do not emit completion.
+- `GET /analytics/summary` and `wait-local-agent analytics summary` include
+  tenant-scoped approval decisions, distinct tickets referenced by executions,
+  current `resolved`/`closed` ticket counts, and grouped activity by workflow,
+  agent, or smart action. These are explainable aggregates, not historical
+  lifecycle or wall-clock measurements.
+- The React dashboard exposes the same local analytics at `/analytics`, with
+  role-scoped metric cards, workflow activity, outcome details, and server-side
+  date/client filters.
+- The workflow catalog includes executable ticket-quality, sentiment,
+  escalation, and similar-ticket review templates backed by the existing
+  smart-action contract. These are read-only analyses and do not mutate PSA
+  records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
-  into tenant-scoped records and run them through the existing approval path.
+  into tenant-scoped editable records, enable or disable them, restore prior
+  versions, compare redacted revision diffs, export versioned JSON artifacts,
+  import validated artifacts as disabled local copies, and run them through the
+  existing approval path. Imports validate the reviewed source template and
+  never carry local ids or tenant identity. The gallery never permits arbitrary
+  code, tools, or write permissions.
 - Bounded agent backfills under `/agent-backfills` persist progress, counts,
-  failures, pause/cancel state, and failed-item reruns.
+  failures, pause/cancel state, and failed-item reruns. The React dashboard
+  exposes dry-run preview, queueing, progress, controls, and failed-item
+  reruns without creating a second execution engine.
+- The React dashboard exposes `/executions` history with run-kind/status
+  filters, redacted step detail, generated artifact metadata, and technician
+  artifact downloads using the existing observability API. Smart-action runs also retain the configured
+  provider/model labels as redacted operational metadata; credentials and
+  hidden reasoning are never persisted.
 - `POST /agent-backfills/preview` validates a bounded batch and returns a
   redacted dry-run estimate without persisting or executing it.
 - Backfills default to sequential execution and may opt into up to four
   bounded workers; result accounting remains deterministic.
 - Technician operators can use `/technician/chat` or
   `wait-local-agent technician-chat` for bounded requests over the existing
-  smart-action catalog.
+  smart-action catalog. Persisted, tenant-scoped technician sessions are
+  available through `/technician/chat/sessions`; the CLI supports
+  `--new-session`, `--session-id`, and `--client-id` for the same bounded
+  history path. Only redacted operational messages, action IDs, statuses, and
+  ticket references are stored.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
@@ -161,6 +205,10 @@ wait-local-agent ingest examples/sample_tickets
 wait-local-agent tickets summarize TCK-1002
 wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
+wait-local-agent workflows gallery
+wait-local-agent workflows gallery-add ticket-triage "local operator review"
+wait-local-agent workflows gallery-export <gallery-id> > template.json
+wait-local-agent workflows gallery-import template.json --client-id acme
 wait-local-agent agents list
 wait-local-agent approvals list
 wait-local-agent events list
@@ -428,7 +476,8 @@ access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Grap
 The live Microsoft Graph surface is intentionally limited to bounded user,
 group, tenant subscribed-license, mailbox-folder, and Intune managed-device
 context plus explicitly approval-gated user lifecycle, direct user license,
-session revocation, and managed-device retirement operations.
+session revocation, managed-device sync, reboot, and retirement, mailbox settings, message move,
+message read-state, and message deletion operations.
 Configure an
 externally acquired delegated or application bearer token:
 
@@ -452,15 +501,32 @@ wait-local-agent connectors m365-groups
 wait-local-agent connectors m365-groups --identity helpdesk@example.com
 wait-local-agent connectors m365-licenses
 wait-local-agent connectors m365-mail-folders --identity user@example.com
+wait-local-agent connectors m365-mail-messages user@example.com inbox-id
 wait-local-agent connectors m365-managed-devices
+wait-local-agent connectors draft-m365-managed-device-sync device-1
+wait-local-agent connectors draft-m365-managed-device-reboot device-1
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
 wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
+wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
+wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
+wait-local-agent connectors draft-m365-mail-message-delete user-1 inbox-id message-id
 ```
 
 Graph reads use only bounded GET requests. License reads return tenant subscribed-SKU
 metadata and aggregate consumption/prepaid counts; per-user license details,
-and mailbox reads return selected root mail-folder metadata and aggregate item
-counts; messages, bodies, attachments, and hidden folders are not expanded.
+and mailbox reads return selected root-folder and bounded message metadata;
+message bodies, previews, attachments, and hidden folders are not expanded.
+Message moves are separately admin-approved through
+`POST /connectors/m365/mail-messages/move-drafts` or
+`draft-m365-mail-message-move`; only the destination folder ID is sent to
+Graph. Read-state changes are separately admin-approved through
+`POST /connectors/m365/mail-messages/read-state-drafts` or
+`draft-m365-mail-message-read-state`; only the boolean `isRead` field is sent
+to Graph. Deletion is separately admin-approved through
+`POST /connectors/m365/mail-messages/delete-drafts` or
+`draft-m365-mail-message-delete`; it sends no request body and only deletes the
+explicitly identified message. Permanent deletion, send, and message-content
+operations remain unavailable.
 User creation requires `WAIT_ALLOW_WRITE_ACTIONS=true`, an admin approval, and
 an encrypted-vault reference to the temporary password. Create a draft through
 `POST /connectors/m365/users/drafts`, approve it through the approval queue, and
@@ -475,7 +541,13 @@ not remove group memberships or licenses or delete mailbox data. Approved
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
-does not expose wipe or delete. Approved mailbox-settings updates are exposed
+does not expose wipe or delete. Approved Intune managed-device sync is exposed
+through `POST /connectors/m365/managed-devices/sync-drafts` and the
+`draft-m365-managed-device-sync` CLI command; it is approval-gated and sends no
+request body. Approved Intune managed-device reboot is exposed through
+`POST /connectors/m365/managed-devices/reboot-drafts` and the
+`draft-m365-managed-device-reboot` CLI command; it is approval-gated and sends
+no request body. Approved mailbox-settings updates are exposed
 through `POST /connectors/m365/users/mailbox-settings-drafts` or the
 `draft-m365-mailbox-settings` CLI command; only timezone, locale, date-format,
 and time-format fields are accepted. Approved group membership changes are
@@ -487,8 +559,8 @@ changes are exposed through `POST /connectors/m365/users/license-drafts` or
 `draft-m365-license-change`; only explicit add/remove operations using immutable
 user IDs and SKU GUIDs are supported. Approved session revocation is exposed
 through `POST /connectors/m365/users/session-revocation-drafts` or
-`draft-m365-session-revocation`; message actions and other Intune mutations
-remain separate future actions.
+`draft-m365-session-revocation`; broader message actions and other Intune
+mutations remain separate future actions.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads
@@ -510,7 +582,19 @@ WAIT_CONNECTWISE_API_VERSION=2022.1
 Read commands are available through the CLI and the `/connectors/connectwise/*`
 API routes. Set `WAIT_ALLOW_HTTP_PROBING=true` before any network request;
 credentials are read from settings/vault and are never accepted in request
-payloads. Writes are not implemented in the public core.
+payloads. Ticket updates use an explicit allowlisted field map and require
+`WAIT_ALLOW_WRITE_ACTIONS=true`, a pending draft, and separate approval:
+
+```bash
+wait-local-agent connectors connectwise-write-health
+wait-local-agent connectors draft-connectwise CW-1002 update_status --field status_id=42
+wait-local-agent approvals update 1 approved 'approved by technician'
+wait-local-agent connectors execute-connectwise 1
+```
+
+Supported actions are `update_status`, `assign_technician`, and
+`update_ticket_fields`. Arbitrary ConnectWise endpoints and fields are not
+accepted.
 
 ### Syncro
 
@@ -600,6 +684,49 @@ in settings or the encrypted vault, never in action payloads. See
 [NinjaOne Public API](https://app.ninjaone.com/apidocs/) and
 [NinjaOne OAuth token configuration](https://www.ninjaone.com/docs/application-programming-interface-api/oauth-token-configuration/).
 
+### Datto RMM
+
+The public Datto RMM adapter provides bounded device inventory, open-alert
+inventory, component metadata, approval-gated quick-job execution, and bounded
+job-status lookup through the shared RMM contract:
+
+```text
+WAIT_DATTORMM_BASE_URL=https://your-datto-api-host/api
+WAIT_DATTORMM_ACCESS_TOKEN=
+WAIT_DATTORMM_SITE_MAP_JSON={"acme":"site-uid"}
+WAIT_DATTORMM_PAGE_SIZE=50
+```
+
+The site map is operator-controlled and required for every request; returned
+rows with a conflicting site identifier are discarded. Datto component/device
+validation occurs before any quick-job write. Execution requires a completed
+technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`; live calls require
+`WAIT_ALLOW_HTTP_PROBING=true`. Datto's API reports job state but does not
+expose completed component output. See the
+[Datto RMM API documentation](https://rmm.datto.com/help/en/Content/2SETUP/APIv2.htm).
+
+### N-able N-central
+
+The read-only N-central adapter provides tenant-scoped device inventory, active
+issues, and scheduled-task metadata through the shared RMM contract:
+
+```text
+WAIT_NCENTRAL_BASE_URL=https://your-ncentral-host
+WAIT_NCENTRAL_ACCESS_TOKEN=
+WAIT_NCENTRAL_ORG_UNIT_MAP_JSON={"acme":[100,101]}
+WAIT_NCENTRAL_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_NCENTRAL_ORG_UNIT_MAP_JSON` maps each WAIT tenant/client ID to one or
+more positive N-central organization-unit IDs. Returned devices, issues, and
+tasks are filtered against that map, and the adapter performs bounded GET-only
+requests. N-central task execution and execution-status lookup remain
+unavailable in this slice; no write flag or approval can enable them. See the
+[N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
+[active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
+and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:
@@ -607,6 +734,19 @@ Workflow templates are listed with:
 ```bash
 wait-local-agent workflows templates
 ```
+
+Gallery templates can be moved between local appliances as reviewed JSON
+artifacts:
+
+```bash
+wait-local-agent workflows gallery-export <gallery-id> > template.json
+wait-local-agent workflows gallery-import template.json --client-id acme
+```
+
+The API equivalents are `GET /workflow-templates/gallery/{id}/export` and
+`POST /workflow-templates/gallery/import`. Imports validate the source against
+the built-in reviewed catalog and arrive disabled until an operator reviews and
+enables them.
 
 Workflow runs and scheduled jobs are available over API routes, including:
 
@@ -621,7 +761,9 @@ Use `template_id` for a workflow schedule. Use `agent_id` plus `entity_id` for
 an agent schedule; the agent definition must use the `scheduled` trigger and
 the job's `params.input` object is passed to the bounded executor. An agent's
 optional execution window is evaluated in its configured IANA timezone before
-the run is created.
+the run is created. Schedule requests accept an IANA `timezone` (default
+`UTC`); cron and interval triggers use it for local-time interpretation, while
+one-time `run_at` timestamps remain absolute instants.
 
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 

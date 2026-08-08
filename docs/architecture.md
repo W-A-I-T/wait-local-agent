@@ -42,8 +42,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - SharePoint read-only site and drive-item metadata through Microsoft Graph
 - Microsoft Graph read-only user and group context lookup through the guarded
   HTTP boundary
-- ConnectWise PSA read-only ticket and company lookup through a guarded,
-  credential-isolated adapter; mutation endpoints are intentionally absent.
+- ConnectWise PSA ticket and company lookup plus an allowlisted,
+  approval-gated ticket PATCH path through a guarded, credential-isolated
+  adapter.
 - Syncro read-only ticket and customer lookup through the same guarded,
   credential-isolated boundary; mutation endpoints are intentionally absent.
 - ServiceNow read-only incident and company lookup through the same guarded,
@@ -62,7 +63,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 
 ## Workflow and Scheduler
 
-- Fixed workflow template catalog in the public core
+- Fixed workflow template catalog in the public core, including tool-backed
+  ticket-quality, sentiment, escalation, and similar-ticket review templates
+- Tool-backed templates call the existing smart-action registry through a small
+  executor contract, so workflow runs do not create a second tool engine
 - Workflow runs persisted with status, message, and approval linkage
 - APScheduler-backed scheduled jobs loaded from SQLite at startup
 - Scheduled workflow and ticket-agent routes mounted under `/scheduled-jobs`
@@ -83,32 +87,56 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   configured client scope. Manual runs and persisted five-field cron schedules
   are supported. Optional execution windows are persisted with revisions and
   evaluated before direct or scheduled runs.
+- Definitions may explicitly select bounded `ticket`, `client`, and local
+  `knowledge` context sources. Selected context is tenant-scoped, capped and
+  redacted, persisted with the operational run state, and passed to each
+  existing tool call as data; it is never treated as executable instructions.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
-- Existing HaloPSA ticket reads and Hudu article reads are also exposed through
-  the same tool contract. The actions reuse the guarded connector clients,
-  require an explicit local tenant scope, and never accept connector
-  credentials in action payloads.
+- Existing HaloPSA, ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket
+  reads, plus Hudu article and IT Glue document reads, are exposed through the
+  same tool contract. The actions reuse the guarded connector clients, require
+  an explicit local tenant scope, and never accept connector credentials in
+  action payloads. Confluence and SharePoint tools return metadata only; they
+  do not expose page bodies or file contents.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,
-  and Intune managed-device reads with operator-supplied credentials, plus an
+  message-metadata, and Intune managed-device reads with operator-supplied
+  credentials. The
+  `m365-live-context` tool exposes those fixed read resources without accepting
+  credentials in its payload, while an
   approval-gated user creation path that resolves a temporary password only
   from the local vault at execution time, plus an approval-gated disable path
   that only sets `accountEnabled=false`. Credentials never enter action or
   approval payloads. Intune managed-device retirement is a separate
   approval-gated, strict-ID action; it does not expose wipe or delete. A
+  separate approval-gated managed-device sync action accepts only a strict
+  device ID, sends no request body, and does not expose wipe or delete. A
+  separate approval-gated managed-device reboot action follows the same
+  strict-ID and bodyless-write boundary; wipe and delete remain unavailable. A
   separate approval-gated mailbox-settings action accepts only timezone,
   locale, date-format, and time-format fields; message contents and forwarding
-  are not exposed. Group membership changes
-  are a distinct strict-ID add/remove action using the same approval path.
+  are not exposed. A separate approval-gated message-move action accepts only
+  explicit mailbox, source-folder, message, and destination-folder IDs; it
+  does not expose message contents or send operations. A separate
+  approval-gated message read-state action accepts only explicit mailbox,
+  source-folder, and message IDs plus a boolean read state. Group membership changes
+  are a distinct strict-ID add/remove action using the same approval path. A
+  separate approval-gated message-delete action accepts only explicit mailbox,
+  source-folder, and message IDs, sends no body, and does not expose permanent
+  deletion.
 - The RMM boundary normalizes tenant-scoped `endpoint-agent` collector assets
   and exposes a shared contract for device lookup, alerts, script metadata,
   script preview, execution lookup, and approval-aware execution. The local
   adapter has no live alert/script source and blocks execution. The NinjaOne
   adapter uses an explicit WAIT-to-NinjaOne organization map, filters returned
   inventory to that organization, and implements the same contract without
-  accepting credentials or provider scope IDs in action payloads.
+  accepting credentials or provider scope IDs in action payloads. The Datto
+  adapter uses an explicit client-to-site map for bounded inventory and jobs.
+  The N-able N-central adapter is GET-only, maps WAIT clients to explicit
+  organization-unit IDs, filters devices/issues/tasks to those IDs, and blocks
+  task execution and execution lookup.
 - Communication drafts and delivery use the same smart-action contract, tenant
   scope, redaction, and approval pause as other proposed actions. Local ticket
   notes are persisted only for an existing tenant-scoped ticket; external
@@ -126,21 +154,30 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   applies cycle prevention at definition time and waits for upstream completion
   with a bounded sequential pass. Each run also persists and returns a
   redacted operational final result containing the last tool status, output,
-  evidence, and error detail; it contains no hidden reasoning. Backfills and
-  conversational agents remain future extensions.
+  evidence, and error detail; it contains no hidden reasoning. Conversational
+  agents remain a future extension.
 
-The scheduler emits `workflow.completed` through the existing event dispatcher
-after a scheduled workflow or scheduled agent completes. The event carries
-only the tenant-scoped ticket, run ID, template/agent ID, and status, uses a
-deterministic idempotency key, and records dispatch failures without changing
-the already-completed workflow outcome.
+The CLI, API, and scheduler emit `workflow.completed` through the existing
+event dispatcher after a CLI/API/gallery workflow, scheduled workflow, or
+scheduled agent completes. The event carries only the tenant-scoped ticket,
+run ID, template/agent ID, and status, uses a deterministic idempotency key,
+and records dispatch failures without changing the already-completed workflow
+outcome. Pending-approval runs do not emit completion.
+
+Analytics reads the same tenant-scoped execution and approval records. It
+reports approval decisions, distinct tickets referenced by normalized sources
+or explicit redacted step-input `ticket_id` fields, current `resolved`/`closed`
+ticket counts, and grouped workflow/agent/smart-action activity. It does not
+infer historical resolution timestamps or measured time saved.
 
 ## Template gallery
 
-The local gallery stores provenance-bearing copies of the fixed core workflow
-catalog. Gallery entries retain the source template identity and tenant scope;
-execution resolves back to the reviewed core implementation, so the gallery
-does not create an unrestricted code or prompt execution surface.
+The local gallery stores provenance-bearing, tenant-scoped instances of the
+fixed core workflow catalog. Operators can edit bounded metadata and operator
+instructions, enable or disable an instance, inspect redacted revisions, and
+restore an earlier definition as a new version. Execution retains the source
+template identity and runs through the reviewed core implementation; gallery
+metadata cannot introduce arbitrary code, tools, write permissions, or prompts.
 
 ## Backfills
 
@@ -163,7 +200,12 @@ triage, similar-ticket search, documentation search, resolution suggestions,
 quality, sentiment, escalation, and dispatch suggestions. It never evaluates
 arbitrary code or forwards the whole message to a model; unsupported requests
 return bounded help text, and existing smart-action approval and tenant checks
-remain authoritative.
+remain authoritative. The `/technician/chat/sessions` routes and the CLI
+session options persist bounded, tenant- and principal-scoped conversation
+history. History contains only redacted user/assistant operational summaries,
+action IDs, statuses, and ticket references; hidden reasoning and provider
+payloads are not persisted. Sessions can be closed, after which new messages
+are rejected.
 
 ## End-user support mode
 
@@ -183,11 +225,14 @@ not implied by enabling it.
   `Idempotency-Key` header or request-body key.
 - Event definitions use `trigger: "event"` and deterministic filters such as
   `{"event_type": "ticket.created", "priority": "P1"}`.
-- Scheduled workflow and agent completion emits `workflow.completed` with
+- CLI/API/gallery workflow and scheduled workflow/agent completion emits `workflow.completed` with
   `workflow_run_id`, `workflow_template_id`, and `status` fields; these can be
   used in deterministic filters to trigger the next bounded agent.
 - Deliveries persist redacted payloads, matched definitions, run IDs, status,
-  errors, and tenant scope in SQLite. Duplicate keys do not execute again.
+  errors, tenant scope, and the next bounded retry time in SQLite. Duplicate
+  keys do not execute again. APScheduler runs a single local retry worker every
+  30 seconds; it claims at most ten due failures per pass and applies the same
+  three-attempt cap used by the technician retry route.
 
 ## Secrets, Backup, and Audit
 
