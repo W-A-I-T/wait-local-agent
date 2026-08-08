@@ -18,6 +18,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessage,
+    M365GraphMailMessageDeleteResult,
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadResponse,
     M365GraphMailMessageReadStateResult,
@@ -659,6 +660,53 @@ def test_m365_graph_mail_message_read_state_is_write_gated_and_allowlisted(setti
         source_folder_id="bad folder",
         message_id="message-1",
         is_read=True,
+    ).status == "failed"
+    assert M365GraphClient(active).update_mail_message_read_state(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+        is_read=cast(Any, "true"),
+    ).status == "failed"
+
+
+def test_m365_graph_mail_message_delete_is_write_gated_and_allowlisted(settings) -> None:
+    blocked = M365GraphClient(_configured(settings)).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+    )
+    assert blocked.status == "blocked"
+
+    active = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == (
+            "/v1.0/users/alice@example.test/mailFolders/inbox/messages/message-1"
+        )
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.content == b""
+        return httpx.Response(204)
+
+    deleted = M365GraphClient(
+        active, transport=httpx.MockTransport(handler)
+    ).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="inbox",
+        message_id="message-1",
+    )
+    assert deleted == M365GraphMailMessageDeleteResult(
+        "succeeded",
+        "Microsoft Graph mail message deletion succeeded.",
+        "alice@example.test",
+        "inbox",
+        "message-1",
+        204,
+    )
+    assert M365GraphClient(active).delete_mail_message(
+        user_identity="alice@example.test",
+        source_folder_id="bad folder",
+        message_id="message-1",
     ).status == "failed"
 
 

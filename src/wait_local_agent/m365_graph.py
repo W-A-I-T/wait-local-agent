@@ -234,6 +234,16 @@ class M365GraphMailMessageReadStateResult:
     status_code: int | None = None
 
 
+@dataclass(frozen=True)
+class M365GraphMailMessageDeleteResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    source_folder_id: str = ""
+    message_id: str = ""
+    status_code: int | None = None
+
+
 class M365GraphReadProvider(Protocol):
     def list_users(
         self,
@@ -694,6 +704,37 @@ class M365GraphClient:
             source_folder_id=safe_source_folder_id,
             message_id=safe_message_id,
             is_read=is_read,
+            status_code=status_code,
+        )
+
+    def delete_mail_message(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+    ) -> M365GraphMailMessageDeleteResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphMailMessageDeleteResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            safe_source_folder_id = _safe_mail_folder_id(source_folder_id)
+            safe_message_id = _safe_mail_folder_id(message_id)
+            endpoint = (
+                f"users/{quote(safe_identity, safe='')}/mailFolders/"
+                f"{quote(safe_source_folder_id, safe='')}/messages/"
+                f"{quote(safe_message_id, safe='')}"
+            )
+            _, status_code = self._delete(endpoint)
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageDeleteResult("failed", exc.message)
+        return M365GraphMailMessageDeleteResult(
+            "succeeded",
+            "Microsoft Graph mail message deletion succeeded.",
+            user_identity=safe_identity,
+            source_folder_id=safe_source_folder_id,
+            message_id=safe_message_id,
             status_code=status_code,
         )
 

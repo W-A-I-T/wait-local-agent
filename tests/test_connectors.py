@@ -9,6 +9,7 @@ from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_delete,
     draft_m365_mail_message_move,
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
@@ -25,6 +26,7 @@ from wait_local_agent.connectors import (
     validate_halopsa_action_fields,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
+    validate_m365_mail_message_delete_payload,
     validate_m365_mail_message_move_payload,
     validate_m365_mail_message_read_state_payload,
     validate_m365_mailbox_settings_update_payload,
@@ -37,6 +39,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailMessageDeleteResult,
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadStateResult,
     M365GraphManagedDeviceRetireResult,
@@ -158,6 +161,17 @@ class FakeM365Client:
             message_id=str(kwargs["message_id"]),
             is_read=bool(kwargs["is_read"]),
             status_code=200,
+        )
+
+    def delete_mail_message(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphMailMessageDeleteResult(
+            "succeeded",
+            "message deleted",
+            user_identity=str(kwargs["user_identity"]),
+            source_folder_id=str(kwargs["source_folder_id"]),
+            message_id=str(kwargs["message_id"]),
+            status_code=204,
         )
 
     def revoke_user_sessions(self, **kwargs):
@@ -642,6 +656,56 @@ def test_m365_mail_message_read_state_payload_rejects_unsafe_shapes() -> None:
     ):
         with pytest.raises(ValueError):
             validate_m365_mail_message_read_state_payload(payload)
+
+
+def test_m365_mail_message_delete_approval_is_strict_and_executes(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_mail_message_delete(
+        store,
+        user_identity="user-1",
+        source_folder_id="inbox",
+        message_id="message-1",
+        client_id="tenant-a",
+    )
+    validate_m365_mail_message_delete_payload(
+        {
+            "connector": "m365",
+            "action_type": "mail-messages.delete",
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+        }
+    )
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(store, cast(Any, client), vault, approval.id or 0)
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+        }
+    ]
+
+
+def test_m365_mail_message_delete_payload_rejects_unsafe_shapes() -> None:
+    valid: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "mail-messages.delete",
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+    }
+    for payload in (
+        {},
+        {**valid, "action_type": "mail-messages.permanent-delete"},
+        {**valid, "message_id": "message 1"},
+        {**valid, "unexpected": "field"},
+    ):
+        with pytest.raises(ValueError):
+            validate_m365_mail_message_delete_payload(payload)
 
 
 def test_m365_user_creation_execution_rejects_invalid_state_and_missing_vault(settings, tmp_path) -> None:

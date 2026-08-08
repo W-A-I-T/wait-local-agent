@@ -31,6 +31,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolder,
     M365GraphMailFolderReadResponse,
     M365GraphMailMessage,
+    M365GraphMailMessageDeleteResult,
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadResponse,
     M365GraphMailMessageReadStateResult,
@@ -3885,6 +3886,83 @@ def test_m365_mail_message_read_state_requires_admin_and_auto_executes_after_app
             "source_folder_id": "inbox",
             "message_id": "message-1",
             "is_read": False,
+        }
+    ]
+
+
+def test_m365_mail_message_delete_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def delete_mail_message(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailMessageDeleteResult(
+                "succeeded",
+                "message deleted",
+                user_identity=str(kwargs["user_identity"]),
+                source_folder_id=str(kwargs["source_folder_id"]),
+                message_id=str(kwargs["message_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "client_id": "tenant-a",
+    }
+
+    viewer_draft = client.post(
+        "/connectors/m365/mail-messages/delete-drafts",
+        headers=_auth("viewer-token"),
+        json=payload,
+    )
+    draft = client.post(
+        "/connectors/m365/mail-messages/delete-drafts",
+        headers=_auth("admin-token"),
+        json=payload,
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.mail-messages.delete"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
         }
     ]
 

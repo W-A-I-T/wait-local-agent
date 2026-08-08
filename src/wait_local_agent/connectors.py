@@ -17,6 +17,7 @@ from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailMessageDeleteResult,
     M365GraphMailMessageMoveResult,
     M365GraphMailMessageReadStateResult,
     M365GraphManagedDeviceRetireResult,
@@ -68,6 +69,7 @@ M365_DEVICE_RETIRE_ACTION = "managed-devices.retire"
 M365_MAILBOX_SETTINGS_UPDATE_ACTION = "users.mailbox-settings.update"
 M365_MAIL_MESSAGE_MOVE_ACTION = "mail-messages.move"
 M365_MAIL_MESSAGE_READ_STATE_ACTION = "mail-messages.read-state"
+M365_MAIL_MESSAGE_DELETE_ACTION = "mail-messages.delete"
 M365_USER_CREATE_FIELDS = {
     "account_enabled",
     "display_name",
@@ -1042,6 +1044,30 @@ def draft_m365_mail_message_read_state(
     )
 
 
+def draft_m365_mail_message_delete(
+    store: Store,
+    *,
+    user_identity: str,
+    source_folder_id: str,
+    message_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_MAIL_MESSAGE_DELETE_ACTION,
+        "message_id": message_id,
+        "source_folder_id": source_folder_id,
+        "user_identity": user_identity,
+    }
+    validate_m365_mail_message_delete_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:message:{message_id.strip()}:delete",
+        f"m365.{M365_MAIL_MESSAGE_DELETE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def execute_m365_approval_request(
     store: Store,
     client: M365GraphClient,
@@ -1063,6 +1089,7 @@ def execute_m365_approval_request(
         f"m365.{M365_MAILBOX_SETTINGS_UPDATE_ACTION}",
         f"m365.{M365_MAIL_MESSAGE_MOVE_ACTION}",
         f"m365.{M365_MAIL_MESSAGE_READ_STATE_ACTION}",
+        f"m365.{M365_MAIL_MESSAGE_DELETE_ACTION}",
     }:
         raise ValueError("approval request is not a supported M365 action")
     if approval.status != "approved":
@@ -1085,6 +1112,7 @@ def execute_m365_approval_request(
         M365_MAILBOX_SETTINGS_UPDATE_ACTION,
         M365_MAIL_MESSAGE_MOVE_ACTION,
         M365_MAIL_MESSAGE_READ_STATE_ACTION,
+        M365_MAIL_MESSAGE_DELETE_ACTION,
     }:
         raise ValueError("approval payload does not match M365 action")
     result: (
@@ -1097,6 +1125,7 @@ def execute_m365_approval_request(
         | M365GraphMailboxSettingsUpdateResult
         | M365GraphMailMessageMoveResult
         | M365GraphMailMessageReadStateResult
+        | M365GraphMailMessageDeleteResult
     )
     result_payload: dict[str, object]
     if action_type == M365_USER_CREATE_ACTION:
@@ -1197,7 +1226,7 @@ def execute_m365_approval_request(
             "destination_folder_id": result.destination_folder_id,
             "status_code": result.status_code,
         }
-    else:
+    elif action_type == M365_MAIL_MESSAGE_READ_STATE_ACTION:
         validate_m365_mail_message_read_state_payload(payload)
         result = client.update_mail_message_read_state(
             user_identity=str(payload["user_identity"]),
@@ -1210,6 +1239,19 @@ def execute_m365_approval_request(
             "source_folder_id": result.source_folder_id,
             "message_id": result.message_id,
             "is_read": result.is_read,
+            "status_code": result.status_code,
+        }
+    else:
+        validate_m365_mail_message_delete_payload(payload)
+        result = client.delete_mail_message(
+            user_identity=str(payload["user_identity"]),
+            source_folder_id=str(payload["source_folder_id"]),
+            message_id=str(payload["message_id"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "source_folder_id": result.source_folder_id,
+            "message_id": result.message_id,
             "status_code": result.status_code,
         }
     return store.record_approval_execution(
@@ -1432,6 +1474,32 @@ def validate_m365_mail_message_read_state_payload(payload: dict[str, object]) ->
         raise ValueError("M365 mail message read-state payload is invalid")
     if not isinstance(payload.get("is_read"), bool):
         raise ValueError("M365 is_read is invalid")
+    for field_name in ("user_identity", "source_folder_id", "message_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
+
+
+def validate_m365_mail_message_delete_payload(payload: dict[str, object]) -> None:
+    required = {
+        "connector",
+        "action_type",
+        "user_identity",
+        "source_folder_id",
+        "message_id",
+    }
+    if set(payload) != required:
+        raise ValueError("M365 mail message delete payload contains unsupported fields")
+    if (
+        payload.get("connector") != "m365"
+        or payload.get("action_type") != M365_MAIL_MESSAGE_DELETE_ACTION
+    ):
+        raise ValueError("M365 mail message delete payload is invalid")
     for field_name in ("user_identity", "source_folder_id", "message_id"):
         value = payload.get(field_name)
         if (

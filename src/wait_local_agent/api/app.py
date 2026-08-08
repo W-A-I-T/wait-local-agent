@@ -63,6 +63,7 @@ from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
     draft_m365_group_membership,
     draft_m365_license_change,
+    draft_m365_mail_message_delete,
     draft_m365_mail_message_move,
     draft_m365_mail_message_read_state,
     draft_m365_mailbox_settings_update,
@@ -239,6 +240,13 @@ class M365MailMessageReadStateDraftRequest(BaseModel):
     source_folder_id: str = Field(min_length=1, max_length=320)
     message_id: str = Field(min_length=1, max_length=320)
     is_read: bool
+    client_id: str | None = None
+
+
+class M365MailMessageDeleteDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    source_folder_id: str = Field(min_length=1, max_length=320)
+    message_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -2791,6 +2799,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 source_folder_id=payload.source_folder_id,
                 message_id=payload.message_id,
                 is_read=payload.is_read,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/mail-messages/delete-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_mail_message_delete_draft(
+        payload: M365MailMessageDeleteDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_mail_message_delete(
+                store,
+                user_identity=payload.user_identity,
+                source_folder_id=payload.source_folder_id,
+                message_id=payload.message_id,
                 client_id=payload.client_id,
             )
         except ValueError as exc:
