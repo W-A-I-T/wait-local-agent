@@ -140,6 +140,79 @@ nav a:hover {
   color: #1f6f55;
 }
 
+.analytics-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.analytics-metric {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.analytics-metric > div,
+.analytics-detail > div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.analytics-metric > div,
+.analytics-metric small,
+.analytics-detail span,
+.analytics-row span {
+  color: #60706a;
+}
+
+.analytics-metric strong {
+  font-size: 1.6rem;
+}
+
+.analytics-metric small {
+  font-size: 0.82rem;
+}
+
+.analytics-list,
+.analytics-detail {
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(120px, 1fr);
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.analytics-row > div {
+  display: grid;
+  gap: 3px;
+}
+
+.analytics-statuses {
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.analytics-detail > div {
+  justify-content: space-between;
+  border-bottom: 1px solid #edf2ef;
+  padding: 8px 0;
+}
+
+.analytics-detail > div span {
+  flex: 1;
+}
+
 .overview-card span,
 .screen-note {
   color: #60706a;

@@ -20,6 +20,7 @@ const navigation = [
   { to: "/connectors", label: "Connectors", icon: GitBranch },
   { to: "/tickets", label: "Tickets", icon: ClipboardList },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/collectors", label: "Collectors", icon: Database },

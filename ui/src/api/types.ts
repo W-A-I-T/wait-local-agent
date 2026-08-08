@@ -96,6 +96,52 @@ export type WorkflowRun = {
   client_id?: string | null;
 };
 
+export type AnalyticsSummary = {
+  range: { from: string | null; to: string | null };
+  client_id: string | null;
+  executions_over_time: Array<{
+    date: string;
+    count: number;
+    succeeded: number;
+    not_succeeded: number;
+  }>;
+  success_rate: { total: number; succeeded: number; rate: number };
+  failures_by_status: Array<{ status: string; count: number }>;
+  activity_breakdown: Array<{
+    run_kind: string;
+    trigger_source: string;
+    status: string;
+    count: number;
+  }>;
+  approval_rate: {
+    requested: number;
+    decided: number;
+    approved: number;
+    rejected: number;
+    pending: number;
+    rate: number;
+    derivation: string;
+  };
+  ticket_metrics: {
+    touched: number;
+    resolved: number;
+    resolution_rate: number;
+    derivation: string;
+  };
+  activity_by_workflow: Array<{
+    run_kind: string;
+    workflow_id: string;
+    total: number;
+    succeeded: number;
+    status_counts: Array<{ status: string; count: number }>;
+  }>;
+  estimated_minutes_saved: {
+    minutes: number;
+    estimate: boolean;
+    derivation: string;
+  };
+};
+
 export type KnowledgeDocument = {
   id: number;
   path: string;

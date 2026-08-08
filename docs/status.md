@@ -95,7 +95,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   estimated-time-saved metrics. It also reports approval decisions, distinct
   execution-referenced tickets, current `resolved`/`closed` ticket counts, and
   grouped activity by workflow, agent, or smart action. Resolution is a
-  current-status aggregate and does not infer historical resolution time.
+  current-status aggregate and does not infer historical resolution time. The
+  React dashboard exposes these local metrics at `/analytics`.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
   read-only local knowledge search, ticket-quality, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
   and read/write classification. The catalog also exposes a technician-gated,
