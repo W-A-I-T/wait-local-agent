@@ -2862,7 +2862,7 @@ def _print_hudu_response(read_type: str, response: HuduReadResponse) -> None:
     _audit_hudu_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(f"{response.result.status} count={response.result.count} {response.result.message}")
     for item in response.items:
-        typer.echo(asdict(item))
+        typer.echo(redact_value(asdict(item)))
 
 
 def _print_connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> None:

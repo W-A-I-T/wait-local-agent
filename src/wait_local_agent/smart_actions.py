@@ -1263,7 +1263,10 @@ class HuduDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="hudu-documentation-search",
         title="Hudu documentation search",
-        description="Search tenant-scoped Hudu article metadata through the existing read-only connector.",
+        description=(
+            "Search tenant-scoped Hudu article titles and bounded content "
+            "through the existing read-only connector."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -1323,7 +1326,10 @@ class HuduDocumentationSearchAction:
                 or not getattr(item, "company_id", "")
                 or getattr(item, "company_id", "") == context.client_id
             )
-            and query_value in str(getattr(item, "name", "")).casefold()
+            and (
+                query_value in str(getattr(item, "name", "")).casefold()
+                or query_value in str(getattr(item, "content", "")).casefold()
+            )
         ][:limit]
         return ActionResult(
             status="success",

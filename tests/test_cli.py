@@ -940,10 +940,14 @@ def test_hudu_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
             page: int = 1,
             page_size: int | None = None,
         ):
-            return _hudu_response([HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def get_article(self, article_id: str):
-            return _hudu_response([HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def list_folders(
             self,
@@ -969,6 +973,7 @@ def test_hudu_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
     assert "Contoso" in companies.output
     assert articles.exit_code == 0
     assert "Runbook" in articles.output
+    assert "token=[redacted]" in articles.output
     assert article.exit_code == 0
     assert "A-1" in article.output
     assert folders.exit_code == 0

@@ -351,7 +351,15 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         hudu_client=SimpleNamespace(
             list_articles=lambda company_id, page, page_size: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
-                items=[HuduArticle("article-1", "VPN setup", company_id, "folder-1", "2026-08-01", "https://hudu")],
+                items=[HuduArticle(
+                    "article-1",
+                    "VPN setup",
+                    company_id,
+                    "folder-1",
+                    "2026-08-01",
+                    "https://hudu",
+                    "MFA reset instructions token=secret",
+                )],
             )
         ),
     )
@@ -398,6 +406,10 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     hudu = HuduDocumentationSearchAction().run(
         connector_context,
         {"query": "vpn", "company_id": "acme"},
+    )
+    hudu_content = HuduDocumentationSearchAction().run(
+        connector_context,
+        {"query": "mfa", "company_id": "acme"},
     )
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
@@ -467,6 +479,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert m365_messages.output["count"] == 1
     assert m365_device.output["count"] == 1
     assert hudu.output["articles"][0]["name"] == "VPN setup"  # type: ignore[index]
+    assert hudu_content.status == "success"
+    assert hudu_content.output["articles"][0]["content"] == "MFA reset instructions token=[redacted]"  # type: ignore[index]
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"

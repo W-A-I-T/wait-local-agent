@@ -2556,10 +2556,14 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
             page: int = 1,
             page_size: int | None = None,
         ):
-            return _hudu_response([HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def get_article(self, article_id: str):
-            return _hudu_response([HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def list_folders(
             self,
@@ -2584,7 +2588,9 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
     assert health.json()["status"] == "ready"
     assert companies.json()["items"][0]["name"] == "Contoso"
     assert articles.json()["items"][0]["name"] == "Runbook"
+    assert articles.json()["items"][0]["content"] == "token=[redacted]"
     assert article.json()["items"][0]["id"] == "A-1"
+    assert article.json()["items"][0]["content"] == "token=[redacted]"
     assert folders.json()["items"][0]["name"] == "Ops"
     assert any(event["event_type"] == "hudu.read" for event in audit.json())
 

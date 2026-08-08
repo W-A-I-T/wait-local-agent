@@ -279,6 +279,7 @@ class HuduArticle:
     folder_id: str
     updated_at: str
     url: str
+    content: str = ""
 
 
 @dataclass(frozen=True)

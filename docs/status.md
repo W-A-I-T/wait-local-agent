@@ -21,7 +21,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Connector setup validation commands for HaloPSA and Hudu.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
-- Hudu read-only connector configuration surface for documentation lookup.
+- Hudu read-only connector configuration surface for tenant-scoped documentation
+  lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common
   guarded HTTP boundary; write operations remain unavailable.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
@@ -148,7 +149,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   lookup, script metadata, script preview, and approval-aware execution. The
   local adapter remains inventory-only and blocks execution until a reviewed
   vendor adapter is installed. Existing HaloPSA ticket reads and
-  Hudu, IT Glue, Confluence, and SharePoint documentation search, and
+  Hudu article-content, IT Glue, Confluence, and SharePoint documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients; connector
   credentials are never action payloads.
@@ -205,7 +206,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Capability | Status |
 | --- | --- |
 | HaloPSA read + approval-gated write | Built |
-| Hudu read-only | Built |
+| Hudu read-only | Built, including bounded article content search |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
