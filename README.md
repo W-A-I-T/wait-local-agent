@@ -31,8 +31,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
   deterministic event deliveries with idempotency and run-once-per-entity
-  protection; conversational and unrestricted execution remain outside this
-  slice.
+  protection. Active runs can be cancelled through `/agent-runs/{id}/cancel`,
+  which also revokes a pending smart-action approval; conversational and
+  unrestricted execution remain outside this slice.
 - Event-triggered agent APIs under `/automation/events` and
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
   tenant checks, and auditable delivery history.

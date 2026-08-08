@@ -308,6 +308,8 @@ class AgentService:
         actor: str,
         approver_role: Role,
     ) -> AgentExecutionResult:
+        if run.status == "cancelled":
+            return self._result(run)
         if run.status not in {"queued", "pending_approval"}:
             raise AgentDefinitionError("only queued or approval-paused runs can be cancelled")
         definition = self._definition_for_run(definition, run)
@@ -324,7 +326,7 @@ class AgentService:
                             approval_id,
                             "rejected",
                             comment="Agent run cancelled",
-                            approver=f"{actor}:cancel",
+                            approver=actor if actor != run.actor else "system:cancellation",
                             approver_role=approver_role,
                         )
                 steps[pending_index]["status"] = "cancelled"

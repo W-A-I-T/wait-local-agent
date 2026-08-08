@@ -207,6 +207,15 @@ def test_agent_run_can_cancel_pending_approval_and_retry(settings) -> None:
     assert cancelled.status == "cancelled"
     assert cancelled.steps[0]["status"] == "cancelled"
     assert service.store.get_approval_request(pending.approval_id or 0).status == "rejected"  # type: ignore[union-attr]
+    assert (
+        service.cancel(
+            definition,
+            service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+            actor="approver",
+            approver_role=Role.TECHNICIAN,
+        ).status
+        == "cancelled"
+    )
 
     retried = service.retry(
         definition,
