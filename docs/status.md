@@ -24,6 +24,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Hudu read-only connector configuration surface for documentation lookup.
 - ConnectWise PSA read-only ticket and company inventory through the common
   guarded HTTP boundary; write operations remain unavailable.
+- Syncro read-only ticket and customer inventory through the common guarded
+  HTTP boundary; write operations remain unavailable.
 - Preview-first communication drafts for email, Teams, Slack, and SMS through
   the common smart-action contract; drafts are approval-gated and explicitly
   non-sendable.

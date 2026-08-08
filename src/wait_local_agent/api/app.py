@@ -94,6 +94,7 @@ from wait_local_agent.security import auth_required
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -270,6 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
+    syncro_client = SyncroClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -354,6 +356,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "hudu_configured": bool(
                 active_settings.hudu_base_url and active_settings.hudu_api_key
+            ),
+            "syncro_configured": bool(
+                active_settings.syncro_base_url and active_settings.syncro_api_token
             ),
         }
 
@@ -1708,6 +1713,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _connectwise_response("companies.list", response)
 
+    @app.get("/connectors/syncro/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = syncro_client.health()
+        _audit_syncro_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/syncro/tickets")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_tickets(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        query: str | None = None,
+        customer_id: str | None = None,
+        status: str | None = None,
+        since_updated_at: str | None = None,
+    ) -> dict[str, object]:
+        response = syncro_client.list_tickets(
+            page=page,
+            query=query,
+            customer_id=customer_id,
+            status=status,
+            since_updated_at=since_updated_at,
+        )
+        return _syncro_response("tickets.list", response)
+
+    @app.get("/connectors/syncro/tickets/{ticket_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = syncro_client.get_ticket(ticket_id)
+        return _syncro_response("tickets.get", response)
+
+    @app.get("/connectors/syncro/customers")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_customers(
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        query: str | None = None,
+        business_name: str | None = None,
+    ) -> dict[str, object]:
+        response = syncro_client.list_customers(
+            page=page,
+            query=query,
+            business_name=business_name,
+        )
+        return _syncro_response("customers.list", response)
+
+    @app.get("/connectors/syncro/customers/{customer_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_customer(
+        customer_id: str,
+        request: Request,
+        _: ViewerAccess,
+    ) -> dict[str, object]:
+        response = syncro_client.get_customer(customer_id)
+        return _syncro_response("customers.get", response)
+
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
@@ -2133,6 +2197,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": response.items,
         }
 
+    def _syncro_response(read_type: str, response: SyncroReadResponse) -> dict[str, object]:
+        _audit_syncro_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": response.items,
+        }
+
     def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
 
@@ -2141,6 +2212,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_connectwise_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("connectwise.read", read_type, f"{status} count={count}")
+
+    def _audit_syncro_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("syncro.read", read_type, f"{status} count={count}")
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
