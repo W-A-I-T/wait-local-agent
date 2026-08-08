@@ -357,6 +357,33 @@ Read commands are available through the CLI and `/connectors/syncro/*` API
 routes. The adapter uses bearer authentication, keeps the token out of query
 strings and request payloads, and exposes no mutation endpoint.
 
+### ServiceNow
+
+Required settings:
+
+```text
+WAIT_SERVICENOW_BASE_URL=
+WAIT_SERVICENOW_USERNAME=
+WAIT_SERVICENOW_PASSWORD=
+WAIT_SERVICENOW_API_VERSION=v1
+WAIT_SERVICENOW_PAGE_SIZE=25
+```
+
+Read commands cover incidents and companies through the ServiceNow Table API:
+
+```bash
+wait-local-agent connectors validate servicenow
+wait-local-agent connectors servicenow-health
+wait-local-agent connectors servicenow-incidents
+wait-local-agent connectors servicenow-incident <sys-id>
+wait-local-agent connectors servicenow-companies
+wait-local-agent connectors servicenow-company <sys-id>
+```
+
+The API mirrors these commands under `/connectors/servicenow/*`. Requests use
+bounded pagination, explicit fields, basic authentication from settings/vault,
+and read-only GET operations ([ServiceNow Table API](https://www.servicenow.com/docs/r/xanadu/api-reference/rest-apis/c_TableAPI.html)).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:

@@ -6,7 +6,7 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 
 | Gate | Default | Effect |
 | --- | --- | --- |
-| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, ConnectWise, and Syncro HTTP calls |
+| `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, ConnectWise, Syncro, and ServiceNow HTTP calls |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
 | Approval request | pending | Required before any HaloPSA draft can execute |
 
@@ -50,6 +50,7 @@ wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET '<secret>'
 wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>'
 wait-local-agent secrets set WAIT_CONNECTWISE_PRIVATE_KEY '<secret>'
 wait-local-agent secrets set WAIT_SYNCRO_API_TOKEN '<secret>'
+wait-local-agent secrets set WAIT_SERVICENOW_PASSWORD '<secret>'
 wait-local-agent secrets list
 ```
 
@@ -217,3 +218,35 @@ wait-local-agent connectors syncro-customer <customer-id>
 
 The API mirrors these commands under `/connectors/syncro/health`,
 `/connectors/syncro/tickets`, and `/connectors/syncro/customers`.
+
+## ServiceNow
+
+### Required settings
+
+```text
+WAIT_SERVICENOW_BASE_URL=
+WAIT_SERVICENOW_USERNAME=
+WAIT_SERVICENOW_PASSWORD=
+WAIT_SERVICENOW_API_VERSION=v1
+WAIT_SERVICENOW_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The read-only adapter uses ServiceNow's Table API for incidents and companies,
+with explicit field selection, bounded pagination, and basic authentication
+from settings or the local vault ([ServiceNow Table API](https://www.servicenow.com/docs/r/xanadu/api-reference/rest-apis/c_TableAPI.html)).
+No mutation endpoint is exposed.
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate servicenow
+wait-local-agent connectors servicenow-health
+wait-local-agent connectors servicenow-incidents
+wait-local-agent connectors servicenow-incident <sys-id>
+wait-local-agent connectors servicenow-companies
+wait-local-agent connectors servicenow-company <sys-id>
+```
+
+The API mirrors these commands under `/connectors/servicenow/health`,
+`/connectors/servicenow/incidents`, and `/connectors/servicenow/companies`.

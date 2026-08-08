@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +22,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroReadResponse
 
@@ -2029,6 +2031,68 @@ def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
     assert customer.json()["items"][0]["id"] == "7"
     assert any(connector["id"] == "syncro" for connector in connectors.json())
     assert any(event["event_type"] == "syncro.read" for event in audit.json())
+
+
+def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ServiceNow ready", 0)
+
+        def list_incidents(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"sys_id": "abc123", "number": "INC001"}],
+            )
+
+        def get_incident(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "incident ready", 1),
+                [{"sys_id": sys_id, "number": "INC001"}],
+            )
+
+        def list_companies(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"sys_id": "co-1", "name": "Contoso"}],
+            )
+
+        def get_company(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"sys_id": sys_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "ServiceNowClient", FakeServiceNowClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/servicenow/health")
+    incidents = client.get(
+        "/connectors/servicenow/incidents",
+        params={"page": 2, "page_size": 10, "query": "active=true"},
+    )
+    incident = client.get("/connectors/servicenow/incidents/abc123")
+    companies = client.get("/connectors/servicenow/companies")
+    company = client.get("/connectors/servicenow/companies/co-1")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert incidents.json()["items"][0]["number"] == "INC001"
+    assert incident.json()["items"][0]["sys_id"] == "abc123"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert company.json()["items"][0]["sys_id"] == "co-1"
+    assert any(connector["id"] == "servicenow" for connector in connectors.json())
+    assert any(event["event_type"] == "servicenow.read" for event in audit.json())
+
+
+def test_servicenow_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/servicenow/health")
+    assert response.status_code == 401
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:

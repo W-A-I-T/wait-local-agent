@@ -22,6 +22,7 @@ from wait_local_agent.models import (
     HuduFolder,
 )
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
+from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroReadResponse
@@ -418,6 +419,53 @@ def test_syncro_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
     assert ticket.exit_code == 0 and "42" in ticket.output
     assert customers.exit_code == 0 and "Contoso" in customers.output
     assert customer.exit_code == 0 and "7" in customer.output
+
+
+def test_servicenow_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None:
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ok", 0)
+
+        def list_incidents(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"sys_id": "abc123", "number": "INC001"}],
+            )
+
+        def get_incident(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"sys_id": sys_id}]
+            )
+
+        def list_companies(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1), [{"sys_id": "co-1", "name": "Contoso"}]
+            )
+
+        def get_company(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "ok", 1), [{"sys_id": sys_id}]
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "ServiceNowClient", FakeServiceNowClient)
+    runner = CliRunner()
+
+    health = runner.invoke(app, ["connectors", "servicenow-health"])
+    incidents = runner.invoke(app, ["connectors", "servicenow-incidents", "--query", "active=true"])
+    incident = runner.invoke(app, ["connectors", "servicenow-incident", "abc123"])
+    companies = runner.invoke(app, ["connectors", "servicenow-companies"])
+    company = runner.invoke(app, ["connectors", "servicenow-company", "co-1"])
+
+    assert health.exit_code == 0
+    assert "ready count=0 ok" in health.output
+    assert incidents.exit_code == 0 and "INC001" in incidents.output
+    assert incident.exit_code == 0 and "abc123" in incident.output
+    assert companies.exit_code == 0 and "Contoso" in companies.output
+    assert company.exit_code == 0 and "co-1" in company.output
 
 
 def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_path) -> None:

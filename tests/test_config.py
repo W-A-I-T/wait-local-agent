@@ -77,6 +77,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.connectwise_page_size == 25
     assert settings.syncro_base_url == ""
     assert settings.syncro_api_token == ""
+    assert settings.servicenow_base_url == ""
+    assert settings.servicenow_username == ""
+    assert settings.servicenow_password == ""
+    assert settings.servicenow_api_version == ""
+    assert settings.servicenow_page_size == 25
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
@@ -155,6 +160,22 @@ def test_syncro_env_values(monkeypatch) -> None:
 
     assert settings.syncro_base_url == "https://acme.syncromsp.com"
     assert settings.syncro_api_token == "syncro-token"
+
+
+def test_servicenow_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SERVICENOW_BASE_URL", "https://service-now.example.test")
+    monkeypatch.setenv("WAIT_SERVICENOW_USERNAME", "api-user")
+    monkeypatch.setenv("WAIT_SERVICENOW_PASSWORD", "password")
+    monkeypatch.setenv("WAIT_SERVICENOW_API_VERSION", "v1")
+    monkeypatch.setenv("WAIT_SERVICENOW_PAGE_SIZE", "10")
+
+    settings = load_settings()
+
+    assert settings.servicenow_base_url == "https://service-now.example.test"
+    assert settings.servicenow_username == "api-user"
+    assert settings.servicenow_password == "password"
+    assert settings.servicenow_api_version == "v1"
+    assert settings.servicenow_page_size == 10
 
 
 def test_rate_limit_env_values(monkeypatch) -> None:

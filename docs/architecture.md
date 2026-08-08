@@ -41,6 +41,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   credential-isolated adapter; mutation endpoints are intentionally absent.
 - Syncro read-only ticket and customer lookup through the same guarded,
   credential-isolated boundary; mutation endpoints are intentionally absent.
+- ServiceNow read-only incident and company lookup through the same guarded,
+  credential-isolated Table API boundary; mutation endpoints are intentionally absent.
 - Connector credential validation through `wait-local-agent connectors validate ...`
 - Outbound calls gated by `WAIT_ALLOW_HTTP_PROBING`
 - Live writes gated by `WAIT_ALLOW_WRITE_ACTIONS`
