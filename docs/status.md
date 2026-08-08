@@ -24,8 +24,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Hudu read-only connector configuration surface for documentation lookup.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, and approver identity capture.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete,
-  reschedule, and audit trail. Cron, interval, and one-time triggers use the
-  existing UTC APScheduler path and persist their agent/entity target.
+  tenant-scoped reschedule, and audit trail. Cron, interval, and one-time
+  triggers use the existing UTC APScheduler path and persist their
+  agent/entity target; all schedule mutations enforce the authenticated tenant
+  boundary.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is

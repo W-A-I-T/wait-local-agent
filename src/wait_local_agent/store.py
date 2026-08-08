@@ -2384,7 +2384,7 @@ class Store:
                 (cron, schedule_type, interval_seconds, run_at, now, job_id),
             )
             client_id = str(row["client_id"]) if row["client_id"] is not None else None
-            detail = f"{schedule_type} schedule updated"
+            detail = f"{row['template_id']} {schedule_type} schedule updated"
             self._add_audit_event(
                 connection,
                 "scheduled_job.rescheduled",

@@ -115,14 +115,40 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
 
         paused = manager.pause(scheduled_job.id or 0)
         resumed = manager.resume(scheduled_job.id or 0)
+        rescheduled = manager.reschedule(
+            scheduled_job.id or 0,
+            cron="0 10 * * *",
+            schedule_type="cron",
+            interval_seconds=None,
+            run_at=None,
+        )
         deleted = manager.remove(scheduled_job.id or 0)
 
         assert paused.paused is True
         assert paused.next_run_at is None
         assert resumed.paused is False
         assert resumed.next_run_at is not None
+        assert rescheduled.cron == "0 10 * * *"
+        assert rescheduled.schedule_type == "cron"
+        assert rescheduled.next_run_at is not None
         assert deleted.id == scheduled_job.id
         assert store.get_scheduled_job(scheduled_job.id or 0) is None
+        with pytest.raises(KeyError):
+            manager.reschedule(
+                999,
+                cron="0 11 * * *",
+                schedule_type="cron",
+                interval_seconds=None,
+                run_at=None,
+            )
+        with pytest.raises(KeyError):
+            store.update_scheduled_job_schedule(
+                999,
+                cron="0 11 * * *",
+                schedule_type="cron",
+                interval_seconds=None,
+                run_at=None,
+            )
 
         unregistered = manager.register(
             "documentation-assisted-response",

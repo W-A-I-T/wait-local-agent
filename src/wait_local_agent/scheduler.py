@@ -102,33 +102,37 @@ class SchedulerManager:
                 self._scheduler.resume_job(self._job_identity(job_id))
         return self._with_runtime_state(scheduled_job)
 
+    def reschedule(
+        self,
+        job_id: int,
+        *,
+        cron: str,
+        schedule_type: str,
+        interval_seconds: int | None,
+        run_at: str | None,
+    ) -> ScheduledJob:
+        existing = self._store.get_scheduled_job(job_id)
+        if existing is None:
+            raise KeyError(job_id)
+        validate_schedule(schedule_type, cron, interval_seconds, run_at)
+        _validate_schedule_target(existing.job_kind, existing.template_id, existing.agent_id, existing.entity_id)
+        scheduled_job = self._store.update_scheduled_job_schedule(
+            job_id,
+            cron=cron,
+            schedule_type=schedule_type,
+            interval_seconds=interval_seconds,
+            run_at=run_at,
+        )
+        if self._scheduler is not None:
+            self._register_live_job(scheduled_job)
+        return self._with_runtime_state(scheduled_job)
+
     def remove(self, job_id: int) -> ScheduledJob:
         scheduled_job = self._store.delete_scheduled_job(job_id)
         if self._scheduler is not None:
             live_job = self._scheduler.get_job(self._job_identity(job_id))
             if live_job is not None:
                 self._scheduler.remove_job(self._job_identity(job_id))
-        return self._with_runtime_state(scheduled_job)
-
-    def reschedule(
-        self,
-        job_id: int,
-        *,
-        schedule_type: str,
-        cron: str,
-        interval_seconds: int | None,
-        run_at: str | None,
-    ) -> ScheduledJob:
-        validate_schedule(schedule_type, cron, interval_seconds, run_at)
-        scheduled_job = self._store.update_scheduled_job_schedule(
-            job_id,
-            schedule_type=schedule_type,
-            cron=cron,
-            interval_seconds=interval_seconds,
-            run_at=run_at,
-        )
-        if self._scheduler is not None:
-            self._register_live_job(scheduled_job)
         return self._with_runtime_state(scheduled_job)
 
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
