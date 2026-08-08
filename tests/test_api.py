@@ -484,6 +484,71 @@ def test_workflow_run_detail_hides_foreign_approval_payload(settings) -> None:
     assert local_payload["approval_request"]["workflow_run_id"] == local_run.id
 
 
+def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    left = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-ACME",
+        "failed",
+        "provider api_key=left-secret",
+        client_id="acme",
+        template_version=1,
+    )
+    right = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-ACME",
+        "completed",
+        "provider api_key=right-secret",
+        client_id="acme",
+        template_version=2,
+    )
+    foreign = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-BETA",
+        "completed",
+        "foreign",
+        client_id="beta",
+        template_version=3,
+    )
+    client = TestClient(create_app(secure_settings))
+
+    compared = client.get(
+        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("tech-token")
+    )
+    foreign_response = client.get(
+        f"/workflow-runs/{left.id}/compare/{foreign.id}", headers=_auth("tech-token")
+    )
+    missing_response = client.get(
+        f"/workflow-runs/{left.id}/compare/99999", headers=_auth("tech-token")
+    )
+    no_tenant_settings = secure_settings.__class__(
+        **{**secure_settings.__dict__, "client_id": "", "tech_token": "", "viewer_token": "viewer-token"}
+    )
+    no_tenant_response = TestClient(create_app(no_tenant_settings)).get(
+        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("viewer-token")
+    )
+
+    assert compared.status_code == 200
+    assert compared.json()["changed"] is True
+    assert {change["field"] for change in compared.json()["changes"]} >= {
+        "status",
+        "template_version",
+    }
+    assert "left-secret" not in compared.text
+    assert "right-secret" not in compared.text
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert no_tenant_response.status_code == 404
+
+
 def test_bound_technician_can_patch_in_scope_approval_payload(settings) -> None:
     secure_settings = settings.__class__(
         **{

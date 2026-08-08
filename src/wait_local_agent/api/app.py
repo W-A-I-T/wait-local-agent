@@ -3016,7 +3016,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-runs/{run_id}")
     def workflow_run_detail(run_id: int, context: ViewerAccess) -> dict[str, object]:
-        run = store.get_workflow_run(run_id)
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        run = store.get_workflow_run(run_id, client_id=scoped_client_id)
         if run is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
         template = next(
@@ -3040,6 +3043,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
             ],
         }
+
+    @app.get("/workflow-runs/{run_id}/compare/{other_run_id}")
+    def workflow_run_compare(
+        run_id: int,
+        other_run_id: int,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        left = store.get_workflow_run(run_id, client_id=scoped_client_id)
+        right = store.get_workflow_run(other_run_id, client_id=scoped_client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="workflow run not found")
+        return _workflow_run_comparison_view(left, right)
 
     @app.get("/executions")
     def executions(
@@ -3515,6 +3533,33 @@ def _template_gallery_revision_view(revision) -> dict[str, object]:
         "definition": _safe_redacted_json_object(revision.definition_json),
         "created_at": revision.created_at,
         "client_id": revision.client_id,
+    }
+
+
+def _workflow_run_comparison_view(left: WorkflowRun, right: WorkflowRun) -> dict[str, object]:
+    fields = (
+        "template_id",
+        "ticket_id",
+        "status",
+        "message",
+        "approval_request_id",
+        "template_version",
+        "client_id",
+    )
+    left_view = asdict(left)
+    right_view = asdict(right)
+    left_view["message"] = redact_text(left.message)
+    right_view["message"] = redact_text(right.message)
+    changes = [
+        {"field": field, "before": left_view[field], "after": right_view[field]}
+        for field in fields
+        if left_view[field] != right_view[field]
+    ]
+    return {
+        "from_run": left_view,
+        "to_run": right_view,
+        "changed": bool(changes),
+        "changes": changes,
     }
 
 

@@ -1942,11 +1942,18 @@ class Store:
             raise RuntimeError("workflow run was not persisted")
         return run
 
-    def get_workflow_run(self, run_id: int) -> WorkflowRun | None:
+    def get_workflow_run(self, run_id: int, client_id: str | None = None) -> WorkflowRun | None:
+        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from workflow_runs where id = ?", (run_id,)
-            ).fetchone()
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from workflow_runs where id = ?", (run_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "select * from workflow_runs where id = ? and client_id = ?",
+                    (run_id, normalized_client_id),
+                ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
 
     def list_workflow_runs(self, client_id: str | None = None) -> list[WorkflowRun]:

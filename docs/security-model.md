@@ -125,6 +125,11 @@ revisions through the same tenant-scoped gallery entry. Comparison responses
 contain only redacted stored definition fields; they do not restore, execute, or
 change a template.
 
+Workflow-run comparisons require viewer access and resolve both runs through the
+same authenticated tenant scope. Comparison responses redact run messages and
+contain only operational fields; they do not expose execution payloads or permit
+reruns, approval changes, or other mutations.
+
 Hudu is read-only in the public repo.
 
 ## Audit trail and export

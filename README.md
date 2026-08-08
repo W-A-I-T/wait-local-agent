@@ -67,6 +67,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Agent revision history, redacted revision diffs, run-to-version links, and
   bounded rollback under `/agents/{id}/revisions`, with immutable snapshots and
   tenant-scoped restore-as-new-version.
+- Workflow run history supports tenant-scoped redacted comparisons through
+  `/workflow-runs/{run_id}/compare/{other_run_id}`, `workflows compare-runs`,
+  and the React workflow dashboard.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.

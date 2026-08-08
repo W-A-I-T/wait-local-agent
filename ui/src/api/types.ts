@@ -153,6 +153,17 @@ export type WorkflowRun = {
   template_version?: number | null;
 };
 
+export type WorkflowRunComparison = {
+  from_run: WorkflowRun;
+  to_run: WorkflowRun;
+  changed: boolean;
+  changes: Array<{
+    field: string;
+    before?: unknown;
+    after?: unknown;
+  }>;
+};
+
 export type AgentTool = {
   id: string;
   name: string;

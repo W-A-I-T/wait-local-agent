@@ -1784,6 +1784,50 @@ def run_workflow(template_id: str, ticket_id: str) -> None:
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 
 
+@workflows_app.command("compare-runs")
+def compare_workflow_runs(
+    from_run_id: int,
+    to_run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    left = store.get_workflow_run(from_run_id, client_id=scoped_client_id)
+    right = store.get_workflow_run(to_run_id, client_id=scoped_client_id)
+    if left is None or right is None:
+        raise typer.BadParameter("workflow run not found")
+    typer.echo(json.dumps(_workflow_run_comparison_payload(left, right), sort_keys=True, indent=2))
+
+
+def _workflow_run_comparison_payload(left, right) -> dict[str, object]:
+    fields = (
+        "template_id",
+        "ticket_id",
+        "status",
+        "message",
+        "approval_request_id",
+        "template_version",
+        "client_id",
+    )
+    left_view = asdict(left)
+    right_view = asdict(right)
+    left_view["message"] = redact_text(left.message)
+    right_view["message"] = redact_text(right.message)
+    changes = [
+        {"field": field, "before": left_view[field], "after": right_view[field]}
+        for field in fields
+        if left_view[field] != right_view[field]
+    ]
+    return {
+        "from_run": left_view,
+        "to_run": right_view,
+        "changed": bool(changes),
+        "changes": changes,
+    }
+
+
 def _dispatch_cli_workflow_completion(store: Store, settings, run) -> None:
     if run.status != "completed" or run.id is None or not run.ticket_id.strip():
         return

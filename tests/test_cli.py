@@ -436,6 +436,12 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     completed = runner.invoke(app, ["workflows", "run", "ticket-triage", "TCK-1001"])
     quality = runner.invoke(app, ["workflows", "run", "ticket-quality-review", "TCK-1001"])
     gallery_run = runner.invoke(app, ["workflows", "gallery-run", gallery_id, "TCK-1001"])
+    stored_runs = Store(data_path).list_workflow_runs()
+    run_comparison = runner.invoke(
+        app,
+        ["workflows", "compare-runs", str(stored_runs[-1].id), str(stored_runs[0].id)],
+    )
+    missing_run_comparison = runner.invoke(app, ["workflows", "compare-runs", "99999", "100000"])
     draft = runner.invoke(
         app,
         [
@@ -481,6 +487,9 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert "status=completed" in quality.output
     assert gallery_run.exit_code == 0
     assert "template_version=5" in gallery_run.output
+    assert run_comparison.exit_code == 0
+    assert '"from_run"' in run_comparison.output
+    assert missing_run_comparison.exit_code != 0
     assert draft.exit_code == 0
     assert "approval_request_id=" in draft.output
     assert approvals.exit_code == 0
