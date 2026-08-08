@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import httpx
@@ -21,10 +22,16 @@ from wait_local_agent.rmm import (
 )
 
 
-def _configured(settings, *, allow_http_probing: bool = True):
+def _configured(
+    settings,
+    *,
+    allow_http_probing: bool = True,
+    allow_write_actions: bool = False,
+):
     return replace(
         settings,
         allow_http_probing=allow_http_probing,
+        allow_write_actions=allow_write_actions,
         ninjaone_base_url="https://app.ninjarmm.com",
         ninjaone_client_id="client-id",
         ninjaone_client_secret="client-secret",
@@ -129,6 +136,43 @@ def test_ninjaone_script_preview_never_echoes_variable_values(settings) -> None:
     assert NinjaOneClient(_configured(settings)).preview_script("17/escape", "4").result.status == "failed"
 
 
+def test_ninjaone_script_execution_requires_both_safety_gates_and_records_remote_job(settings) -> None:
+    blocked = NinjaOneClient(_configured(settings)).execute_script("17", "4")
+    assert blocked.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in blocked.message
+
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path == "/ws/oauth/token":
+            return httpx.Response(200, json={"access_token": "access-token", "expires_in": 3600})
+        assert request.url.path == "/api/v2/device/17/script/run"
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert json.loads(request.content)["parameters"] == '{"Path":"/tmp/logs"}'
+        assert json.loads(request.content)["id"] == 4
+        assert json.loads(request.content)["runAs"] == "system"
+        return httpx.Response(202, json={"jobId": "job-17"})
+
+    client = NinjaOneClient(
+        _configured(settings, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.execute_script("17", "4", {"Path": "/tmp/logs"}, run_as=" system ")
+    assert result.status == "succeeded"
+    assert result.status_code == 202
+    assert result.remote_id == "job-17"
+    assert [request.method for request in calls] == ["POST", "POST"]
+
+
+def test_ninjaone_script_execution_rejects_unsafe_or_unbounded_inputs(settings) -> None:
+    client = NinjaOneClient(_configured(settings, allow_write_actions=True))
+    assert client.execute_script("17/escape", "4").status == "failed"
+    assert "positive numeric" in client.execute_script("17", "script-name").message
+    assert "single-line" in client.execute_script("17", "4", run_as="bad\nvalue").message
+    assert "serializable" in client.execute_script("17", "4", {"value": object()}).message
+
+
 def test_ninjaone_sanitizes_http_and_json_failures(settings) -> None:
     def unauthorized(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ws/oauth/token":
@@ -146,9 +190,7 @@ def test_ninjaone_sanitizes_http_and_json_failures(settings) -> None:
             return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
         return httpx.Response(200, text="not-json")
 
-    malformed_result = NinjaOneClient(
-        _configured(settings), transport=httpx.MockTransport(malformed)
-    ).list_devices()
+    malformed_result = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(malformed)).list_devices()
     assert malformed_result.result.status == "failed"
     assert "malformed JSON" in malformed_result.result.message
 
@@ -212,17 +254,13 @@ def test_ninjaone_maps_transport_and_token_failures(settings) -> None:
     def token_missing_access(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"expires_in": 10})
 
-    missing_access = NinjaOneClient(
-        _configured(settings), transport=httpx.MockTransport(token_missing_access)
-    )
+    missing_access = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(token_missing_access))
     assert missing_access.health().message == "NinjaOne token response did not contain an access token."
 
     def token_connect_error(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connect failed")
 
-    connect_client = NinjaOneClient(
-        _configured(settings), transport=httpx.MockTransport(token_connect_error)
-    )
+    connect_client = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(token_connect_error))
     assert "before receiving a response" in connect_client.health().message
 
 
@@ -254,9 +292,7 @@ def test_ninjaone_guard_and_get_error_edges(settings) -> None:
             return httpx.Response(200, json={"access_token": "token"})
         raise httpx.ReadError("read failed")
 
-    read_error = NinjaOneClient(
-        _configured(settings), transport=httpx.MockTransport(get_read_error)
-    )
+    read_error = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(get_read_error))
     assert read_error.list_devices().result.message == "NinjaOne request failed."
 
     def get_http_failure(request: httpx.Request) -> httpx.Response:
@@ -264,9 +300,7 @@ def test_ninjaone_guard_and_get_error_edges(settings) -> None:
             return httpx.Response(200, json={"access_token": "token"})
         return httpx.Response(503, text="private body")
 
-    http_failure = NinjaOneClient(
-        _configured(settings), transport=httpx.MockTransport(get_http_failure)
-    )
+    http_failure = NinjaOneClient(_configured(settings), transport=httpx.MockTransport(get_http_failure))
     failed = http_failure.list_devices()
     assert failed.result.message == "NinjaOne GET devices failed with HTTP 503."
     assert "private body" not in failed.result.message

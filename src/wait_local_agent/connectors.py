@@ -19,7 +19,7 @@ from wait_local_agent.models import (
     SecretRecord,
 )
 from wait_local_agent.reports.renderers import redact_value
-from wait_local_agent.rmm import NinjaOneClient, RmmClient
+from wait_local_agent.rmm import NinjaOneClient, RmmClient, RmmExecutionClient, RmmExecutionResult
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
@@ -60,9 +60,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     if itglue_configured:
         itglue_status = "configured" if settings.allow_http_probing else "blocked"
     ninjaone_configured = bool(
-        settings.ninjaone_base_url
-        and settings.ninjaone_client_id
-        and settings.ninjaone_client_secret
+        settings.ninjaone_base_url and settings.ninjaone_client_id and settings.ninjaone_client_secret
     )
     ninjaone_status: ConnectorStatusValue = "not_configured"
     if ninjaone_configured:
@@ -91,9 +89,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     if syncro_configured:
         syncro_status = "configured" if settings.allow_http_probing else "blocked"
     servicenow_configured = bool(
-        settings.servicenow_base_url
-        and settings.servicenow_username
-        and settings.servicenow_password
+        settings.servicenow_base_url and settings.servicenow_username and settings.servicenow_password
     )
     servicenow_status: ConnectorStatusValue = "not_configured"
     if servicenow_configured:
@@ -107,10 +103,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             message=(
                 "HaloPSA credentials are configured; live writes still require approval."
                 if halopsa_status == "configured"
-                else (
-                    "HaloPSA credentials are configured; live reads require "
-                    "WAIT_ALLOW_HTTP_PROBING."
-                )
+                else ("HaloPSA credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING.")
                 if halopsa_status == "blocked"
                 else "Set WAIT_HALOPSA_* values to enable the first PSA read path."
             ),
@@ -537,6 +530,129 @@ def execute_halopsa_approval_request(
         message=result.message,
         result=sanitize_halopsa_write_result(result),
     )
+
+
+def draft_ninjaone_script_execution(
+    store: Store,
+    device_id: str,
+    script_id: str,
+    variables: dict[str, object] | None = None,
+    *,
+    run_as: str = "",
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    normalized_device_id = _validate_ninjaone_device_id(device_id)
+    normalized_script_id = _validate_ninjaone_script_id(script_id)
+    normalized_variables = _validate_ninjaone_variables(variables)
+    if len(run_as) > 200 or any(character in run_as for character in "\r\n"):
+        raise ValueError("NinjaOne run_as must be a bounded single-line value")
+    payload: dict[str, object] = {
+        "connector": "ninjaone",
+        "device_id": normalized_device_id,
+        "script_id": normalized_script_id,
+        "variables": normalized_variables,
+        "run_as": run_as.strip(),
+    }
+    return store.create_approval_request(
+        normalized_device_id,
+        "ninjaone.script.run",
+        payload,
+        client_id=client_id,
+    )
+
+
+def execute_ninjaone_approval_request(
+    store: Store,
+    client: RmmExecutionClient,
+    request_id: int,
+) -> ApprovalRequest:
+    approval = store.get_approval_request(request_id)
+    if approval is None:
+        raise KeyError(request_id)
+    if approval.action_type != "ninjaone.script.run":
+        raise ValueError("approval request is not a NinjaOne script action")
+    if approval.status != "approved":
+        raise PermissionError("NinjaOne script execution requires an approved approval request")
+    if approval.execution_status == "succeeded":
+        raise RuntimeError("NinjaOne approval request has already executed successfully")
+    try:
+        payload = json.loads(approval.payload_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("approval payload is malformed") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("approval payload is malformed")
+    if payload.get("connector") != "ninjaone":
+        raise ValueError("approval payload connector does not match NinjaOne")
+    device_id = _validate_ninjaone_device_id(str(payload.get("device_id") or ""))
+    if device_id != approval.subject_id:
+        raise ValueError("approval payload device does not match approval request")
+    script_id = _validate_ninjaone_script_id(str(payload.get("script_id") or ""))
+    variables = _validate_ninjaone_variables(payload.get("variables"))
+    run_as = payload.get("run_as", "")
+    if not isinstance(run_as, str):
+        raise ValueError("NinjaOne approval run_as must be a string")
+    result = client.execute_script(device_id, script_id, variables, run_as)
+    return store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result=sanitize_ninjaone_execution_result(result),
+        event_type="rmm.write",
+    )
+
+
+def sanitize_ninjaone_execution_result(result: RmmExecutionResult) -> dict[str, object]:
+    return {
+        "connector": "ninjaone",
+        "operation": "script.run",
+        "device_id": result.device_id,
+        "script_id": result.script_id,
+        "status": result.status,
+        "status_code": result.status_code,
+        "remote_id": result.remote_id,
+    }
+
+
+def _validate_ninjaone_device_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized or any(character in normalized for character in "/?#"):
+        raise ValueError("NinjaOne device identifiers must be single path segments")
+    return normalized
+
+
+def _validate_ninjaone_script_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized.isdecimal() or int(normalized) <= 0:
+        raise ValueError("NinjaOne script identifiers must be positive numeric IDs")
+    return str(int(normalized))
+
+
+def _validate_ninjaone_variables(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("NinjaOne script variables must be an object")
+    sensitive_tokens = (
+        "secret",
+        "token",
+        "password",
+        "credential",
+        "authorization",
+        "bearer",
+        "api_key",
+    )
+    for key in value:
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("NinjaOne script variable names must be non-empty strings")
+        if any(token in key.lower() for token in sensitive_tokens):
+            raise ValueError("NinjaOne script variables must not contain secret-like names")
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("NinjaOne script variables must be JSON serializable") from exc
+    if len(value) > 50 or len(encoded.encode("utf-8")) > 16_384:
+        raise ValueError("NinjaOne script variables exceed the bounded request limit")
+    return dict(value)
 
 
 def sanitize_halopsa_write_result(result: HaloWriteResult) -> dict[str, object]:

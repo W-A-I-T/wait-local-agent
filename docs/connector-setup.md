@@ -7,10 +7,10 @@ WAIT Local Agent keeps connector surfaces conservative by default.
 | Gate | Default | Effect |
 | --- | --- | --- |
 | `WAIT_ALLOW_HTTP_PROBING` | `false` | Blocks all outbound HaloPSA, Hudu, IT Glue, NinjaOne, Autotask, ConnectWise, Syncro, and ServiceNow HTTP calls |
-| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA write execution |
-| Approval request | pending | Required before any HaloPSA draft can execute |
+| `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Blocks live HaloPSA writes and NinjaOne script execution |
+| Approval request | pending | Required before any HaloPSA or NinjaOne action can execute |
 
-A fresh install can create HaloPSA drafts but cannot mutate HaloPSA until the operator enables both the write gate and the approval flow.
+A fresh install can create approval requests but cannot mutate HaloPSA or run a NinjaOne script until the operator enables both the write gate and the approval flow.
 
 ## API Authentication
 
@@ -190,9 +190,10 @@ wait-local-agent connectors itglue-folders <organization-id>
 
 ## NinjaOne RMM
 
-The public NinjaOne adapter is read-only. It lists devices, active alerts, and
-automation script metadata, and can create a redacted script execution preview.
-It never calls NinjaOne script execution or management endpoints.
+The public NinjaOne adapter is read-first. It lists devices, active alerts, and
+automation script metadata, creates redacted execution previews, and supports
+one approval-gated script execution action. It does not expose general
+NinjaOne management endpoints.
 
 ### Required settings
 
@@ -203,6 +204,7 @@ WAIT_NINJAONE_CLIENT_SECRET=
 WAIT_NINJAONE_SCOPE=monitoring
 WAIT_NINJAONE_PAGE_SIZE=50
 WAIT_ALLOW_HTTP_PROBING=true
+WAIT_ALLOW_WRITE_ACTIONS=false
 ```
 
 Use a NinjaOne OAuth application with monitoring scope. Keep the client secret
@@ -222,10 +224,14 @@ wait-local-agent connectors ninjaone-device <device-id>
 wait-local-agent connectors ninjaone-alerts
 wait-local-agent connectors ninjaone-scripts
 wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
+wait-local-agent connectors ninjaone-script-request <device-id> <script-id> '{}'
+wait-local-agent connectors ninjaone-script-execute <approval-id>
 ```
 
-The API equivalents are under `/connectors/ninjaone`. The script preview
-returns variable names only; variable values are never echoed or persisted.
+The API equivalents are under `/connectors/ninjaone`. The request endpoint only
+creates a pending approval. Execution additionally requires both safety flags
+and rejects secret-like variable names; execution results persist only bounded
+metadata, never script parameters.
 
 ## Autotask PSA
 

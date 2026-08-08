@@ -25,8 +25,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Hudu read-only documentation context.
 - IT Glue read-only organization and documentation context; IT Glue writes are not exposed.
 - Connector credential validation with `wait-local-agent connectors validate halopsa`, `hudu`, `ninjaone`, `autotask`, `connectwise`, `syncro`, and `servicenow`.
-- Read-only NinjaOne RMM inventory for devices, alerts, automation scripts, and
-  safe script execution previews; script execution is not exposed.
+- NinjaOne RMM inventory for devices, alerts, and automation scripts, plus an
+  approval-gated script execution request path with persisted execution history.
 - Read-only Autotask PSA ticket and company inventory; Autotask writes are not exposed.
 - Read-only ConnectWise PSA ticket and company inventory; ConnectWise writes are not exposed.
 - Read-only SyncroMSP ticket and customer inventory; Syncro writes are not exposed.
@@ -339,7 +339,7 @@ No IT Glue write operation is performed by these commands.
 
 ### NinjaOne RMM
 
-The public NinjaOne adapter is read-only and requires explicit HTTP probing.
+The public NinjaOne adapter is read-first and requires explicit HTTP probing.
 Configure `WAIT_NINJAONE_BASE_URL`, `WAIT_NINJAONE_CLIENT_ID`, and
 `WAIT_NINJAONE_CLIENT_SECRET`, then use:
 
@@ -349,9 +349,15 @@ wait-local-agent connectors ninjaone-devices
 wait-local-agent connectors ninjaone-alerts
 wait-local-agent connectors ninjaone-scripts
 wait-local-agent connectors ninjaone-script-preview <device-id> <script-id>
+wait-local-agent connectors ninjaone-script-request <device-id> <script-id> '{}'
+wait-local-agent connectors ninjaone-script-execute <approval-id>
 ```
 
-No NinjaOne script or management mutation is performed by these commands.
+The request command only creates a pending approval. Execution requires an
+approved request, `WAIT_ALLOW_HTTP_PROBING=true`, and
+`WAIT_ALLOW_WRITE_ACTIONS=true`; script variables must not contain secret-like
+names. Device, alert, and script metadata remain read-only, and no general
+NinjaOne management mutation is exposed.
 
 ### Autotask PSA
 

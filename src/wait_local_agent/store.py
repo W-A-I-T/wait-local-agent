@@ -1034,6 +1034,7 @@ class Store:
         status: str,
         message: str,
         result: dict[str, object],
+        event_type: str = "halopsa.write",
     ) -> ApprovalRequest:
         now = utc_now()
         result_json = _json_dumps(result)
@@ -1057,7 +1058,7 @@ class Store:
             detail = f"{action_type} execution {status}: {message}"
             self._add_audit_event(
                 connection,
-                "halopsa.write",
+                event_type,
                 subject_id,
                 detail,
                 client_id=str(row["client_id"]) if row["client_id"] is not None else None,
@@ -1065,7 +1066,7 @@ class Store:
             )
             self._add_event_history(
                 connection,
-                "halopsa.write",
+                event_type,
                 subject_id,
                 status,
                 message,

@@ -1,22 +1,43 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
 
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
+    draft_ninjaone_script_execution,
     execute_halopsa_approval_request,
+    execute_ninjaone_approval_request,
     update_halopsa_approval_fields,
     validate_halopsa_action_fields,
 )
 from wait_local_agent.models import HaloWriteResult
+from wait_local_agent.rmm import RmmExecutionResult
 from wait_local_agent.store import Store
 
 
 class FakeHaloClient:
     def execute_write(self, request):
         return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+
+class FakeNinjaOneClient:
+    def execute_script(
+        self,
+        device_id: str,
+        script_id: str,
+        variables: Mapping[str, object] | None = None,
+        run_as: str = "",
+    ) -> RmmExecutionResult:
+        assert (device_id, script_id, variables, run_as) == (
+            "17",
+            "4",
+            {"Path": "/tmp/logs"},
+            "system",
+        )
+        return RmmExecutionResult("succeeded", "accepted", device_id, script_id, 202, "job-17")
 
 
 def test_cloud_inventory_connectors_are_public_exports() -> None:
@@ -149,3 +170,47 @@ def test_halopsa_field_edit_validation_edges(settings) -> None:
     validate_halopsa_action_fields("update_status", {"status_id": "1"})
     validate_halopsa_action_fields("assign_technician", {"team_id": "2"})
     validate_halopsa_action_fields("update_ticket_fields", {"custom_field": "value"})
+
+
+def test_ninjaone_script_approval_persists_execution_without_script_parameters_in_result(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="secret-like"):
+        draft_ninjaone_script_execution(store, "17", "4", {"api_token": "never-store"})
+
+    approval = draft_ninjaone_script_execution(
+        store,
+        "17",
+        "4",
+        {"Path": "/tmp/logs"},
+        run_as="system",
+        client_id="acme",
+    )
+    assert approval.action_type == "ninjaone.script.run"
+    assert "variables" in approval.payload_json
+    with pytest.raises(PermissionError, match="approved"):
+        execute_ninjaone_approval_request(store, FakeNinjaOneClient(), approval.id or 0)
+
+    store.update_approval_request(approval.id or 0, "approved", approver_id="tech")
+    executed = execute_ninjaone_approval_request(store, FakeNinjaOneClient(), approval.id or 0)
+    assert executed.execution_status == "succeeded"
+    assert "Path" not in executed.execution_result_json
+    assert "job-17" in executed.execution_result_json
+    assert any(event.event_type == "rmm.write" for event in store.list_audit_events(client_id="acme"))
+    with pytest.raises(RuntimeError, match="already executed"):
+        execute_ninjaone_approval_request(store, FakeNinjaOneClient(), approval.id or 0)
+
+
+def test_ninjaone_script_approval_payload_and_identifier_validation(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="numeric"):
+        draft_ninjaone_script_execution(store, "17", "script-name")
+    with pytest.raises(ValueError, match="single path"):
+        draft_ninjaone_script_execution(store, "17/escape", "4")
+    approval = store.create_approval_request(
+        "17",
+        "ninjaone.script.run",
+        {"connector": "other", "device_id": "17", "script_id": "4", "variables": {}},
+    )
+    store.update_approval_request(approval.id or 0, "approved")
+    with pytest.raises(ValueError, match="connector"):
+        execute_ninjaone_approval_request(store, FakeNinjaOneClient(), approval.id or 0)

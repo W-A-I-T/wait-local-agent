@@ -1,13 +1,13 @@
-"""Read-first RMM contracts and the initial NinjaOne adapter.
+"""RMM contracts and the bounded NinjaOne adapter.
 
-The adapter intentionally stops at inventory, alerts, scripts, and safe script
-previews.  It does not execute scripts or expose management endpoints.  Those
-operations can be added later behind the existing approval and write-action
-gates once credential scope and execution history are defined.
+Inventory remains read-first. Script execution is the one supported mutation,
+and it is only reachable through an approval request and the write-action
+safety gate.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import monotonic
@@ -28,6 +28,16 @@ class RmmReadResponse:
     items: list[RmmItem]
 
 
+@dataclass(frozen=True)
+class RmmExecutionResult:
+    status: str
+    message: str
+    device_id: str
+    script_id: str
+    status_code: int | None = None
+    remote_id: str = ""
+
+
 class RmmReadError(Exception):
     """A sanitized RMM adapter failure."""
 
@@ -39,32 +49,44 @@ class RmmReadError(Exception):
 class RmmClient(Protocol):
     """Read-first contract shared by future RMM vendor adapters."""
 
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
-    def list_devices(self, *, page_size: int | None = None, after: str | None = None) -> RmmReadResponse:
-        ...
+    def list_devices(self, *, page_size: int | None = None, after: str | None = None) -> RmmReadResponse: ...
 
-    def get_device(self, device_id: str) -> RmmReadResponse:
-        ...
+    def get_device(self, device_id: str) -> RmmReadResponse: ...
 
-    def list_alerts(self, *, page_size: int | None = None, after: str | None = None) -> RmmReadResponse:
-        ...
+    def list_alerts(self, *, page_size: int | None = None, after: str | None = None) -> RmmReadResponse: ...
 
-    def list_scripts(self) -> RmmReadResponse:
-        ...
+    def list_scripts(self) -> RmmReadResponse: ...
 
     def preview_script(
         self,
         device_id: str,
         script_id: str,
         variables: Mapping[str, object] | None = None,
-    ) -> RmmReadResponse:
-        ...
+    ) -> RmmReadResponse: ...
+
+    def execute_script(
+        self,
+        device_id: str,
+        script_id: str,
+        variables: Mapping[str, object] | None = None,
+        run_as: str = "",
+    ) -> RmmExecutionResult: ...
+
+
+class RmmExecutionClient(Protocol):
+    def execute_script(
+        self,
+        device_id: str,
+        script_id: str,
+        variables: Mapping[str, object] | None = None,
+        run_as: str = "",
+    ) -> RmmExecutionResult: ...
 
 
 class NinjaOneClient:
-    """Small read-only NinjaOne Public API adapter."""
+    """Small NinjaOne Public API adapter with one approval-gated mutation."""
 
     def __init__(
         self,
@@ -121,9 +143,7 @@ class NinjaOneClient:
             normalized_script_id = _safe_segment(script_id)
         except RmmReadError as exc:
             return RmmReadResponse(ConnectorReadResult("failed", exc.message), [])
-        variable_names = sorted(
-            key for key in (variables or {}) if isinstance(key, str) and key.strip()
-        )
+        variable_names = sorted(key for key in (variables or {}) if isinstance(key, str) and key.strip())
         return RmmReadResponse(
             ConnectorReadResult(
                 "ready",
@@ -139,6 +159,82 @@ class NinjaOneClient:
                     "variable_names": variable_names,
                 }
             ],
+        )
+
+    def execute_script(
+        self,
+        device_id: str,
+        script_id: str,
+        variables: Mapping[str, object] | None = None,
+        run_as: str = "",
+    ) -> RmmExecutionResult:
+        """Run one script after the caller has completed approval checks."""
+
+        if not self.settings.allow_http_probing:
+            return RmmExecutionResult(
+                "blocked",
+                "NinjaOne script execution is blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+                device_id,
+                script_id,
+            )
+        if not self.settings.allow_write_actions:
+            return RmmExecutionResult(
+                "blocked",
+                "NinjaOne script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true.",
+                device_id,
+                script_id,
+            )
+        try:
+            normalized_device_id = _safe_segment(device_id)
+            normalized_script_id = _numeric_script_id(script_id)
+            normalized_run_as = _safe_run_as(run_as)
+            parameters = _script_parameters(variables)
+            token = self._access_token()
+            with self._client() as client:
+                response = client.post(
+                    f"{_api_base_url(self.settings.ninjaone_base_url)}/device/{normalized_device_id}/script/run",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    json={
+                        "type": "SCRIPT",
+                        "id": normalized_script_id,
+                        "parameters": parameters,
+                        "runAs": normalized_run_as,
+                    },
+                )
+        except RmmReadError as exc:
+            return RmmExecutionResult("failed", exc.message, device_id, script_id)
+        except (httpx.TimeoutException, httpx.ConnectError):
+            return RmmExecutionResult(
+                "failed", "NinjaOne script request failed before receiving a response.", device_id, script_id
+            )
+        except httpx.HTTPError:
+            return RmmExecutionResult("failed", "NinjaOne script request failed.", device_id, script_id)
+
+        if response.status_code >= 400:
+            return RmmExecutionResult(
+                "failed",
+                f"NinjaOne script execution failed with HTTP {response.status_code}.",
+                device_id,
+                script_id,
+                response.status_code,
+            )
+        remote_id = ""
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            for key in ("jobId", "job_id", "id", "uid"):
+                if payload.get(key) not in (None, ""):
+                    remote_id = str(payload[key])
+                    break
+        return RmmExecutionResult(
+            "succeeded",
+            "NinjaOne script execution accepted.",
+            device_id,
+            script_id,
+            response.status_code,
+            remote_id,
         )
 
     def _list(
@@ -306,6 +402,32 @@ def _safe_segment(value: str) -> str:
     if not stripped or any(character in stripped for character in "/?#"):
         raise RmmReadError("NinjaOne resource identifiers must be single path segments.")
     return stripped
+
+
+def _numeric_script_id(value: str) -> int:
+    stripped = value.strip()
+    if not stripped.isdecimal() or int(stripped) <= 0:
+        raise RmmReadError("NinjaOne script identifiers must be positive numeric IDs.")
+    return int(stripped)
+
+
+def _safe_run_as(value: str) -> str:
+    if len(value) > 200 or any(character in value for character in "\r\n"):
+        raise RmmReadError("NinjaOne runAs must be a bounded single-line value.")
+    return value.strip()
+
+
+def _script_parameters(variables: Mapping[str, object] | None) -> str:
+    values = dict(variables or {})
+    if len(values) > 50:
+        raise RmmReadError("NinjaOne script variables are limited to 50 entries.")
+    try:
+        encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise RmmReadError("NinjaOne script variables must be JSON serializable.") from exc
+    if len(encoded.encode("utf-8")) > 16_384:
+        raise RmmReadError("NinjaOne script variables exceed the 16 KiB limit.")
+    return encoded
 
 
 def _bounded_page_size(value: int) -> int:

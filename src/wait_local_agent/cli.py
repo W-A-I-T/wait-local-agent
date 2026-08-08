@@ -54,7 +54,9 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_ninjaone_script_execution,
     execute_halopsa_approval_request,
+    execute_ninjaone_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
@@ -217,9 +219,7 @@ def doctor() -> None:
     itglue_configured = bool(settings.itglue_base_url and settings.itglue_api_key)
     typer.echo(f"itglue_configured={itglue_configured}")
     ninjaone_configured = bool(
-        settings.ninjaone_base_url
-        and settings.ninjaone_client_id
-        and settings.ninjaone_client_secret
+        settings.ninjaone_base_url and settings.ninjaone_client_id and settings.ninjaone_client_secret
     )
     typer.echo(f"ninjaone_configured={ninjaone_configured}")
     autotask_configured = bool(
@@ -240,9 +240,7 @@ def doctor() -> None:
     syncro_configured = bool(settings.syncro_base_url and settings.syncro_api_key)
     typer.echo(f"syncro_configured={syncro_configured}")
     servicenow_configured = bool(
-        settings.servicenow_base_url
-        and settings.servicenow_username
-        and settings.servicenow_password
+        settings.servicenow_base_url and settings.servicenow_username and settings.servicenow_password
     )
     typer.echo(f"servicenow_configured={servicenow_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
@@ -554,10 +552,7 @@ def export_audit_events(
 @events_app.command("list")
 def list_event_history() -> None:
     for event in _store().list_event_history():
-        typer.echo(
-            f"{event.id} {event.event_type} {event.subject_id} "
-            f"{event.status} {event.message}"
-        )
+        typer.echo(f"{event.id} {event.event_type} {event.subject_id} {event.status} {event.message}")
 
 
 @approvals_app.command("list")
@@ -655,10 +650,7 @@ def list_connectors() -> None:
 def list_secrets() -> None:
     settings = load_settings()
     for secret in list_secret_records(settings):
-        typer.echo(
-            f"{secret.key} configured={secret.configured} "
-            f"required_for={secret.required_for}"
-        )
+        typer.echo(f"{secret.key} configured={secret.configured} required_for={secret.required_for}")
 
 
 @connectors_app.command("validate")
@@ -666,7 +658,7 @@ def validate_connector(
     connector: Annotated[
         str,
         typer.Argument(help="Connector id, such as halopsa, hudu, autotask, connectwise, syncro, or servicenow."),
-    ]
+    ],
 ) -> None:
     settings = load_settings()
     try:
@@ -908,6 +900,47 @@ def ninjaone_script_preview(device_id: str, script_id: str) -> None:
     )
 
 
+@connectors_app.command("ninjaone-script-request")
+def ninjaone_script_request(
+    device_id: str,
+    script_id: str,
+    variables_json: str = "{}",
+    run_as: str = "",
+) -> None:
+    try:
+        variables = json.loads(variables_json)
+        if not isinstance(variables, dict):
+            raise ValueError("variables_json must decode to an object")
+        approval = draft_ninjaone_script_execution(
+            _store(),
+            device_id,
+            script_id,
+            variables,
+            run_as=run_as,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_id={approval.id} status={approval.status} "
+        f"subject_id={approval.subject_id} action_type={approval.action_type}"
+    )
+
+
+@connectors_app.command("ninjaone-script-execute")
+def ninjaone_script_execute(request_id: int) -> None:
+    try:
+        approval = execute_ninjaone_approval_request(_store(), _ninjaone_client(), request_id)
+    except KeyError as exc:
+        raise typer.BadParameter("approval request not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_id={approval.id} status={approval.status} "
+        f"execution_status={approval.execution_status} "
+        f"execution_message={approval.execution_message}"
+    )
+
+
 @connectors_app.command("autotask-health")
 def autotask_health() -> None:
     result = _autotask_client().health()
@@ -1023,9 +1056,7 @@ def servicenow_companies(page: int = 1, page_size: int = 50) -> None:
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
-        typer.echo(
-            f"{template.id} {template.trigger} approval_required={template.approval_required}"
-        )
+        typer.echo(f"{template.id} {template.trigger} approval_required={template.approval_required}")
 
 
 @workflows_app.command("run")
@@ -1051,17 +1082,13 @@ def ingest_knowledge(
     documents = service.ingest_path(path)
     typer.echo(f"documents={len(documents)}")
     for document in documents:
-        typer.echo(
-            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
-        )
+        typer.echo(f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}")
 
 
 @knowledge_app.command("list")
 def list_knowledge_documents() -> None:
     for document in _store().list_knowledge_documents():
-        typer.echo(
-            f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
-        )
+        typer.echo(f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}")
 
 
 @knowledge_app.command("search")
@@ -1135,10 +1162,7 @@ def list_smart_action_runs(
     settings = load_settings()
     store = Store(settings.data_path)
     for run in store.list_smart_action_runs(client_id=client_id):
-        typer.echo(
-            f"{run.id} {run.action_id} {run.status} actor={run.actor} "
-            f"approval_id={run.approval_id}"
-        )
+        typer.echo(f"{run.id} {run.action_id} {run.status} actor={run.actor} approval_id={run.approval_id}")
 
 
 def _cli_execution_scope(settings, token: str | None, client_id: str | None) -> str | None:
@@ -1188,9 +1212,7 @@ def show_execution(
         raise typer.BadParameter("execution not found")
     payload = {
         **asdict(run),
-        "steps": [
-            _execution_cli_step_view(step) for step in store.list_execution_steps(run.id)
-        ],
+        "steps": [_execution_cli_step_view(step) for step in store.list_execution_steps(run.id)],
         "artifacts": [
             {
                 "id": artifact.id,
@@ -1217,9 +1239,7 @@ def analytics_summary_command(
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
     service = SmartActionService(store, settings)
-    estimates = {
-        manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()
-    }
+    estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in service.list()}
     summary = build_analytics_summary(
         store,
         estimates,
@@ -1262,10 +1282,7 @@ def list_collectors() -> None:
         typer.echo("no collector modules registered")
         return
     for manifest in modules:
-        typer.echo(
-            f"{manifest.id} version={manifest.version} "
-            f"capabilities={','.join(manifest.capabilities) or '-'}"
-        )
+        typer.echo(f"{manifest.id} version={manifest.version} capabilities={','.join(manifest.capabilities) or '-'}")
 
 
 @collectors_app.command("validate")
@@ -1359,14 +1376,9 @@ def list_reports(
     except ValueError as exc:
         typer.echo(f"unknown report type: {report_type}")
         raise typer.Exit(code=1) from exc
-    stored = service.list_reports(
-        report_type=type_filter, client_id=client_id, project_id=project_id
-    )
+    stored = service.list_reports(report_type=type_filter, client_id=client_id, project_id=project_id)
     for report in stored:
-        typer.echo(
-            f"{report.id} type={report.report_type.value} title={report.title} "
-            f"created_at={report.created_at}"
-        )
+        typer.echo(f"{report.id} type={report.report_type.value} title={report.title} created_at={report.created_at}")
     typer.echo(f"count={len(stored)}")
 
 
@@ -1450,9 +1462,7 @@ def run_hardening() -> None:
         settings,
         store=store,
         backup_paths=tuple(
-            path
-            for path in settings.data_path.parent.glob("*")
-            if path.is_file() and path != settings.data_path
+            path for path in settings.data_path.parent.glob("*") if path.is_file() and path != settings.data_path
         ),
         audit_event_count=len(store.list_audit_events()),
     )
@@ -1787,11 +1797,7 @@ def _format_update_status(status: UpdateStatus) -> str:
             f"notes_url={status.notes_url}"
         )
     if status.status == "up_to_date":
-        return (
-            "status=up_to_date "
-            f"current_version={status.current_version} "
-            f"remote_version={status.remote_version}"
-        )
+        return f"status=up_to_date current_version={status.current_version} remote_version={status.remote_version}"
     if status.status == "invalid_signature":
         return "status=invalid_signature warning=update_metadata_signature_invalid"
     return f"status=unknown detail={status.detail}"

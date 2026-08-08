@@ -57,7 +57,9 @@ from wait_local_agent.collectors import (
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.connectors import (
     draft_halopsa_ticket_action,
+    draft_ninjaone_script_execution,
     execute_halopsa_approval_request,
+    execute_ninjaone_approval_request,
     list_connector_statuses,
     list_secret_records,
     update_halopsa_approval_fields,
@@ -252,6 +254,11 @@ class NinjaScriptPreviewRequest(BaseModel):
     variables: dict[str, object] = Field(default_factory=dict)
 
 
+class NinjaScriptExecutionRequest(NinjaScriptPreviewRequest):
+    run_as: str = Field(default="", max_length=200)
+    client_id: str | None = None
+
+
 class PackInstallRequest(BaseModel):
     tarball_path: str = Field(validation_alias=AliasChoices("tarball_path", "tarball"))
     license_key: str | None = Field(
@@ -378,9 +385,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and active_settings.halopsa_client_secret
                 and active_settings.halopsa_tenant
             ),
-            "hudu_configured": bool(
-                active_settings.hudu_base_url and active_settings.hudu_api_key
-            ),
+            "hudu_configured": bool(active_settings.hudu_base_url and active_settings.hudu_api_key),
         }
 
     @app.get("/auth/role")
@@ -486,10 +491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _agent_definition_view(definition)
-            for definition in agent_service.list_definitions(scoped_client_id)
-        ]
+        return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
 
     @app.post("/agents")
     def create_agent(
@@ -682,18 +684,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AuthContext,
         scoped_client_id: str | None,
     ):
-        entity_ids = [
-            item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)
-        ]
+        entity_ids = [item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)]
         input_payload = _safe_json_object(backfill.input_json)
         run_ids = [
-            item for item in _safe_json_values(backfill.run_ids_json)
+            item
+            for item in _safe_json_values(backfill.run_ids_json)
             if isinstance(item, int) and not isinstance(item, bool)
         ]
         failed_entity_ids = [
-            item
-            for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         errors = [backfill.error_detail] if backfill.error_detail else []
         if definition.client_id is None and scoped_client_id is not None:
@@ -867,12 +866,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 succeeded_count=backfill.succeeded_count,
                 failed_count=backfill.failed_count,
                 run_ids=[
-                    item for item in _safe_json_values(backfill.run_ids_json)
+                    item
+                    for item in _safe_json_values(backfill.run_ids_json)
                     if isinstance(item, int) and not isinstance(item, bool)
                 ],
                 failed_entity_ids=[
-                    item for item in _safe_json_values(backfill.failed_entity_ids_json)
-                    if isinstance(item, str)
+                    item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
                 ],
                 error_detail=backfill.error_detail,
             )
@@ -907,8 +906,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if backfill is None:
             raise HTTPException(status_code=404, detail="agent backfill not found")
         failed_entity_ids = [
-            item for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         if not failed_entity_ids:
             raise HTTPException(status_code=409, detail="agent backfill has no failed entities")
@@ -1079,9 +1077,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _event_delivery_view(delivery)
 
     @app.get("/smart-actions/runs")
-    def smart_action_runs(
-        context: ViewerAccess, client_id: str | None = None
-    ) -> list[dict[str, object]]:
+    def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
@@ -1091,9 +1087,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/smart-actions/runs/{run_id}")
-    def smart_action_run_detail(
-        run_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def smart_action_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="smart action run not found")
@@ -1154,10 +1148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
         scoped_client_id = _approval_client_scope(context, client_id)
-        return [
-            _approval_view(request)
-            for request in store.list_approval_requests(client_id=scoped_client_id)
-        ]
+        return [_approval_view(request) for request in store.list_approval_requests(client_id=scoped_client_id)]
 
     @app.get("/approval-requests/{request_id}")
     def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
@@ -1222,6 +1213,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.status == "approved" and approval.action_type.startswith("halopsa."):
                 try:
                     approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
+                except RuntimeError:
+                    approval = store.get_approval_request(request_id) or approval
+            elif payload.status == "approved" and approval.action_type == "ninjaone.script.run":
+                try:
+                    approval = execute_ninjaone_approval_request(store, ninjaone_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
             return _approval_view(approval)
@@ -1310,16 +1306,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result_status": collector_run_result_status(run),
             "collection_scope": collector_run_collection_scope(run),
             "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
-            "observations": [
-                asdict(observation) for observation in store.list_asset_observations(run_id=run_id)
-            ],
-            "config_snapshots": [
-                asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)
-            ],
+            "observations": [asdict(observation) for observation in store.list_asset_observations(run_id=run_id)],
+            "config_snapshots": [asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)],
             "config_diffs": [asdict(diff) for diff in store.list_config_diffs(run_id=run_id)],
-            "restore_exercises": [
-                asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)
-            ],
+            "restore_exercises": [asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)],
         }
 
     @app.post("/collectors/runs/{run_id}/export")
@@ -1376,9 +1366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             rendered,
             media_type=media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'},
         )
 
     @app.get("/audit")
@@ -1419,7 +1407,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         all_events = store.list_audit_events(client_id=client_id)
         filtered = [
-            e for e in all_events
+            e
+            for e in all_events
             if (from_ is None or datetime.fromisoformat(e.created_at) >= from_.astimezone(UTC))
             and (to_ is None or datetime.fromisoformat(e.created_at) <= to_.astimezone(UTC))
         ]
@@ -1829,6 +1818,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ninjaone_client.preview_script(device_id, payload.script_id, payload.variables),
         )
 
+    @app.post("/connectors/ninjaone/devices/{device_id}/script-requests")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def create_ninjaone_script_request(
+        device_id: str,
+        payload: NinjaScriptExecutionRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        try:
+            approval = draft_ninjaone_script_execution(
+                store,
+                device_id,
+                payload.script_id,
+                payload.variables,
+                run_as=payload.run_as,
+                client_id=scoped_client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/ninjaone/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_ninjaone_approval(
+        request_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = store.get_approval_request(request_id)
+            if approval is None or not _approval_in_scope(context, approval):
+                raise KeyError(request_id)
+            return _approval_view(execute_ninjaone_approval_request(store, ninjaone_client, request_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval request not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/connectors/autotask/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def autotask_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -1993,10 +2023,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _template_gallery_view(entry)
-            for entry in store.list_template_gallery_entries(scoped_client_id)
-        ]
+        return [_template_gallery_view(entry) for entry in store.list_template_gallery_entries(scoped_client_id)]
 
     @app.get("/workflow-templates/gallery/export")
     def export_template_gallery(
@@ -2168,8 +2195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         params = dict(request.params)
         raw_client_id = params.get("client_id")
         if (
-            raw_client_id is None
-            or (isinstance(raw_client_id, str) and not raw_client_id.strip())
+            raw_client_id is None or (isinstance(raw_client_id, str) and not raw_client_id.strip())
         ) and ticket.client_id:
             params["client_id"] = ticket.client_id
         input_payload = params.get("input", {})
@@ -2273,22 +2299,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (item for item in list_workflow_templates() if item.id == run.template_id),
             None,
         )
-        approval = (
-            store.get_approval_request(run.approval_request_id)
-            if run.approval_request_id is not None
-            else None
-        )
+        approval = store.get_approval_request(run.approval_request_id) if run.approval_request_id is not None else None
         return {
             **asdict(run),
             "template": asdict(template) if template is not None else None,
             "approval_request": (
-                _approval_view(approval)
-                if approval is not None and _approval_in_scope(context, approval)
-                else None
+                _approval_view(approval) if approval is not None and _approval_in_scope(context, approval) else None
             ),
-            "events": [
-                asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
-            ],
+            "events": [asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)],
         }
 
     @app.get("/executions")
@@ -2315,9 +2333,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/executions/{execution_id}")
-    def execution_detail(
-        execution_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def execution_detail(execution_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="execution not found")
@@ -2326,13 +2342,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="execution not found")
         return {
             **_execution_run_view(run),
-            "steps": [
-                _execution_step_view(step) for step in store.list_execution_steps(run.id)
-            ],
-            "artifacts": [
-                _execution_artifact_view(artifact)
-                for artifact in store.list_execution_artifacts(run.id)
-            ],
+            "steps": [_execution_step_view(step) for step in store.list_execution_steps(run.id)],
+            "artifacts": [_execution_artifact_view(artifact) for artifact in store.list_execution_artifacts(run.id)],
         }
 
     @app.get("/executions/{execution_id}/artifacts/{artifact_id}")
@@ -2365,10 +2376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
-        estimates = {
-            manifest.action_id: manifest.estimated_minutes_saved
-            for manifest in smart_action_service.list()
-        }
+        estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         if context.role < Role.ADMIN and scoped_client_id is None:
             return _empty_analytics_summary(started_from, started_to)
         return build_analytics_summary(
@@ -2492,11 +2500,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
-        workflow_run = (
-            store.get_workflow_run_for_approval(request.id)
-            if request.id is not None
-            else None
-        )
+        workflow_run = store.get_workflow_run_for_approval(request.id) if request.id is not None else None
         can_execute, block_reason = _approval_execution_state(request)
         view = asdict(request)
         view["payload_json"] = _redact_json_text(request.payload_json)
@@ -2512,12 +2516,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
-        if not request.action_type.startswith("halopsa."):
-            return False, "Only HaloPSA approvals have live execution in this release."
+        is_halo = request.action_type.startswith("halopsa.")
+        is_ninjaone = request.action_type == "ninjaone.script.run"
+        if not is_halo and not is_ninjaone:
+            return False, "Only approved HaloPSA and NinjaOne actions have live execution."
         if request.status != "approved":
             return False, "Approval must be approved before execution."
         if request.execution_status == "succeeded":
             return False, "Approval request has already executed successfully."
+        if is_ninjaone:
+            if not active_settings.allow_http_probing:
+                return False, "NinjaOne script execution is blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            if not active_settings.allow_write_actions:
+                return False, "NinjaOne script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            health = ninjaone_client.health()
+            if health.status != "ready":
+                return False, health.message
+            return True, ""
         if not hasattr(halopsa_client, "write_health"):
             return False, "HaloPSA write health is unavailable."
         write_health = halopsa_client.write_health()
@@ -2776,9 +2791,7 @@ def _safe_json_value(payload_json: str) -> object:
         return None
 
 
-def _empty_analytics_summary(
-    started_from: str | None, started_to: str | None
-) -> dict[str, object]:
+def _empty_analytics_summary(started_from: str | None, started_to: str | None) -> dict[str, object]:
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": None,
@@ -2807,11 +2820,7 @@ def _approval_client_scope(context: AuthContext, requested_client_id: str | None
 def _approval_in_scope(context: AuthContext, approval) -> bool:
     scoped_client_id = _approval_client_scope(context, None)
     approval_client_id = _normalize_client_id(approval.client_id)
-    return (
-        scoped_client_id is None
-        or approval_client_id is None
-        or approval_client_id == scoped_client_id
-    )
+    return scoped_client_id is None or approval_client_id is None or approval_client_id == scoped_client_id
 
 
 def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
