@@ -588,8 +588,11 @@ only immutable group and user directory object IDs plus an explicit `add` or
 provider failure without fake success. The catalog also exposes admin-only
 `m365-license-change`, which accepts immutable user IDs, one to fifty SKU GUIDs,
 and an explicit `add` or `remove` operation; license changes remain
-approval-gated and report provider failure without fake success. Intune
-managed-device retirement is exposed through
+approval-gated and report provider failure without fake success. The catalog
+also exposes admin-only `m365-session-revocation`, which accepts one immutable
+user ID and revokes active sessions only after approval. Provider failures are
+reported as failures without fake success. Intune managed-device retirement is
+exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
 does not expose wipe or delete. Approved Intune managed-device sync is exposed

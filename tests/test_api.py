@@ -2493,6 +2493,10 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
                 "operation": "add",
             },
         ),
+        (
+            "m365-session-revocation",
+            {"user_id": "user-immutable-id"},
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
