@@ -147,6 +147,44 @@ describe("wla-04 onboarding and parity surfaces", () => {
     });
     expect(await screen.findByText("Backup requested.")).toBeInTheDocument();
   });
+
+  it("requires explicit acknowledgement before restoring local state", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/settings/providers") return jsonResponse({ local_model_provider: "demo", vector_backend: "local" });
+      if (path === "/settings/security") return jsonResponse({ api_token_configured: false, demo_mode: true });
+      if (path === "/packs" || path === "/secrets") return jsonResponse([]);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "No update available." });
+      if (path === "/founder/lp-status") return jsonResponse({ error: "launch passport not configured" }, 409);
+      if (path === "/backups/restore") return jsonResponse({ restored: "/workspace/state.db", encrypted: false });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("Settings loaded.");
+    const restoreButton = screen.getByRole("button", { name: "Restore" });
+    expect(restoreButton).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "/workspace/state.db" } });
+    expect(restoreButton).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("I understand this replaces the current local state"));
+    expect(restoreButton).toBeEnabled();
+    fireEvent.click(restoreButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/backups/restore",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ source: "/workspace/state.db", encrypted: false })
+      })
+    ));
+    expect(await screen.findByText("Restore requested.")).toBeInTheDocument();
+  });
 });
 
 function jsonResponse(body: unknown, status = 200): Response {

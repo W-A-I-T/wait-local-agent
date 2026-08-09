@@ -29,6 +29,7 @@ export function Settings() {
   const [backupEncrypt, setBackupEncrypt] = useState(false);
   const [restoreSource, setRestoreSource] = useState("");
   const [restoreEncrypt, setRestoreEncrypt] = useState(false);
+  const [restoreAcknowledged, setRestoreAcknowledged] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -138,6 +139,7 @@ export function Settings() {
       });
       setStatusMessage("Restore requested.");
       setRestoreSource("");
+      setRestoreAcknowledged(false);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Restore failed.");
     }
@@ -370,8 +372,17 @@ export function Settings() {
                   onChange={(event) => setRestoreEncrypt(event.target.checked)}
                 />
                 Source is encrypted
+                </label>
+              <label className="switch-label">
+                <input
+                  type="checkbox"
+                  checked={restoreAcknowledged}
+                  onChange={(event) => setRestoreAcknowledged(event.target.checked)}
+                />
+                I understand this replaces the current local state
               </label>
-              <button type="submit">Restore</button>
+              <p className="screen-note">Restore replaces the appliance's current local database. Create a fresh backup first if you may need to undo this operation.</p>
+              <button type="submit" disabled={!restoreSource || !restoreAcknowledged}>Restore</button>
             </form>
           </>
         ) : <p className="screen-note">Backups require admin permissions.</p>}
