@@ -29,6 +29,13 @@ export type HaloTicket = {
   client_id?: string;
 };
 
+export type EndUserTicket = {
+  ticket_id: string;
+  subject: string;
+  status: string;
+  priority: string;
+};
+
 export type TicketSummarySource = {
   title: string;
   path: string;
