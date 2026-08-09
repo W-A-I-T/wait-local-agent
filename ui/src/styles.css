@@ -1583,6 +1583,40 @@ dd svg {
   font-size: .82rem;
 }
 
+.agent-history {
+  display: grid;
+  gap: .55rem;
+  border-top: 1px solid var(--border);
+  padding-top: .7rem;
+  font-size: .82rem;
+}
+
+.agent-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  color: var(--muted);
+}
+
+.agent-diff {
+  display: grid;
+  gap: .45rem;
+  border: 1px solid var(--border);
+  border-radius: .55rem;
+  padding: .65rem;
+}
+
+.agent-diff > div {
+  display: grid;
+  gap: .2rem;
+}
+
+.agent-diff small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
 @media (max-width: 760px) {
   .shell,
   .end-user-grid,
@@ -1609,6 +1643,11 @@ dd svg {
   }
 
   .agent-run-row {
+    flex-direction: column;
+  }
+
+  .agent-history-row {
+    align-items: flex-start;
     flex-direction: column;
   }
 

@@ -614,6 +614,28 @@ export type AgentDefinition = {
   approval_required_tools: string[];
 };
 
+export type AgentRevision = {
+  id: number | null;
+  agent_id: string;
+  version: number;
+  definition: Record<string, unknown>;
+  created_at: string;
+  client_id?: string | null;
+};
+
+export type AgentRevisionDiff = {
+  agent_id: string;
+  from_version: number;
+  to_version: number;
+  changed: boolean;
+  changes: Array<{
+    field: string;
+    before?: unknown;
+    after?: unknown;
+  }>;
+  client_id?: string | null;
+};
+
 export type AgentPlan = {
   instruction: string;
   entity_id: string;

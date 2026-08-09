@@ -21,13 +21,14 @@ describe("Agents", () => {
     max_steps: 1,
     execution_timeout_seconds: 30,
     client_id: "acme",
-    version: 1,
+    version: 2,
     run_once_per_entity: true,
     depends_on_agent_ids: [],
     execution_window_timezone: "UTC",
     context_sources: ["ticket"],
     approval_expiry_seconds: null,
-    approval_required_tools: []
+    approval_required_tools: [],
+    result_aware: false
   };
 
   beforeEach(() => {
@@ -73,6 +74,21 @@ describe("Agents", () => {
       if (path === "/agents/agent-1/run" && init?.method === "POST") {
         return Promise.resolve(new Response(JSON.stringify({ run_id: 7 }), { status: 200 }));
       }
+      if (path === "/agents/agent-1" && init?.method === "PUT") {
+        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 3, description: "Updated bounded triage." }), { status: 200 }));
+      }
+      if (path === "/agents/agent-1/revisions" && !init?.method) {
+        return Promise.resolve(new Response(JSON.stringify([
+          { id: 2, agent_id: "agent-1", version: 2, definition: {}, created_at: "2026-08-09T12:00:00Z", client_id: "acme" },
+          { id: 1, agent_id: "agent-1", version: 1, definition: {}, created_at: "2026-08-08T12:00:00Z", client_id: "acme" }
+        ]), { status: 200 }));
+      }
+      if (path === "/agents/agent-1/revisions/1/diff/2" && !init?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ agent_id: "agent-1", from_version: 1, to_version: 2, changed: false, changes: [], client_id: "acme" }), { status: 200 }));
+      }
+      if (path === "/agents/agent-1/revisions/1/restore" && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 4 }), { status: 200 }));
+      }
       if (path === "/agent-runs/7") {
         return Promise.resolve(new Response(JSON.stringify({
           id: 7,
@@ -116,5 +132,32 @@ describe("Agents", () => {
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("approval_required_tools")
     )).toBe(true);
+  });
+
+  it("edits an existing agent into a new revision", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Updated bounded triage." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save agent revision" }));
+
+    await waitFor(() => expect(screen.getByText("Agent updated; a new revision is now available.")).toBeInTheDocument());
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input, init]) => String(input) === "/agents/agent-1" && init?.method === "PUT" && String(init.body).includes("Updated bounded triage.")
+    )).toBe(true);
+  });
+
+  it("loads, compares, and restores agent revisions", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByRole("button", { name: "History" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("Revision history")).toBeInTheDocument();
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Compare to current" }));
+    expect(await screen.findByText("No changes")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(screen.getByText("Restored MFA triage version 1 as version 4.")).toBeInTheDocument());
   });
 });

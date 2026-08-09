@@ -140,7 +140,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   runs do not emit completion. A
   React agent builder now creates bounded definitions from the existing tool
   catalog and lets operators select ticket, client, and local-knowledge
-  context sources; selected context is recorded with each run.
+  context sources; selected context is recorded with each run. The Agents
+  screen also edits existing definitions into new versions, loads revision
+  history, compares a prior revision with the current one, and restores a
+  prior revision as a new version through the existing tenant-scoped API.
   provenance-bearing tenant-scoped template gallery can create, edit,
   enable/disable, version, compare redacted revision diffs, restore, export
   versioned JSON artifacts, and import validated artifacts as disabled local
