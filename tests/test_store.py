@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from wait_local_agent.models import AgentDefinition
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.workflows import get_workflow_template
 
@@ -78,6 +79,41 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
     assert workflow is not None and workflow["client_id"] is None
     assert document is not None and document["client_id"] is None
+
+
+def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("alter table agent_definitions add column execution_timezone text")
+
+    definition = AgentDefinition(
+        id="agent-legacy-timezone",
+        name="Legacy timezone",
+        description="",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id=None,
+        version=1,
+        created_at="2026-08-09T00:00:00+00:00",
+        updated_at="2026-08-09T00:00:00+00:00",
+        execution_window_timezone="UTC",
+    )
+    store.create_agent_definition(definition)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update agent_definitions set execution_timezone = ? where id = ?",
+            ("America/Vancouver", definition.id),
+        )
+    created = store.get_agent_definition(definition.id)
+
+    assert created is not None
+    assert created.execution_window_timezone == "America/Vancouver"
 
 
 def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Path) -> None:
