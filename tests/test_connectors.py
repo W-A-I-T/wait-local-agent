@@ -394,6 +394,47 @@ def test_m365_authentication_method_remove_is_strictly_allowlisted_and_approval_
         )
 
 
+def test_m365_password_and_authentication_payloads_reject_unsafe_shapes() -> None:
+    password_base: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "users.password-reset",
+        "force_change_next_sign_in": True,
+        "force_change_next_sign_in_with_mfa": False,
+        "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        "user_identity": "adele.vance@example.test",
+    }
+    invalid_password_payloads = [
+        {**password_base, "unexpected": True},
+        {**password_base, "action_type": "users.disable"},
+        {**password_base, "user_identity": "user with spaces"},
+        {**password_base, "temporary_vault_name": "not-a-vault"},
+        {**password_base, "force_change_next_sign_in": "yes"},
+        {**password_base, "force_change_next_sign_in": False, "force_change_next_sign_in_with_mfa": True},
+    ]
+    for payload in invalid_password_payloads:
+        with pytest.raises(ValueError):
+            validate_m365_password_reset_payload(payload)
+
+    authentication_base: dict[str, object] = {
+        "connector": "m365",
+        "action_type": "users.authentication-methods.remove",
+        "method_id": "method-1",
+        "method_type": "fido2",
+        "user_identity": "adele.vance@example.test",
+    }
+    invalid_authentication_payloads = [
+        {**authentication_base, "unexpected": True},
+        {**authentication_base, "action_type": "users.disable"},
+        {**authentication_base, "method_id": "method with spaces"},
+        {**authentication_base, "user_identity": "user with spaces"},
+        {**authentication_base, "method_type": "all"},
+        {**authentication_base, "method_type": "phone"},
+    ]
+    for payload in invalid_authentication_payloads:
+        with pytest.raises(ValueError):
+            validate_m365_authentication_method_delete_payload(payload)
+
+
 def test_m365_user_disable_approval_has_no_secret_fields_and_executes(settings, tmp_path) -> None:
     store = Store(settings.data_path)
     vault = SecretVault.initialize(tmp_path / "vault")

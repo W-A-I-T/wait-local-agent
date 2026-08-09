@@ -2364,7 +2364,6 @@ def test_m365_user_onboarding_is_vault_backed_and_approval_gated(settings, tmp_p
     missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
     assert missing_run is not None and missing_run.status == "failed"
 
-
 def test_m365_user_onboarding_rejects_unready_and_failed_provider_paths(settings, tmp_path) -> None:
     class FakeM365Create:
         def __init__(
@@ -3428,3 +3427,89 @@ def test_m365_password_reset_and_authentication_method_removal_are_admin_approva
             "method_id": "method-1",
         }
     ]
+
+
+def test_m365_security_actions_report_invalid_unready_missing_and_provider_failures(settings, tmp_path) -> None:
+    class FakeM365SecurityWrites:
+        def __init__(self, health_status: str = "ready", result_status: str = "failed") -> None:
+            self.health_status = health_status
+            self.result_status = result_status
+            self.calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="provider unavailable")
+
+        def reset_user_password(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(status=self.result_status, message="provider rejected", status_code=400)
+
+        def delete_authentication_method(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(status=self.result_status, message="provider rejected", status_code=400)
+
+    failing_settings = replace(settings, vault_path=tmp_path / "failing-vault")
+    SecretVault.initialize(failing_settings.vault_path).set(
+        "WAIT_M365_TEMP_USER", "Temporary-Password-123!"
+    )
+    failing_service = SmartActionService(
+        Store(failing_settings.data_path),
+        failing_settings,
+        m365_client=FakeM365SecurityWrites(result_status="failed"),
+    )
+    failed_provider = failing_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+        "requester",
+    )
+    failing_service.update_approval(
+        failed_provider.approval_id or 0,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    failed_run = failing_service.store.get_smart_action_run(failed_provider.run_id or 0)
+    assert failed_run is not None and failed_run.status == "failed"
+
+    invalid_service = SmartActionService(
+        Store(settings.data_path), settings, m365_client=FakeM365SecurityWrites()
+    )
+    invalid = invalid_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_password": "never-accepted"},
+        "requester",
+    )
+    assert invalid.status == "failed"
+    invalid_method = invalid_service.invoke(
+        "m365-authentication-method-remove",
+        {"user_identity": "user@example.test", "method_type": "all", "method_id": "method-1"},
+        "requester",
+    )
+    assert invalid_method.status == "failed"
+
+    unavailable = SmartActionService(
+        Store(settings.data_path), settings, m365_client=FakeM365SecurityWrites("blocked")
+    ).invoke(
+        "m365-authentication-method-remove",
+        {"user_identity": "user@example.test", "method_type": "fido2", "method_id": "method-1"},
+        "requester",
+    )
+    assert unavailable.status == "failed"
+
+    active_settings = replace(settings, vault_path=tmp_path / "missing-vault")
+    missing_service = SmartActionService(
+        Store(active_settings.data_path), active_settings, m365_client=FakeM365SecurityWrites()
+    )
+    missing = missing_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+        "requester",
+    )
+    assert missing.approval_id is not None
+    missing_service.update_approval(
+        missing.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
+    assert missing_run is not None and missing_run.status == "failed"

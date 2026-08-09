@@ -209,6 +209,46 @@ def test_m365_graph_authentication_method_delete_uses_allowlisted_endpoint(setti
     assert blocked.status == "failed"
 
 
+def test_m365_graph_password_and_authentication_validation_fail_closed(settings) -> None:
+    blocked = M365GraphClient(_configured(settings, allow_http_probing=False)).reset_user_password(
+        user_identity="user@example.test",
+        temporary_password="Temporary-Password-123!",
+        force_change_password_next_sign_in=True,
+        force_change_password_next_sign_in_with_mfa=False,
+    )
+    assert blocked.status == "blocked"
+
+    active_settings = replace(_configured(settings), allow_write_actions=True)
+    invalid_password = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ).reset_user_password(
+        user_identity="user@example.test",
+        temporary_password="short",
+        force_change_password_next_sign_in=True,
+        force_change_password_next_sign_in_with_mfa=False,
+    )
+    assert invalid_password.status == "failed"
+
+    invalid_flags = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ).reset_user_password(
+        user_identity="user@example.test",
+        temporary_password="Temporary-Password-123!",
+        force_change_password_next_sign_in=False,
+        force_change_password_next_sign_in_with_mfa=True,
+    )
+    assert invalid_flags.status == "failed"
+
+    invalid_method = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ).delete_authentication_method(
+        user_identity="user@example.test",
+        method_type="unsupported",
+        method_id="method-1",
+    )
+    assert invalid_method.status == "failed"
+
+
 def test_m365_graph_user_creation_blocks_when_write_flag_is_disabled(settings) -> None:
     active_settings = _configured(settings)
     response = M365GraphClient(active_settings).create_user(
