@@ -28,7 +28,7 @@ from wait_local_agent.smart_actions import (
     SmartActionService,
 )
 from wait_local_agent.store import Store
-from wait_local_agent.workflows import run_workflow_template
+from wait_local_agent.workflows import get_workflow_template, run_workflow_template
 
 
 def test_scheduler_manager_registers_and_reloads_persisted_jobs(tmp_path: Path) -> None:
@@ -588,7 +588,10 @@ def test_inactive_ticket_follow_up_executes_local_note_only_after_approval(
         client_id="acme",
         actor="requester",
         tool_executor=service,
-        input_payload={"body": "Please confirm whether this issue is still active."},
+        input_payload={
+            "channel": "ticket_note",
+            "body": "Please confirm whether this issue is still active.",
+        },
     )
 
     assert run.status == "pending_approval"
@@ -614,6 +617,25 @@ def test_inactive_ticket_follow_up_executes_local_note_only_after_approval(
     assert [note.body for note in notes] == [
         "Please confirm whether this issue is still active."
     ]
+
+
+def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
+    settings, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "follow-up-draft.db")
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    template = get_workflow_template("inactive-ticket-follow-up")
+    assert template is not None
+
+    run = run_workflow_template(
+        store,
+        "inactive-ticket-follow-up",
+        "TCK-1001",
+        template_override=replace(template, tool_id=None),
+    )
+
+    assert run.status == "pending_approval"
+    assert "Drafted inactive ticket follow-up" in run.message
 
 
 def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:
