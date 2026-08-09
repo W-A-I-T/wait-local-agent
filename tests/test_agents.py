@@ -896,6 +896,16 @@ def test_agent_conditional_approval_matches_authenticated_role_and_survives_resu
     )
     assert no_role.status == "completed"
 
+    wrong_role = service.run(
+        definition,
+        entity_id="TCK-1002",
+        actor="admin",
+        actor_role=Role.ADMIN,
+        input_payload={},
+    )
+    assert wrong_role.status == "completed"
+    assert agents_module._actor_role_from_state({"actor_role": "owner"}) is None  # noqa: SLF001
+
 
 def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
     service = _service(settings)
