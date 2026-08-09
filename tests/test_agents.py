@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -778,7 +778,7 @@ def test_agent_conditional_approval_matches_explicit_ticket_fields(settings) -> 
 
 def test_agent_conditional_approval_rules_are_bounded(settings) -> None:
     service = _service(settings)
-    base = {
+    base: dict[str, Any] = {
         "name": "Invalid conditional approval",
         "description": "",
         "enabled": True,
@@ -791,7 +791,7 @@ def test_agent_conditional_approval_rules_are_bounded(settings) -> None:
         "execution_timeout_seconds": 30,
         "client_id": "acme",
     }
-    invalid_rules = [
+    invalid_rules: list[tuple[Any, str]] = [
         ([{"tool_id": "not-enabled", "when": {"priority": ["high"]}}], "must be enabled"),
         ([{"tool_id": "ticket-triage", "when": {"unknown": ["high"]}}], "unsupported approval rule fields"),
         ([{"tool_id": "ticket-triage", "when": {}}], "at least one condition"),
