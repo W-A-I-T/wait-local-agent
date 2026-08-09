@@ -98,6 +98,7 @@ class AgentPlanResult:
     status: str
     steps: list[dict[str, object]]
     context: dict[str, object]
+    definition: dict[str, object] = field(default_factory=dict)
     blocked_reason: str = ""
 
 
@@ -216,6 +217,20 @@ class AgentService:
                 for index, tool_id in enumerate(selected_ids)
             ],
             context=context,
+            definition={
+                "name": f"Plan for {entity_id}",
+                "description": normalized,
+                "enabled": False,
+                "trigger": "manual",
+                "entity_type": "ticket",
+                "filters": {},
+                "enabled_tools": selected_ids,
+                "steps":[{"tool_id": tool_id, "payload": {}} for tool_id in selected_ids],
+                "max_steps": len(selected_ids),
+                "execution_timeout_seconds": 30.0,
+                "client_id": normalized_client_id,
+                "context_sources": context_sources,
+            },
         )
 
     def create(

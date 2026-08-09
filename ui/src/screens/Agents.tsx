@@ -148,6 +148,21 @@ export function Agents() {
     }
   }
 
+  async function createPlanDraft() {
+    if (!plan?.definition) return;
+    try {
+      await apiFetch<AgentDefinition>("/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(plan.definition)
+      });
+      setMessage("Disabled agent draft created. Review it before enabling.");
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to create the draft.");
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -206,6 +221,7 @@ export function Agents() {
         {plan ? <div className="agent-run-detail" aria-live="polite">
           <strong>{plan.status === "preview" ? `${plan.steps.length} approved tool step(s) proposed` : "Plan blocked"}</strong>
           {plan.steps.map((step) => <div key={`${step.index}-${step.tool_id}`}><span>{step.index + 1}. {step.name}</span><small>{step.reason} {step.approval_required ? "Approval required." : "Read-only or draft."}</small></div>)}
+          {plan.status === "preview" ? <button type="button" disabled={!canWrite} onClick={() => void createPlanDraft()}>Create disabled draft</button> : null}
           {plan.blocked_reason ? <p className="notice danger">{plan.blocked_reason}</p> : null}
         </div> : null}
       </section>
