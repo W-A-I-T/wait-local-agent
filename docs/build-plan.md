@@ -367,7 +367,8 @@ Docs: `docs/cloud-permissions-m365.md` and `docs/connector-setup.md`.
 ### Task 4.4 — NinjaOne RMM Read-Only Connector (public core bounded slice shipped)
 
 The public core now includes the bounded NinjaOne adapter, plus Datto RMM
-read/quick-job surfaces and read-only N-central inventory/issue/task metadata.
+read/quick-job surfaces and N-central inventory/issue/task metadata with a
+bounded approval-gated direct-task/status path.
 The original design sketch remains below; broader RMM vendor coverage and
 provider-native remediation remain future work.
 
@@ -533,7 +534,7 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 4. Feature gating: `pack_enabled("msp")` check before executing any paid feature
 5. White-label branding: `WAIT_PRODUCT_NAME`, `WAIT_BRAND_LOGO_URL`
 6. Broader N-central remediation and additional RMM connectors; the bounded
-   read-only N-central metadata adapter is already shipped in public core
+  N-central inventory/direct-task adapter is already shipped in public core
 7. Kaseya VSA connector (read-only)
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 

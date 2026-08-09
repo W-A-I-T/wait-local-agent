@@ -188,7 +188,7 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
     if settings.ncentral_base_url or settings.ncentral_access_token:
         from wait_local_agent.ncentral import NCentralRmmAdapter
 
-        return NCentralRmmAdapter(settings)
+        return NCentralRmmAdapter(settings, store=store)
     return LocalCollectorRmmAdapter(store)
 
 

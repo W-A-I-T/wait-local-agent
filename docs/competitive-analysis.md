@@ -72,7 +72,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state/assignment/resolution-metadata updates | Broader write operations | Incremental |
 | NinjaOne RMM | ✓ | ✓ bounded devices, alerts, scripts, previews, and approved execution | Broader remediation parity | Incremental |
 | Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
-| N-able | ✓ | ✓ N-central read-only device/issue/task metadata | Execution and richer remediation | Incremental |
+| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path | Broader task management and remediation | Incremental |
 | Kaseya | ✓ | ✗ | Connector | Phase 5 |
 | IT Glue | ✓ | ✓ read-only organization/document retrieval | Broader search and write operations | Incremental |
 | M365 / Entra | ✓ | ✓ bounded reads plus approved user, group, license, session, Intune, mailbox-settings, and message mutations | Broader resource and policy coverage | Incremental |

@@ -1,10 +1,11 @@
-"""Read-only N-able N-central adapter for the shared RMM contract."""
+"""Bounded N-able N-central adapter for the shared RMM contract."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -17,6 +18,7 @@ from wait_local_agent.rmm import (
     RmmScriptExecution,
     RmmScriptPreview,
 )
+from wait_local_agent.store import Store
 
 MAX_PAGE_SIZE = 100
 MAX_ORG_UNITS = 50
@@ -30,12 +32,12 @@ class NCentralRmmError(Exception):
 
 
 class NCentralRmmAdapter:
-    """Normalize N-central device, active-issue, and task metadata reads.
+    """Normalize N-central inventory and governed direct-task operations.
 
     N-central organization-unit IDs are intentionally mapped from WAIT client
-    IDs in local configuration. Script execution is not exposed by this
-    adapter until the documented task item mapping can be represented without
-    accepting arbitrary remote task identifiers.
+    IDs in local configuration. Writes are limited to existing numeric task
+    items and devices returned for that tenant; WAIT never uploads script
+    source or accepts provider credentials in an action payload.
     """
 
     adapter_id = "ncentral"
@@ -45,9 +47,11 @@ class NCentralRmmAdapter:
         settings: Settings,
         *,
         transport: httpx.BaseTransport | None = None,
+        store: Store | None = None,
     ) -> None:
         self.settings = settings
         self.transport = transport
+        self.store = store
 
     def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
         org_unit_ids = self._org_unit_ids(client_id)
@@ -170,8 +174,11 @@ class NCentralRmmAdapter:
             arguments=dict(arguments),
             status="preview",
             message=(
-                "N-central device and scheduled task are in scope; execution is not "
-                "exposed by the read-only adapter"
+                "N-central device and scheduled task are in scope; execution requires "
+                "a completed technician approval"
+                if self.settings.allow_write_actions
+                else "N-central device and scheduled task are in scope; execution is blocked "
+                "until WAIT_ALLOW_WRITE_ACTIONS=true"
             ),
         )
 
@@ -184,11 +191,45 @@ class NCentralRmmAdapter:
         client_id: str | None = None,
     ) -> RmmScriptExecution:
         _validate_script_request(script_id, device_id, arguments)
+        if not self.settings.allow_write_actions:
+            return RmmScriptExecution(
+                script_id=script_id,
+                device_id=device_id,
+                status="blocked",
+                message="N-central direct-task execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true",
+            )
+        device = self._scoped_device(device_id, client_id)
+        self._scoped_script(script_id, client_id)
+        customer_id = _numeric_id(device.attributes.get("customerId"), "customer")
+        payload = {
+            "name": _task_name(script_id, device_id, arguments),
+            "itemId": _numeric_id(script_id, "script"),
+            "taskType": "Script",
+            "customerId": customer_id,
+            "deviceId": _numeric_id(device_id, "device"),
+            "parameters": [
+                {"name": key, "value": value, "type": "string"}
+                for key, value in sorted(arguments.items())
+            ],
+        }
+        response = self._post("api/scheduled-tasks/direct", payload, client_id=client_id)
+        execution_id = _first_nested_text(response, "taskId", "taskID", "id")
+        if not execution_id or not _is_numeric_id(execution_id):
+            raise NCentralRmmError("N-central direct-task response was malformed")
+        if self.store is not None and client_id is not None:
+            self.store.record_rmm_execution_scope(
+                execution_id,
+                self.adapter_id,
+                script_id.strip(),
+                device_id.strip(),
+                client_id,
+            )
         return RmmScriptExecution(
             script_id=script_id,
             device_id=device_id,
-            status="blocked",
-            message="N-central script execution is unavailable in the read-only adapter",
+            status="queued",
+            message="N-central direct task was queued",
+            execution_id=execution_id,
         )
 
     def get_execution(
@@ -199,13 +240,62 @@ class NCentralRmmAdapter:
     ) -> RmmScriptExecution:
         if not execution_id.strip() or len(execution_id) > MAX_ID_LENGTH:
             raise NCentralRmmError("N-central execution ID is invalid")
-        return RmmScriptExecution(
-            script_id="",
-            device_id="",
-            status="blocked",
-            message="N-central execution lookup is unavailable in the read-only adapter",
-            execution_id=execution_id.strip(),
+        normalized_id = execution_id.strip()
+        if not _is_numeric_id(normalized_id):
+            raise NCentralRmmError("N-central execution ID is invalid")
+        self._org_unit_ids(client_id)
+        if self.store is None or client_id is None:
+            return RmmScriptExecution(
+                script_id="",
+                device_id="",
+                status="blocked",
+                message="N-central execution scope is unavailable locally",
+                execution_id=normalized_id,
+            )
+        scope = self.store.get_rmm_execution_scope(
+            normalized_id,
+            self.adapter_id,
+            client_id,
         )
+        if scope is None:
+            return RmmScriptExecution(
+                script_id="",
+                device_id="",
+                status="blocked",
+                message="N-central execution is outside the tenant scope",
+                execution_id=normalized_id,
+            )
+        response = self._get(
+            f"api/scheduled-tasks/{normalized_id}/status",
+            params={},
+            client_id=client_id,
+        )
+        status = _status_from_response(response)
+        return RmmScriptExecution(
+            script_id=scope.script_id,
+            device_id=scope.device_id,
+            status=status,
+            message=(
+                "N-central task is still running"
+                if status == "queued"
+                else "N-central task completed"
+                if status in {"completed", "succeeded"}
+                else "N-central task failed"
+            ),
+            execution_id=normalized_id,
+        )
+
+    def _scoped_device(self, device_id: str, client_id: str | None) -> RmmDevice:
+        for device in self.list_devices(client_id):
+            if device.device_id == device_id:
+                return device
+        raise NCentralRmmError("N-central device is outside the tenant scope")
+
+    def _scoped_script(self, script_id: str, client_id: str | None) -> RmmScript:
+        for script in self.list_scripts(client_id):
+            if script.script_id == script_id:
+                return script
+        raise NCentralRmmError("N-central scheduled task was not found")
 
     def _get(
         self,
@@ -216,12 +306,17 @@ class NCentralRmmAdapter:
     ) -> object:
         return self._request(endpoint, params=params, client_id=client_id)
 
+    def _post(self, endpoint: str, payload: object, *, client_id: str | None) -> object:
+        return self._request(endpoint, params={}, client_id=client_id, method="POST", payload=payload)
+
     def _request(
         self,
         endpoint: str,
         *,
         params: dict[str, int],
         client_id: str | None,
+        method: str = "GET",
+        payload: object | None = None,
     ) -> object:
         self._org_unit_ids(client_id)
         if not self.settings.allow_http_probing:
@@ -240,13 +335,15 @@ class NCentralRmmAdapter:
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
-                response = client.get(
+                response = client.request(
+                    method,
                     f"{base_url}/{safe_endpoint}",
                     headers={
                         "Accept": "application/json",
                         "Authorization": f"Bearer {self.settings.ncentral_access_token}",
                     },
                     params=params,
+                    json=payload,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise NCentralRmmError("N-central request failed before receiving a response") from exc
@@ -320,6 +417,101 @@ def _first_text(row: Mapping[str, Any], *keys: str) -> str:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return str(value)
     return ""
+
+
+def _first_nested_text(payload: object, *keys: str) -> str:
+    if isinstance(payload, Mapping):
+        value = _first_text(payload, *keys)
+        if value:
+            return value
+        for nested_key in ("data", "result", "payload"):
+            nested = payload.get(nested_key)
+            value = _first_nested_text(nested, *keys)
+            if value:
+                return value
+    return ""
+
+
+def _is_numeric_id(value: str) -> bool:
+    return bool(value) and value.isascii() and value.isdigit() and int(value) > 0
+
+
+def _numeric_id(value: object, label: str) -> int:
+    if isinstance(value, bool):
+        raise NCentralRmmError(f"N-central {label} ID is invalid")
+    normalized = str(value).strip() if isinstance(value, (int, str)) else ""
+    if not _is_numeric_id(normalized):
+        raise NCentralRmmError(f"N-central {label} ID is invalid")
+    return int(normalized)
+
+
+def _task_name(script_id: str, device_id: str, arguments: Mapping[str, str]) -> str:
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {"script": script_id, "device": device_id, "arguments": dict(sorted(arguments.items()))},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    return f"WAIT-NC-{script_id.strip()}-{device_id.strip()}-{fingerprint}"[:MAX_TEXT_LENGTH]
+
+
+def _status_from_response(payload: object) -> Literal["queued", "completed", "succeeded", "failed"]:
+    provider_status = _first_nested_text(payload, "status", "taskStatus", "state").casefold()
+    status_map = {
+        "pending": "queued",
+        "queued": "queued",
+        "scheduled": "queued",
+        "running": "queued",
+        "in progress": "queued",
+        "active": "queued",
+        "completed": "completed",
+        "complete": "completed",
+        "succeeded": "succeeded",
+        "success": "succeeded",
+        "failed": "failed",
+        "failure": "failed",
+        "error": "failed",
+    }
+    if provider_status in status_map:
+        return cast(Literal["queued", "completed", "succeeded", "failed"], status_map[provider_status])
+
+    counts = _status_counts(payload)
+    if counts["failed"]:
+        return "failed"
+    if counts["active"]:
+        return "queued"
+    if counts["completed"]:
+        return "completed"
+    raise NCentralRmmError("N-central task status response was malformed")
+
+
+def _status_counts(payload: object) -> dict[str, int]:
+    counts = {"active": 0, "completed": 0, "failed": 0}
+    if not isinstance(payload, Mapping):
+        return counts
+    raw_counts = payload.get("statusCounts")
+    if not isinstance(raw_counts, Mapping):
+        data = payload.get("data")
+        raw_counts = data.get("statusCounts") if isinstance(data, Mapping) else None
+    if not isinstance(raw_counts, Mapping):
+        return counts
+    for key, value in raw_counts.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        normalized = str(key).casefold().replace("_", " ").replace("-", " ")
+        bucket = (
+            "failed"
+            if any(token in normalized for token in ("fail", "error"))
+            else "completed"
+            if "complete" in normalized
+            else "active"
+            if any(token in normalized for token in ("pending", "queue", "schedul", "run", "progress", "active"))
+            else None
+        )
+        if bucket:
+            counts[bucket] += max(0, int(value))
+    return counts
 
 
 def _in_scope(row: Mapping[str, Any], org_unit_ids: tuple[int, ...]) -> bool:

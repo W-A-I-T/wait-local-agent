@@ -111,7 +111,7 @@ requester-role rules.
 - Feature gating: paid features blocked without valid license.
 - White-label branding configuration.
 - Broader N-central remediation and additional RMM connectors beyond the
-  bounded read-only vendor surfaces already shipped.
+  bounded inventory/direct-task vendor surfaces already shipped.
 - Kaseya VSA connector (read-only).
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.

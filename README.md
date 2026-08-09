@@ -49,8 +49,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   inventory plus a separate bounded live Graph user/group/license/mailbox-read
   connector and `m365-live-context` tool, and a
   bounded RMM device/alert/script lookup and script preview over the shared
-  provider contract; the local adapter and read-only N-central adapter block
-  execution, while reviewed NinjaOne and Datto adapters expose their bounded
+  provider contract; the local adapter blocks execution, while reviewed
+  NinjaOne, Datto, and N-central adapters expose bounded
   write paths. This is alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
   search), Confluence, and SharePoint (including bounded Graph drive search), and
@@ -859,8 +859,9 @@ expose completed component output. See the
 
 ### N-able N-central
 
-The read-only N-central adapter provides tenant-scoped device inventory, active
-issues, and scheduled-task metadata through the shared RMM contract:
+The N-central adapter provides tenant-scoped device inventory, active issues,
+scheduled-task metadata, and a bounded direct-task execution/status path through
+the shared RMM contract:
 
 ```text
 WAIT_NCENTRAL_BASE_URL=https://your-ncentral-host
@@ -872,9 +873,11 @@ WAIT_ALLOW_HTTP_PROBING=true
 
 `WAIT_NCENTRAL_ORG_UNIT_MAP_JSON` maps each WAIT tenant/client ID to one or
 more positive N-central organization-unit IDs. Returned devices, issues, and
-tasks are filtered against that map, and the adapter performs bounded GET-only
-requests. N-central task execution and execution-status lookup remain
-unavailable in this slice; no write flag or approval can enable them. See the
+tasks are filtered against that map. Direct tasks are limited to existing
+numeric script items and devices returned for the mapped tenant, require
+`WAIT_ALLOW_WRITE_ACTIONS=true` plus the existing technician approval flow, and
+persist execution scope locally before status polling. WAIT sends no script
+source, provider credential, or caller-supplied customer ID. See the
 [N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
 [active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
 and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
