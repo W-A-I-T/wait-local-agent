@@ -221,7 +221,7 @@ export function Templates() {
         <button type="submit" disabled={!canWrite || !sourceTemplateId}>Create local template</button>
         <div className="template-import-row">
           <label>Import template artifact<input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>
-          <button type="button" disabled={!canWrite || !importFile} onClick={() => void importEntry()}>Import disabled</button>
+          <button type="button" disabled={!canWrite || !importFile} onClick={() => void importEntry()}>Import template</button>
         </div>
         </form>
         {message ? <div className="notice">{message}</div> : null}
