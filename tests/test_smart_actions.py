@@ -59,6 +59,7 @@ from wait_local_agent.smart_actions import (
     HuduDocumentationSearchAction,
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
+    M365AuthenticationMethodDeleteAction,
     M365GroupMembershipAction,
     M365IdentityLookupAction,
     M365LicenseChangeAction,
@@ -68,6 +69,7 @@ from wait_local_agent.smart_actions import (
     M365MailMessageMoveAction,
     M365MailMessageReadStateAction,
     M365ManagedDeviceAction,
+    M365PasswordResetAction,
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -3513,3 +3515,102 @@ def test_m365_security_actions_report_invalid_unready_missing_and_provider_failu
     )
     missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
     assert missing_run is not None and missing_run.status == "failed"
+
+
+def test_m365_security_actions_cover_exception_and_non_success_paths(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+
+    invalid_context = _action_context(store, settings)
+    assert M365PasswordResetAction().run(
+        invalid_context,
+        {"user_identity": "user@example.test", "temporary_vault_name": "not-a-vault"},
+    ).status == "failed"
+    assert M365AuthenticationMethodDeleteAction().run(
+        invalid_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "all",
+            "method_id": "method-1",
+        },
+    ).status == "failed"
+
+    class HealthFailureProvider:
+        def write_health(self):
+            raise RuntimeError("health unavailable")
+
+        def reset_user_password(self, **kwargs):
+            raise AssertionError("password reset must not run after health failure")
+
+        def delete_authentication_method(self, **kwargs):
+            raise AssertionError("authentication removal must not run after health failure")
+
+    health_context = ActionContext(
+        store=store,
+        settings=settings,
+        actor="technician",
+        m365_client=HealthFailureProvider(),
+    )
+    assert M365PasswordResetAction().run(
+        health_context,
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+    ).status == "failed"
+    assert M365AuthenticationMethodDeleteAction().run(
+        health_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    ).status == "failed"
+
+    active_settings = replace(settings, vault_path=tmp_path / "exception-vault")
+    SecretVault.initialize(active_settings.vault_path).set(
+        "WAIT_M365_TEMP_USER", "Temporary-Password-123!"
+    )
+
+    class PasswordFailureProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def reset_user_password(self, **kwargs):
+            raise RuntimeError("password reset failed")
+
+    password_context = ActionContext(
+        store=Store(active_settings.data_path),
+        settings=active_settings,
+        actor="technician",
+        m365_client=PasswordFailureProvider(),
+    )
+    password_result = M365PasswordResetAction().run(
+        password_context,
+        {
+            "user_identity": "user@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            "_approval_completed": True,
+        },
+    )
+    assert password_result.status == "failed"
+
+    class AuthenticationFailureProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def delete_authentication_method(self, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", status_code=400)
+
+    authentication_result = M365AuthenticationMethodDeleteAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=AuthenticationFailureProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "_approval_completed": True,
+        },
+    )
+    assert authentication_result.status == "failed"
+    assert authentication_result.error_detail == "provider rejected"
