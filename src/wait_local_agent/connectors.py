@@ -64,6 +64,7 @@ CONNECTWISE_ACTION_TYPES = {
 SERVICENOW_ACTION_TYPES = {
     "add_work_note",
     "update_state",
+    "assign_incident",
 }
 
 AUTOTASK_ACTION_TYPES = {
@@ -1837,11 +1838,22 @@ def validate_servicenow_action_fields(action_type: str, fields: dict[str, object
         raise ValueError(f"unsupported ServiceNow action type: {action_type}")
     if not isinstance(fields, dict) or not fields:
         raise ValueError(f"ServiceNow {action_type} requires incident fields")
-    allowed = {"work_notes"} if action_type == "add_work_note" else {"incident_state"}
-    if set(fields) != allowed:
+    if action_type == "add_work_note":
+        allowed = {"work_notes"}
+        max_length = 4_000
+    elif action_type == "update_state":
+        allowed = {"incident_state"}
+        max_length = 20
+    else:
+        allowed = {"assigned_to", "assignment_group"}
+        if set(fields) not in ({"assigned_to"}, {"assignment_group"}):
+            raise ValueError(
+                "ServiceNow assign_incident requires exactly one of assigned_to or assignment_group"
+            )
+        max_length = 64
+    if set(fields) != allowed and action_type != "assign_incident":
         raise ValueError(f"ServiceNow {action_type} only accepts {sorted(allowed)}")
     value = next(iter(fields.values()))
-    max_length = 4_000 if action_type == "add_work_note" else 20
     if not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length:
         raise ValueError(f"ServiceNow {action_type} field is invalid")
     if any(ord(character) < 32 for character in value):

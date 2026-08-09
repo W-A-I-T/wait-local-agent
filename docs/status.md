@@ -334,7 +334,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | IT Glue connector | Read-only core surface plus bounded content search built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
-| ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
+| ServiceNow connector | Incident/company reads plus approval-gated work-note, state, and assignment updates built; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |

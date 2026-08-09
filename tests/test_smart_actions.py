@@ -1047,6 +1047,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-preview",
         "security-alert-assessment",
         "servicenow-incident-add-work-note",
+        "servicenow-incident-assign",
         "servicenow-incident-lookup",
         "servicenow-incident-update-state",
         "sharepoint-document-content",
@@ -1346,6 +1347,29 @@ def test_servicenow_incident_writes_are_approval_gated_and_validated(settings) -
         replace(context, servicenow_client=FakeServiceNowWrites(result_status="failed")),
         {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
     ).status == "failed"
+
+    assignment = ServiceNowIncidentWriteAction(
+        action_id="test-servicenow-assignment",
+        title="test",
+        action_type="assign_incident",
+    )
+    assignment_fields: dict[str, object] = {"assigned_to": "agent-123"}
+    assert assignment.run(
+        replace(context, servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": assignment_fields},
+    ).output["approval_required"] is True
+    completed_assignment = assignment.run(
+        replace(context, servicenow_client=provider),
+        {
+            "ticket_id": "TCK-1001",
+            "fields": assignment_fields,
+            "_approval_completed": True,
+        },
+    )
+    assert completed_assignment.status == "success"
+    assert provider.calls[-1] == ServiceNowWriteRequest(
+        "TCK-1001", "assign_incident", assignment_fields
+    )
 
 
 def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> None:

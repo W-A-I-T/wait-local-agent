@@ -119,6 +119,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "confluence-documentation-search",
         "syncro-ticket-lookup",
         "servicenow-incident-add-work-note",
+        "servicenow-incident-assign",
         "servicenow-incident-lookup",
         "servicenow-incident-update-state",
         "sharepoint-document-content",
@@ -2139,6 +2140,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert {
         "syncro-ticket-lookup",
         "servicenow-incident-lookup",
+        "servicenow-incident-assign",
         "autotask-ticket-lookup",
         "autotask-ticket-add-note",
         "autotask-ticket-update-status",

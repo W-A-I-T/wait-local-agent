@@ -471,6 +471,19 @@ def _write_fields(action_type: str, fields: Mapping[str, object]) -> dict[str, o
                 "ServiceNow incident_state must be non-empty text of at most 20 characters."
             )
         return {"incident_state": value.strip()}
+    if action_type == "assign_incident":
+        if set(fields) not in ({"assigned_to"}, {"assignment_group"}):
+            raise ServiceNowReadError(
+                "ServiceNow assign_incident requires exactly one of assigned_to or assignment_group."
+            )
+        field, value = next(iter(fields.items()))
+        if not isinstance(value, str) or not value.strip() or len(value) > 64:
+            raise ServiceNowReadError(
+                f"ServiceNow {field} must be a non-empty reference of at most 64 characters."
+            )
+        if not all(character.isalnum() or character in {"_", "-"} for character in value.strip()):
+            raise ServiceNowReadError(f"ServiceNow {field} contains unsafe characters.")
+        return {field: value.strip()}
     raise ServiceNowReadError(f"ServiceNow incident action is not supported: {action_type}.")
 
 
