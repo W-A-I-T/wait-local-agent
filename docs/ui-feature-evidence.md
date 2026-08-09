@@ -15,7 +15,7 @@ visible here instead of being presented as a completed UI feature.
 | `/tickets` | Ticket lookup, summary, approval draft | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
 | `/analytics` | Filtered operational metrics and operator-priced model usage estimates | `/analytics/summary` | Existing UI tests; browser route render |
-| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; real-browser rerun remains blocked by the environment's missing Chromium binary |
+| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; local Chromium smoke verified render, requester-role entry, and agent creation against a fresh local database |
 | `/backfills` | Preview, queue, pause, cancel, rerun | `/agent-backfills/*` | Existing UI tests; browser route render |
 | `/executions` | Run history, detail, artifact download | `/executions/*` | Existing UI tests; browser route render |
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
@@ -57,10 +57,9 @@ unverifiable product claim.
   environment.
 - Browser: Agents create/run flow completed against the real local API; all
   sidebar routes rendered through in-app navigation.
-- Current browser rerun: blocked before application launch because the local
-  environment has no installed Chrome/Chromium binary and DNS cannot resolve
-  the package registry needed for the approved browser installer. This is an
-  environment blocker, not a product pass claim.
+- Local Chromium smoke: passed for `/agents`, including conditional
+  requester-role entry and agent creation through the real local API. A full
+  post-change route/control sweep remains a separate validation item.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.

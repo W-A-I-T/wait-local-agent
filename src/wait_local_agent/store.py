@@ -5929,7 +5929,11 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["execution_window_start"] = _optional_text(payload.get("execution_window_start"))
     payload["execution_window_end"] = _optional_text(payload.get("execution_window_end"))
-    payload["execution_window_timezone"] = str(payload.get("execution_window_timezone") or "UTC")
+    legacy_timezone = payload.pop("execution_timezone", None)
+    current_timezone = payload.get("execution_window_timezone")
+    if legacy_timezone and (current_timezone is None or str(current_timezone) == "UTC"):
+        current_timezone = legacy_timezone
+    payload["execution_window_timezone"] = str(current_timezone or "UTC")
     raw_approval_expiry = payload.get("approval_expiry_seconds")
     payload["approval_expiry_seconds"] = (
         int(raw_approval_expiry) if raw_approval_expiry is not None else None
