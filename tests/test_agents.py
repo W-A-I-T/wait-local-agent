@@ -372,7 +372,24 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
     pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
     assert pending.status == "pending_approval"
 
-    failure_definition = service.create(
+    class UnavailableProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+    failure_service = AgentService(
+        service.store,
+        settings,
+        SmartActionService(
+            service.store,
+            settings,
+            provider=UnavailableProvider(),
+            provider_configured=True,
+        ),
+    )
+    failure_definition = failure_service.create(
         name="Result-aware failure",
         description="Fail without a model.",
         enabled=True,
@@ -386,7 +403,9 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
         client_id="acme",
         result_aware=True,
     )
-    failed = service.run(failure_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    failed = failure_service.run(
+        failure_definition, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
     assert failed.status == "failed"
 
 
