@@ -1019,7 +1019,7 @@ def test_openai_provider_surfaces_empty_and_non_2xx_responses(tmp_path: Path) ->
             provider.summarize_ticket(_ticket(), _sources())
 
 
-def test_openai_provider_does_not_cache_failure_after_transient_failure(
+def test_openai_provider_retries_transient_failure_and_caches_recovery(
     tmp_path: Path,
 ) -> None:
     requests: list[httpx.Request] = []
@@ -1027,7 +1027,11 @@ def test_openai_provider_does_not_cache_failure_after_transient_failure(
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(503, json={"error": "unavailable"})
+            return httpx.Response(
+                503,
+                headers={"Retry-After": "not-a-duration"},
+                json={"error": "unavailable"},
+            )
         return httpx.Response(
             200,
             json={
@@ -1051,14 +1055,42 @@ def test_openai_provider_does_not_cache_failure_after_transient_failure(
         transport=httpx.MockTransport(handler),
     )
 
-    with pytest.raises(ProviderUnavailableError):
-        provider.summarize_ticket(_ticket(), _sources())
+    assert provider.summarize_ticket(_ticket(), _sources()) == "Recovered model summary"
     assert provider.summarize_ticket(_ticket(), _sources()) == "Recovered model summary"
     assert len(requests) == 2
+    assert provider._last_call_metadata["retry_count"] == 1
+
+
+def test_openai_provider_bounds_transient_retries_and_records_retry_count(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(429, headers={"Retry-After": "0"}, json={"error": "rate limited"})
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderUnavailableError):
+        provider.summarize_ticket(_ticket(), _sources())
+    assert len(requests) == 3
+    assert provider._last_call_metadata == {
+        "usage_status": "provider_error",
+        "cost_status": "not_configured",
+        "cost_usd": None,
+        "retry_count": 2,
+    }
 
 
 def test_openai_provider_surfaces_connection_error(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         raise httpx.ConnectError("connection refused", request=request)
 
     provider = OpenAICompatibleLocalProvider(
@@ -1068,6 +1100,38 @@ def test_openai_provider_surfaces_connection_error(tmp_path: Path) -> None:
 
     with pytest.raises(ProviderUnavailableError):
         provider.summarize_ticket(_ticket(), [])
+    assert len(requests) == 3
+    assert provider._last_call_metadata["retry_count"] == 2
+
+
+def test_remote_provider_retries_transient_failure_and_records_metadata() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"recovered","suggested_response":"response"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.summarize_ticket(_ticket(), []) == "recovered"
+    assert len(requests) == 2
+    assert provider._last_call_metadata["retry_count"] == 1
 
 
 def test_openai_provider_selects_one_continuation_tool_and_redacts_result(tmp_path: Path) -> None:

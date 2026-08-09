@@ -350,6 +350,9 @@ Administrators can explicitly run `GET /settings/providers/health` (or use
 “Check model health” in Settings) to query the configured provider model list;
 offline, disabled, unsupported, malformed, unavailable, and missing-model
 states remain visible and no credentials are returned.
+Model calls use a fixed two-retry budget for transient rate-limit, timeout,
+server, and transport failures. Non-retryable failures stop immediately, and
+the retry count is retained only as safe provider metadata.
 
 ## Secrets Vault and Encrypted Backups
 

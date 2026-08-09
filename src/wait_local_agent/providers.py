@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -22,6 +23,15 @@ SUPPORTED_REMOTE_MODEL_PROVIDERS = {
 }
 _REMOTE_CONTEXT_LIMIT = 2_000
 _REMOTE_SOURCE_LIMIT = 800
+_MODEL_MAX_ATTEMPTS = 3
+_MODEL_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+_MODEL_MAX_RETRY_DELAY_SECONDS = 1.0
+
+
+class _ModelTransportError(RuntimeError):
+    def __init__(self, message: str, *, retry_count: int) -> None:
+        super().__init__(message)
+        self.retry_count = retry_count
 
 
 class ModelProvider(Protocol):
@@ -233,18 +243,23 @@ class OpenAICompatibleLocalProvider:
             ],
             "stream": False,
         }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning("local model provider request failed: %s", exc)
             return None
-        self._last_call_metadata = _response_usage_metadata(response)
+        self._last_call_metadata = _response_usage_metadata(response, retry_count=retry_count)
         return _completion_from_response(response)
 
     def _request_tool_selection(
@@ -273,18 +288,23 @@ class OpenAICompatibleLocalProvider:
             ],
             "stream": False,
         }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning("local model planner request failed: %s", exc)
             return None
-        self._last_call_metadata = _response_usage_metadata(response)
+        self._last_call_metadata = _response_usage_metadata(response, retry_count=retry_count)
         return _tool_selection_from_response(response, max_tools=max_tools)
 
     def _request_next_tool_selection(
@@ -316,18 +336,23 @@ class OpenAICompatibleLocalProvider:
             ],
             "stream": False,
         }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning("local model continuation request failed: %s", exc)
             return None
-        self._last_call_metadata = _response_usage_metadata(response)
+        self._last_call_metadata = _response_usage_metadata(response, retry_count=retry_count)
         return _next_tool_selection_from_response(response)
 
 
@@ -453,18 +478,25 @@ class RemoteModelProvider:
                 ],
                 "stream": False,
             }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, headers=headers, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, headers=headers, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning("remote model provider request failed: provider=%s error=%s", self.profile.provider, exc)
             return None
-        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
+        self._last_call_metadata = _response_usage_metadata(
+            response, anthropic=is_anthropic, retry_count=retry_count
+        )
         return (
             _completion_from_anthropic_response(response)
             if is_anthropic
@@ -520,22 +552,29 @@ class RemoteModelProvider:
                 ],
                 "stream": False,
             }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, headers=headers, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, headers=headers, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning(
                 "remote model planner request failed: provider=%s error=%s",
                 self.profile.provider,
                 exc,
             )
             return None
-        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
+        self._last_call_metadata = _response_usage_metadata(
+            response, anthropic=is_anthropic, retry_count=retry_count
+        )
         return _tool_selection_from_response(
             response,
             max_tools=max_tools,
@@ -588,22 +627,29 @@ class RemoteModelProvider:
                 ],
                 "stream": False,
             }
+        retry_count = 0
         try:
             with httpx.Client(
                 timeout=self.profile.timeout_seconds,
                 transport=self._transport,
             ) as client:
-                response = client.post(url, headers=headers, json=payload)
+                response, retry_count = _post_with_bounded_retry(
+                    client, url, headers=headers, json=payload
+                )
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
-            self._last_call_metadata = _provider_error_metadata()
+        except (httpx.HTTPError, _ModelTransportError) as exc:
+            self._last_call_metadata = _provider_error_metadata(
+                retry_count=getattr(exc, "retry_count", retry_count)
+            )
             LOGGER.warning(
                 "remote model continuation request failed: provider=%s error=%s",
                 self.profile.provider,
                 exc,
             )
             return None
-        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
+        self._last_call_metadata = _response_usage_metadata(
+            response, anthropic=is_anthropic, retry_count=retry_count
+        )
         return _next_tool_selection_from_response(response, anthropic=is_anthropic)
 
 
@@ -1215,11 +1261,12 @@ def _provider_call_metadata(provider: ModelProvider | None) -> dict[str, object]
     return None
 
 
-def _provider_error_metadata() -> dict[str, object]:
+def _provider_error_metadata(*, retry_count: int = 0) -> dict[str, object]:
     return {
         "usage_status": "provider_error",
         "cost_status": "not_configured",
         "cost_usd": None,
+        "retry_count": retry_count,
     }
 
 
@@ -1247,7 +1294,7 @@ def _add_configured_cost(metadata: dict[str, object], settings: Settings) -> Non
 
 
 def _response_usage_metadata(
-    response: httpx.Response, *, anthropic: bool = False
+    response: httpx.Response, *, anthropic: bool = False, retry_count: int = 0
 ) -> dict[str, object]:
     try:
         payload = response.json()
@@ -1259,6 +1306,7 @@ def _response_usage_metadata(
             "usage_status": "not_reported",
             "cost_status": "not_configured",
             "cost_usd": None,
+            "retry_count": retry_count,
         }
     input_key = "input_tokens" if anthropic else "prompt_tokens"
     output_key = "output_tokens" if anthropic else "completion_tokens"
@@ -1275,6 +1323,7 @@ def _response_usage_metadata(
         ),
         "cost_status": "not_configured",
         "cost_usd": None,
+        "retry_count": retry_count,
     }
     if input_tokens is not None:
         metadata["input_tokens"] = input_tokens
@@ -1283,6 +1332,49 @@ def _response_usage_metadata(
     if total_tokens is not None:
         metadata["total_tokens"] = total_tokens
     return metadata
+
+
+def _post_with_bounded_retry(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    json: dict[str, object],
+) -> tuple[httpx.Response, int]:
+    """POST a model request with a small, auditable transient-failure budget."""
+    retry_count = 0
+    attempt = 0
+    while True:
+        try:
+            response = client.post(url, headers=headers, json=json)
+        except httpx.RequestError as exc:
+            if attempt + 1 >= _MODEL_MAX_ATTEMPTS:
+                raise _ModelTransportError(
+                    "model request transport failed after bounded retries",
+                    retry_count=retry_count,
+                ) from exc
+            retry_count += 1
+            attempt += 1
+            time.sleep(_model_retry_delay(retry_count))
+            continue
+        if response.status_code not in _MODEL_RETRYABLE_STATUS_CODES:
+            return response, retry_count
+        if attempt + 1 >= _MODEL_MAX_ATTEMPTS:
+            return response, retry_count
+        retry_count += 1
+        attempt += 1
+        time.sleep(_model_retry_delay(retry_count, response=response))
+
+
+def _model_retry_delay(retry_count: int, *, response: httpx.Response | None = None) -> float:
+    if response is not None:
+        retry_after = response.headers.get("Retry-After", "").strip()
+        try:
+            if retry_after:
+                return min(max(float(retry_after), 0.0), _MODEL_MAX_RETRY_DELAY_SECONDS)
+        except ValueError:
+            pass
+    return min(0.1 * (2 ** max(retry_count - 1, 0)), _MODEL_MAX_RETRY_DELAY_SECONDS)
 
 
 def _nonnegative_int(value: object) -> int | None:

@@ -26,6 +26,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   documented model-list contract, report missing models and malformed or
   unavailable responses explicitly, and never probe remote providers while
   offline or when remote fallback is disabled.
+- Model completion, planning, and continuation requests retry only transient
+  rate-limit, timeout, server, or transport failures within a fixed two-retry
+  budget; non-retryable failures stop immediately, and redacted provider
+  metadata records the retry count.
 - Preview-only bounded planning through `POST /agents/plan` and the React
   Agents screen selects existing approved tools from a natural-language
   instruction using the configured model provider when available and bounded
