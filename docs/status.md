@@ -205,6 +205,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   The catalog also exposes admin-only `m365-mailbox-settings` with only the
   existing allowlisted mailbox fields; updates remain approval-gated and
   provider failures are explicit.
+  It also exposes admin-only `m365-mail-message-move` for one explicit user,
+  source folder, message, and destination folder ID; message moves remain
+  previewed and approval-gated, with provider failures reported explicitly.
   Onboarding accepts only a validated local-vault reference for the temporary
   credential and reads the secret after approval; offboarding accepts only an
   explicit user identity and directory ID, disables the account, then revokes

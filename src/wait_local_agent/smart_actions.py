@@ -143,6 +143,21 @@ class M365MailboxSettingsWriteProvider(Protocol):
         """Update only the allowlisted mailbox settings for one user."""
 
 
+class M365MailMessageMoveWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def move_mail_message(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+        destination_folder_id: str,
+    ) -> object:
+        """Move one explicitly identified message to one destination folder."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -215,6 +230,7 @@ class ActionContext:
         | M365LicenseWriteProvider
         | M365SessionRevocationWriteProvider
         | M365MailboxSettingsWriteProvider
+        | M365MailMessageMoveWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -831,6 +847,157 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365MailMessageMoveAction:
+    manifest = SmartActionManifest(
+        action_id="m365-mail-message-move",
+        title="Microsoft 365 message move",
+        description=(
+            "Prepare an approval-gated Microsoft Graph message move using explicit "
+            "user, source-folder, message, and destination-folder identifiers."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": [
+                "user_identity",
+                "source_folder_id",
+                "message_id",
+                "destination_folder_id",
+            ],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "source_folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "message_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "destination_folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "source_folder_id": "string",
+            "message_id": "string",
+            "destination_folder_id": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=2,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "user_identity",
+            "source_folder_id",
+            "message_id",
+            "destination_folder_id",
+            "_approval_completed",
+        }
+        if set(payload) - allowed:
+            return _failed("M365 mail message move payload contains unsupported fields")
+        message_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "mail-messages.move",
+            "destination_folder_id": payload.get("destination_folder_id"),
+            "message_id": payload.get("message_id"),
+            "source_folder_id": payload.get("source_folder_id"),
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_mail_message_move_payload
+
+            validate_m365_mail_message_move_payload(message_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(message_payload["user_identity"]).strip()
+        source_folder_id = str(message_payload["source_folder_id"]).strip()
+        message_id = str(message_payload["message_id"]).strip()
+        destination_folder_id = str(message_payload["destination_folder_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365MailMessageMoveWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "mail_message_move",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "source_folder_id": source_folder_id,
+            "message_id": message_id,
+            "destination_folder_id": destination_folder_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "mail_message_move",
+                "client_id": context.client_id,
+                "scope": {
+                    "user_identity": user_identity,
+                    "source_folder_id": source_folder_id,
+                    "message_id": message_id,
+                    "destination_folder_id": destination_folder_id,
+                },
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.move_mail_message(
+                user_identity=user_identity,
+                source_folder_id=source_folder_id,
+                message_id=message_id,
+                destination_folder_id=destination_folder_id,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph mail message move failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph mail message move failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -3162,6 +3329,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365LicenseChangeAction(),
         M365SessionRevocationAction(),
         M365MailboxSettingsAction(),
+        M365MailMessageMoveAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -3211,6 +3379,7 @@ class SmartActionService:
             | M365LicenseWriteProvider
             | M365SessionRevocationWriteProvider
             | M365MailboxSettingsWriteProvider
+            | M365MailMessageMoveWriteProvider
             | None
         ) = None,
     ) -> None:

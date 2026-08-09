@@ -76,6 +76,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "m365-user-onboarding",
         "m365-license-change",
         "m365-mailbox-settings",
+        "m365-mail-message-move",
         "m365-session-revocation",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
