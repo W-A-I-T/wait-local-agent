@@ -647,6 +647,17 @@ def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
     assert run.status == "pending_approval"
     assert "Drafted inactive ticket follow-up" in run.message
 
+    p1_template = get_workflow_template("p1-alert")
+    assert p1_template is not None
+    p1_run = run_workflow_template(
+        store,
+        "p1-alert",
+        "TCK-1001",
+        template_override=replace(p1_template, tool_id=None),
+    )
+    assert p1_run.status == "pending_approval"
+    assert "Prepared priority alert" in p1_run.message
+
 
 def test_p1_alert_executes_local_note_only_after_approval(settings, tmp_path: Path) -> None:
     store = Store(tmp_path / "p1-alert.db")
