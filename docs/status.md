@@ -191,8 +191,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   and read/write classification. The catalog also exposes a technician-gated,
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read
-  tool, including tenant and per-user license context; no credentials or write
-  operation are accepted by either action. A
+  tool, including tenant and per-user license context, plus the admin-only
+  approval-gated `m365-user-offboarding` tool. The offboarding tool accepts
+  only an explicit user identity and directory ID, disables the account, then
+  revokes sessions after approval, and reports partial completion without
+  continuing after a failed step. Credentials are never accepted by the tool.
+  A
   matching RMM contract exposes tenant-scoped device and alert
   lookup, script metadata, script preview, and approval-aware execution. The
   local adapter remains inventory-only and blocks execution until a reviewed

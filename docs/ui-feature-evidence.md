@@ -41,7 +41,7 @@ unverifiable product claim.
 
 | Capability | Current interface | UI status | Safety boundary |
 | --- | --- | --- | --- |
-| Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence |
+| Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence; `m365-user-offboarding` is admin-only, approval-gated, and reports partial failure |
 | Event ingestion and delivery retry | `/automation/*`, API | No standalone screen; retry policy is intentionally API-only | Authenticated event types, idempotency, tenant checks, persisted `max_retries` 0-10, persisted `retry_delay_seconds` 1-3600, and bounded automatic retries |
 | Technician chat and persisted sessions | `/technician/chat*`, CLI | No standalone screen | Technician role, tenant/principal scope, bounded parser and history |
 | End-user local ticket support | `/end-user/tickets*` | No operator screen; separate end-user API | Separate end-user token, requester and tenant scope |

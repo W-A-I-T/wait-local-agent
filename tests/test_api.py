@@ -2451,6 +2451,33 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
+def test_m365_user_offboarding_requires_admin_at_invoke_boundary(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "client_id": "acme",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+
+    denied = client.post(
+        "/smart-actions/m365-user-offboarding/invoke",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "payload": {"user_identity": "user@example.test", "user_id": "graph-user-1"},
+        },
+    )
+    detail = client.get("/smart-actions/m365-user-offboarding", headers=_auth("tech-token"))
+
+    assert denied.status_code == 403
+    assert detail.status_code == 200
+    assert detail.json()["required_role"] == "admin"
+
+
 def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings) -> None:
     secure_settings = settings.__class__(
         **{
