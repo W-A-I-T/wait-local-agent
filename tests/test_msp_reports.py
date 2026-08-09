@@ -246,3 +246,30 @@ def test_cli_generates_client_reports(monkeypatch, tmp_path) -> None:
     assert '"report_type": "qbr"' in qbr.stdout
     assert opportunity.exit_code == 0, opportunity.stdout
     assert '"report_type": "automation_opportunity"' in opportunity.stdout
+
+
+def test_cli_schedules_bounded_client_report(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "scheduled-report.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(db_path))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    result = CliRunner().invoke(
+        app,
+        [
+            "reports",
+            "schedule",
+            "qbr",
+            "--cron",
+            "0 9 * * *",
+            "--client-id",
+            "acme",
+            "--period-days",
+            "30",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    job = Store(db_path).list_scheduled_jobs()[0]
+    assert job.job_kind == "report"
+    assert job.template_id == "qbr"
+    assert json.loads(job.params_json)["client_id"] == "acme"

@@ -133,7 +133,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Agent definitions may additionally declare a validated local execution
   window with an IANA timezone, including overnight ranges; closed scheduled
   windows are skipped without creating a run and are recorded in the audit
-  trail.
+  trail. Bounded client-scoped QBR and automation-opportunity report targets
+  reuse the same scheduler and deterministic local report builders with
+  validated periods and failure auditing.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is
@@ -349,7 +351,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and bounded N-central inventory/direct-task adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/license-request workflow templates; broader resources and mutations future |
-| Scheduled / proactive workflows | Built |
+| Scheduled / proactive workflows | Built; workflow, agent, and bounded client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR and automation-opportunity reports built; provider-backed lifecycle enrichment and PDF export remain future work |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
 | LP evidence bundle export | Public contract built; proprietary founder implementation remains private |

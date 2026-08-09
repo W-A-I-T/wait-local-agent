@@ -24,11 +24,11 @@ visible here instead of being presented as a completed UI feature.
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR and automation-opportunity generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
-| `/scheduled-jobs` | Schedule lifecycle | `/scheduled-jobs/*` | Browser route render |
+| `/scheduled-jobs` | Workflow, agent, and client-report schedule lifecycle | `/scheduled-jobs/*` | Browser route render; UI test creates a bounded QBR schedule |
 | `/settings` | Packs, secrets, backups, acknowledgement-gated restore, update check, admin-triggered model health | `/settings/*`, `/settings/providers/health`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
 | `/founder` | Founder pack and Launch Passport boundary | `/founder/*` | Existing UI tests; browser route render; pack-not-installed state is explicit |
 
-All 16 sidebar destinations rendered their expected primary heading through
+All listed sidebar destinations rendered their expected primary heading through
 normal in-app navigation in the local browser. The Vite proxy now covers every
 dashboard API family and lets HTML navigations fall through to the SPA; this is
 covered by `ui/tests/vite-proxy.test.ts`.
@@ -51,7 +51,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 19 files, 76 tests passed.
+- UI tests: 20 files, 77 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
@@ -65,6 +65,9 @@ unverifiable product claim.
   environment.
 - Browser: Agents create/run flow completed against the real local API; all
   sidebar routes rendered through in-app navigation.
+- Scheduled report UI test: `/scheduled-jobs` switched to Client report and
+  submitted a tenant-scoped QBR schedule with a bounded rolling period through
+  `POST /scheduled-jobs`.
 - Local Chromium smoke after merged commit `470dbd2`: passed for `/agents`; the
   real local API returned HTTP 200 for `/agents`, `/tools`, `/connectors`, and
   the dashboard's supporting requests, with no browser errors. The tool catalog

@@ -559,6 +559,65 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         run_workflow_template(store, "ticket-triage", "NOPE")
 
 
+def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:
+    db_path = tmp_path / "scheduled-report.db"
+    store = Store(db_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    manager = SchedulerManager(
+        store,
+        enabled=False,
+        smart_action_service=SmartActionService(store, settings),
+    )
+    scheduled_job = manager.register(
+        "qbr",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30},
+        job_kind="report",
+    )
+
+    async def scenario() -> None:
+        await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+    reports = store.list_reports(report_type="qbr", client_id="acme")
+    assert len(reports) == 1
+    assert reports[0].created_by == "scheduler"
+    assert reports[0].metadata["client_id"] == "acme"
+    assert reports[0].metadata["period_start"]
+    assert reports[0].metadata["period_end"]
+    assert any(event.event_type == "report.created" for event in store.list_audit_events(client_id="acme"))
+    assert any(event.event_type == "scheduled_job.triggered" for event in store.list_audit_events(client_id="acme"))
+
+
+def test_scheduler_report_failure_is_audited_and_does_not_create_report(tmp_path: Path) -> None:
+    store = Store(tmp_path / "scheduled-report-failure.db")
+    manager = SchedulerManager(store, enabled=False)
+    scheduled_job = manager.register(
+        "automation_opportunity",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30},
+        job_kind="report",
+    )
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError, match="not configured"):
+            await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+    assert store.list_reports(report_type="automation_opportunity", client_id="acme") == []
+    failed = [
+        event
+        for event in store.list_audit_events(client_id="acme")
+        if event.event_type == "scheduled_job.trigger_failed"
+    ]
+    assert len(failed) == 1
+    assert "not configured" in failed[0].detail
+
+
 def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)

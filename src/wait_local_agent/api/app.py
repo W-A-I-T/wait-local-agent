@@ -135,7 +135,7 @@ from wait_local_agent.reports.models import ReportFormat, ReportType
 from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.scheduler import SchedulerManager
+from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
@@ -435,6 +435,7 @@ class EventIngestRequest(BaseModel):
 
 class ScheduledJobCreateRequest(BaseModel):
     template_id: str | None = None
+    report_type: Literal["qbr", "automation_opportunity"] | None = None
     agent_id: str | None = None
     entity_id: str | None = None
     cron: str = ""
@@ -3563,6 +3564,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ScheduledJobCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.report_type is not None:
+            return _create_scheduled_report_job(request, context)
         if request.agent_id is not None:
             return _create_scheduled_agent_job(request, context)
         if request.template_id is None:
@@ -3587,6 +3590,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.template_id,
                 request.cron,
                 params,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
+                timezone=request.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_report_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if request.template_id is not None or request.agent_id is not None or request.entity_id is not None:
+            raise HTTPException(status_code=422, detail="report schedules cannot include a workflow or agent target")
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = _report_client_scope(context, requested_client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=400, detail="client_id is required for a scheduled report")
+        params = dict(request.params)
+        params["client_id"] = scoped_client_id
+        try:
+            validate_scheduled_report_params(params, timezone=request.timezone)
+            scheduled_job = scheduler.register(
+                request.report_type or "",
+                request.cron,
+                params,
+                job_kind="report",
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,

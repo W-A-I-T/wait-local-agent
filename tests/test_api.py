@@ -5,10 +5,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+import pytest
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
-from wait_local_agent.api.app import create_app
+from wait_local_agent.api.app import ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
     default_registry,
@@ -60,6 +63,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
 from wait_local_agent.store import Store
@@ -950,6 +954,58 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
     assert created.json()["client_id"] == "acme"
     assert created.json()["params"]["client_id"] == "acme"
     assert [job["id"] for job in filtered.json()] == [created.json()["id"]]
+
+
+def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    app = create_app(secure_settings)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/scheduled-jobs"
+        and route.methods is not None
+        and "POST" in route.methods
+    )
+    technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id="acme")
+    created = endpoint(
+        ScheduledJobCreateRequest(
+            report_type="qbr",
+            cron="0 9 * * *",
+            params={"client_id": "globex", "period_days": 90},
+        ),
+        technician,
+    )
+
+    with pytest.raises(HTTPException, match="period_days or period_start"):
+        endpoint(
+            ScheduledJobCreateRequest(report_type="qbr", cron="0 9 * * *", params={"client_id": "acme"}),
+            technician,
+        )
+    with pytest.raises(HTTPException, match="cannot include"):
+        endpoint(
+            ScheduledJobCreateRequest(
+                report_type="qbr",
+                template_id="ticket-triage",
+                cron="0 9 * * *",
+                params={"client_id": "acme", "period_days": 30},
+            ),
+            technician,
+        )
+
+    assert created["job_kind"] == "report"
+    assert created["template_id"] == "qbr"
+    assert created["client_id"] == "acme"
+    assert created["params"]["client_id"] == "acme"
 
 
 def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_id(settings) -> None:

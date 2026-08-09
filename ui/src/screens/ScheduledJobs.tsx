@@ -8,8 +8,9 @@ export function ScheduledJobs() {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
-  const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent">("workflow");
+  const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent" | "report">("workflow");
   const [templateId, setTemplateId] = useState("");
+  const [reportType, setReportType] = useState<"qbr" | "automation_opportunity">("qbr");
   const [agentId, setAgentId] = useState("");
   const [entityId, setEntityId] = useState("HALO-1");
   const [cron, setCron] = useState("0 */6 * * *");
@@ -67,7 +68,9 @@ export function ScheduledJobs() {
     try {
       const body: ScheduledJobRequestBody = scheduleKind === "agent"
         ? { agent_id: agentId, entity_id: entityId.trim(), cron, timezone: timezone.trim(), params }
-        : { template_id: templateId, cron, timezone: timezone.trim(), params };
+        : scheduleKind === "report"
+          ? { report_type: reportType, cron, timezone: timezone.trim(), params }
+          : { template_id: templateId, cron, timezone: timezone.trim(), params };
       await apiFetch<ScheduledJob>("/scheduled-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -112,9 +115,10 @@ export function ScheduledJobs() {
           <div className="grid">
             <label>
               Schedule type
-              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "agent")}>
+              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "agent" | "report")}>
                 <option value="workflow">Workflow template</option>
                 <option value="agent">Agent definition</option>
+                <option value="report">Client report</option>
               </select>
             </label>
             {scheduleKind === "workflow" ? (
@@ -125,6 +129,14 @@ export function ScheduledJobs() {
                   {templates.map((template) => (
                     <option key={template.id} value={template.id}>{template.name}</option>
                   ))}
+                </select>
+              </label>
+            ) : scheduleKind === "report" ? (
+              <label>
+                Report
+                <select value={reportType} onChange={(event) => setReportType(event.target.value as "qbr" | "automation_opportunity")}>
+                  <option value="qbr">Quarterly business review</option>
+                  <option value="automation_opportunity">Automation opportunities</option>
                 </select>
               </label>
             ) : (
@@ -161,7 +173,13 @@ export function ScheduledJobs() {
             </label>
             <label>
               Params JSON
-              <textarea rows={5} value={paramsText} onChange={(event) => setParamsText(event.target.value)} />
+              <textarea
+                aria-label="Params JSON"
+                rows={5}
+                value={paramsText}
+                onChange={(event) => setParamsText(event.target.value)}
+              />
+              {scheduleKind === "report" ? <span>Include a client_id and either period_days (1–366) or period_start/period_end ISO dates.</span> : null}
             </label>
           </div>
           <button type="submit" disabled={!canWrite}>Create schedule</button>
@@ -173,7 +191,7 @@ export function ScheduledJobs() {
           {jobs.map((job) => (
             <article className="table-row" key={job.id}>
               <div>
-                <strong>{job.job_kind === "agent" ? `Agent ${job.agent_id}` : job.template_id}</strong>
+                <strong>{job.job_kind === "agent" ? `Agent ${job.agent_id}` : job.job_kind === "report" ? `Report ${job.template_id}` : job.template_id}</strong>
                 <span>{job.cron} ({job.timezone})</span>
               </div>
               <span>{job.paused ? "paused" : "running"}</span>
@@ -199,7 +217,7 @@ export function ScheduledJobs() {
         {selectedJob ? (
           <>
             <div className="event-row">
-              <span>{selectedJob.job_kind === "agent" ? `Agent ${selectedJob.agent_id}` : selectedJob.template_id}</span>
+              <span>{selectedJob.job_kind === "agent" ? `Agent ${selectedJob.agent_id}` : selectedJob.job_kind === "report" ? `Report ${selectedJob.template_id}` : selectedJob.template_id}</span>
               <em>{selectedJob.client_id || "global"}</em>
               <span>{selectedJob.next_run_at || "next run unknown"}</span>
             </div>

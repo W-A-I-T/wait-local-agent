@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -13,7 +13,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
 from wait_local_agent.reports.renderers import redact_text
+from wait_local_agent.reports.service import ReportService
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
@@ -164,6 +167,9 @@ class SchedulerManager:
         if scheduled_job.job_kind == "agent":
             await self._run_agent_job(scheduled_job, params, client_id)
             return
+        if scheduled_job.job_kind == "report":
+            await self._run_report_job(scheduled_job, params, client_id)
+            return
         ticket_id = _required_ticket_id(params)
         try:
             input_payload = params.get("input", {})
@@ -200,6 +206,67 @@ class SchedulerManager:
             status=run.status,
             client_id=run.client_id,
             actor="scheduler",
+        )
+
+    async def _run_report_job(
+        self,
+        scheduled_job: ScheduledJob,
+        params: dict[str, object],
+        client_id: str | None,
+    ) -> None:
+        try:
+            if client_id is None:
+                raise ValueError("scheduled report params must include client_id")
+            report_type = _scheduled_report_type(scheduled_job.template_id)
+            period_start, period_end = _scheduled_report_period(
+                params,
+                timezone=scheduled_job.timezone,
+            )
+            if self._smart_action_service is None:
+                raise RuntimeError("scheduled report execution is not configured")
+            estimates = {
+                manifest.action_id: manifest.estimated_minutes_saved
+                for manifest in self._smart_action_service.list()
+            }
+            if report_type is ReportType.QBR:
+                sections, metadata = build_qbr_report(
+                    self._store,
+                    estimates,
+                    client_id=client_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+                title = f"Quarterly business review — {client_id}"
+            else:
+                sections, metadata = build_automation_opportunity_report(
+                    self._store,
+                    estimates,
+                    client_id=client_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+                title = f"Automation opportunities — {client_id}"
+            report = ReportService(self._store).create_report(
+                report_type,
+                title,
+                sections,
+                created_by="scheduler",
+                client_id=client_id,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            self._store.add_audit_event(
+                "scheduled_job.trigger_failed",
+                str(scheduled_job.id),
+                f"{scheduled_job.template_id} report failed: {redact_text(str(exc))}",
+                client_id=client_id,
+            )
+            raise
+        self._store.add_audit_event(
+            "scheduled_job.triggered",
+            str(scheduled_job.id),
+            f"{scheduled_job.template_id} created report {report.id}",
+            client_id=client_id,
         )
 
     async def _run_agent_job(
@@ -454,7 +521,57 @@ def _validate_schedule_target(
         if template_id or not _string_or_none(agent_id) or not _string_or_none(entity_id):
             raise ValueError("agent schedules require agent_id and entity_id")
         return
+    if job_kind == "report":
+        if template_id not in _SCHEDULED_REPORT_TYPES or agent_id is not None or entity_id is not None:
+            raise ValueError("report schedules require a supported report type only")
+        return
     raise ValueError("unsupported scheduled job kind")
+
+
+_SCHEDULED_REPORT_TYPES = {
+    ReportType.QBR.value,
+    ReportType.AUTOMATION_OPPORTUNITY.value,
+}
+
+
+def _scheduled_report_type(value: str) -> ReportType:
+    if value not in _SCHEDULED_REPORT_TYPES:
+        raise ValueError("scheduled report type must be qbr or automation_opportunity")
+    return ReportType(value)
+
+
+def _scheduled_report_period(params: dict[str, object], *, timezone: str) -> tuple[str, str]:
+    period_days = params.get("period_days")
+    if period_days is not None:
+        if isinstance(period_days, bool) or not isinstance(period_days, int) or not 1 <= period_days <= 366:
+            raise ValueError("period_days must be an integer between 1 and 366")
+        local_today = datetime.now(ZoneInfo(validate_timezone(timezone))).date()
+        return (
+            (local_today - timedelta(days=period_days - 1)).isoformat(),
+            local_today.isoformat(),
+        )
+    period_start = params.get("period_start")
+    period_end = params.get("period_end")
+    if not isinstance(period_start, str) or not isinstance(period_end, str):
+        raise ValueError("scheduled report params require period_days or period_start and period_end")
+    try:
+        start = date.fromisoformat(period_start)
+        end = date.fromisoformat(period_end)
+    except ValueError as exc:
+        raise ValueError("scheduled report period must use ISO dates") from exc
+    if end < start:
+        raise ValueError("scheduled report period_end must be on or after period_start")
+    if (end - start).days > 365:
+        raise ValueError("scheduled report period cannot exceed 366 days")
+    return start.isoformat(), end.isoformat()
+
+
+def validate_scheduled_report_params(params: dict[str, object], *, timezone: str = "UTC") -> None:
+    """Validate the bounded scope and period required by a scheduled report."""
+    client_id = params.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("scheduled report params must include client_id")
+    _scheduled_report_period(params, timezone=timezone)
 
 
 def _safe_json_object(payload_json: str) -> dict[str, object]:
