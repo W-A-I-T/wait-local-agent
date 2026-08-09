@@ -49,6 +49,7 @@ from wait_local_agent.smart_actions import (
     M365IdentityLookupAction,
     M365LicenseChangeAction,
     M365LiveContextAction,
+    M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
     RmmDeviceLookupAction,
@@ -959,6 +960,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-identity-lookup",
         "m365-license-change",
         "m365-live-context",
+        "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
         "rmm-alert-lookup",
@@ -1152,6 +1154,92 @@ def test_m365_license_change_is_approval_gated_and_sku_scoped(settings) -> None:
     ).status == "failed"
     assert M365LicenseChangeAction().run(
         replace(context, m365_client=FakeM365LicenseWrites(change_status="failed")),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_m365_session_revocation_is_approval_gated_and_user_scoped(settings) -> None:
+    class FakeM365SessionWrites:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            revoke_status="succeeded",
+            revoke_error=False,
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.revoke_status = revoke_status
+            self.revoke_error = revoke_error
+            self.calls: list[dict[str, str]] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def revoke_user_sessions(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.revoke_error:
+                raise RuntimeError("revoke unavailable")
+            return SimpleNamespace(
+                status=self.revoke_status,
+                message="sessions revoked" if self.revoke_status == "succeeded" else "provider rejected revocation",
+                status_code=204 if self.revoke_status == "succeeded" else 400,
+            )
+
+    store = Store(settings.data_path)
+    provider = FakeM365SessionWrites()
+    service = SmartActionService(store, settings, m365_client=provider)
+    payload: dict[str, object] = {"user_id": "user-immutable-id"}
+
+    pending = service.invoke("m365-session-revocation", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.calls == [{"user_id": "user-immutable-id"}]
+
+    context = _action_context(store, settings, client_id="acme")
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "_approval_completed": True},
+    ).status == "success"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "unexpected": "field"},
+    ).status == "failed"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=provider),
+        {"user_id": ""},
+    ).status == "failed"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=FakeM365SessionWrites(health_status="blocked")),
+        payload,
+    ).status == "failed"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=FakeM365SessionWrites(health_error=True)),
+        payload,
+    ).status == "failed"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=FakeM365SessionWrites(revoke_error=True)),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+    assert M365SessionRevocationAction().run(
+        replace(context, m365_client=FakeM365SessionWrites(revoke_status="failed")),
         {**payload, "_approval_completed": True},
     ).status == "failed"
 

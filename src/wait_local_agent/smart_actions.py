@@ -122,6 +122,14 @@ class M365LicenseWriteProvider(Protocol):
         """Add or remove explicitly identified license SKU IDs for one user."""
 
 
+class M365SessionRevocationWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def revoke_user_sessions(self, *, user_id: str) -> object:
+        """Revoke sessions for one explicitly identified user."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -192,6 +200,7 @@ class ActionContext:
         | M365UserCreateProvider
         | M365GroupMembershipWriteProvider
         | M365LicenseWriteProvider
+        | M365SessionRevocationWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -808,6 +817,120 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365SessionRevocationAction:
+    manifest = SmartActionManifest(
+        action_id="m365-session-revocation",
+        title="Microsoft 365 session revocation",
+        description=(
+            "Prepare an approval-gated Microsoft Graph session revocation for one "
+            "explicitly identified user."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_id"],
+            "properties": {
+                "user_id": {"type": "string", "minLength": 1, "maxLength": 320},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_id": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=2,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"user_id", "_approval_completed"}:
+            return _failed("M365 session revocation payload contains unsupported fields")
+        session_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "users.sessions.revoke",
+            "user_id": payload.get("user_id"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_session_revocation_payload
+
+            validate_m365_session_revocation_payload(session_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_id = str(session_payload["user_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365SessionRevocationWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "session_revocation",
+            "connector_status": connector_status,
+            "user_id": user_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "session_revocation",
+                "client_id": context.client_id,
+                "scope": {"user_id": user_id},
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.revoke_user_sessions(user_id=user_id)
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph session revocation failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph session revocation failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -2897,6 +3020,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365LiveContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
+        M365SessionRevocationAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -2944,6 +3068,7 @@ class SmartActionService:
             | M365UserCreateProvider
             | M365GroupMembershipWriteProvider
             | M365LicenseWriteProvider
+            | M365SessionRevocationWriteProvider
             | None
         ) = None,
     ) -> None:

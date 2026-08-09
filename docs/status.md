@@ -199,6 +199,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   The catalog also exposes admin-only `m365-license-change` for immutable user
   IDs and one to fifty SKU GUIDs with an explicit add/remove operation; it is
   approval-gated and reports provider failures without fake success.
+  It also exposes admin-only `m365-session-revocation` for one immutable user
+  ID; active sessions are revoked only after approval and provider failures
+  remain explicit failures.
   Onboarding accepts only a validated local-vault reference for the temporary
   credential and reads the secret after approval; offboarding accepts only an
   explicit user identity and directory ID, disables the account, then revokes
