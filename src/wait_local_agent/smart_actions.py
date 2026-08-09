@@ -34,6 +34,7 @@ from wait_local_agent.providers import (
     ModelProvider,
     ProviderUnavailableError,
     provider_from_settings,
+    provider_metadata,
 )
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -2593,8 +2594,7 @@ class SmartActionService:
             trigger_source=trigger_source,
             client_id=client_id,
             metadata={
-                "provider": self.settings.local_model_provider or "deterministic",
-                "model": self.settings.local_model_name,
+                **provider_metadata(self.settings, self.provider),
             },
             steps=(step,),
             artifacts=artifacts,

@@ -15,6 +15,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_VAULT_PATH", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("WAIT_REMOTE_MODEL_PROVIDER", raising=False)
+    monkeypatch.delenv("WAIT_REMOTE_MODEL_BASE_URL", raising=False)
+    monkeypatch.delenv("WAIT_REMOTE_MODEL_NAME", raising=False)
+    monkeypatch.delenv("WAIT_REMOTE_MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TOKEN_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TICKET_WRITE_ENDPOINT", raising=False)
@@ -64,6 +69,11 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert str(settings.vault_path) == ".wait-local-agent/vault"
     assert settings.local_model_provider == "deterministic"
     assert settings.local_model_timeout_seconds == 20.0
+    assert settings.remote_model_provider == ""
+    assert settings.remote_model_base_url == ""
+    assert settings.remote_model_name == ""
+    assert settings.remote_model_api_key == ""
+    assert settings.remote_model_timeout_seconds == 20.0
     assert settings.halopsa_base_url == ""
     assert settings.halopsa_token_url == ""
     assert settings.halopsa_ticket_write_endpoint == "Ticket"

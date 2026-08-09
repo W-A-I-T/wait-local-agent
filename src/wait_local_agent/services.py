@@ -33,6 +33,7 @@ class TicketIntelligenceService:
             self.settings.allowed_doc_root,
             self.store,
             self.settings,
+            client_id=ticket.client_id,
         )
         summary = TicketSummary(
             ticket_id=ticket.id,

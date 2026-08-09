@@ -144,6 +144,28 @@ def test_provider_settings_and_tickets_list(settings) -> None:
     assert len(tickets.json()) == 2
 
 
+def test_provider_settings_expose_remote_status_without_secret(settings) -> None:
+    remote_settings = replace(
+        settings,
+        allow_llm_inference=True,
+        allow_cloud_fallback=True,
+        remote_model_provider="anthropic",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(remote_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["remote_model_provider"] == "anthropic"
+    assert payload["remote_model_configured"] is True
+    assert "remote_model_api_key" not in payload
+    assert "do-not-return" not in response.text
+
+
 def test_ticket_summary_and_approval_flow(settings) -> None:
     Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))

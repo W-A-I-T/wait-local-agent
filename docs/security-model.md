@@ -10,10 +10,17 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live connector mutations |
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
+| `WAIT_REMOTE_MODEL_*` | empty | No remote provider is configured; a complete provider, base URL, model, and secret plus both model opt-ins are required |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 | `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
+
+Remote model requests are never part of local-only operation. When explicitly
+enabled, the provider adapter sends only bounded, redacted ticket and local
+knowledge context; it does not send tenant IDs, local paths, credentials, or
+hidden reasoning. Provider/model labels are retained as safe operational
+metadata, while API keys remain in the configured env/vault secret boundary.
 
 NinjaOne RMM calls use the same outbound HTTP gate. A tenant/client request is
 accepted only when its ID resolves through the operator-controlled

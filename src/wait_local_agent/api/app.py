@@ -630,6 +630,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_model_name": active_settings.local_model_name,
             "local_model_timeout_seconds": active_settings.local_model_timeout_seconds,
             "llm_inference_enabled": active_settings.allow_llm_inference,
+            "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
+            "remote_model_provider": active_settings.remote_model_provider,
+            "remote_model_configured": bool(
+                active_settings.remote_model_provider
+                and active_settings.remote_model_base_url
+                and active_settings.remote_model_name
+                and active_settings.remote_model_api_key
+            ),
             "vector_backend": active_settings.vector_backend,
             "document_parser": active_settings.document_parser,
             "ocr_enabled": active_settings.allow_ocr,

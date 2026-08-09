@@ -157,6 +157,11 @@ class Settings:
     license_key: str = ""
     license_secret: str = ""
     pack_signing_secret: str = ""
+    remote_model_provider: str = ""
+    remote_model_base_url: str = ""
+    remote_model_name: str = ""
+    remote_model_api_key: str = ""
+    remote_model_timeout_seconds: float = 20.0
 
 
 def load_settings() -> Settings:
@@ -174,6 +179,16 @@ def load_settings() -> Settings:
         local_model_name=os.getenv("WAIT_LOCAL_MODEL_NAME", "llama3.1"),
         local_model_timeout_seconds=_float_env("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", 20.0),
         vector_backend=os.getenv("WAIT_VECTOR_BACKEND", "sqlite"),
+        remote_model_provider=os.getenv("WAIT_REMOTE_MODEL_PROVIDER", "").strip().lower(),
+        remote_model_base_url=os.getenv("WAIT_REMOTE_MODEL_BASE_URL", "").strip(),
+        remote_model_name=os.getenv("WAIT_REMOTE_MODEL_NAME", "").strip(),
+        remote_model_api_key=_secret_value(
+            "WAIT_REMOTE_MODEL_API_KEY",
+            os.getenv("WAIT_REMOTE_MODEL_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        remote_model_timeout_seconds=_float_env("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", 20.0),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),

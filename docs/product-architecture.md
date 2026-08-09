@@ -331,7 +331,7 @@ All must be explicitly set `true` by the operator. Even then, writes require an 
 
 1. **Deterministic** (default): keyword classification + template substitution + FTS5 citation — always works, always reproducible
 2. **Local OpenAI-compatible** (opt-in: `WAIT_ALLOW_LLM_INFERENCE=true`): Ollama/vLLM at `WAIT_OPENAI_BASE_URL`
-3. **Cloud fallback** (disabled by default: `WAIT_ALLOW_CLOUD_FALLBACK=true`): redaction pass before any cloud call
+3. **Remote fallback** (disabled by default: `WAIT_ALLOW_CLOUD_FALLBACK=true` plus a complete `WAIT_REMOTE_MODEL_*` configuration): the local provider is attempted first, then the configured Anthropic Messages or documented OpenAI-compatible adapter receives bounded redacted context after local unavailability
 
 ### Cited-Answers-Only Policy
 

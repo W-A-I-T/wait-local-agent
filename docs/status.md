@@ -12,7 +12,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Optional Docling parser/OCR configuration for scanned or richer documents when the optional dependency is installed and OCR is explicitly enabled.
 - SQLite FTS5 knowledge retrieval by default, with optional Qdrant vector backend configuration.
 - Deterministic ticket intelligence with indexed citations.
-- Optional local OpenAI-compatible provider with deterministic fallback.
+- Optional local OpenAI-compatible provider with deterministic fallback, plus
+  explicit remote fallback adapters for Anthropic Messages and documented
+  OpenAI-compatible DeepSeek, Kimi, or documented coding-model-compatible endpoints. Remote
+  calls remain disabled unless cloud fallback and a complete remote provider
+  configuration are enabled.
 - API-backed dashboard for HaloPSA tickets, approval queue, event history, knowledge, workflows, connectors, and provider health.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent SQLite volume.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
