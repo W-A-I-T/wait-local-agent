@@ -770,12 +770,13 @@ wait-local-agent connectors autotask-company <company-id>
 The API mirrors these commands under `/connectors/autotask/*`. Credentials are
 sent only in the documented request headers, network access remains gated by
 `WAIT_ALLOW_HTTP_PROBING`, and the Agents catalog exposes approval-gated
-`add_note`, `update_status`, `update_resolution`, and `assign_technician`
-actions only when `WAIT_ALLOW_WRITE_ACTIONS=true`. The actions use the
+`add_note`, `add_time_entry`, `update_status`, `update_resolution`, and
+`assign_technician` actions only when `WAIT_ALLOW_WRITE_ACTIONS=true`. The actions use the
 documented `TicketNotes` and `Tickets` contracts; `noteType`, `publish`, the
-status ID, resolution text, and assigned resource ID are explicit
-operator-supplied instance values rather than invented defaults. Broader Autotask mutations
-remain unavailable ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm), [TicketNotes entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TicketNotesEntity.htm), [Tickets entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TicketsEntity.htm)).
+status ID, resolution text, assigned resource ID, and time-entry resource/role,
+date, hours, and summary values are explicit operator-supplied instance values
+rather than invented defaults. Broader Autotask mutations
+remain unavailable ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm), [TicketNotes entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TicketNotesEntity.htm), [TimeEntries entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TimeEntriesEntity.htm), [Tickets entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TicketsEntity.htm)).
 
 ### NinjaOne RMM
 

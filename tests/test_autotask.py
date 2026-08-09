@@ -59,6 +59,19 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
             )
             return httpx.Response(200)
         assert request.method == "POST"
+        if request.url.path.endswith("/TimeEntries"):
+            assert json.loads(request.content) == {
+                "ticketID": 123,
+                "resourceID": 456,
+                "roleID": 789,
+                "dateWorked": "2026-08-09",
+                "hoursWorked": 1.5,
+                "summaryNotes": "Investigated locally",
+                "billingCodeID": 12,
+                "isNonBillable": False,
+                "showOnInvoice": True,
+            }
+            return httpx.Response(200, json={"itemId": 999})
         assert request.url.path.endswith("/TicketNotes")
         assert request.headers["Content-Type"] == "application/json"
         assert json.loads(request.content) == {
@@ -120,6 +133,25 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
     )
     assert assignment_result.status == "succeeded"
     assert assignment_result.endpoint == "Tickets"
+    time_result = client.execute_write(
+        AutotaskWriteRequest(
+            "123",
+            "add_time_entry",
+            {
+                "resource_id": 456,
+                "role_id": 789,
+                "date_worked": "2026-08-09",
+                "hours_worked": 1.5,
+                "summary_notes": "Investigated locally",
+                "billing_code_id": 12,
+                "is_non_billable": False,
+                "show_on_invoice": True,
+            },
+        )
+    )
+    assert time_result.status == "succeeded"
+    assert time_result.endpoint == "TimeEntries"
+    assert time_result.remote_id == "999"
     assert client.execute_write(
         AutotaskWriteRequest(
             "123", "add_note", {"description": "unsafe", "note_type": 3, "publish": 0, "extra": 1}

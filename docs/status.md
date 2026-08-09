@@ -72,11 +72,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   boundary, plus approval-gated work-note and state updates through the shared
   smart-action runtime; broader incident fields remain unavailable.
 - Autotask ticket and company inventory through the common guarded HTTP boundary,
-  plus approval-gated ticket-note, status, resolution, and assignment actions. The note contract requires
+  plus approval-gated ticket-note, time-entry, status, resolution, and assignment actions. The note contract requires
   the operator to provide the provider's instance-specific non-negative
   `noteType` and `publish` values, status updates require an explicit provider
-  status ID, resolution text is bounded to the documented field, and assignment
-  requires an explicit positive `assignedResourceID`;
+  status ID, resolution text is bounded to the documented field, assignment
+  requires an explicit positive `assignedResourceID`, and time entries require
+  explicit resource/role/date/hours/summary values with hours bounded to the
+  provider's documented 0-24-hour range;
   broader write operations remain unavailable.
 - NinjaOne RMM device and alert inventory, script catalog and preview, plus
   approval-gated script execution through the bounded tenant-mapped adapter;
@@ -328,7 +330,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Air-gap compatible default path | Built |
 | IT Glue connector | Read-only core surface built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
-| Autotask connector | Ticket/company reads plus approval-gated ticket-note, status, resolution, and assignment updates built; broader writes remain future |
+| Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
