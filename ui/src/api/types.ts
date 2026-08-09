@@ -355,6 +355,15 @@ export type AnalyticsSummary = {
     estimate: boolean;
     derivation: string;
   };
+  model_usage: {
+    runs_with_usage: number;
+    runs_with_cost: number;
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost_usd: number;
+    estimate: boolean;
+    derivation: string;
+  };
 };
 
 export type KnowledgeDocument = {

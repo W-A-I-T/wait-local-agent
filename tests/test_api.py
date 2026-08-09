@@ -143,6 +143,8 @@ def test_provider_settings_and_tickets_list(settings) -> None:
     assert providers.json()["local_model_timeout_seconds"] == 20.0
     assert providers.json()["offline_mode"] is False
     assert providers.json()["remote_model_enabled"] is False
+    assert providers.json()["model_input_cost_usd_per_million_tokens"] is None
+    assert providers.json()["model_output_cost_usd_per_million_tokens"] is None
     assert tickets.status_code == 200
     assert len(tickets.json()) == 2
 
@@ -190,6 +192,23 @@ def test_provider_settings_report_remote_fallback_disabled_in_offline_mode(setti
     assert payload["offline_mode"] is True
     assert payload["remote_model_configured"] is True
     assert payload["remote_model_enabled"] is False
+    assert "do-not-return" not in response.text
+
+
+def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
+    priced_settings = replace(
+        settings,
+        model_input_cost_usd_per_million_tokens=1.25,
+        model_output_cost_usd_per_million_tokens=4.5,
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(priced_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    assert response.json()["model_input_cost_usd_per_million_tokens"] == 1.25
+    assert response.json()["model_output_cost_usd_per_million_tokens"] == 4.5
     assert "do-not-return" not in response.text
 
 

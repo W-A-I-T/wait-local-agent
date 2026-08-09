@@ -20,6 +20,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_REMOTE_MODEL_NAME", raising=False)
     monkeypatch.delenv("WAIT_REMOTE_MODEL_API_KEY", raising=False)
     monkeypatch.delenv("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", raising=False)
+    monkeypatch.delenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", raising=False)
     monkeypatch.delenv("WAIT_OFFLINE_MODE", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TOKEN_URL", raising=False)
@@ -75,6 +77,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.remote_model_name == ""
     assert settings.remote_model_api_key == ""
     assert settings.remote_model_timeout_seconds == 20.0
+    assert settings.model_input_cost_usd_per_million_tokens is None
+    assert settings.model_output_cost_usd_per_million_tokens is None
     assert settings.offline_mode is False
     assert settings.halopsa_base_url == ""
     assert settings.halopsa_token_url == ""
@@ -149,6 +153,20 @@ def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.local_model_timeout_seconds == 20.0
+
+
+def test_model_cost_rates_are_optional_and_reject_negative_values(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", "1.25")
+    monkeypatch.setenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", "4.5")
+    settings = load_settings()
+    assert settings.model_input_cost_usd_per_million_tokens == 1.25
+    assert settings.model_output_cost_usd_per_million_tokens == 4.5
+
+    monkeypatch.setenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", "-1")
+    monkeypatch.setenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", "not-a-rate")
+    invalid = load_settings()
+    assert invalid.model_input_cost_usd_per_million_tokens is None
+    assert invalid.model_output_cost_usd_per_million_tokens is None
 
 
 def test_hudu_and_knowledge_env_values(monkeypatch) -> None:

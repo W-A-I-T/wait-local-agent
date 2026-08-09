@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -553,6 +554,58 @@ def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_pat
     assert metadata["output_tokens"] == 7
     assert metadata["total_tokens"] == 18
     assert metadata["cost_status"] == "not_configured"
+    assert metadata["cost_usd"] is None
+
+
+def test_provider_metadata_calculates_cost_only_from_explicit_operator_rates(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path), transport=httpx.MockTransport(handler)
+    )
+    provider.summarize_ticket(_ticket(), [])
+
+    metadata = provider_metadata(
+        _settings(tmp_path),
+        provider,
+    )
+    assert metadata["cost_status"] == "not_configured"
+    priced = provider_metadata(
+        replace(
+            _settings(tmp_path),
+            model_input_cost_usd_per_million_tokens=1.0,
+            model_output_cost_usd_per_million_tokens=2.0,
+        ),
+        provider,
+    )
+    assert priced["cost_status"] == "configured_estimate"
+    assert priced["cost_usd"] == 0.000025
+
+
+def test_provider_metadata_keeps_partial_usage_unpriced(tmp_path: Path) -> None:
+    metadata = {
+        **_response_usage_metadata(httpx.Response(200, json={"usage": {"prompt_tokens": 11}})),
+    }
+    from wait_local_agent.providers import _add_configured_cost
+
+    _add_configured_cost(
+        metadata,
+        replace(
+            _settings(tmp_path),
+            model_input_cost_usd_per_million_tokens=1.0,
+            model_output_cost_usd_per_million_tokens=2.0,
+        ),
+    )
+    assert metadata["cost_status"] == "incomplete_usage"
     assert metadata["cost_usd"] is None
 
 

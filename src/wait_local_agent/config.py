@@ -25,6 +25,17 @@ def _float_env(name: str, default: float) -> float:
     return parsed if parsed > 0 else default
 
 
+def _optional_nonnegative_float_env(name: str) -> float | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
 def _int_env(name: str, default: int) -> int:
     value = os.getenv(name)
     if value is None:
@@ -162,6 +173,8 @@ class Settings:
     remote_model_name: str = ""
     remote_model_api_key: str = ""
     remote_model_timeout_seconds: float = 20.0
+    model_input_cost_usd_per_million_tokens: float | None = None
+    model_output_cost_usd_per_million_tokens: float | None = None
     offline_mode: bool = False
 
 
@@ -190,6 +203,12 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         remote_model_timeout_seconds=_float_env("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", 20.0),
+        model_input_cost_usd_per_million_tokens=_optional_nonnegative_float_env(
+            "WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS"
+        ),
+        model_output_cost_usd_per_million_tokens=_optional_nonnegative_float_env(
+            "WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS"
+        ),
         offline_mode=_bool_env("WAIT_OFFLINE_MODE"),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),

@@ -119,6 +119,7 @@ from wait_local_agent.models import (
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
+    MODEL_COST_DERIVATION,
     TICKET_LIFECYCLE_DERIVATION,
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
@@ -680,6 +681,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and active_settings.remote_model_name
                 and active_settings.remote_model_api_key
             ),
+            "model_input_cost_usd_per_million_tokens": active_settings.model_input_cost_usd_per_million_tokens,
+            "model_output_cost_usd_per_million_tokens": active_settings.model_output_cost_usd_per_million_tokens,
             "vector_backend": active_settings.vector_backend,
             "document_parser": active_settings.document_parser,
             "ocr_enabled": active_settings.allow_ocr,
@@ -4640,6 +4643,15 @@ def _empty_analytics_summary(
             "minutes": 0,
             "estimate": True,
             "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
+        },
+        "model_usage": {
+            "runs_with_usage": 0,
+            "runs_with_cost": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "estimate": True,
+            "derivation": MODEL_COST_DERIVATION,
         },
     }
 
