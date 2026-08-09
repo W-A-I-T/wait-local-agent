@@ -48,6 +48,7 @@ from wait_local_agent.smart_actions import (
     M365IdentityLookupAction,
     M365LiveContextAction,
     M365UserOffboardingAction,
+    M365UserOnboardingAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
     SharePointDocumentationContentAction,
@@ -1075,6 +1076,67 @@ def test_m365_user_onboarding_is_vault_backed_and_approval_gated(settings, tmp_p
     assert missing_provider.calls == []
     missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
     assert missing_run is not None and missing_run.status == "failed"
+
+
+def test_m365_user_onboarding_rejects_unready_and_failed_provider_paths(settings, tmp_path) -> None:
+    class FakeM365Create:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            create_error=False,
+            create_status="succeeded",
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.create_error = create_error
+            self.create_status = create_status
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="provider unavailable")
+
+        def create_user(self, **kwargs):
+            del kwargs
+            if self.create_error:
+                raise RuntimeError("create unavailable")
+            return SimpleNamespace(
+                status=self.create_status,
+                message="provider rejected user",
+                remote_id="user-1",
+                status_code=400,
+            )
+
+    vault_path = tmp_path / "vault"
+    SecretVault.initialize(vault_path).set("WAIT_M365_TEMP_EDGE", "Temporary-Password-123!")
+    valid_payload: dict[str, object] = {
+        "user_principal_name": "edge@example.test",
+        "display_name": "Edge User",
+        "mail_nickname": "edge.user",
+        "temporary_vault_name": "WAIT_M365_TEMP_EDGE",
+        "_approval_completed": True,
+    }
+
+    def run(payload, provider, *, path=vault_path):
+        action_settings = replace(settings, vault_path=path)
+        context = replace(
+            _action_context(Store(action_settings.data_path), action_settings),
+            m365_client=provider,
+            client_id="acme",
+        )
+        return M365UserOnboardingAction().run(context, payload)
+
+    assert run({**valid_payload, "account_enabled": "yes"}, FakeM365Create()).status == "failed"
+    assert run({**valid_payload, "user_principal_name": ""}, FakeM365Create()).status == "failed"
+    assert run(valid_payload, FakeM365Create(health_error=True)).status == "failed"
+    assert run(valid_payload, FakeM365Create(health_status="blocked")).status == "failed"
+    missing_vault = tmp_path / "missing-vault"
+    SecretVault.initialize(missing_vault)
+    assert run(valid_payload, FakeM365Create(), path=missing_vault).status == "failed"
+    assert run(valid_payload, FakeM365Create(create_error=True)).status == "failed"
+    assert run(valid_payload, FakeM365Create(create_status="failed")).status == "failed"
 
 
 def test_m365_user_offboarding_is_approval_gated_and_reports_partial_failure(settings) -> None:
