@@ -32,6 +32,15 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     )
     ticket_id = created.json()["ticket_id"]
     status = client.get(f"/end-user/tickets/{ticket_id}", headers=_auth("end-user-token"))
+    message = client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Please call me after 3pm"},
+    )
+    messages = client.get(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+    )
     escalated = client.post(
         f"/end-user/tickets/{ticket_id}/escalate",
         headers=_auth("end-user-token"),
@@ -48,6 +57,10 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     assert "password=do-not-store" not in created.text
     assert status.status_code == 200
     assert status.json()["ticket_id"] == ticket_id
+    assert message.status_code == 200
+    assert message.json()["body"] == "Please call me after 3pm"
+    assert messages.status_code == 200
+    assert [item["body"] for item in messages.json()] == ["Please call me after 3pm"]
     assert escalated.status_code == 200
     assert escalated.json()["status"] == "escalated"
     assert technician.status_code == 403
@@ -77,6 +90,10 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
     other_identity = replace(enabled, end_user_token="other-token", end_user_user_id="user-2")
     other_client = TestClient(create_app(other_identity))
     hidden = other_client.get(f"/end-user/tickets/{ticket_id}", headers=_auth("other-token"))
+    hidden_messages = other_client.get(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("other-token"),
+    )
     malformed = client.get("/end-user/tickets/not a ticket", headers=_auth("end-user-token"))
     missing_ticket_escalation = client.post(
         "/end-user/tickets/EUS-missing/escalate",
@@ -85,6 +102,19 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
     malformed_escalation = client.post(
         "/end-user/tickets/not a ticket/escalate",
         headers=_auth("end-user-token"),
+    )
+    missing_messages = client.get(
+        "/end-user/tickets/EUS-missing/messages",
+        headers=_auth("end-user-token"),
+    )
+    malformed_messages = client.get(
+        "/end-user/tickets/not a ticket/messages",
+        headers=_auth("end-user-token"),
+    )
+    malformed_message_create = client.post(
+        "/end-user/tickets/not a ticket/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "not delivered"},
     )
 
     disabled = TestClient(create_app(settings))
@@ -115,16 +145,68 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
         "/end-user/tickets/EUS-missing/escalate",
         headers=_auth("unscoped-token"),
     )
+    unscoped_messages = unscoped.get(
+        "/end-user/tickets/EUS-missing/messages",
+        headers=_auth("unscoped-token"),
+    )
+    unscoped_message_create = unscoped.post(
+        "/end-user/tickets/EUS-missing/messages",
+        headers=_auth("unscoped-token"),
+        json={"body": "Unscoped"},
+    )
 
     assert created.status_code == 200
     assert hidden.status_code == 404
+    assert hidden_messages.status_code == 404
     assert malformed.status_code == 404
     assert missing_ticket_escalation.status_code == 404
     assert malformed_escalation.status_code == 404
+    assert missing_messages.status_code == 404
+    assert malformed_messages.status_code == 404
+    assert malformed_message_create.status_code == 404
     assert disabled_response.status_code == 403
     assert unscoped_response.status_code == 403
     assert unscoped_status.status_code == 404
     assert unscoped_escalation.status_code == 403
+    assert unscoped_messages.status_code == 404
+    assert unscoped_message_create.status_code == 403
+
+
+def test_end_user_messages_do_not_expose_internal_ticket_notes(settings) -> None:
+    enabled = replace(
+        settings,
+        demo_mode=False,
+        end_user_support_enabled=True,
+        end_user_token="end-user-token",
+        end_user_client_id="acme",
+        end_user_user_id="user-1",
+    )
+    client = TestClient(create_app(enabled))
+    created = client.post(
+        "/end-user/tickets",
+        headers=_auth("end-user-token"),
+        json={"subject": "VPN issue", "body": "VPN is unavailable"},
+    )
+    ticket_id = created.json()["ticket_id"]
+    Store(enabled.data_path).create_ticket_note(
+        ticket_id,
+        client_id="acme",
+        author="technician",
+        body="Internal diagnostic note",
+    )
+    client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Customer follow-up"},
+    )
+
+    response = client.get(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+    )
+
+    assert response.status_code == 200
+    assert [item["body"] for item in response.json()] == ["Customer follow-up"]
 
 
 def test_end_user_store_rejects_unscoped_creation_and_missing_owned_ticket(settings) -> None:
@@ -172,3 +254,29 @@ def test_end_user_store_reports_unreadable_persistence(settings, monkeypatch) ->
             subject="subject",
             body="body",
         )
+
+
+def test_end_user_store_rejects_invalid_messages_and_missing_tickets(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="client scope"):
+        store.create_end_user_message(
+            "EUS-missing", client_id="", requester_id="user-1", body="body"
+        )
+    with pytest.raises(ValueError, match="requester identity"):
+        store.create_end_user_message(
+            "EUS-missing", client_id="acme", requester_id=" ", body="body"
+        )
+    with pytest.raises(ValueError, match="body"):
+        store.create_end_user_message(
+            "EUS-missing", client_id="acme", requester_id="user-1", body=" "
+        )
+
+    assert store.create_end_user_message(
+        "EUS-missing", client_id="acme", requester_id="user-1", body="body"
+    ) is None
+    assert store.list_end_user_messages(
+        "EUS-missing", client_id="acme", requester_id="user-1"
+    ) == []
+    assert store.list_end_user_messages(
+        "EUS-missing", client_id="", requester_id="user-1"
+    ) == []

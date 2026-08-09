@@ -28,6 +28,7 @@ from wait_local_agent.models import (
     CollectorSource,
     ConfigDiff,
     ConfigSnapshot,
+    EndUserMessage,
     EventDelivery,
     EventHistoryEntry,
     ExecutionArtifact,
@@ -143,6 +144,24 @@ class Store:
                     body text not null,
                     created_at text not null
                 )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists end_user_messages (
+                    id integer primary key autoincrement,
+                    ticket_id text not null,
+                    client_id text not null,
+                    requester_id text not null,
+                    body text not null,
+                    created_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_end_user_messages_scope
+                on end_user_messages (client_id, requester_id, ticket_id, id)
                 """
             )
             connection.execute(
@@ -1614,6 +1633,86 @@ class Store:
                 client_id=normalized_client_id,
             )
         return self.get_ticket(ticket_id, normalized_client_id)
+
+    def create_end_user_message(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        requester_id: str,
+        body: str,
+    ) -> EndUserMessage | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_requester_id = _redact_text(requester_id.strip())
+        safe_body = _redact_text(body.strip())
+        if not normalized_client_id:
+            raise ValueError("end-user messages require a client scope")
+        if not safe_requester_id:
+            raise ValueError("end-user messages require a requester identity")
+        if not safe_body:
+            raise ValueError("end-user messages require a body")
+        if self.get_end_user_ticket(
+            ticket_id,
+            client_id=normalized_client_id,
+            requester_id=safe_requester_id,
+        ) is None:
+            return None
+        created_at = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into end_user_messages
+                  (ticket_id, client_id, requester_id, body, created_at)
+                values (?, ?, ?, ?, ?)
+                """,
+                (ticket_id, normalized_client_id, safe_requester_id, safe_body, created_at),
+            )
+            self._add_audit_event(
+                connection,
+                "end_user.message.created",
+                ticket_id,
+                "End-user message created",
+                client_id=normalized_client_id,
+            )
+        return EndUserMessage(
+            id=cursor.lastrowid,
+            ticket_id=ticket_id,
+            client_id=normalized_client_id,
+            requester_id=safe_requester_id,
+            body=safe_body,
+            created_at=created_at,
+        )
+
+    def list_end_user_messages(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        requester_id: str,
+    ) -> list[EndUserMessage]:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_requester_id = _redact_text(requester_id.strip())
+        if (
+            not normalized_client_id
+            or not safe_requester_id
+            or self.get_end_user_ticket(
+                ticket_id,
+                client_id=normalized_client_id,
+                requester_id=safe_requester_id,
+            ) is None
+        ):
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, ticket_id, client_id, requester_id, body, created_at
+                from end_user_messages
+                where ticket_id = ? and client_id = ? and requester_id = ?
+                order by id
+                """,
+                (ticket_id, normalized_client_id, safe_requester_id),
+            ).fetchall()
+        return [EndUserMessage(**dict(row)) for row in rows]
 
     def list_ticket_status_history(
         self, ticket_id: str, *, client_id: str | None = None

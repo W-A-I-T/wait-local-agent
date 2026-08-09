@@ -338,6 +338,10 @@ class EndUserTicketCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
 
 
+class EndUserMessageRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=10_000)
+
+
 class AgentStepRequest(BaseModel):
     tool_id: str
     payload: dict[str, object] = Field(default_factory=dict)
@@ -1634,6 +1638,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if ticket is None:
             raise HTTPException(status_code=404, detail="end-user ticket not found")
         return _end_user_ticket_view(ticket)
+
+    @app.get("/end-user/tickets/{ticket_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_ticket_messages(
+        ticket_id: str,
+        request: Request,
+        context: EndUserAccess,
+    ) -> list[dict[str, object]]:
+        if not context.client_id or not context.principal_id or not _safe_end_user_ticket_id(ticket_id):
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        ticket = store.get_end_user_ticket(
+            ticket_id,
+            client_id=context.client_id,
+            requester_id=context.principal_id,
+        )
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        return [
+            _end_user_message_view(message)
+            for message in store.list_end_user_messages(
+                ticket_id,
+                client_id=context.client_id,
+                requester_id=context.principal_id,
+            )
+        ]
+
+    @app.post("/end-user/tickets/{ticket_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_add_ticket_message(
+        ticket_id: str,
+        payload: EndUserMessageRequest,
+        request: Request,
+        context: EndUserAccess,
+    ) -> dict[str, object]:
+        if not context.client_id or not context.principal_id:
+            raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
+        if not _safe_end_user_ticket_id(ticket_id):
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        message = store.create_end_user_message(
+            ticket_id,
+            client_id=context.client_id,
+            requester_id=context.principal_id,
+            body=payload.body,
+        )
+        if message is None:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        return _end_user_message_view(message)
 
     @app.post("/end-user/tickets/{ticket_id}/escalate")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -4248,6 +4299,15 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
         "status": ticket.status,
         "priority": ticket.priority,
         "client_id": ticket.client_id,
+    }
+
+
+def _end_user_message_view(message) -> dict[str, object]:
+    return {
+        "id": message.id,
+        "ticket_id": message.ticket_id,
+        "body": redact_text(message.body),
+        "created_at": message.created_at,
     }
 
 

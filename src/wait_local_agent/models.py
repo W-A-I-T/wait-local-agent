@@ -71,6 +71,16 @@ class TicketNote:
 
 
 @dataclass(frozen=True)
+class EndUserMessage:
+    id: int | None
+    ticket_id: str
+    client_id: str
+    requester_id: str
+    body: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class SourceReference:
     title: str
     path: str

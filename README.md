@@ -285,7 +285,8 @@ Behavior:
   `WAIT_END_USER_USER_ID`, and `WAIT_END_USER_SUPPORT_ENABLED=true`.
 - When that mode is enabled, open `/end-user` for the separate client support
   surface. It supports local request creation, requester-scoped status lookup,
-  and technician escalation without exposing the operator dashboard.
+  isolated follow-up messages, and technician escalation without exposing the
+  operator dashboard.
 - When `WAIT_DEMO_MODE=true`, requests resolve as local admin for demo use.
 
 ## Configuration

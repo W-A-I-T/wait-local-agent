@@ -36,6 +36,13 @@ export type EndUserTicket = {
   priority: string;
 };
 
+export type EndUserMessage = {
+  id: number;
+  ticket_id: string;
+  body: string;
+  created_at: string;
+};
+
 export type TicketSummarySource = {
   title: string;
   path: string;

@@ -117,6 +117,27 @@ a {
   color: #60706a;
 }
 
+.end-user-messages {
+  border-top: 1px solid #e4ebe8;
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.end-user-messages p {
+  background: #f7faf8;
+  border-radius: 8px;
+  color: #40504b;
+  margin: 0;
+  padding: 10px;
+}
+
+.end-user-messages > span {
+  color: #60706a;
+  font-size: 0.88rem;
+}
+
 .end-user-ticket button {
   margin-top: 6px;
 }
