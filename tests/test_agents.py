@@ -1624,6 +1624,23 @@ def test_agent_revision_and_runtime_guards_fail_closed(settings, monkeypatch) ->
     with pytest.raises(AgentDefinitionError, match="revision is malformed"):
         service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
 
+    monkeypatch.setattr(
+        service.store,
+        "get_agent_definition_revision",
+        lambda *args, **kwargs: revision_with(
+            json.dumps(
+                {
+                    "filters": {},
+                    "enabled_tools": ["ticket-triage"],
+                    "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+                    "approval_rules": {},
+                }
+            )
+        ),
+    )
+    with pytest.raises(AgentDefinitionError, match="revision is malformed"):
+        service._definition_for_run(definition, replace(base_run, revision_version=0))  # noqa: SLF001
+
     with pytest.raises(AgentDefinitionError, match="only queued or approval-paused"):
         service.cancel(
             definition,
