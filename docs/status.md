@@ -202,6 +202,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   `/end-user/config` route supports local tenant branding name/tagline values;
   live PSA sync, outbound delivery, logos, and theme customization remain
   unavailable.
+- The inactive-ticket follow-up workflow now reuses the shared communication
+  action: it prepares a tenant-scoped local ticket-note draft by default, or an
+  explicitly selected configured channel, and cannot write or deliver until a
+  technician approval completes. A missing or unavailable delivery adapter is
+  reported as a failure rather than treated as success.
 - Client-scoped QBR, automation-opportunity, and recurring-service-review
   reports are available through their matching `/reports/*` API routes, CLI
   commands, and the `/reports` dashboard. They use local ticket,

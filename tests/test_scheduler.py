@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -12,6 +13,7 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.models import ScheduledJob
+from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import (
     SchedulerManager,
     _schedule_trigger,
@@ -538,7 +540,13 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         jobs = manager.list_jobs()
         triage_run = run_workflow_template(store, "ticket-triage", "TCK-1001")
         assign_run = run_workflow_template(store, "assign-technician", "TCK-1001")
-        follow_up_run = run_workflow_template(store, "inactive-ticket-follow-up", "TCK-1001")
+        follow_up_run = run_workflow_template(
+            store,
+            "inactive-ticket-follow-up",
+            "TCK-1001",
+            actor="scheduler",
+            tool_executor=SmartActionService(store, settings),
+        )
         alert_run = run_workflow_template(store, "p1-alert", "TCK-1001")
 
         assert paused_job.id is not None
@@ -547,7 +555,11 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         assert triage_run.status == "completed"
         assert "Classified TCK-1001 as" in triage_run.message
         assert "assignment" in assign_run.message
-        assert "follow-up" in follow_up_run.message
+        assert follow_up_run.status == "pending_approval"
+        assert "approval required" in follow_up_run.message
+        follow_up_approval = store.get_approval_request(follow_up_run.approval_request_id or 0)
+        assert follow_up_approval is not None
+        assert follow_up_approval.action_type == "smart_action:communication-send"
         assert "priority alert" in alert_run.message
 
         manager.shutdown()
@@ -558,6 +570,50 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         run_workflow_template(store, "missing-template", "TCK-1001")
     with pytest.raises(LookupError):
         run_workflow_template(store, "ticket-triage", "NOPE")
+
+
+def test_inactive_ticket_follow_up_executes_local_note_only_after_approval(
+    settings, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "follow-up.db")
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = SmartActionService(store, replace(settings, allow_write_actions=True))
+
+    run = run_workflow_template(
+        store,
+        "inactive-ticket-follow-up",
+        "TCK-1001",
+        client_id="acme",
+        actor="requester",
+        tool_executor=service,
+        input_payload={"body": "Please confirm whether this issue is still active."},
+    )
+
+    assert run.status == "pending_approval"
+    approval = store.get_approval_request(run.approval_request_id or 0)
+    assert approval is not None
+    payload = json.loads(approval.payload_json)
+    assert payload["payload"] == {
+        "body": "Please confirm whether this issue is still active.",
+        "channel": "ticket_note",
+        "ticket_id": "TCK-1001",
+    }
+    assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
+
+    result = service.update_approval(
+        run.approval_request_id or 0,
+        "approved",
+        approver="technician",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert result.status == "approved"
+    notes = store.list_ticket_notes("TCK-1001", client_id="acme")
+    assert [note.body for note in notes] == [
+        "Please confirm whether this issue is still active."
+    ]
 
 
 def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:

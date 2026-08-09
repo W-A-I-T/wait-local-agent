@@ -8,7 +8,7 @@
 
 | Tier | Price | What's included |
 |------|-------|----------------|
-| **Open Core** | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu connectors, 9 workflow templates, approval queue, knowledge base, Docker Compose, 95%+ test suite |
+| **Open Core** | Free (Apache 2.0) | Full runtime, governed PSA/documentation/RMM/M365 capabilities, 21 workflow templates, approval queue, knowledge base, Docker Compose, 95%+ test suite |
 | **WAIT MSP Pack** | $99/month per appliance | + IT Glue, ConnectWise, Autotask, NinjaOne, Datto, M365/Entra connectors; scheduled workflows; QBR report PDF; ROI/time-saved dashboard; automation opportunity report; client/tenant boundaries; white-label branding; 15+ premium templates |
 | **WAIT Founder Pack** | $49/month per workspace | + Project workspace scanner; encrypted evidence vault; launch readiness preflight; LP CollectorBundle export + upload; developer handoff generator; investor evidence preparation |
 | **WAIT Sync** | $29/month | + Template marketplace; encrypted cloud backup (client-side AES-256); multi-tech team coordination; license management; optional cloud model fallback |

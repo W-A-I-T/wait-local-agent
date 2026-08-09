@@ -107,7 +107,7 @@ Everything in the current repo at `W-A-I-T/wait-local-agent`. Full feature list:
 | Approval lifecycle + payload preview | ✓ Built | `src/wait_local_agent/models.py` |
 | HaloPSA: read + draft-write + execution | ✓ Built | `src/wait_local_agent/halopsa.py` |
 | Hudu: read-only | ✓ Built | `src/wait_local_agent/hudu.py` |
-| 15 MSP workflow templates, including ten tool-backed reviews | ✓ Built | `src/wait_local_agent/workflows.py` |
+| 21 MSP workflow templates, including 17 tool-backed reviews | ✓ Built | `src/wait_local_agent/workflows.py` |
 | Docker Compose appliance | ✓ Built | `docker-compose.yml` |
 | React/Vite dashboard | ✓ Built | `ui/src/App.tsx` |
 | Backup/restore | ✓ Built | `src/wait_local_agent/backup.py` |
@@ -141,7 +141,7 @@ Includes:
 - Time-saved / ROI dashboard based on labeled local estimates; measured/provider-backed ROI remains a future extension
 - Client/tenant boundary enforcement (`client_id` isolation on all queries)
 - White-label branding config (`WAIT_PRODUCT_NAME`, logo, color scheme)
-- Premium MSP workflow templates (15+ beyond the 9 in open core)
+- Premium MSP workflow templates beyond the 21 reviewed open-core templates
 
 ### Layer C — WAIT Founder Pack (historical commercial packaging plan)
 
