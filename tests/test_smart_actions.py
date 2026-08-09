@@ -2838,6 +2838,45 @@ def test_m365_context_action_rejects_invalid_and_malformed_provider_results(sett
         context,
         {"query": "vpn", "site_id": "acme", "parent_item_id": ""},
     ).status == "failed"
+    sharepoint_search_calls: list[tuple[str, str, str | None, int]] = []
+
+    def search_sharepoint_documents(
+        site_id: str,
+        query: str,
+        *,
+        parent_item_id: str | None,
+        limit: int,
+    ) -> SimpleNamespace:
+        sharepoint_search_calls.append((site_id, query, parent_item_id, limit))
+        return SimpleNamespace(
+            result=SimpleNamespace(status="ready", message="ok", count=1),
+            items=[
+                SharePointDocument(
+                    "file-1",
+                    "MFA.md",
+                    site_id,
+                    "root",
+                    42,
+                    "today",
+                    "https://sharepoint",
+                    False,
+                    True,
+                    "token=secret",
+                )
+            ],
+        )
+
+    sharepoint_content_search = replace(
+        context,
+        sharepoint_client=SimpleNamespace(search_documents=search_sharepoint_documents),
+    )
+    sharepoint_content_search_result = sharepoint.run(
+        sharepoint_content_search,
+        {"query": "mfa", "site_id": "acme", "parent_item_id": "root", "limit": 3},
+    )
+    assert sharepoint_content_search_result.status == "success"
+    assert sharepoint_search_calls == [("acme", "mfa", "root", 3)]
+    assert sharepoint_content_search_result.output["documents"][0]["name"] == "MFA.md"  # type: ignore[index]
     sharepoint_error = replace(
         context,
         sharepoint_client=SimpleNamespace(

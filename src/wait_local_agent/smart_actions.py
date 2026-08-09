@@ -3709,7 +3709,10 @@ class SharePointDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="sharepoint-documentation-search",
         title="SharePoint documentation search",
-        description="Search tenant-scoped SharePoint drive-item metadata through Microsoft Graph.",
+        description=(
+            "Search tenant-scoped SharePoint drive items and provider-indexed file content "
+            "through Microsoft Graph."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -3753,11 +3756,20 @@ class SharePointDocumentationSearchAction:
 
         provider = context.sharepoint_client or SharePointClient(context.settings)
         try:
-            response = provider.list_documents(
-                scoped_site_id,
-                parent_item_id=parent_item_id.strip() if isinstance(parent_item_id, str) else None,
-                page_size=limit,
-            )
+            search_documents = getattr(provider, "search_documents", None)
+            if callable(search_documents):
+                response = search_documents(
+                    scoped_site_id,
+                    query.strip(),
+                    parent_item_id=parent_item_id.strip() if isinstance(parent_item_id, str) else None,
+                    limit=limit,
+                )
+            else:
+                response = provider.list_documents(
+                    scoped_site_id,
+                    parent_item_id=parent_item_id.strip() if isinstance(parent_item_id, str) else None,
+                    page_size=limit,
+                )
         except Exception:
             return _failed("SharePoint documentation lookup failed")
         result = getattr(response, "result", None)
@@ -3787,7 +3799,10 @@ class SharePointDocumentationSearchAction:
             for item in items
             if hasattr(item, "__dataclass_fields__")
             and str(getattr(item, "site_id", "")) in {"", scoped_site_id}
-            and query_value in str(getattr(item, "name", "")).casefold()
+            and (
+                query_value in str(getattr(item, "name", "")).casefold()
+                or query_value in str(getattr(item, "content", "")).casefold()
+            )
         ][:limit]
         return ActionResult(
             status="success",

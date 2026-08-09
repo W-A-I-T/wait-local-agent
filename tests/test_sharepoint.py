@@ -120,6 +120,53 @@ def test_sharepoint_reads_use_bearer_auth_and_normalize_graph_resources(settings
     assert paths.count("/v1.0/sites") == 2
 
 
+def test_sharepoint_content_search_uses_documented_drive_search_and_bounds_results(settings) -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer access-token"
+        expected_top = "1" if "/drive/items/folder-1/" in request.url.path else "50"
+        assert request.url.params["$top"] == expected_top
+        if "search(q='MFA guidance')" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {
+                            "id": "file-1",
+                            "name": "MFA.md",
+                            "size": 42,
+                            "file": {"mimeType": "text/markdown"},
+                            "parentReference": {"id": "root"},
+                        }
+                    ],
+                        "@odata.nextLink": "https://graph.microsoft.com/v1.0/next?%24skiptoken=ignored",
+                },
+            )
+        raise AssertionError(request.url)
+
+    client = SharePointClient(_configured(settings), transport=httpx.MockTransport(handler))
+    result = client.search_documents(SITE_ID, "MFA guidance", limit=100)
+    scoped = client.search_documents(SITE_ID, "MFA guidance", parent_item_id="folder-1", limit=1)
+
+    assert result.result.status == "ready"
+    assert result.items == [SharePointDocument("file-1", "MFA.md", SITE_ID, "root", 42, "", "", False, True)]
+    assert result.next_cursor == "ignored"
+    assert scoped.result.status == "ready"
+    assert paths[0].endswith("/drive/root/search(q='MFA guidance')")
+    assert paths[1].endswith("/drive/items/folder-1/search(q='MFA guidance')")
+
+
+def test_sharepoint_content_search_rejects_invalid_scope_and_query(settings) -> None:
+    client = SharePointClient(_configured(settings))
+    assert client.search_documents(SITE_ID, "", limit=1).result.status == "failed"
+    assert client.search_documents(SITE_ID, "x" * 201, limit=1).result.status == "failed"
+    assert client.search_documents(SITE_ID, "mfa", limit=0).result.status == "failed"
+    assert client.search_documents("bad/id", "mfa", limit=1).result.status == "failed"
+    assert client.search_documents(SITE_ID, "mfa", parent_item_id="bad/id", limit=1).result.status == "failed"
+
+
 def test_sharepoint_sanitizes_failures_and_bounds_inputs(settings) -> None:
     def denied(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="private body")
