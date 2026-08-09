@@ -51,7 +51,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 19 files, 75 tests passed.
+- UI tests: 19 files, 76 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
