@@ -344,6 +344,10 @@ addresses, phone numbers, and local paths. If both optional cost-rate settings
 are supplied, execution metadata and `/analytics` report a configured cost
 estimate from provider-reported input/output tokens; missing rates or usage
 remain explicitly unpriced.
+Administrators can explicitly run `GET /settings/providers/health` (or use
+“Check model health” in Settings) to query the configured provider model list;
+offline, disabled, unsupported, malformed, unavailable, and missing-model
+states remain visible and no credentials are returned.
 
 ## Secrets Vault and Encrypted Backups
 

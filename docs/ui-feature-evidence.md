@@ -25,7 +25,7 @@ visible here instead of being presented as a completed UI feature.
 | `/reports` | Hardening, restore exercise, deterministic client QBR and automation-opportunity generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
 | `/scheduled-jobs` | Schedule lifecycle | `/scheduled-jobs/*` | Browser route render |
-| `/settings` | Packs, secrets, backups, update check | `/settings/*`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
+| `/settings` | Packs, secrets, backups, update check, admin-triggered model health | `/settings/*`, `/settings/providers/health`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
 | `/founder` | Founder pack and Launch Passport boundary | `/founder/*` | Existing UI tests; browser route render; pack-not-installed state is explicit |
 
 All 16 sidebar destinations rendered their expected primary heading through

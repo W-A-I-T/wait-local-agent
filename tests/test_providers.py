@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from wait_local_agent.providers import (
     RemoteModelProfile,
     RemoteModelProvider,
     _response_usage_metadata,
+    probe_model_providers,
     provider_from_settings,
     provider_metadata,
 )
@@ -575,7 +577,7 @@ def test_provider_metadata_calculates_cost_only_from_explicit_operator_rates(tmp
     provider.summarize_ticket(_ticket(), [])
 
     metadata = provider_metadata(
-        _settings(tmp_path),
+        _settings(tmp_path, provider="deterministic"),
         provider,
     )
     assert metadata["cost_status"] == "not_configured"
@@ -674,6 +676,137 @@ def test_usage_metadata_handles_partial_and_explicit_totals() -> None:
     )
     assert partial["usage_status"] == "reported"
     assert partial["input_tokens"] == 2
+
+
+def test_provider_health_keeps_deterministic_mode_local(tmp_path: Path) -> None:
+    result = cast(dict[str, Any], probe_model_providers(
+        replace(_settings(tmp_path), allow_llm_inference=False),
+        transport=httpx.MockTransport(lambda request: pytest.fail("network probe not expected")),
+    ))
+    assert result["local"] == {
+        "provider": "openai-compatible",
+        "model": "llama3.1",
+        "status": "ready",
+        "probe": "not_required",
+        "detail": "deterministic local mode",
+    }
+    assert result["remote"]["status"] == "not_configured"
+
+
+def test_provider_health_probes_local_models_contract_and_reports_missing_model(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "other-model"}]})
+
+    result = cast(dict[str, Any], probe_model_providers(
+        _settings(tmp_path),
+        transport=httpx.MockTransport(handler),
+    ))
+    assert requests[0].url.path == "/v1/models"
+    assert result["local"]["status"] == "model_unavailable"
+    assert result["local"]["model_available"] is False
+
+
+def test_provider_health_probes_anthropic_with_documented_headers(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "documented-model"}]})
+
+    settings = replace(
+        _settings(tmp_path),
+        allow_cloud_fallback=True,
+        remote_model_provider="anthropic",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="remote-secret",
+    )
+    result = cast(dict[str, Any], probe_model_providers(settings, transport=httpx.MockTransport(handler)))
+
+    assert requests[1].url.path == "/v1/models"
+    assert requests[1].headers["x-api-key"] == "remote-secret"
+    assert requests[1].headers["anthropic-version"] == "2023-06-01"
+    assert result["remote"]["status"] == "ready"
+    assert "remote-secret" not in str(result)
+
+
+def test_provider_health_denies_remote_probe_in_offline_mode(tmp_path: Path) -> None:
+    settings = replace(
+        _settings(tmp_path, provider="deterministic"),
+        allow_cloud_fallback=True,
+        offline_mode=True,
+        remote_model_provider="deepseek",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="remote-secret",
+    )
+    result = cast(dict[str, Any], probe_model_providers(
+        settings,
+        transport=httpx.MockTransport(lambda request: pytest.fail("offline probe not expected")),
+    ))
+    assert result["remote"] == {
+        "provider": "deepseek",
+        "model": "documented-model",
+        "status": "blocked_offline",
+        "probe": "not_run",
+    }
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_status"),
+    [
+        (httpx.Response(503, json={"error": "unavailable"}), "unavailable"),
+        (httpx.Response(200, json={"unexpected": []}), "malformed_response"),
+    ],
+)
+def test_provider_health_reports_provider_failures_without_response_body(
+    tmp_path: Path,
+    response: httpx.Response,
+    expected_status: str,
+) -> None:
+    result = cast(
+        dict[str, Any],
+        probe_model_providers(
+            _settings(tmp_path),
+            transport=httpx.MockTransport(lambda request: response),
+        ),
+    )
+    assert result["local"]["status"] == expected_status
+    assert "unavailable" not in str(result["local"].get("detail", ""))
+
+
+def test_provider_health_reports_disabled_and_unsupported_remote_config(tmp_path: Path) -> None:
+    disabled = cast(
+        dict[str, Any],
+        probe_model_providers(
+            replace(
+                _settings(tmp_path, provider="deterministic"),
+                remote_model_provider="deepseek",
+                remote_model_base_url="https://api.example/v1",
+                remote_model_name="documented-model",
+                remote_model_api_key="remote-secret",
+            )
+        ),
+    )
+    assert disabled["remote"]["status"] == "disabled"
+
+    unsupported = cast(
+        dict[str, Any],
+        probe_model_providers(
+            replace(
+                _settings(tmp_path, provider="deterministic"),
+                allow_cloud_fallback=True,
+                remote_model_provider="vendor-without-adapter",
+                remote_model_base_url="https://api.example/v1",
+                remote_model_name="documented-model",
+                remote_model_api_key="remote-secret",
+            )
+        ),
+    )
+    assert unsupported["remote"]["status"] == "unsupported_provider"
 
 
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:

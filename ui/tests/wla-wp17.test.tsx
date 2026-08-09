@@ -58,6 +58,31 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
   });
 
+  it("checks model provider health only when the admin asks", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/settings/providers") return jsonResponse({ local_model_provider: "local", vector_backend: "local" });
+      if (path === "/settings/security") return jsonResponse({ api_token_configured: false, demo_mode: true });
+      if (path === "/packs" || path === "/secrets") return jsonResponse([]);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/founder/lp-status") return jsonResponse({ error: "launch passport not configured" }, 409);
+      if (path === "/settings/providers/health") return jsonResponse({
+        local: { provider: "local", model: "llama3.1", status: "ready", probe: "models", model_available: true },
+        remote: { provider: null, model: null, status: "not_configured", probe: "not_run" }
+      });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    expect(await screen.findByRole("button", { name: "Check model health" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain("/settings/providers/health");
+    fireEvent.click(screen.getByRole("button", { name: "Check model health" }));
+    expect(await screen.findByText(/Local: ready/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain("/settings/providers/health");
+  });
+
   it("does not request the admin-only project status for a viewer", async () => {
     dashboardState.role = "viewer";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
