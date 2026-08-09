@@ -231,6 +231,200 @@ def build_automation_opportunity_report(
     }
 
 
+def build_recurring_service_review_report(
+    store: Store,
+    *,
+    client_id: str,
+    period_start: str,
+    period_end: str,
+    follow_up_after_days: int = 14,
+) -> tuple[list[ReportSection], dict[str, Any]]:
+    """Build a deterministic recurring service review from local evidence.
+
+    The review identifies service volume, current open-ticket follow-up candidates,
+    explicit lifecycle evidence, and local execution activity. It does not infer
+    vendor SLA compliance, customer sentiment, contract health, or measured savings.
+    """
+
+    start, end = _period(period_start, period_end)
+    if isinstance(follow_up_after_days, bool) or not isinstance(follow_up_after_days, int):
+        raise ValueError("follow_up_after_days must be an integer between 1 and 90")
+    if not 1 <= follow_up_after_days <= 90:
+        raise ValueError("follow_up_after_days must be an integer between 1 and 90")
+
+    all_tickets = store.list_tickets(client_id=client_id)
+    period_tickets = [
+        ticket for ticket in all_tickets if _in_period(ticket.created_at, start, end)
+    ]
+    open_tickets = [
+        ticket
+        for ticket in all_tickets
+        if ticket.status.strip().lower() not in {"resolved", "closed"}
+    ]
+    follow_up_candidates: list[dict[str, Any]] = []
+    missing_activity_timestamp = 0
+    for ticket in open_tickets:
+        activity_at = ticket.updated_at or ticket.created_at
+        activity_date = _timestamp_date(activity_at)
+        if activity_date is None:
+            missing_activity_timestamp += 1
+            continue
+        age_days = (end - activity_date).days
+        if age_days >= follow_up_after_days:
+            follow_up_candidates.append(
+                {
+                    "ticket_id": ticket.id,
+                    "status": ticket.status,
+                    "priority": ticket.priority,
+                    "last_activity_at": activity_at,
+                    "age_days": age_days,
+                    "candidate_reason": (
+                        "Open ticket has no recorded activity within the explicit follow-up threshold."
+                    ),
+                }
+            )
+    follow_up_candidates.sort(key=lambda item: (-int(item["age_days"]), str(item["ticket_id"])))
+    executions = [
+        run
+        for run in store.list_execution_runs(client_id=client_id)
+        if _in_period(run.started_at, start, end)
+    ]
+    status_counts = Counter(ticket.status.strip().lower() or "unknown" for ticket in period_tickets)
+    priority_counts = Counter(ticket.priority.strip().lower() or "unknown" for ticket in period_tickets)
+    lifecycle = cast(
+        dict[str, Any],
+        store.ticket_lifecycle_metrics(period_start, period_end, client_id),
+    )
+    evidence_status = (
+        "no_evidence"
+        if not all_tickets and not executions
+        else "partial"
+        if missing_activity_timestamp or lifecycle.get("with_duration", 0) == 0
+        else "completed"
+    )
+    sections = [
+        ReportSection(
+            title="Service Posture",
+            summary=(
+                f"{len(period_tickets)} client tickets were created in the requested period; "
+                f"{len(open_tickets)} tickets are currently open."
+            ),
+            findings=[
+                {
+                    "period_ticket_count": len(period_tickets),
+                    "current_open_ticket_count": len(open_tickets),
+                    "status_counts": dict(sorted(status_counts.items())),
+                    "priority_counts": dict(sorted(priority_counts.items())),
+                    "period_ticket_ids": _bounded_ids(period_tickets),
+                    "period_ticket_ids_truncated": len(period_tickets) > 100,
+                }
+            ],
+            evidence=[
+                {
+                    "kind": "local_ticket_records",
+                    "client_id": client_id,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "record_count": len(period_tickets),
+                    "derivation": "Ticket created_at falls within the requested inclusive date range.",
+                }
+            ],
+        ),
+        ReportSection(
+            title="Follow-up Candidates",
+            summary=(
+                f"{len(follow_up_candidates)} open tickets meet the explicit {follow_up_after_days}-day "
+                "follow-up threshold. These are review candidates, not automatic communications."
+            ),
+            findings=[
+                {
+                    "follow_up_after_days": follow_up_after_days,
+                    "candidates": follow_up_candidates[:100],
+                    "candidate_count": len(follow_up_candidates),
+                    "candidates_truncated": len(follow_up_candidates) > 100,
+                    "excluded_missing_activity_timestamp": missing_activity_timestamp,
+                }
+            ],
+            evidence=[
+                {
+                    "kind": "local_ticket_activity",
+                    "client_id": client_id,
+                    "period_end": period_end,
+                    "record_count": len(open_tickets),
+                    "derivation": (
+                        "Open tickets are compared with updated_at, or created_at when updated_at is absent; "
+                        "records without timestamps are excluded and counted."
+                    ),
+                }
+            ],
+            recommendations=(
+                ["Review candidates and use an approval-gated communication workflow for any follow-up."]
+                if follow_up_candidates
+                else ["No ticket met the explicit follow-up threshold in the available local records."]
+            ),
+        ),
+        ReportSection(
+            title="Lifecycle And Automation Evidence",
+            summary=(
+                f"{len(executions)} local execution records and explicit ticket lifecycle evidence "
+                "were reviewed."
+            ),
+            findings=[
+                {
+                    "execution_count": len(executions),
+                    "lifecycle": lifecycle,
+                    "execution_status_counts": dict(
+                        sorted(Counter(run.status.strip().lower() or "unknown" for run in executions).items())
+                    ),
+                }
+            ],
+            evidence=[
+                {
+                    "kind": "local_execution_records",
+                    "client_id": client_id,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "record_count": len(executions),
+                    "derivation": "Execution records are filtered by started_at and tenant scope.",
+                },
+                {
+                    "kind": "ticket_status_history",
+                    "client_id": client_id,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "derivation": (
+                        "Only explicit locally recorded status transitions contribute to lifecycle metrics; "
+                        "missing transitions are not inferred."
+                    ),
+                },
+            ],
+            recommendations=(
+                ["Import explicit status transitions before using historical resolution duration."]
+                if lifecycle.get("with_duration", 0) == 0 and period_tickets
+                else []
+            ),
+        ),
+    ]
+    return sections, {
+        "client_id": client_id,
+        "period_start": period_start,
+        "period_end": period_end,
+        "follow_up_after_days": follow_up_after_days,
+        "period_ticket_count": len(period_tickets),
+        "current_open_ticket_count": len(open_tickets),
+        "follow_up_candidate_count": len(follow_up_candidates),
+        "execution_count": len(executions),
+        "evidence_status": evidence_status,
+        "scope": "single client",
+        "claims_excluded": [
+            "vendor_sla_compliance",
+            "customer_sentiment",
+            "contract_health",
+            "measured_savings",
+        ],
+    }
+
+
 def _successful_action_candidates(
     store: Store,
     estimates: dict[str, int],
@@ -276,6 +470,15 @@ def _in_period(value: str, start: date, end: date) -> bool:
     except ValueError:
         return False
     return start <= parsed <= end
+
+
+def _timestamp_date(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _bounded_ids(tickets: list[Ticket]) -> list[str]:

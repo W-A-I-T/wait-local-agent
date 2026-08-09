@@ -133,7 +133,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Agent definitions may additionally declare a validated local execution
   window with an IANA timezone, including overnight ranges; closed scheduled
   windows are skipped without creating a run and are recorded in the audit
-  trail. Bounded client-scoped QBR and automation-opportunity report targets
+  trail. Bounded client-scoped QBR, automation-opportunity, and
+  recurring-service-review report targets
   reuse the same scheduler and deterministic local report builders with
   validated periods and failure auditing.
 - Bounded agent definitions with an explicit existing-tool allowlist, ticket
@@ -198,13 +199,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   through both `/end-user/tickets*` and the separate `/end-user` React surface;
   it does not load the operator shell. Live PSA sync, outbound delivery, and
   tenant-configurable branding remain unavailable.
-- Client-scoped QBR and automation-opportunity reports are available through
-  `POST /reports/qbr`, `POST /reports/automation-opportunity`, the matching
-  `reports qbr` and `reports automation-opportunity` CLI commands, and the
-  `/reports` dashboard. They use local ticket, status-history, smart-action, and
-  execution evidence; repeated actions are ranked for review, and time-saved
-  values are explicitly labeled estimates. Report reads, generation, audit, and
-  export enforce the authenticated client scope.
+- Client-scoped QBR, automation-opportunity, and recurring-service-review
+  reports are available through their matching `/reports/*` API routes, CLI
+  commands, and the `/reports` dashboard. They use local ticket,
+  status-history, smart-action, and execution evidence; repeated actions and
+  follow-up candidates are review outputs only, and time-saved values are
+  explicitly labeled estimates. Report reads, generation, audit, and export
+  enforce the authenticated client scope.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics. It also reports approval decisions, distinct
@@ -351,8 +352,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and bounded N-central inventory/direct-task adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/license-request workflow templates; broader resources and mutations future |
-| Scheduled / proactive workflows | Built; workflow, agent, and bounded client-report targets are available |
-| QBR / ROI reporting | Deterministic client-scoped QBR and automation-opportunity reports built; provider-backed lifecycle enrichment and PDF export remain future work |
+| Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
+| QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built; provider-backed lifecycle enrichment and PDF export remain future work |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
 | LP evidence bundle export | Public contract built; proprietary founder implementation remains private |
 

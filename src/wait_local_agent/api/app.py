@@ -132,7 +132,11 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
+from wait_local_agent.reports.msp import (
+    build_automation_opportunity_report,
+    build_qbr_report,
+    build_recurring_service_review_report,
+)
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
@@ -435,7 +439,7 @@ class EventIngestRequest(BaseModel):
 
 class ScheduledJobCreateRequest(BaseModel):
     template_id: str | None = None
-    report_type: Literal["qbr", "automation_opportunity"] | None = None
+    report_type: Literal["qbr", "automation_opportunity", "recurring_service_review"] | None = None
     agent_id: str | None = None
     entity_id: str | None = None
     cron: str = ""
@@ -2065,6 +2069,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         report = report_service.create_report(
             ReportType.AUTOMATION_OPPORTUNITY,
             f"Automation opportunities — {scoped_client_id}",
+            sections,
+            created_by=context.approver_id or "system",
+            client_id=scoped_client_id,
+            metadata=metadata,
+        )
+        return report_as_dict(report)
+
+    @app.post("/reports/recurring-service-review")
+    def create_recurring_service_review_report(
+        request: ClientReportRequest,
+        context: ViewerAccess,
+        follow_up_after_days: int = Query(default=14, ge=1, le=90),
+    ) -> dict[str, object]:
+        scoped_client_id = _report_client_scope(context, request.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
+        if request.period_end < request.period_start:
+            raise HTTPException(status_code=400, detail="period_end must be on or after period_start")
+        try:
+            sections, metadata = build_recurring_service_review_report(
+                store,
+                client_id=scoped_client_id,
+                period_start=request.period_start.isoformat(),
+                period_end=request.period_end.isoformat(),
+                follow_up_after_days=follow_up_after_days,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        report = report_service.create_report(
+            ReportType.RECURRING_SERVICE_REVIEW,
+            f"Recurring service review — {scoped_client_id}",
             sections,
             created_by=context.approver_id or "system",
             client_id=scoped_client_id,

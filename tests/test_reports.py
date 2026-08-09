@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -19,6 +21,7 @@ from wait_local_agent.reports.models import (
     ReportType,
     sections_from_json,
 )
+from wait_local_agent.reports.msp import build_recurring_service_review_report
 from wait_local_agent.reports.renderers import (
     REDACTED,
     redact_value,
@@ -140,6 +143,46 @@ def test_hardening_and_restore_reports_are_not_run_without_evidence(settings) ->
     assert restore.evidence_status == "not_run"
     assert json.loads(render_json(hardening))["evidence_status"] == "not_run"
     assert "Evidence status: `not_run`" in render_markdown(restore)
+
+
+def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
+            ("acme", "2026-01-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", "TCK-1001"),
+        )
+        connection.execute(
+            "update tickets set client_id = ?, status = ?, created_at = ?, updated_at = ? where id = ?",
+            ("acme", "closed", "2026-02-01T00:00:00+00:00", "2026-02-03T00:00:00+00:00", "TCK-1002"),
+        )
+
+    sections, metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+        follow_up_after_days=14,
+    )
+
+    assert metadata["client_id"] == "acme"
+    assert metadata["period_ticket_count"] == 2
+    assert metadata["current_open_ticket_count"] == 1
+    assert metadata["follow_up_candidate_count"] == 1
+    assert metadata["evidence_status"] == "partial"
+    assert "vendor_sla_compliance" in metadata["claims_excluded"]
+    assert sections[1].findings[0]["candidates"][0]["ticket_id"] == "TCK-1001"
+    assert store.list_tickets(client_id="other-client") == []
+
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        build_recurring_service_review_report(
+            store,
+            client_id="acme",
+            period_start="2026-01-01",
+            period_end="2026-03-31",
+            follow_up_after_days=0,
+        )
 
 
 def test_markdown_render_contains_headers_and_recommendations() -> None:
@@ -356,3 +399,30 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     assert '"report_type": "qbr"' in inline.output
     assert bad_format.exit_code == 1
     assert missing_export.exit_code == 1
+
+
+def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    store = Store(data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "reports",
+            "recurring-service-review",
+            "--period-start",
+            "2026-01-01",
+            "--period-end",
+            "2026-03-31",
+            "--client-id",
+            "acme",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"report_type": "recurring_service_review"' in result.output
+    assert '"scope": "single client"' in result.output

@@ -22,9 +22,9 @@ visible here instead of being presented as a completed UI feature.
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
 | `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
-| `/reports` | Hardening, restore exercise, deterministic client QBR and automation-opportunity generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
+| `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
-| `/scheduled-jobs` | Workflow, agent, and client-report schedule lifecycle | `/scheduled-jobs/*` | Browser route render; UI test creates a bounded QBR schedule |
+| `/scheduled-jobs` | Workflow, agent, and client-report schedule lifecycle | `/scheduled-jobs/*` | Browser route render; UI test creates a bounded QBR schedule; recurring-service-review target covered by backend tests |
 | `/settings` | Packs, secrets, backups, acknowledgement-gated restore, update check, admin-triggered model health | `/settings/*`, `/settings/providers/health`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
 | `/founder` | Founder pack and Launch Passport boundary | `/founder/*` | Existing UI tests; browser route render; pack-not-installed state is explicit |
 

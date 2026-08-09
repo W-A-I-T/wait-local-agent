@@ -104,7 +104,11 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
-from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
+from wait_local_agent.reports.msp import (
+    build_automation_opportunity_report,
+    build_qbr_report,
+    build_recurring_service_review_report,
+)
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
@@ -2752,13 +2756,34 @@ def generate_automation_opportunity_report(
     )
 
 
+@reports_app.command("recurring-service-review")
+def generate_recurring_service_review_report(
+    period_start: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-01-01.")],
+    period_end: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-03-31.")],
+    follow_up_after_days: Annotated[int, typer.Option(min=1, max=90)] = 14,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    _generate_client_report(
+        ReportType.RECURRING_SERVICE_REVIEW,
+        period_start=period_start,
+        period_end=period_end,
+        requested_client_id=client_id,
+        token=token,
+        follow_up_after_days=follow_up_after_days,
+    )
+
+
 @reports_app.command("schedule")
 def schedule_client_report(
-    report_type: Annotated[str, typer.Argument(help="qbr or automation_opportunity.")],
+    report_type: Annotated[
+        str, typer.Argument(help="qbr, automation_opportunity, or recurring_service_review.")
+    ],
     cron: Annotated[str, typer.Option(help="Five-field cron expression.")],
     period_days: Annotated[int, typer.Option(min=1, max=366)] = 90,
     client_id: Annotated[str | None, typer.Option("--client-id")] = None,
     timezone: Annotated[str, typer.Option(help="IANA schedule timezone.")] = "UTC",
+    follow_up_after_days: Annotated[int, typer.Option(min=1, max=90)] = 14,
     token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
     settings = load_settings()
@@ -2766,13 +2791,25 @@ def schedule_client_report(
     try:
         selected_type = ReportType(report_type)
     except ValueError as exc:
-        raise typer.BadParameter("report_type must be qbr or automation_opportunity") from exc
-    if selected_type not in {ReportType.QBR, ReportType.AUTOMATION_OPPORTUNITY}:
-        raise typer.BadParameter("report_type must be qbr or automation_opportunity")
+        raise typer.BadParameter(
+            "report_type must be qbr, automation_opportunity, or recurring_service_review"
+        ) from exc
+    if selected_type not in {
+        ReportType.QBR,
+        ReportType.AUTOMATION_OPPORTUNITY,
+        ReportType.RECURRING_SERVICE_REVIEW,
+    }:
+        raise typer.BadParameter(
+            "report_type must be qbr, automation_opportunity, or recurring_service_review"
+        )
     scoped_client_id = _cli_report_client_scope(context, client_id)
     if not scoped_client_id:
         raise typer.BadParameter("a client id is required for a scheduled report")
-    params = {"client_id": scoped_client_id, "period_days": period_days}
+    params = {
+        "client_id": scoped_client_id,
+        "period_days": period_days,
+        "follow_up_after_days": follow_up_after_days,
+    }
     try:
         validate_scheduled_report_params(params, timezone=timezone)
         job = SchedulerManager(Store(settings.data_path), enabled=False).register(
@@ -3287,6 +3324,7 @@ def _generate_client_report(
     period_end: str,
     requested_client_id: str | None,
     token: str | None,
+    follow_up_after_days: int = 14,
 ) -> None:
     settings = load_settings()
     context = _cli_access(settings, token, Role.VIEWER)
@@ -3306,13 +3344,21 @@ def _generate_client_report(
             period_start=period_start,
             period_end=period_end,
         )
-    else:
+    elif report_type is ReportType.AUTOMATION_OPPORTUNITY:
         sections, metadata = build_automation_opportunity_report(
             store,
             estimates,
             client_id=client_id,
             period_start=period_start,
             period_end=period_end,
+        )
+    else:
+        sections, metadata = build_recurring_service_review_report(
+            store,
+            client_id=client_id,
+            period_start=period_start,
+            period_end=period_end,
+            follow_up_after_days=follow_up_after_days,
         )
     report = ReportService(store).create_report(
         report_type,

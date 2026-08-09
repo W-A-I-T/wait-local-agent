@@ -70,7 +70,9 @@ export function Reports() {
   const [reportPeriodEnd, setReportPeriodEnd] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [runningAction, setRunningAction] = useState<"hardening" | "restore" | null>(null);
-  const [reportGeneration, setReportGeneration] = useState<"qbr" | "automation-opportunity" | null>(null);
+  const [reportGeneration, setReportGeneration] = useState<
+    "qbr" | "automation-opportunity" | "recurring-service-review" | null
+  >(null);
   const [loadState, setLoadState] = useState<EvidenceLoadState>("loading");
   const [technicalError, setTechnicalError] = useState("");
 
@@ -184,7 +186,9 @@ export function Reports() {
     }
   }
 
-  async function generateClientReport(reportType: "qbr" | "automation-opportunity") {
+  async function generateClientReport(
+    reportType: "qbr" | "automation-opportunity" | "recurring-service-review"
+  ) {
     if (!reportPeriodStart || !reportPeriodEnd) {
       setStatusMessage("Choose a start and end date before generating a client report.");
       return;
@@ -294,7 +298,7 @@ export function Reports() {
         <div className="report-generation panel-subsection">
           <div>
             <h3>Client reports</h3>
-            <p className="screen-note">Generate a deterministic QBR or automation-opportunity report from local ticket and execution evidence. Estimates are labeled and no workflow is enabled by report generation.</p>
+            <p className="screen-note">Generate deterministic QBR, automation-opportunity, or recurring service review reports from local ticket and execution evidence. Follow-up candidates are review-only; no workflow or communication is enabled by report generation.</p>
           </div>
           <div className="grid">
             <label>
@@ -309,6 +313,7 @@ export function Reports() {
           <div className="row-actions">
             <button type="button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("qbr")}>{reportGeneration === "qbr" ? "Generating…" : "Generate QBR"}</button>
             <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("automation-opportunity")}>{reportGeneration === "automation-opportunity" ? "Generating…" : "Find automation opportunities"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("recurring-service-review")}>{reportGeneration === "recurring-service-review" ? "Generating…" : "Generate service review"}</button>
           </div>
         </div>
         <form className="draft-form" onSubmit={openReport}>

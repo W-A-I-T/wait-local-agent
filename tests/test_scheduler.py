@@ -583,10 +583,17 @@ def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> N
         {"client_id": "acme", "period_days": 30},
         job_kind="report",
     )
+    recurring_job = manager.register(
+        "recurring_service_review",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30, "follow_up_after_days": 14},
+        job_kind="report",
+    )
 
     async def scenario() -> None:
         await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
         await manager._build_job_callable(automation_job)()  # noqa: SLF001
+        await manager._build_job_callable(recurring_job)()  # noqa: SLF001
 
     asyncio.run(scenario())
 
@@ -601,6 +608,9 @@ def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> N
     assert automation_reports[0].created_by == "scheduler"
     assert any(event.event_type == "report.created" for event in store.list_audit_events(client_id="acme"))
     assert any(event.event_type == "scheduled_job.triggered" for event in store.list_audit_events(client_id="acme"))
+    recurring_reports = store.list_reports(report_type="recurring_service_review", client_id="acme")
+    assert len(recurring_reports) == 1
+    assert recurring_reports[0].metadata["follow_up_after_days"] == 14
 
 
 def test_scheduler_report_failure_is_audited_and_does_not_create_report(tmp_path: Path) -> None:

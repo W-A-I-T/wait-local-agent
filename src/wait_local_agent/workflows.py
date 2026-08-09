@@ -216,6 +216,29 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         },
     ),
     WorkflowTemplate(
+        id="recurring-service-review",
+        name="Recurring Service Review",
+        trigger="schedule.monthly",
+        description=(
+            "Review a client-scoped local service posture, explicit follow-up candidates, "
+            "lifecycle evidence, and automation activity without changing records."
+        ),
+        action_type="client.recurring_service_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("client_id", "period_start", "period_end", "follow_up_candidates", "evidence_status"),
+        tool_id="recurring-service-review",
+        payload_schema={
+            "type": "object",
+            "required": ["period_start", "period_end"],
+            "properties": {
+                "period_start": "inclusive ISO date",
+                "period_end": "inclusive ISO date",
+                "follow_up_after_days": "integer from 1 to 90",
+            },
+        },
+    ),
+    WorkflowTemplate(
         id="m365-user-onboarding-review",
         name="Microsoft 365 User Onboarding Review",
         trigger="ticket.created",
@@ -495,6 +518,14 @@ def _bounded_workflow_payload(
         threshold = safe_payload.get("stale_after_minutes")
         if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold <= 0:
             raise ValueError("stale_after_minutes must be a positive integer")
+    elif template.id == "recurring-service-review":
+        follow_up_after_days = safe_payload.get("follow_up_after_days", 14)
+        if (
+            isinstance(follow_up_after_days, bool)
+            or not isinstance(follow_up_after_days, int)
+            or not 1 <= follow_up_after_days <= 90
+        ):
+            raise ValueError("follow_up_after_days must be an integer between 1 and 90")
     return safe_payload
 
 

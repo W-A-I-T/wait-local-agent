@@ -4257,6 +4257,102 @@ class StaleTicketSweepAction:
         )
 
 
+class RecurringServiceReviewAction:
+    manifest = SmartActionManifest(
+        action_id="recurring-service-review",
+        title="Recurring service review",
+        description=(
+            "Review one client's local ticket posture, explicit follow-up candidates, "
+            "lifecycle evidence, and automation activity without taking side effects."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["period_start", "period_end"],
+            "properties": {
+                "ticket_id": {"type": "string", "maxLength": 200},
+                "period_start": {"type": "string", "format": "date"},
+                "period_end": {"type": "string", "format": "date"},
+                "follow_up_after_days": {"type": "integer", "minimum": 1, "maximum": 90},
+            },
+        },
+        output_schema={
+            "report_type": "string",
+            "client_id": "string",
+            "period_start": "string",
+            "period_end": "string",
+            "evidence_status": "string",
+            "sections": "array",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=20,
+        risk_level="low",
+        required_role="viewer",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "period_start", "period_end", "follow_up_after_days"}:
+            return _failed("recurring service review payload contains unsupported fields")
+        client_id = context.client_id.strip() if isinstance(context.client_id, str) else ""
+        if not client_id:
+            return _failed("recurring service review requires a tenant-scoped client")
+        ticket_id = payload.get("ticket_id")
+        if ticket_id is not None:
+            if not isinstance(ticket_id, str) or not ticket_id.strip():
+                return _failed("ticket_id must identify an existing ticket")
+            if context.store.get_ticket(ticket_id.strip(), client_id=client_id) is None:
+                return _failed("ticket_id must identify an existing ticket in the client scope")
+        period_start = payload.get("period_start")
+        period_end = payload.get("period_end")
+        if not isinstance(period_start, str) or not isinstance(period_end, str):
+            return _failed("period_start and period_end must be ISO dates")
+        follow_up_after_days = payload.get("follow_up_after_days", 14)
+        if (
+            isinstance(follow_up_after_days, bool)
+            or not isinstance(follow_up_after_days, int)
+            or not 1 <= follow_up_after_days <= 90
+        ):
+            return _failed("follow_up_after_days must be an integer between 1 and 90")
+        try:
+            from wait_local_agent.reports.msp import build_recurring_service_review_report
+
+            sections, metadata = build_recurring_service_review_report(
+                context.store,
+                client_id=client_id,
+                period_start=period_start,
+                period_end=period_end,
+                follow_up_after_days=follow_up_after_days,
+            )
+        except ValueError as exc:
+            return _failed(redact_text(str(exc)))
+        evidence = [
+            {
+                "type": "local_recurring_service_review",
+                "client_id": client_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "follow_up_after_days": follow_up_after_days,
+                "evidence_status": metadata["evidence_status"],
+                "claims_excluded": metadata["claims_excluded"],
+                "ticket_id": ticket_id.strip() if isinstance(ticket_id, str) else None,
+            }
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "report_type": "recurring_service_review",
+                "client_id": client_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "evidence_status": metadata["evidence_status"],
+                "metadata": metadata,
+                "sections": [asdict(section) for section in sections],
+            },
+            evidence=evidence,
+        )
+
+
 class TicketSentimentAction:
     manifest = SmartActionManifest(
         action_id="ticket-sentiment",
@@ -4715,6 +4811,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketQualityAction(),
         TicketSlaAssessmentAction(),
         StaleTicketSweepAction(),
+        RecurringServiceReviewAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
         SecurityAlertAssessmentAction(),

@@ -14,7 +14,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
 from wait_local_agent.reports.models import ReportType
-from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
+from wait_local_agent.reports.msp import (
+    build_automation_opportunity_report,
+    build_qbr_report,
+    build_recurring_service_review_report,
+)
 from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.smart_actions import SmartActionService
@@ -237,7 +241,7 @@ class SchedulerManager:
                     period_end=period_end,
                 )
                 title = f"Quarterly business review — {client_id}"
-            else:
+            elif report_type is ReportType.AUTOMATION_OPPORTUNITY:
                 sections, metadata = build_automation_opportunity_report(
                     self._store,
                     estimates,
@@ -246,6 +250,15 @@ class SchedulerManager:
                     period_end=period_end,
                 )
                 title = f"Automation opportunities — {client_id}"
+            else:
+                sections, metadata = build_recurring_service_review_report(
+                    self._store,
+                    client_id=client_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                    follow_up_after_days=_scheduled_follow_up_after_days(params),
+                )
+                title = f"Recurring service review — {client_id}"
             report = ReportService(self._store).create_report(
                 report_type,
                 title,
@@ -531,13 +544,23 @@ def _validate_schedule_target(
 _SCHEDULED_REPORT_TYPES = {
     ReportType.QBR.value,
     ReportType.AUTOMATION_OPPORTUNITY.value,
+    ReportType.RECURRING_SERVICE_REVIEW.value,
 }
 
 
 def _scheduled_report_type(value: str) -> ReportType:
     if value not in _SCHEDULED_REPORT_TYPES:
-        raise ValueError("scheduled report type must be qbr or automation_opportunity")
+        raise ValueError(
+            "scheduled report type must be qbr, automation_opportunity, or recurring_service_review"
+        )
     return ReportType(value)
+
+
+def _scheduled_follow_up_after_days(params: dict[str, object]) -> int:
+    value = params.get("follow_up_after_days", 14)
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 90:
+        raise ValueError("follow_up_after_days must be an integer between 1 and 90")
+    return value
 
 
 def _scheduled_report_period(params: dict[str, object], *, timezone: str) -> tuple[str, str]:
@@ -571,6 +594,8 @@ def validate_scheduled_report_params(params: dict[str, object], *, timezone: str
     client_id = params.get("client_id")
     if not isinstance(client_id, str) or not client_id.strip():
         raise ValueError("scheduled report params must include client_id")
+    if "follow_up_after_days" in params:
+        _scheduled_follow_up_after_days(params)
     _scheduled_report_period(params, timezone=timezone)
 
 
