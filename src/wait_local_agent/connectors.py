@@ -69,6 +69,7 @@ SERVICENOW_ACTION_TYPES = {
 AUTOTASK_ACTION_TYPES = {
     "add_note",
     "update_status",
+    "update_resolution",
 }
 
 M365_USER_CREATE_ACTION = "users.create"
@@ -377,7 +378,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             status=autotask_status,
             message=(
                 "Autotask credentials are configured for ticket/company lookup and "
-                "approval-gated ticket-note creation and status updates."
+                "approval-gated ticket-note, status, and resolution updates."
                 if autotask_status == "configured"
                 else "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING "
                 "and writes also require WAIT_ALLOW_WRITE_ACTIONS."
@@ -1854,6 +1855,18 @@ def validate_autotask_action_fields(action_type: str, fields: dict[str, object])
         value = fields["status"]
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError("Autotask ticket status must be a non-negative integer")
+        return
+    if action_type == "update_resolution":
+        if set(fields) != {"resolution"}:
+            raise ValueError("Autotask update_resolution requires only a resolution field")
+        value = fields["resolution"]
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value.strip()) > 32_000
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise ValueError("Autotask ticket resolution is invalid")
         return
     if not isinstance(fields, dict) or not {"description", "note_type", "publish"} <= set(fields):
         raise ValueError(

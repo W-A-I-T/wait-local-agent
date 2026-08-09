@@ -51,7 +51,11 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
         requests.append(request)
         if request.method == "PATCH":
             assert request.url.path.endswith("/Tickets")
-            assert json.loads(request.content) == {"id": 123, "status": 7}
+            body = json.loads(request.content)
+            assert body in (
+                {"id": 123, "status": 7},
+                {"id": 123, "resolution": "Resolved by local runbook."},
+            )
             return httpx.Response(200)
         assert request.method == "POST"
         assert request.url.path.endswith("/TicketNotes")
@@ -102,6 +106,12 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
     assert status_result.status == "succeeded"
     assert status_result.endpoint == "Tickets"
     assert status_result.remote_id == ""
+    resolution_result = client.execute_write(
+        AutotaskWriteRequest(
+            "123", "update_resolution", {"resolution": "Resolved by local runbook."}
+        )
+    )
+    assert resolution_result.status == "succeeded"
     assert client.execute_write(
         AutotaskWriteRequest(
             "123", "add_note", {"description": "unsafe", "note_type": 3, "publish": 0, "extra": 1}
@@ -138,6 +148,9 @@ def test_autotask_write_failures_and_helpers_are_bounded(settings) -> None:
         ("update_status", {"status": -1}),
         ("update_status", {"status": True}),
         ("update_status", {"status": 7, "extra": 1}),
+        ("update_resolution", {"resolution": ""}),
+        ("update_resolution", {"resolution": "x", "extra": 1}),
+        ("update_resolution", {"resolution": "\x00"}),
         ("add_note", {"description": "x"}),
         ("add_note", {"description": "", "note_type": 3, "publish": 0}),
         ("add_note", {"description": "x", "note_type": -1, "publish": 0}),
