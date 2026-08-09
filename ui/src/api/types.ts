@@ -612,6 +612,15 @@ export type AgentDefinition = {
   approval_expiry_seconds?: number | null;
   result_aware: boolean;
   approval_required_tools: string[];
+  approval_rules: AgentApprovalRule[];
+};
+
+export type AgentApprovalRule = {
+  tool_id: string;
+  when: {
+    priority?: string[];
+    status?: string[];
+  };
 };
 
 export type AgentRevision = {

@@ -1558,6 +1558,20 @@ dd svg {
   font-size: .86rem;
 }
 
+.agent-rule-row {
+  display: grid;
+  grid-template-columns: minmax(140px, .7fr) 1fr 1fr;
+  gap: .65rem;
+  width: 100%;
+  align-items: end;
+}
+
+.agent-rule-row label {
+  display: grid;
+  align-items: start;
+  gap: .25rem;
+}
+
 .agent-card {
   display: grid;
   gap: .7rem;
@@ -1644,6 +1658,10 @@ dd svg {
 
   .agent-run-row {
     flex-direction: column;
+  }
+
+  .agent-rule-row {
+    grid-template-columns: 1fr;
   }
 
   .agent-history-row {

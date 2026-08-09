@@ -742,6 +742,70 @@ def test_agent_can_add_approval_to_a_read_only_tool(settings) -> None:
     assert resumed.status == "completed"
 
 
+def test_agent_conditional_approval_matches_explicit_ticket_fields(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Priority-gated triage",
+        description="Require review for high-priority triage.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_rules=[{"tool_id": "ticket-triage", "when": {"priority": ["HIGH"]}}],
+    )
+
+    persisted = service.store.get_agent_definition(definition.id, client_id="acme")
+    assert persisted is not None
+    assert persisted.approval_rules == [{"tool_id": "ticket-triage", "when": {"priority": ["high"]}}]
+
+    high_priority = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert high_priority.status == "pending_approval"
+    assert high_priority.steps[0]["approval_policy"] == {
+        "type": "conditional",
+        "tool_id": "ticket-triage",
+        "when": {"priority": ["high"]},
+    }
+
+    medium_priority = service.run(definition, entity_id="TCK-1002", actor="requester", input_payload={})
+    assert medium_priority.status == "completed"
+    assert "approval_policy" not in medium_priority.steps[0]
+
+
+def test_agent_conditional_approval_rules_are_bounded(settings) -> None:
+    service = _service(settings)
+    base = {
+        "name": "Invalid conditional approval",
+        "description": "",
+        "enabled": True,
+        "trigger": "manual",
+        "entity_type": "ticket",
+        "filters": {},
+        "enabled_tools": ["ticket-triage"],
+        "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+        "max_steps": 1,
+        "execution_timeout_seconds": 30,
+        "client_id": "acme",
+    }
+    invalid_rules = [
+        ([{"tool_id": "not-enabled", "when": {"priority": ["high"]}}], "must be enabled"),
+        ([{"tool_id": "ticket-triage", "when": {"unknown": ["high"]}}], "unsupported approval rule fields"),
+        ([{"tool_id": "ticket-triage", "when": {}}], "at least one condition"),
+        ([{"tool_id": "ticket-triage", "when": {"priority": [""]}}], "non-empty strings"),
+        ([
+            {"tool_id": "ticket-triage", "when": {"priority": ["high"]}},
+            {"tool_id": "ticket-triage", "when": {"status": ["new"]}},
+        ], "must not duplicate tool"),
+    ]
+    for rules, message in invalid_rules:
+        with pytest.raises(AgentDefinitionError, match=message):
+            service.create(**base, approval_rules=rules)
+
+
 def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
     service = _service(settings)
     definition = service.create(
@@ -1914,6 +1978,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "execution_window_timezone": "America/Vancouver",
             "context_sources": ["ticket", "client"],
             "client_id": "acme",
+            "approval_rules": [{"tool_id": "ticket-triage", "when": {"priority": ["high"]}}],
         },
     )
     assert created.status_code == 200
@@ -1922,6 +1987,9 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_end"] == "23:59"
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
     assert created.json()["context_sources"] == ["ticket", "client"]
+    assert created.json()["approval_rules"] == [
+        {"tool_id": "ticket-triage", "when": {"priority": ["high"]}}
+    ]
     tools_response = client.get("/tools")
     assert tools_response.status_code == 200
     tool_ids = {tool["id"] for tool in tools_response.json()}
