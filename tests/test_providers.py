@@ -698,7 +698,7 @@ def test_provider_health_probes_local_models_contract_and_reports_missing_model(
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"data": [{"id": "other-model"}]})
+        return httpx.Response(200, json={"data": [{"id": "other-model"}, {"id": 42}, "bad-entry"]})
 
     result = cast(dict[str, Any], probe_model_providers(
         _settings(tmp_path),
@@ -731,6 +731,38 @@ def test_provider_health_probes_anthropic_with_documented_headers(tmp_path: Path
     assert requests[1].headers["anthropic-version"] == "2023-06-01"
     assert result["remote"]["status"] == "ready"
     assert "remote-secret" not in str(result)
+
+
+def test_provider_health_uses_bearer_auth_for_openai_compatible_remote(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "documented-model"}]})
+
+    settings = replace(
+        _settings(tmp_path, provider="deterministic"),
+        allow_cloud_fallback=True,
+        remote_model_provider="deepseek",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="remote-secret",
+    )
+    result = cast(dict[str, Any], probe_model_providers(settings, transport=httpx.MockTransport(handler)))
+
+    assert requests[0].headers["authorization"] == "Bearer remote-secret"
+    assert result["remote"]["status"] == "ready"
+
+
+def test_provider_health_reports_missing_local_base_url_without_network(tmp_path: Path) -> None:
+    result = cast(
+        dict[str, Any],
+        probe_model_providers(
+            replace(_settings(tmp_path), local_model_base_url=""),
+            transport=httpx.MockTransport(lambda request: pytest.fail("probe not expected")),
+        ),
+    )
+    assert result["local"]["status"] == "not_configured"
 
 
 def test_provider_health_denies_remote_probe_in_offline_mode(tmp_path: Path) -> None:
