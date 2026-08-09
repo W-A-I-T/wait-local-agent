@@ -357,7 +357,7 @@ class AgentStepRequest(BaseModel):
 
 class AgentApprovalRuleRequest(BaseModel):
     tool_id: str = Field(min_length=1, max_length=120)
-    when: dict[str, list[str]] = Field(min_length=1, max_length=2)
+    when: dict[str, list[str]] = Field(min_length=1, max_length=3)
 
 
 class AgentDefinitionRequest(BaseModel):
@@ -987,6 +987,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 entity_id=payload.entity_id,
                 actor=context.approver_id or "api",
                 input_payload=payload.input,
+                actor_role=context.role,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1041,6 +1042,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     entity_id=entity_id,
                     actor=backfill.actor or context.approver_id or "api",
                     input_payload=input_payload,
+                    actor_role=context.role,
                 )
                 if result.status in {"completed", "pending_approval"}:
                     return result, None
@@ -1359,6 +1361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 definition,
                 run,
                 actor=context.approver_id or "api",
+                actor_role=context.role,
             )
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

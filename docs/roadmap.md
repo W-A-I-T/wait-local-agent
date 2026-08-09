@@ -17,8 +17,8 @@ client-scoped QBR/automation reports, provider usage/cost estimates, and
 admin-triggered documented model-list health checks. Remaining gaps include
 broader provider write parity, native channel adapters, live end-user PSA
 synchronization, white-label branding, provider-backed lifecycle evidence, and
-role- or connector-specific approval policy composition beyond explicit ticket
-priority/status rules.
+connector-specific approval policy composition beyond explicit ticket and
+requester-role rules.
 
 ## Phase 0: Product Packaging
 

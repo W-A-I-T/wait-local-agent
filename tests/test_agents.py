@@ -824,6 +824,78 @@ def test_agent_conditional_approval_rules_are_bounded(settings) -> None:
         with pytest.raises(AgentDefinitionError, match=message):
             service.create(**base, approval_rules=rules)
 
+    with pytest.raises(AgentDefinitionError, match="actor_role values must be one of"):
+        service.create(
+            **base,
+            approval_rules=[
+                {"tool_id": "ticket-triage", "when": {"actor_role": ["owner"]}}
+            ],
+        )
+
+
+def test_agent_conditional_approval_matches_authenticated_role_and_survives_resume(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Role-gated triage",
+        description="Require review for technician-triggered triage and summary.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage", "ticket-summary"],
+        steps=[
+            {"tool_id": "ticket-triage", "payload": {}},
+            {"tool_id": "ticket-summary", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_rules=[
+            {"tool_id": "ticket-triage", "when": {"actor_role": ["TECHNICIAN"]}},
+            {"tool_id": "ticket-summary", "when": {"actor_role": ["technician"]}},
+        ],
+    )
+
+    technician = service.run(
+        definition,
+        entity_id="TCK-1001",
+        actor="technician",
+        actor_role=Role.TECHNICIAN,
+        input_payload={},
+    )
+    assert technician.status == "pending_approval"
+    technician_policy = cast(dict[str, object], technician.steps[0]["approval_policy"])
+    assert technician_policy["when"] == {"actor_role": ["technician"]}
+    stored = service.store.get_agent_run(technician.run_id, client_id="acme")
+    assert stored is not None
+    assert json.loads(stored.state_json)["actor_role"] == "technician"
+
+    second_pending = service.resume(
+        definition,
+        stored,
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert second_pending.status == "pending_approval"
+    second_policy = cast(dict[str, object], second_pending.steps[1]["approval_policy"])
+    assert second_policy["when"] == {"actor_role": ["technician"]}
+
+    completed = service.resume(
+        definition,
+        service.store.get_agent_run(second_pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert completed.status == "completed"
+
+    no_role = service.run(
+        definition,
+        entity_id="TCK-1002",
+        actor="scheduler",
+        input_payload={},
+    )
+    assert no_role.status == "completed"
+
 
 def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
     service = _service(settings)
@@ -2014,7 +2086,12 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "execution_window_timezone": "America/Vancouver",
             "context_sources": ["ticket", "client"],
             "client_id": "acme",
-            "approval_rules": [{"tool_id": "ticket-triage", "when": {"priority": ["medium"]}}],
+            "approval_rules": [
+                {
+                    "tool_id": "ticket-triage",
+                    "when": {"priority": ["medium"], "actor_role": ["admin"]},
+                }
+            ],
         },
     )
     assert created.status_code == 200
@@ -2024,7 +2101,10 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
     assert created.json()["context_sources"] == ["ticket", "client"]
     assert created.json()["approval_rules"] == [
-        {"tool_id": "ticket-triage", "when": {"priority": ["medium"]}}
+        {
+            "tool_id": "ticket-triage",
+            "when": {"priority": ["medium"], "actor_role": ["admin"]},
+        }
     ]
     tools_response = client.get("/tools")
     assert tools_response.status_code == 200

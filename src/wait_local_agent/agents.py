@@ -64,7 +64,8 @@ MAX_CONTEXT_SOURCES = 3
 EXECUTION_WINDOW_TIME_FORMAT = "%H:%M"
 MAX_APPROVAL_RULES = MAX_AGENT_STEPS
 MAX_APPROVAL_RULE_VALUES = MAX_AGENT_STEPS
-APPROVAL_RULE_FIELDS = frozenset({"priority", "status"})
+APPROVAL_RULE_FIELDS = frozenset({"priority", "status", "actor_role"})
+APPROVAL_RULE_ROLE_VALUES = frozenset(role.label() for role in Role)
 
 
 @dataclass(frozen=True)
@@ -464,6 +465,7 @@ class AgentService:
         input_payload: dict[str, object],
         retry_count: int = 0,
         retry_of_run_id: int | None = None,
+        actor_role: Role | None = None,
     ) -> AgentExecutionResult:
         if not definition.enabled:
             raise AgentDefinitionError("agent is disabled")
@@ -482,6 +484,7 @@ class AgentService:
             "steps": [],
             "pending_approval_step": None,
             "retry_count": retry_count,
+            "actor_role": actor_role.label() if actor_role is not None else None,
         }
         if retry_of_run_id is not None:
             state["retry_of_run_id"] = retry_of_run_id
@@ -495,7 +498,14 @@ class AgentService:
             revision_version=definition.version,
             client_id=client_id,
         )
-        return self._continue(definition, run, actor, start_step=0, state=state)
+        return self._continue(
+            definition,
+            run,
+            actor,
+            start_step=0,
+            state=state,
+            actor_role=actor_role,
+        )
 
     @staticmethod
     def execution_window_open(
@@ -527,6 +537,7 @@ class AgentService:
         run: AgentRun,
         *,
         actor: str,
+        actor_role: Role | None = None,
     ) -> AgentExecutionResult:
         """Retry a failed or cancelled run with a small persisted attempt cap."""
         if run.status not in {"failed", "cancelled"}:
@@ -547,6 +558,7 @@ class AgentService:
             input_payload=input_payload,
             retry_count=retry_count + 1,
             retry_of_run_id=run.id,
+            actor_role=actor_role,
         )
 
     def resume(
@@ -606,6 +618,7 @@ class AgentService:
             run.actor,
             start_step=run.current_step + 1,
             state=state,
+            actor_role=_actor_role_from_state(state),
         )
 
     def cancel(
@@ -741,9 +754,16 @@ class AgentService:
         *,
         start_step: int,
         state: dict[str, object],
+        actor_role: Role | None,
     ) -> AgentExecutionResult:
         if definition.result_aware:
-            return self._continue_result_aware(definition, run, actor, state=state)
+            return self._continue_result_aware(
+                definition,
+                run,
+                actor,
+                state=state,
+                actor_role=actor_role,
+            )
         started = time.monotonic()
         steps = _state_steps(state)
         input_payload = _state_object(state.get("input"))
@@ -788,6 +808,7 @@ class AgentService:
                 tool_id,
                 run.entity_id,
                 self.store,
+                actor_role=actor_role,
             )
             try:
                 action_result = self.smart_actions.invoke(
@@ -841,6 +862,7 @@ class AgentService:
         actor: str,
         *,
         state: dict[str, object],
+        actor_role: Role | None,
     ) -> AgentExecutionResult:
         """Execute a reviewed definition one bounded, result-aware step at a time."""
         started = time.monotonic()
@@ -899,6 +921,7 @@ class AgentService:
                 tool_id,
                 run.entity_id,
                 self.store,
+                actor_role=actor_role,
             )
             try:
                 action_result = self.smart_actions.invoke(
@@ -1460,6 +1483,11 @@ def _normalize_approval_rules(
                         f"approval rule {field_name} values must be non-empty strings of at most 40 characters"
                     )
                 value = raw_value.strip().casefold()
+                if field_name == "actor_role" and value not in APPROVAL_RULE_ROLE_VALUES:
+                    raise AgentDefinitionError(
+                        "approval rule actor_role values must be one of: "
+                        + ", ".join(sorted(APPROVAL_RULE_ROLE_VALUES))
+                    )
                 if value not in values:
                     values.append(value)
             normalized_conditions[field_name] = values
@@ -1472,6 +1500,8 @@ def _approval_policy_for_ticket(
     tool_id: str,
     entity_id: str,
     store: Store,
+    *,
+    actor_role: Role | None = None,
 ) -> dict[str, object] | None:
     if tool_id in definition.approval_required_tools:
         return {"type": "agent", "mode": "always"}
@@ -1485,11 +1515,22 @@ def _approval_policy_for_ticket(
             continue
         conditions = cast(dict[str, list[str]], rule["when"])
         if all(
-            str(getattr(ticket, field_name, "")).strip().casefold() in values
+            (
+                actor_role is not None and actor_role.label() in values
+                if field_name == "actor_role"
+                else str(getattr(ticket, field_name, "")).strip().casefold() in values
+            )
             for field_name, values in conditions.items()
         ):
             return {"type": "conditional", "tool_id": tool_id, "when": conditions}
     return None
+
+
+def _actor_role_from_state(state: dict[str, object]) -> Role | None:
+    value = state.get("actor_role")
+    if not isinstance(value, str):
+        return None
+    return next((role for role in Role if role.label() == value), None)
 
 
 def _bounded_context_text(value: str, limit: int) -> str:
