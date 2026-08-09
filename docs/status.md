@@ -93,9 +93,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Datto RMM device and open-alert inventory plus component metadata through the
   same bounded contract, with explicit client-to-site mapping, approval-gated
   quick-job execution, and bounded job-status lookup.
-- N-able N-central read-only device, active-issue, and scheduled-task metadata
-  through the same bounded contract with explicit client-to-organization-unit
-  mapping; task execution and execution-status lookup remain unavailable.
+- N-able N-central device, active-issue, and scheduled-task metadata through the
+  same bounded contract with explicit client-to-organization-unit mapping, plus
+  approval-gated direct-task submission and locally scoped execution-status
+  lookup. Script upload, arbitrary task identifiers, and provider credentials in
+  action payloads remain unavailable.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph, plus
@@ -345,7 +347,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
+| RMM connectors | Local, NinjaOne, Datto, and bounded N-central inventory/direct-task adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Deterministic client-scoped QBR and automation-opportunity reports built; provider-backed lifecycle enrichment and PDF export remain future work |

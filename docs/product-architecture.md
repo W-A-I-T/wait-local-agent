@@ -239,7 +239,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership/license/session actions | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
-| N-able N-central | Phase 4 | ✓ bounded metadata | — | Public core |
+| N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
 | Kaseya VSA | Phase 5 | ✓ | — | MSP Pack |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |

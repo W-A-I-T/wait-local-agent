@@ -226,7 +226,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 "Datto RMM is configured for tenant-scoped inventory, component "
                 "metadata, and approval-gated quick jobs."
                 if datto_rmm_configured
-                else "N-able N-central is configured for tenant-scoped read-only device, issue, and task metadata."
+                else (
+                    "N-able N-central is configured for tenant-scoped device, issue, and task "
+                    "metadata plus approval-gated direct tasks and status lookup."
+                )
             )
         )
         if rmm_status == "configured"
