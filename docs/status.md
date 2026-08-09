@@ -198,8 +198,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Optional end-user support can create and track requester-scoped local tickets,
   send isolated requester follow-up messages, and request technician escalation
   through both `/end-user/tickets*` and the separate `/end-user` React surface;
-  it does not load the operator shell. Live PSA sync, outbound delivery, and
-  tenant-configurable branding remain unavailable.
+  it does not load the operator shell. The separately scoped
+  `/end-user/config` route supports local tenant branding name/tagline values;
+  live PSA sync, outbound delivery, logos, and theme customization remain
+  unavailable.
 - Client-scoped QBR, automation-opportunity, and recurring-service-review
   reports are available through their matching `/reports/*` API routes, CLI
   commands, and the `/reports` dashboard. They use local ticket,

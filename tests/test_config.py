@@ -10,6 +10,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_ALLOW_CLOUD_FALLBACK", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_LLM_INFERENCE", raising=False)
     monkeypatch.delenv("WAIT_API_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_END_USER_BRAND_NAME", raising=False)
+    monkeypatch.delenv("WAIT_END_USER_BRAND_TAGLINE", raising=False)
     monkeypatch.delenv("WAIT_DEMO_MODE", raising=False)
     monkeypatch.delenv("WAIT_SECRETS_BACKEND", raising=False)
     monkeypatch.delenv("WAIT_VAULT_PATH", raising=False)
@@ -67,6 +69,8 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.admin_token == ""
     assert settings.tech_token == ""
     assert settings.viewer_token == ""
+    assert settings.end_user_brand_name == "WAIT Support"
+    assert settings.end_user_brand_tagline == "Private help desk"
     assert settings.demo_mode is True
     assert settings.secrets_backend == "env"
     assert str(settings.vault_path) == ".wait-local-agent/vault"
@@ -145,6 +149,16 @@ def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     assert settings.allow_llm_inference is True
     assert settings.offline_mode is True
     assert settings.demo_mode is False
+
+
+def test_end_user_branding_env_values_are_loaded(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_END_USER_BRAND_NAME", "Acme Support")
+    monkeypatch.setenv("WAIT_END_USER_BRAND_TAGLINE", "Help for Acme teams")
+
+    settings = load_settings()
+
+    assert settings.end_user_brand_name == "Acme Support"
+    assert settings.end_user_brand_tagline == "Help for Acme teams"
 
 
 def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:

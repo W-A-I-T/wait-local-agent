@@ -266,8 +266,11 @@ status lookup, and technician escalation, and does not load the operator shell.
 Follow-up messages use a separate `end_user_messages` table and are scoped to
 the same requester and client; internal `ticket_notes` are never returned by
 the end-user message routes.
-Live PSA synchronization, outbound delivery, and tenant-configurable branding
-are separate capabilities and are not implied by this surface.
+The authenticated `/end-user/config` route returns optional local branding
+configured with `WAIT_END_USER_BRAND_NAME` and `WAIT_END_USER_BRAND_TAGLINE`.
+It returns only display strings after the same client/requester scope check;
+live PSA synchronization, outbound delivery, logos, and theme customization
+remain separate capabilities.
 
 ## Event-triggered agents
 

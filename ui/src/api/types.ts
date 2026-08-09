@@ -36,6 +36,11 @@ export type EndUserTicket = {
   priority: string;
 };
 
+export type EndUserBranding = {
+  brand_name: string;
+  brand_tagline: string;
+};
+
 export type EndUserMessage = {
   id: number;
   ticket_id: string;

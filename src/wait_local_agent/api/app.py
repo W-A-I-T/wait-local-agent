@@ -362,6 +362,11 @@ class EndUserTicketCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
 
 
+class EndUserBrandingResponse(BaseModel):
+    brand_name: str
+    brand_tagline: str
+
+
 class EndUserMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
 
@@ -1660,6 +1665,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if session is None:
             raise HTTPException(status_code=404, detail="technician chat session not found")
         return _technician_chat_session_view(store, session)
+
+    @app.get("/end-user/config", response_model=EndUserBrandingResponse)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def end_user_config(
+        request: Request,
+        context: EndUserAccess,
+    ) -> EndUserBrandingResponse:
+        if not context.client_id or not context.principal_id:
+            raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
+        return EndUserBrandingResponse(
+            brand_name=_end_user_branding_text(active_settings.end_user_brand_name, "WAIT Support"),
+            brand_tagline=_end_user_branding_text(
+                active_settings.end_user_brand_tagline, "Private help desk"
+            ),
+        )
 
     @app.post("/end-user/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -4548,6 +4568,11 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
         "priority": ticket.priority,
         "client_id": ticket.client_id,
     }
+
+
+def _end_user_branding_text(value: str, fallback: str) -> str:
+    cleaned = redact_text(value.strip())[:120].strip()
+    return cleaned or fallback
 
 
 def _end_user_message_view(message) -> dict[str, object]:

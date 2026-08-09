@@ -21,9 +21,13 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         end_user_token="end-user-token",
         end_user_client_id="acme",
         end_user_user_id="user-1",
+        end_user_brand_name="Acme Support",
+        end_user_brand_tagline="Help for Acme teams",
         tech_token="tech-token",
     )
     client = TestClient(create_app(enabled))
+
+    branding = client.get("/end-user/config", headers=_auth("end-user-token"))
 
     created = client.post(
         "/end-user/tickets",
@@ -52,6 +56,12 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     )
 
     assert created.status_code == 200
+    assert branding.status_code == 200
+    assert branding.json() == {
+        "brand_name": "Acme Support",
+        "brand_tagline": "Help for Acme teams",
+    }
+    assert "client_id" not in branding.json()
     assert created.json()["status"] == "new"
     assert created.json()["priority"] == "normal"
     assert "password=do-not-store" not in created.text
@@ -122,6 +132,7 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
         "/end-user/tickets",
         json={"subject": "Disabled", "body": "Disabled"},
     )
+    disabled_branding = disabled.get("/end-user/config")
     unscoped = TestClient(
         create_app(
             replace(
@@ -131,6 +142,10 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
                 end_user_token="unscoped-token",
             )
         )
+    )
+    unscoped_branding = unscoped.get(
+        "/end-user/config",
+        headers=_auth("unscoped-token"),
     )
     unscoped_response = unscoped.post(
         "/end-user/tickets",
@@ -165,6 +180,8 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
     assert malformed_messages.status_code == 404
     assert malformed_message_create.status_code == 404
     assert disabled_response.status_code == 403
+    assert disabled_branding.status_code == 403
+    assert unscoped_branding.status_code == 403
     assert unscoped_response.status_code == 403
     assert unscoped_status.status_code == 404
     assert unscoped_escalation.status_code == 403

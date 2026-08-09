@@ -11,6 +11,7 @@ describe("EndUserSupport", () => {
   it("submits, looks up, and escalates a scoped request with the end-user token", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock
+      .mockResolvedValueOnce(json({ brand_name: "Acme Support", brand_tagline: "Help for Acme teams" }))
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "new", priority: "normal" }))
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "new", priority: "normal" }))
       .mockResolvedValueOnce(json([]))
@@ -20,6 +21,8 @@ describe("EndUserSupport", () => {
     render(<EndUserSupport />);
     fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "scoped-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+    expect(await screen.findByText("Acme Support")).toBeInTheDocument();
+    expect(screen.getByText("Help for Acme teams")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Cannot sign in" } });
     fireEvent.change(screen.getByLabelText("Details"), { target: { value: "MFA is blocked" } });
     fireEvent.click(screen.getByRole("button", { name: "Submit request" }));
@@ -33,8 +36,11 @@ describe("EndUserSupport", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask for technician attention" }));
     expect(await screen.findByText("Your request was marked for technician attention.")).toBeInTheDocument();
 
-    const firstCall = fetchMock.mock.calls[0];
-    const escalationCall = fetchMock.mock.calls[4];
+    const brandingCall = fetchMock.mock.calls[0];
+    const firstCall = fetchMock.mock.calls[1];
+    const escalationCall = fetchMock.mock.calls[5];
+    expect(brandingCall?.[0]).toBe("/end-user/config");
+    expect(new Headers(brandingCall?.[1]?.headers).get("Authorization")).toBe("Bearer scoped-token");
     expect(firstCall?.[0]).toBe("/end-user/tickets");
     expect(new Headers(firstCall?.[1]?.headers).get("Authorization")).toBe("Bearer scoped-token");
     expect(escalationCall?.[0]).toBe("/end-user/tickets/EUS-1/escalate");
@@ -53,7 +59,7 @@ describe("EndUserSupport", () => {
     fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "wrong-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     fireEvent.click(screen.getByRole("button", { name: "Check status" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to do that.");
     expect(screen.getByText("Your request details will appear here after a successful lookup.")).toBeInTheDocument();
   });

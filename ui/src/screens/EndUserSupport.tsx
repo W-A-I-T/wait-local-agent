@@ -1,9 +1,10 @@
 import { FormEvent, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { apiFetch, ApiRequestError } from "../api/client";
-import type { EndUserMessage, EndUserTicket } from "../api/types";
+import type { EndUserBranding, EndUserMessage, EndUserTicket } from "../api/types";
 
 const tokenStorageKey = "wait-local-agent-end-user-token";
+const defaultBranding: EndUserBranding = { brand_name: "WAIT Support", brand_tagline: "Private help desk" };
 
 function loadToken(): string {
   try {
@@ -33,11 +34,12 @@ export function EndUserSupport() {
   const [ticket, setTicket] = useState<EndUserTicket | null>(null);
   const [messages, setMessages] = useState<EndUserMessage[]>([]);
   const [replyBody, setReplyBody] = useState("");
+  const [branding, setBranding] = useState<EndUserBranding>(defaultBranding);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"create" | "lookup" | "message" | "escalate" | null>(null);
 
-  function saveToken(event: FormEvent<HTMLFormElement>) {
+  async function saveToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
       if (token.trim()) {
@@ -48,8 +50,19 @@ export function EndUserSupport() {
     } catch {
       // The token still applies to this page session when storage is unavailable.
     }
-    setMessage(token.trim() ? "Access token saved on this device." : "Access token cleared.");
     setError("");
+    if (!token.trim()) {
+      setBranding(defaultBranding);
+      setMessage("Access token cleared.");
+      return;
+    }
+    try {
+      setBranding(await endUserFetch<EndUserBranding>(token, "/end-user/config"));
+      setMessage("Access token saved on this device.");
+    } catch (requestError) {
+      setMessage("Access token saved. Default support branding is shown.");
+      setError(userFacingError(requestError, "We couldn't load your support branding."));
+    }
   }
 
   async function createTicket(event: FormEvent<HTMLFormElement>) {
@@ -153,7 +166,7 @@ export function EndUserSupport() {
   return (
     <main className="end-user-shell">
       <div className="end-user-header">
-        <div className="end-user-brand"><ShieldCheck size={30} aria-hidden="true" /><div><strong>WAIT Support</strong><span>Private help desk</span></div></div>
+        <div className="end-user-brand"><ShieldCheck size={30} aria-hidden="true" /><div><strong>{branding.brand_name}</strong><span>{branding.brand_tagline}</span></div></div>
         <div className="end-user-secure"><KeyRound size={16} aria-hidden="true" /> Access is limited to your support account</div>
       </div>
       <section className="end-user-intro">
