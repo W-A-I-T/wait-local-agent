@@ -311,6 +311,7 @@ class AgentService:
         execution_window_timezone: str = "UTC",
         context_sources: list[str] | None = None,
         approval_expiry_seconds: int | None = None,
+        result_aware: bool = False,
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -361,6 +362,7 @@ class AgentService:
             execution_window_timezone=window_timezone,
             context_sources=list(context_sources or []),
             approval_expiry_seconds=approval_expiry_seconds,
+            result_aware=result_aware,
         )
         return self.store.create_agent_definition(definition)
 
@@ -385,6 +387,7 @@ class AgentService:
         execution_window_timezone: str = "UTC",
         context_sources: list[str] | None = None,
         approval_expiry_seconds: int | None = None,
+        result_aware: bool = False,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -433,6 +436,7 @@ class AgentService:
             execution_window_timezone=window_timezone,
             context_sources=list(context_sources or []),
             approval_expiry_seconds=approval_expiry_seconds,
+            result_aware=result_aware,
         )
         return self.store.update_agent_definition(updated)
 
@@ -682,6 +686,28 @@ class AgentService:
             updated_at=revision.created_at,
             run_once_per_entity=bool(payload.get("run_once_per_entity", definition.run_once_per_entity)),
             depends_on_agent_ids=cast(list[str], dependencies),
+            execution_window_start=(
+                payload.get("execution_window_start")
+                if isinstance(payload.get("execution_window_start"), str)
+                else None
+            ),
+            execution_window_end=(
+                payload.get("execution_window_end")
+                if isinstance(payload.get("execution_window_end"), str)
+                else None
+            ),
+            execution_window_timezone=str(
+                payload.get("execution_window_timezone", definition.execution_window_timezone)
+            ),
+            context_sources=cast(
+                list[str], payload.get("context_sources", definition.context_sources)
+            ),
+            approval_expiry_seconds=(
+                int(payload["approval_expiry_seconds"])
+                if isinstance(payload.get("approval_expiry_seconds"), int)
+                else definition.approval_expiry_seconds
+            ),
+            result_aware=bool(payload.get("result_aware", definition.result_aware)),
         )
 
     def _continue(
@@ -693,6 +719,8 @@ class AgentService:
         start_step: int,
         state: dict[str, object],
     ) -> AgentExecutionResult:
+        if definition.result_aware:
+            return self._continue_result_aware(definition, run, actor, state=state)
         started = time.monotonic()
         steps = _state_steps(state)
         input_payload = _state_object(state.get("input"))
@@ -773,6 +801,191 @@ class AgentService:
             state,
             actor=actor,
         )
+
+    def _continue_result_aware(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        actor: str,
+        *,
+        state: dict[str, object],
+    ) -> AgentExecutionResult:
+        """Execute a reviewed definition one bounded, result-aware step at a time."""
+        started = time.monotonic()
+        steps = _state_steps(state)
+        input_payload = _state_object(state.get("input"))
+        while len(steps) < definition.max_steps:
+            ordinal = len(steps)
+            if time.monotonic() - started >= definition.execution_timeout_seconds:
+                return self._finish(
+                    definition,
+                    run,
+                    "failed",
+                    ordinal,
+                    {**state, "error_detail": "agent execution timed out"},
+                    actor=actor,
+                )
+            configured_step, selection_mode = self._select_result_aware_step(
+                definition,
+                run.entity_id,
+                steps,
+            )
+            if configured_step is None:
+                state["continuation"] = {
+                    "status": "complete",
+                    "selection_mode": selection_mode,
+                    "reason": "no remaining approved tool matched the bounded run",
+                }
+                return self._finish(definition, run, "completed", ordinal, state, actor=actor)
+            tool_id = configured_step.get("tool_id")
+            configured_payload = configured_step.get("payload", {})
+            if not isinstance(tool_id, str) or not isinstance(configured_payload, dict):
+                return self._finish(
+                    definition,
+                    run,
+                    "failed",
+                    ordinal,
+                    {**state, "error_detail": "agent step is malformed"},
+                    actor=actor,
+                )
+            payload = dict(input_payload)
+            payload.update(configured_payload)
+            payload.setdefault("ticket_id", run.entity_id)
+            if state.get("context"):
+                payload["_agent_context"] = state["context"]
+            if tool_id not in definition.enabled_tools:
+                return self._finish(
+                    definition,
+                    run,
+                    "failed",
+                    ordinal,
+                    {**state, "error_detail": f"tool {tool_id} is not enabled for this agent"},
+                    actor=actor,
+                )
+            try:
+                action_result = self.smart_actions.invoke(
+                    tool_id,
+                    payload,
+                    actor,
+                    client_id=definition.client_id,
+                    approval_expiry_seconds=definition.approval_expiry_seconds,
+                )
+            except KeyError:
+                action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
+            step = {
+                "index": ordinal,
+                "tool_id": tool_id,
+                "input": redact_value(payload),
+                "continuation": {
+                    "selection_mode": selection_mode,
+                    "reason": "selected from the remaining reviewed tool catalog",
+                },
+            }
+            self._apply_result(step, action_result)
+            state["final_result"] = _final_result_from_action(tool_id, action_result)
+            steps.append(step)
+            state["steps"] = steps
+            if action_result.status == "pending_approval":
+                state["pending_approval_step"] = ordinal
+                return self._finish(
+                    definition,
+                    run,
+                    "pending_approval",
+                    ordinal,
+                    state,
+                    actor=actor,
+                )
+            if action_result.status != "success":
+                return self._finish(definition, run, "failed", ordinal, state, actor=actor)
+            state["pending_approval_step"] = None
+            run = self.store.update_agent_run(run.id or 0, "queued", ordinal + 1, state)
+        return self._finish(
+            definition,
+            run,
+            "completed",
+            len(steps),
+            state,
+            actor=actor,
+        )
+
+    def _select_result_aware_step(
+        self,
+        definition: AgentDefinition,
+        entity_id: str,
+        steps: list[dict[str, object]],
+    ) -> tuple[dict[str, object] | None, str]:
+        completed = [
+            tool_id
+            for step in steps
+            if isinstance((tool_id := step.get("tool_id")), str)
+        ]
+        candidates = [
+            step
+            for step in definition.steps
+            if isinstance(step.get("tool_id"), str)
+            and step["tool_id"] in definition.enabled_tools
+            and step["tool_id"] not in completed
+        ]
+        if not candidates:
+            return None, "deterministic"
+        tools_by_id = {tool.id: tool for tool in self.list_tools()}
+        catalog = [
+            {
+                "id": str(step["tool_id"]),
+                "name": tools_by_id[str(step["tool_id"])].name,
+                "description": tools_by_id[str(step["tool_id"])].description,
+            }
+            for step in candidates
+            if str(step["tool_id"]) in tools_by_id
+        ]
+        selected = self._model_next_tool_id(
+            definition,
+            entity_id,
+            catalog,
+            steps[-1] if steps else None,
+            completed,
+        )
+        if selected:
+            for step in candidates:
+                if step.get("tool_id") == selected:
+                    return step, "model"
+        return candidates[0], "deterministic-fallback" if selected is None else "deterministic-rejected-model"
+
+    def _model_next_tool_id(
+        self,
+        definition: AgentDefinition,
+        entity_id: str,
+        tools: list[dict[str, str]],
+        previous_step: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str | None:
+        if not self.smart_actions.provider_configured or not tools:
+            return None
+        selector = getattr(self.smart_actions.provider, "select_next_tool", None)
+        if not callable(selector):
+            return None
+        ticket = self.store.get_ticket(entity_id, client_id=definition.client_id)
+        if ticket is None:
+            return None
+        try:
+            sources = retrieve_sources(
+                ticket,
+                self.settings.allowed_doc_root,
+                self.store,
+                self.settings,
+                client_id=ticket.client_id,
+            )
+            selected = selector(
+                definition.description,
+                ticket,
+                sources,
+                tools,
+                _bounded_step_result(previous_step),
+                completed_tool_ids,
+            )
+        except Exception:
+            return None
+        return selected if isinstance(selected, str) else None
 
     def _build_context(self, definition: AgentDefinition, entity_id: str) -> dict[str, object]:
         if not definition.context_sources:
@@ -1177,6 +1390,23 @@ def _final_result_from_step(step: dict[str, object]) -> dict[str, object]:
             {
                 "status": step.get("status", "failed"),
                 "tool_id": step.get("tool_id", "unknown"),
+                "output": step.get("output", {}),
+                "evidence": step.get("evidence", []),
+                "error_detail": step.get("error_detail", ""),
+            }
+        ),
+    )
+
+
+def _bounded_step_result(step: dict[str, object] | None) -> dict[str, object]:
+    if not step:
+        return {}
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "tool_id": step.get("tool_id", ""),
+                "status": step.get("status", ""),
                 "output": step.get("output", {}),
                 "evidence": step.get("evidence", []),
                 "error_detail": step.get("error_detail", ""),

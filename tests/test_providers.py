@@ -756,3 +756,63 @@ def test_openai_provider_surfaces_connection_error(tmp_path: Path) -> None:
 
     with pytest.raises(ProviderUnavailableError):
         provider.summarize_ticket(_ticket(), [])
+
+
+def test_openai_provider_selects_one_continuation_tool_and_redacts_result(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"tool_id":"ticket-summary"}'}}]},
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+    selected = provider.select_next_tool(
+        "Inspect the result and continue safely.",
+        _ticket(),
+        _sources(),
+        [{"id": "ticket-summary", "name": "Ticket summary", "description": "Summarize"}],
+        {"status": "success", "output": {"password": "secret"}},
+        ["ticket-triage"],
+    )
+
+    assert selected == "ticket-summary"
+    body = requests[0].content.decode()
+    assert "secret" not in body
+    assert "[REDACTED]" in body
+
+
+def test_remote_anthropic_provider_selects_continuation_tool(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages"
+        assert request.headers["x-api-key"] == "remote-secret"
+        return httpx.Response(
+            200,
+            json={"content": [{"type": "text", "text": '{"tool_id":"ticket-summary"}'}]},
+        )
+
+    provider = RemoteModelProvider(
+        RemoteModelProfile(
+            provider="anthropic",
+            base_url="https://api.anthropic.com",
+            model="claude-test",
+            api_key="remote-secret",
+            timeout_seconds=5,
+            cloud_fallback_enabled=True,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.select_next_tool(
+        "Continue",
+        _ticket(),
+        _sources(),
+        [{"id": "ticket-summary", "name": "Ticket summary", "description": "Summarize"}],
+        {"status": "success"},
+        [],
+    ) == "ticket-summary"

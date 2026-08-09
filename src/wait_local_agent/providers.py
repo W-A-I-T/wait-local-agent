@@ -44,6 +44,17 @@ class PlanningModelProvider(Protocol):
     ) -> list[str]:
         """Select only catalog tool IDs for a bounded plan."""
 
+    def select_next_tool(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str:
+        """Select one remaining catalog tool after inspecting a bounded result."""
+
 
 class ProviderUnavailableError(RuntimeError):
     """Raised when a configured model provider cannot produce a completion."""
@@ -99,6 +110,17 @@ class DeterministicLocalProvider:
     ) -> list[str]:
         raise ProviderUnavailableError("deterministic provider does not select plan tools")
 
+    def select_next_tool(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str:
+        raise ProviderUnavailableError("deterministic provider does not select continuation tools")
+
 
 @dataclass(frozen=True)
 class ModelCompletion:
@@ -145,6 +167,29 @@ class OpenAICompatibleLocalProvider:
             raise ProviderUnavailableError("openai-compatible provider returned no valid tool selection")
         self._cached_plan_request_key = request_key
         self._cached_plan = tuple(selected)
+        return selected
+
+    def select_next_tool(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str:
+        selected = self._request_next_tool_selection(
+            instruction,
+            ticket,
+            sources,
+            tools,
+            previous_result,
+            completed_tool_ids,
+        )
+        if selected is None:
+            raise ProviderUnavailableError(
+                "openai-compatible provider returned no valid continuation tool"
+            )
         return selected
 
     def _request_completion_or_raise(
@@ -237,6 +282,47 @@ class OpenAICompatibleLocalProvider:
             return None
         return _tool_selection_from_response(response, max_tools=max_tools)
 
+    def _request_next_tool_selection(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str | None:
+        url = f"{self.profile.base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": self.profile.model,
+            "messages": [
+                {"role": "system", "content": _continuation_system_prompt()},
+                {
+                    "role": "user",
+                    "content": _continuation_prompt(
+                        instruction,
+                        ticket,
+                        sources,
+                        tools,
+                        previous_result,
+                        completed_tool_ids,
+                        redact=True,
+                    ),
+                },
+            ],
+            "stream": False,
+        }
+        try:
+            with httpx.Client(
+                timeout=self.profile.timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = client.post(url, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            LOGGER.warning("local model continuation request failed: %s", exc)
+            return None
+        return _next_tool_selection_from_response(response)
+
 
 class RemoteModelProvider:
     """Explicit remote adapter for documented provider contracts.
@@ -287,6 +373,29 @@ class RemoteModelProvider:
             )
         self._cached_plan_request_key = request_key
         self._cached_plan = tuple(selected)
+        return selected
+
+    def select_next_tool(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str:
+        selected = self._request_next_tool_selection(
+            instruction,
+            ticket,
+            sources,
+            tools,
+            previous_result,
+            completed_tool_ids,
+        )
+        if selected is None:
+            raise ProviderUnavailableError(
+                f"{self.profile.provider} provider returned no valid continuation tool"
+            )
         return selected
 
     def _request_completion_or_raise(
@@ -421,6 +530,68 @@ class RemoteModelProvider:
             anthropic=is_anthropic,
         )
 
+    def _request_next_tool_selection(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str | None:
+        is_anthropic = self.profile.provider == "anthropic"
+        continuation = _continuation_prompt(
+            instruction,
+            ticket,
+            sources,
+            tools,
+            previous_result,
+            completed_tool_ids,
+            redact=True,
+        )
+        if is_anthropic:
+            url = _endpoint(self.profile.base_url, "v1/messages")
+            headers = {
+                "content-type": "application/json",
+                "x-api-key": self.profile.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+            payload = {
+                "model": self.profile.model,
+                "max_tokens": 128,
+                "system": _continuation_system_prompt(),
+                "messages": [{"role": "user", "content": continuation}],
+            }
+        else:
+            url = _endpoint(self.profile.base_url, "chat/completions")
+            headers = {
+                "content-type": "application/json",
+                "authorization": f"Bearer {self.profile.api_key}",
+            }
+            payload = {
+                "model": self.profile.model,
+                "messages": [
+                    {"role": "system", "content": _continuation_system_prompt()},
+                    {"role": "user", "content": continuation},
+                ],
+                "stream": False,
+            }
+        try:
+            with httpx.Client(
+                timeout=self.profile.timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            LOGGER.warning(
+                "remote model continuation request failed: provider=%s error=%s",
+                self.profile.provider,
+                exc,
+            )
+            return None
+        return _next_tool_selection_from_response(response, anthropic=is_anthropic)
+
 
 class FallbackModelProvider:
     """Use a configured remote provider only after local inference fails."""
@@ -464,7 +635,43 @@ class FallbackModelProvider:
                 instruction, ticket, sources, tools, max_tools=max_tools
             )
 
-
+    def select_next_tool(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        sources: list[SourceReference],
+        tools: list[dict[str, str]],
+        previous_result: dict[str, object] | None,
+        completed_tool_ids: list[str],
+    ) -> str:
+        primary_selector = getattr(self.primary, "select_next_tool", None)
+        if not callable(primary_selector):
+            return self.fallback.select_next_tool(
+                instruction,
+                ticket,
+                sources,
+                tools,
+                previous_result,
+                completed_tool_ids,
+            )
+        try:
+            return primary_selector(
+                instruction,
+                ticket,
+                sources,
+                tools,
+                previous_result,
+                completed_tool_ids,
+            )
+        except ProviderUnavailableError:
+            return self.fallback.select_next_tool(
+                instruction,
+                ticket,
+                sources,
+                tools,
+                previous_result,
+                completed_tool_ids,
+            )
 def _request_key(ticket: Ticket, sources: list[SourceReference]) -> tuple[str, ...]:
     return (
         ticket.id,
@@ -504,6 +711,50 @@ def _planning_system_prompt() -> str:
         "Do not explain, invent tools, claim execution, or return hidden reasoning. "
         'Return only JSON in the form {"tool_ids":["known-tool-id"]}. '
         "Return at most the requested number of IDs."
+    )
+
+
+def _continuation_system_prompt() -> str:
+    return (
+        "You assist a bounded MSP workflow executor. Inspect the prior tool result and "
+        "select exactly one tool ID from the remaining approved catalog. Do not explain, "
+        "invent tools, claim execution, or return hidden reasoning. Return only JSON in "
+        'the form {"tool_id":"known-tool-id"}.'
+    )
+
+
+def _continuation_prompt(
+    instruction: str,
+    ticket: Ticket,
+    sources: list[SourceReference],
+    tools: list[dict[str, str]],
+    previous_result: dict[str, object] | None,
+    completed_tool_ids: list[str],
+    *,
+    redact: bool = False,
+) -> str:
+    tool_lines = "\n".join(
+        f"- {tool.get('id', '')}: {_context_value(tool.get('name', ''), limit=120, redact=redact)} — "
+        f"{_context_value(tool.get('description', ''), limit=240, redact=redact)}"
+        for tool in tools[:32]
+    ) or "No remaining tools."
+    result_text = json.dumps(previous_result or {}, sort_keys=True, default=str)
+    result_text = _context_value(result_text, limit=1_500, redact=redact)
+    source_lines = "\n".join(
+        f"- {_context_value(source.title, limit=160, redact=redact)}: "
+        f"{_context_value(source.excerpt, limit=_REMOTE_SOURCE_LIMIT, redact=redact)}"
+        for source in sources[:3]
+    ) or "No local sources found."
+    client = "[CLIENT]" if redact else _context_value(ticket.client, limit=200)
+    return (
+        f"Instruction: {_context_value(instruction, limit=2_000, redact=redact)}\n"
+        f"Ticket client: {client}\n"
+        f"Ticket subject: {_context_value(ticket.subject, limit=500, redact=redact)}\n"
+        f"Previous result: {result_text}\n"
+        f"Completed tool IDs: {', '.join(completed_tool_ids[:8]) or 'none'}\n"
+        f"Local source excerpts:\n{source_lines}\n\n"
+        f"Remaining approved tool catalog:\n{tool_lines}\n"
+        'Return JSON like {"tool_id":"known-tool-id"}.'
     )
 
 
@@ -578,6 +829,11 @@ def _context_value(value: str, *, limit: int = _REMOTE_CONTEXT_LIMIT, redact: bo
         r"\1[REDACTED]",
         redacted,
     )
+    redacted = re.sub(
+        r'(?i)(["\']?(?:api[_ -]?key|token|password|secret)["\']?\s*:\s*["\']?)[^,"\' }]+',
+        r"\1[REDACTED]",
+        redacted,
+    )
     redacted = re.sub(r"\b(?:\+?\d[\d ()-]{7,}\d)\b", "[REDACTED_PHONE]", redacted)
     return redacted
 
@@ -644,6 +900,29 @@ def _tool_selection_from_response(
         if len(selected) >= max_tools:
             break
     return selected or None
+
+
+def _next_tool_selection_from_response(
+    response: httpx.Response,
+    *,
+    anthropic: bool = False,
+) -> str | None:
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        LOGGER.warning("model continuation response was not valid JSON")
+        return None
+    content = _anthropic_message_content(payload) if anthropic else _message_content(payload)
+    if not content:
+        return None
+    try:
+        selection = json.loads(_strip_json_fence(content))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(selection, dict) or not isinstance(selection.get("tool_id"), str):
+        return None
+    tool_id = selection["tool_id"].strip()
+    return tool_id or None
 
 
 def _completion_from_anthropic_response(response: httpx.Response) -> ModelCompletion | None:

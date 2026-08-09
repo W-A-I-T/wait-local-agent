@@ -214,6 +214,66 @@ def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> Non
     assert len(service.store.list_execution_steps(executions[0].id or 0)) == 2
 
 
+def test_result_aware_agent_uses_model_selection_and_never_repeats_tools(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store, client_id="acme")
+
+    class ResultAwareProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "summary"
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "response"
+
+        def select_next_tool(
+            self,
+            instruction: str,
+            ticket: Ticket,
+            sources: list[SourceReference],
+            tools: list[dict[str, str]],
+            previous_result: dict[str, object] | None,
+            completed_tool_ids: list[str],
+        ) -> str:
+            return "ticket-summary" if "ticket-summary" not in completed_tool_ids else "ticket-triage"
+
+    service = AgentService(
+        store,
+        settings,
+        SmartActionService(
+            store,
+            settings,
+            provider=ResultAwareProvider(),
+            provider_configured=True,
+        ),
+    )
+    definition = service.create(
+        name="Result-aware triage",
+        description="Inspect each result before selecting the next approved tool.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage", "ticket-summary"],
+        steps=[
+            {"tool_id": "ticket-triage", "payload": {}},
+            {"tool_id": "ticket-summary", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        result_aware=True,
+    )
+
+    result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "completed"
+    assert [step["tool_id"] for step in result.steps] == ["ticket-summary", "ticket-triage"]
+    assert [step["continuation"]["selection_mode"] for step in result.steps] == ["model", "model"]
+    assert definition.result_aware is True
+    persisted = service.store.get_agent_definition(definition.id, client_id="acme")
+    assert persisted is not None and persisted.result_aware is True
+
+
 def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> None:
     service = _service(settings)
     service.store.upsert_knowledge_document(
