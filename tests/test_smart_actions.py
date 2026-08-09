@@ -3563,6 +3563,26 @@ def test_m365_security_actions_cover_exception_and_non_success_paths(settings, t
         },
     ).status == "failed"
 
+    class UnreadyProvider:
+        def write_health(self):
+            return SimpleNamespace(status="blocked", message="writes disabled")
+
+        def reset_user_password(self, **kwargs):
+            raise AssertionError("password reset must not run when writes are blocked")
+
+        def delete_authentication_method(self, **kwargs):
+            raise AssertionError("authentication removal must not run when writes are blocked")
+
+    assert M365PasswordResetAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=UnreadyProvider(),
+        ),
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+    ).status == "failed"
+
     active_settings = replace(settings, vault_path=tmp_path / "exception-vault")
     SecretVault.initialize(active_settings.vault_path).set(
         "WAIT_M365_TEMP_USER", "Temporary-Password-123!"
@@ -3591,6 +3611,31 @@ def test_m365_security_actions_cover_exception_and_non_success_paths(settings, t
     )
     assert password_result.status == "failed"
 
+    missing_vault_result = M365PasswordResetAction().run(
+        ActionContext(
+            store=Store(replace(active_settings, vault_path=tmp_path / "missing-vault").data_path),
+            settings=replace(active_settings, vault_path=tmp_path / "missing-vault"),
+            actor="technician",
+            m365_client=PasswordFailureProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            "_approval_completed": True,
+        },
+    )
+    assert missing_vault_result.status == "failed"
+
+    assert M365AuthenticationMethodDeleteAction().run(
+        invalid_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "unexpected": True,
+        },
+    ).status == "failed"
+
     class AuthenticationFailureProvider:
         def write_health(self):
             return SimpleNamespace(status="ready", message="ready")
@@ -3614,3 +3659,26 @@ def test_m365_security_actions_cover_exception_and_non_success_paths(settings, t
     )
     assert authentication_result.status == "failed"
     assert authentication_result.error_detail == "provider rejected"
+
+    class AuthenticationExceptionProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def delete_authentication_method(self, **kwargs):
+            raise RuntimeError("authentication removal failed")
+
+    exception_result = M365AuthenticationMethodDeleteAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=AuthenticationExceptionProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "_approval_completed": True,
+        },
+    )
+    assert exception_result.status == "failed"

@@ -218,6 +218,15 @@ def test_m365_graph_password_and_authentication_validation_fail_closed(settings)
     )
     assert blocked.status == "blocked"
 
+    blocked_method = M365GraphClient(
+        _configured(settings, allow_http_probing=False)
+    ).delete_authentication_method(
+        user_identity="user@example.test",
+        method_type="fido2",
+        method_id="method-1",
+    )
+    assert blocked_method.status == "blocked"
+
     active_settings = replace(_configured(settings), allow_write_actions=True)
     invalid_password = M365GraphClient(
         active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
@@ -238,6 +247,16 @@ def test_m365_graph_password_and_authentication_validation_fail_closed(settings)
         force_change_password_next_sign_in_with_mfa=True,
     )
     assert invalid_flags.status == "failed"
+
+    invalid_flag_type = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ).reset_user_password(
+        user_identity="user@example.test",
+        temporary_password="Temporary-Password-123!",
+        force_change_password_next_sign_in=cast(Any, "yes"),
+        force_change_password_next_sign_in_with_mfa=False,
+    )
+    assert invalid_flag_type.status == "failed"
 
     invalid_method = M365GraphClient(
         active_settings, transport=httpx.MockTransport(lambda request: httpx.Response(204))
