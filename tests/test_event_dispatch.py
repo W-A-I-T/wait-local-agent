@@ -556,6 +556,6 @@ def test_next_retry_at_validates_and_exponentially_backoffs() -> None:
     assert first < second
 
     with pytest.raises(ValueError, match="integer"):
-        _next_retry_at(0, retry_delay_seconds=True)  # type: ignore[arg-type]
+        _next_retry_at(0, retry_delay_seconds=True)
     with pytest.raises(ValueError, match="between 1"):
         _next_retry_at(0, retry_delay_seconds=0)
