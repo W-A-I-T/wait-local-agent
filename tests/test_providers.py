@@ -16,6 +16,7 @@ from wait_local_agent.providers import (
     ProviderUnavailableError,
     RemoteModelProfile,
     RemoteModelProvider,
+    _response_usage_metadata,
     provider_from_settings,
     provider_metadata,
 )
@@ -527,6 +528,99 @@ def test_fallback_provider_draft_and_safe_metadata(tmp_path: Path) -> None:
     assert fallback_metadata["fallback_provider"] == "deepseek"
     assert "remote-secret" not in str(fallback_metadata)
     assert provider_metadata(settings, remote) == {"provider": "deepseek", "model": "documented-model"}
+
+
+def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path), transport=httpx.MockTransport(handler)
+    )
+    provider.summarize_ticket(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), provider)
+    assert metadata["usage_status"] == "reported"
+    assert metadata["input_tokens"] == 11
+    assert metadata["output_tokens"] == 7
+    assert metadata["total_tokens"] == 18
+    assert metadata["cost_status"] == "not_configured"
+    assert metadata["cost_usd"] is None
+
+
+def test_fallback_metadata_uses_primary_local_usage(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    local = OpenAICompatibleLocalProvider(
+        _profile(tmp_path), transport=httpx.MockTransport(handler)
+    )
+    fallback = FallbackModelProvider(local, RemoteModelProvider(_remote_profile()))
+    local.summarize_ticket(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), fallback)
+    assert metadata["input_tokens"] == 3
+    assert metadata["output_tokens"] == 2
+    assert metadata["total_tokens"] == 5
+
+
+def test_fallback_metadata_uses_remote_usage_after_local_failure(tmp_path: Path) -> None:
+    def local_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("local provider unavailable", request=request)
+
+    def remote_success(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    fallback = FallbackModelProvider(
+        OpenAICompatibleLocalProvider(
+            _profile(tmp_path), transport=httpx.MockTransport(local_failure)
+        ),
+        RemoteModelProvider(
+            _remote_profile(), transport=httpx.MockTransport(remote_success)
+        ),
+    )
+    fallback.draft_response(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), fallback)
+    assert metadata["usage_status"] == "reported"
+    assert metadata["total_tokens"] == 9
+
+
+def test_usage_metadata_handles_partial_and_explicit_totals() -> None:
+    explicit = _response_usage_metadata(
+        httpx.Response(200, json={"usage": {"total_tokens": 4}})
+    )
+    assert explicit["usage_status"] == "reported"
+    assert explicit["total_tokens"] == 4
+    partial = _response_usage_metadata(
+        httpx.Response(200, json={"usage": {"prompt_tokens": 2}})
+    )
+    assert partial["usage_status"] == "reported"
+    assert partial["input_tokens"] == 2
 
 
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:
