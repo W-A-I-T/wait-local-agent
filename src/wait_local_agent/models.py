@@ -19,6 +19,7 @@ ActionKind = Literal[
     "ticket.sentiment",
     "ticket.escalation",
     "ticket.similar",
+    "ticket.security_alert",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]

@@ -235,6 +235,26 @@ _NEGATIVE_SENTIMENT_TERMS = frozenset(
         "cannot",
     }
 )
+_SECURITY_ALERT_TERMS = frozenset(
+    {
+        "account takeover",
+        "breach",
+        "credential theft",
+        "data exfiltration",
+        "edr",
+        "impossible travel",
+        "malware",
+        "mfa fatigue",
+        "phishing",
+        "ransomware",
+        "security alert",
+        "suspicious login",
+        "unauthorized access",
+    }
+)
+_CRITICAL_SECURITY_TERMS = frozenset(
+    {"account takeover", "breach", "credential theft", "data exfiltration", "malware", "ransomware"}
+)
 
 
 @dataclass(frozen=True)
@@ -3890,6 +3910,56 @@ class TicketEscalationAction:
         )
 
 
+class SecurityAlertAssessmentAction:
+    manifest = SmartActionManifest(
+        action_id="security-alert-assessment",
+        title="Assess security alert",
+        description=(
+            "Detect bounded security-alert indicators in a ticket and recommend "
+            "human security handling without changing the ticket or running a tool."
+        ),
+        kind="deterministic",
+        input_schema={"type": "object", "required": ["ticket_id"]},
+        output_schema={
+            "ticket_id": "string",
+            "security_signal": "boolean",
+            "severity": "string",
+            "indicators": "array",
+            "recommendation": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        text = f"{ticket.subject} {ticket.body}".casefold()
+        indicators = sorted(term for term in _SECURITY_ALERT_TERMS if term in text)
+        critical = any(term in _CRITICAL_SECURITY_TERMS for term in indicators)
+        severity = "critical" if critical else "high" if indicators else "none"
+        recommendation = (
+            "Pause automated side effects and route to a security-qualified technician."
+            if indicators
+            else "No bounded security-alert indicator was found in the supplied ticket text."
+        )
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "security_signal": bool(indicators),
+                "severity": severity,
+                "indicators": indicators,
+                "recommendation": recommendation,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["subject", "body", "priority", "status"])],
+        )
+
+
 class FindSimilarTicketsAction:
     manifest = SmartActionManifest(
         action_id="find-similar-tickets",
@@ -4166,6 +4236,7 @@ def _build_default_registry() -> SmartActionRegistry:
         StaleTicketSweepAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
+        SecurityAlertAssessmentAction(),
         CollectorPreviewAction(),
         FindSimilarTicketsAction(),
         DispatchSuggestionAction(),

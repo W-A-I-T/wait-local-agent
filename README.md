@@ -112,7 +112,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   role-scoped metric cards, workflow activity, outcome details, and server-side
   date/client filters.
 - The workflow catalog includes executable ticket-quality, sentiment,
-  escalation, and similar-ticket review templates backed by the existing
+  escalation, similar-ticket, and security-alert review templates backed by the existing
   smart-action contract. These are read-only analyses and do not mutate PSA
   records.
 - A provenance-bearing local template gallery can copy reviewed core workflows
