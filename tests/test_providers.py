@@ -210,6 +210,54 @@ def test_remote_provider_plan_redacts_ticket_and_source_context() -> None:
     assert "[CLIENT]" in prompt
 
 
+def test_anthropic_provider_selects_tools_with_messages_contract() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"content": [{"type": "text", "text": '{"tool_ids":["ticket-triage"]}'}]},
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile("anthropic"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.select_tools(
+        "Triage this ticket.",
+        _ticket(),
+        [],
+        [{"id": "ticket-triage", "name": "Ticket triage", "description": "Classify."}],
+        max_tools=1,
+    ) == ["ticket-triage"]
+    assert str(requests[0].url) == "https://provider.example/v1/messages"
+    assert requests[0].headers["x-api-key"] == "remote-secret"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="not response json"),
+        httpx.Response(200, json={"choices": []}),
+        httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]}),
+        httpx.Response(200, json={"choices": [{"message": {"content": '{"tool_ids":{}}'}}]}),
+        httpx.Response(200, json={"choices": [{"message": {"content": '{"tool_ids":[1]}'}}]}),
+    ],
+)
+def test_openai_provider_plan_rejects_invalid_response_shapes(
+    tmp_path: Path, response: httpx.Response
+) -> None:
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(lambda request, response=response: response),
+    )
+
+    with pytest.raises(ProviderUnavailableError, match="tool selection"):
+        provider.select_tools("Investigate", _ticket(), [], [], max_tools=2)
+
+
 def test_openai_provider_rejects_malformed_tool_selection(tmp_path: Path) -> None:
     provider = OpenAICompatibleLocalProvider(
         _profile(tmp_path),
