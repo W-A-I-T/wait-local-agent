@@ -143,6 +143,10 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
             )
         )
     )
+    unscoped_branding = unscoped.get(
+        "/end-user/config",
+        headers=_auth("unscoped-token"),
+    )
     unscoped_response = unscoped.post(
         "/end-user/tickets",
         headers=_auth("unscoped-token"),
@@ -177,6 +181,7 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
     assert malformed_message_create.status_code == 404
     assert disabled_response.status_code == 403
     assert disabled_branding.status_code == 403
+    assert unscoped_branding.status_code == 403
     assert unscoped_response.status_code == 403
     assert unscoped_status.status_code == 404
     assert unscoped_escalation.status_code == 403
