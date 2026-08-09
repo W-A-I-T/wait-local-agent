@@ -50,7 +50,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter and read-only N-central adapter block
   execution, while reviewed NinjaOne and Datto adapters expose their bounded
   write paths. This is alongside tenant-scoped HaloPSA ticket and Hudu
-  documentation read tools for Hudu, IT Glue, Confluence, and SharePoint, and
+  documentation read tools for Hudu, IT Glue (including bounded document-content
+  search), Confluence, and SharePoint, and
   ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
@@ -484,6 +485,10 @@ wait-local-agent connectors itglue-documents <organization-id>
 wait-local-agent connectors itglue-document <document-id>
 wait-local-agent connectors itglue-folders <organization-id>
 ```
+
+The Agents catalog also exposes the read-only `itglue-documentation-search`
+tool for bounded organization-scoped document-name and text/step-content
+search. It inspects at most 50 listed candidates and never writes to IT Glue.
 
 The API mirrors these commands under `/connectors/itglue/*`. The API key stays
 in the settings/vault boundary, requests are read-only and bounded, and live

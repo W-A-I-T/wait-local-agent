@@ -46,13 +46,18 @@ unverifiable product claim.
 | Technician chat and persisted sessions | `/technician/chat*`, `/technician-chat`, CLI | Dedicated technician screen supports session create/select/send/close; the CLI and API remain available | Technician role, tenant/principal scope, bounded parser and history; the screen reuses the same audited smart-action runtime |
 | End-user local ticket support | `/end-user/tickets*`, `/end-user` | Dedicated end-user surface supports token save, ticket creation, status lookup, requester-only follow-up messages, and technician escalation; it is separate from the operator shell | Separate end-user token, fixed requester and tenant scope, isolated end-user message store, end-user-safe responses, and no technician/admin tools |
 | Ticket lifecycle history and historical resolution metrics | `/tickets/{ticket_id}/status-history`, `/analytics/summary`, CLI analytics summary | Analytics metric on dashboard; history remains an API/CLI detail surface | Uses only explicit local/imported transitions; existing snapshots are not treated as historical evidence |
-| Syncro, ServiceNow, Autotask, IT Glue, Confluence, SharePoint, M365, and RMM provider detail routes | API, CLI, Agents tool catalog | No provider-specific dashboard screen | Read-only or approval-gated provider contracts; ServiceNow work-note/state and Autotask ticket-note/status/resolution tools are approval-gated; disabled live calls remain reported as blocked |
+| Syncro, ServiceNow, Autotask, IT Glue, Confluence, SharePoint, M365, and RMM provider detail routes | API, CLI, Agents tool catalog | No provider-specific dashboard screen; IT Glue content search is selectable in `/agents` | Read-only or approval-gated provider contracts; IT Glue search is tenant-scoped, capped at 50 listed candidates, redacted, and blocked when live probing is disabled; ServiceNow work-note/state and Autotask ticket-note/status/resolution tools are approval-gated; disabled live calls remain reported as blocked |
 | Founder Pack implementation | Public `/founder/*` contract | Founder screen reports pack boundary | Stable `501`/unconfigured responses; no fake scan result |
 
 ## Validation record
 
 - UI tests: 19 files, 75 tests passed.
 - UI production build: passed.
+- Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
+  loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
+  search control was selectable and the bounded plan-preview control surfaced a
+  `400 ticket was not found in the requested scope` response for an empty local
+  ticket fixture rather than claiming success.
 - Ruff, mypy, Bandit, and public-surface audit: passed in the isolated project
   environment.
 - Browser: Agents create/run flow completed against the real local API; all

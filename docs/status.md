@@ -56,8 +56,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Hudu read-only connector configuration surface for tenant-scoped documentation
   lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common
-  guarded HTTP boundary, including bounded document-detail content retrieval;
-  write operations remain unavailable.
+  guarded HTTP boundary, including bounded document-name/text/step-content
+  search across up to 50 listed candidates and document-detail section
+  retrieval; write operations remain unavailable.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and drive-item metadata plus explicitly requested,
@@ -264,7 +265,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   lookup, script metadata, script preview, and approval-aware execution. The
   local adapter remains inventory-only and blocks execution until a reviewed
   vendor adapter is installed. Existing HaloPSA ticket reads and
-  Hudu article-content, IT Glue, Confluence page-content, and SharePoint documentation search, and
+  Hudu article-content, IT Glue document-content, Confluence page-content, and SharePoint documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients. ServiceNow work-note
   and state updates, and Autotask ticket notes/status/resolution updates, are exposed as approval-gated tools;
@@ -323,12 +324,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | --- | --- |
 | HaloPSA read + approval-gated write | Built |
 | Hudu read-only | Built, including bounded article content search |
-| IT Glue read-only | Built, including bounded document-detail content retrieval |
+| IT Glue read-only | Built, including bounded organization document-content search and document-detail section retrieval |
 | Confluence read-only | Built, including bounded page content search |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
-| IT Glue connector | Read-only core surface built |
+| IT Glue connector | Read-only core surface plus bounded content search built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
