@@ -595,6 +595,10 @@ reported as failures without fake success. The catalog also exposes admin-only
 `m365-mailbox-settings`, which accepts only the allowlisted time zone, locale,
 date-format, and time-format fields for one explicit user identity. Updates
 remain approval-gated and provider failures are reported without fake success.
+The shared catalog also exposes admin-only `m365-mail-message-move`, which
+accepts one explicit user, source folder, message, and destination folder ID.
+Message moves are previewed and approval-gated, and provider failures remain
+explicit failures.
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and

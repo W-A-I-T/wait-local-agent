@@ -2504,6 +2504,15 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
                 "settings": {"locale": "en-US"},
             },
         ),
+        (
+            "m365-mail-message-move",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+                "destination_folder_id": "archive-id",
+            },
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
