@@ -11,6 +11,7 @@ from wait_local_agent.event_dispatch import (
     EventDispatchError,
     _attempts_from_json,
     _json_list,
+    _next_retry_at,
 )
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -547,3 +548,14 @@ def test_event_dispatch_persists_bounded_retry_policy(settings) -> None:
             client_id="acme",
             retry_delay_seconds=3601,
         )
+
+
+def test_next_retry_at_validates_and_exponentially_backoffs() -> None:
+    first = _next_retry_at(0, retry_delay_seconds=7)
+    second = _next_retry_at(1, retry_delay_seconds=7)
+    assert first < second
+
+    with pytest.raises(ValueError, match="integer"):
+        _next_retry_at(0, retry_delay_seconds=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="between 1"):
+        _next_retry_at(0, retry_delay_seconds=0)
