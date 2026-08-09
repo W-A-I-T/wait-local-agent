@@ -550,6 +550,26 @@ export type AgentDefinition = {
   approval_expiry_seconds?: number | null;
 };
 
+export type AgentPlan = {
+  instruction: string;
+  entity_id: string;
+  client_id: string | null;
+  status: "preview" | "blocked";
+  steps: Array<{
+    index: number;
+    tool_id: string;
+    name: string;
+    reason: string;
+    risk_level: string;
+    required_role: string;
+    approval_required: boolean;
+    access_mode: string;
+    payload: Record<string, unknown>;
+  }>;
+  context: Record<string, unknown>;
+  blocked_reason: string;
+};
+
 export type ProviderSettings = {
   local_model_provider: string;
   local_model_base_url: string;

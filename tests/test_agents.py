@@ -90,6 +90,37 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     assert tools["dispatch-suggestion"].approval_required is True
 
 
+def test_plan_preview_selects_existing_tools_without_executing(settings) -> None:
+    service = _service(settings)
+
+    result = service.plan(
+        "Triage this ticket, search the runbook, and suggest a resolution.",
+        entity_id="TCK-1001",
+        client_id="acme",
+    )
+
+    assert result.status == "preview"
+    assert [step["tool_id"] for step in result.steps] == [
+        "knowledge-search",
+        "ticket-triage",
+        "suggest-resolution",
+    ]
+    assert result.context["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert service.store.list_agent_runs(client_id="acme") == []
+    assert all("approval_required" in step for step in result.steps)
+
+
+def test_plan_preview_blocks_unknown_requests_and_enforces_scope(settings) -> None:
+    service = _service(settings)
+
+    blocked = service.plan("Please do something unrelated.", entity_id="TCK-1001", client_id="acme")
+
+    assert blocked.status == "blocked"
+    assert blocked.steps == []
+    with pytest.raises(AgentDefinitionError, match="not found in the requested scope"):
+        service.plan("summarize", entity_id="TCK-1001", client_id="other")
+
+
 def test_agent_executes_bounded_steps_and_records_grouped_trace(settings) -> None:
     service = _service(settings)
     definition = service.create(
@@ -1639,6 +1670,38 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
 
     cross_tenant = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1002", "client_id": "beta"})
     assert cross_tenant.status_code in {404, 403}
+
+
+def test_agent_plan_api_is_preview_only_and_tenant_scoped(settings) -> None:
+    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
+    store = Store(scoped.data_path)
+    _seed(store, client_id="acme")
+    client = TestClient(create_app(scoped))
+
+    response = client.post(
+        "/agents/plan",
+        json={
+            "instruction": "Triage this ticket and search the runbook",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "preview"
+    assert [step["tool_id"] for step in payload["steps"]] == [
+        "knowledge-search",
+        "ticket-triage",
+    ]
+    assert payload["context"]["ticket"]["id"] == "TCK-1001"
+    assert Store(scoped.data_path).list_agent_runs(client_id="acme") == []
+
+    cross_tenant = client.post(
+        "/agents/plan",
+        json={"instruction": "summarize", "entity_id": "TCK-1001", "client_id": "beta"},
+    )
+    assert cross_tenant.status_code == 400
 
 
 def test_agent_revision_restore_requires_tenant_for_authenticated_technicians(settings) -> None:

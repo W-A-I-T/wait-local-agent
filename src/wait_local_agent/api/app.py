@@ -369,6 +369,13 @@ class AgentRunStartRequest(BaseModel):
     client_id: str | None = None
 
 
+class AgentPlanRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=2_000)
+    entity_id: str = Field(min_length=1, max_length=100)
+    max_steps: int = Field(default=8, ge=1, le=8)
+    client_id: str | None = None
+
+
 class AgentBackfillCreateRequest(BaseModel):
     agent_id: str
     entity_ids: list[str] = Field(min_length=1, max_length=100)
@@ -705,6 +712,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tools")
     def tools(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(tool) for tool in agent_service.list_tools()]
+
+    @app.post("/agents/plan")
+    def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = agent_service.plan(
+                payload.instruction,
+                entity_id=payload.entity_id,
+                client_id=scoped_client_id,
+                max_steps=payload.max_steps,
+            )
+        except AgentDefinitionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(plan)
 
     @app.get("/agents")
     def agents(

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { AgentDefinition, AgentRunDetail, AgentTool } from "../api/types";
+import type { AgentDefinition, AgentPlan, AgentRunDetail, AgentTool } from "../api/types";
 
 const contextOptions = [
   ["ticket", "Ticket details"],
@@ -22,6 +22,9 @@ export function Agents() {
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [runDetails, setRunDetails] = useState<Record<string, AgentRunDetail>>({});
   const [message, setMessage] = useState("");
+  const [planInstruction, setPlanInstruction] = useState("");
+  const [planTicket, setPlanTicket] = useState("");
+  const [plan, setPlan] = useState<AgentPlan | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -126,6 +129,25 @@ export function Agents() {
     }
   }
 
+  async function previewPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!planInstruction.trim() || !planTicket.trim()) {
+      setMessage("Provide an instruction and ticket id before previewing a plan.");
+      return;
+    }
+    try {
+      const result = await apiFetch<AgentPlan>("/agents/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: planInstruction.trim(), entity_id: planTicket.trim() })
+      });
+      setPlan(result);
+      setMessage(result.status === "preview" ? "Plan preview ready for review." : result.blocked_reason);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to preview the plan.");
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -169,6 +191,23 @@ export function Agents() {
             {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}
           </article>;
         })}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading"><h2>Plan preview</h2><span>Review only</span></div>
+        <p className="screen-note">Describe a bounded ticket task. WAIT selects only existing tools and does not execute or publish this preview.</p>
+        <form className="draft-form" onSubmit={(event) => void previewPlan(event)}>
+          <div className="grid">
+            <label>Ticket<input value={planTicket} onChange={(event) => setPlanTicket(event.target.value)} placeholder="TCK-1001" /></label>
+            <label>Instruction<textarea rows={2} value={planInstruction} onChange={(event) => setPlanInstruction(event.target.value)} placeholder="Triage this ticket, search the runbook, and suggest a resolution." maxLength={2000} /></label>
+          </div>
+          <button type="submit" disabled={!canWrite}>Preview plan</button>
+        </form>
+        {plan ? <div className="agent-run-detail" aria-live="polite">
+          <strong>{plan.status === "preview" ? `${plan.steps.length} approved tool step(s) proposed` : "Plan blocked"}</strong>
+          {plan.steps.map((step) => <div key={`${step.index}-${step.tool_id}`}><span>{step.index + 1}. {step.name}</span><small>{step.reason} {step.approval_required ? "Approval required." : "Read-only or draft."}</small></div>)}
+          {plan.blocked_reason ? <p className="notice danger">{plan.blocked_reason}</p> : null}
+        </div> : null}
       </section>
     </div>
   );
