@@ -1027,7 +1027,11 @@ def test_openai_provider_retries_transient_failure_and_caches_recovery(
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(503, json={"error": "unavailable"})
+            return httpx.Response(
+                503,
+                headers={"Retry-After": "not-a-duration"},
+                json={"error": "unavailable"},
+            )
         return httpx.Response(
             200,
             json={

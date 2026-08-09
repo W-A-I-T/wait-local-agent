@@ -1343,7 +1343,8 @@ def _post_with_bounded_retry(
 ) -> tuple[httpx.Response, int]:
     """POST a model request with a small, auditable transient-failure budget."""
     retry_count = 0
-    for attempt in range(_MODEL_MAX_ATTEMPTS):
+    attempt = 0
+    while True:
         try:
             response = client.post(url, headers=headers, json=json)
         except httpx.RequestError as exc:
@@ -1353,6 +1354,7 @@ def _post_with_bounded_retry(
                     retry_count=retry_count,
                 ) from exc
             retry_count += 1
+            attempt += 1
             time.sleep(_model_retry_delay(retry_count))
             continue
         if response.status_code not in _MODEL_RETRYABLE_STATUS_CODES:
@@ -1360,8 +1362,8 @@ def _post_with_bounded_retry(
         if attempt + 1 >= _MODEL_MAX_ATTEMPTS:
             return response, retry_count
         retry_count += 1
+        attempt += 1
         time.sleep(_model_retry_delay(retry_count, response=response))
-    raise RuntimeError("model request retry loop ended unexpectedly")
 
 
 def _model_retry_delay(retry_count: int, *, response: httpx.Response | None = None) -> float:
