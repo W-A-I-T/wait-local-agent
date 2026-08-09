@@ -146,6 +146,7 @@ def test_syncro_write_boundaries_cover_transport_and_payload_edges(settings) -> 
 
     active = replace(_settings(settings), allow_write_actions=True)
     assert SyncroClient(active).write_health().status == "ready"
+    assert SyncroClient(replace(active, allow_http_probing=False)).write_health().status == "blocked"
     request = SyncroWriteRequest("42", "add_note", {"subject": "Internal", "body": "Reviewed"})
     for blocked_settings, expected in (
         (replace(active, allow_http_probing=False), "WAIT_ALLOW_HTTP_PROBING"),
@@ -206,6 +207,8 @@ def test_syncro_write_boundaries_cover_transport_and_payload_edges(settings) -> 
         else:
             raise AssertionError("invalid Syncro comment edge was accepted")
     assert _remote_id([{"nested": {"comment_id": 7}}]) == "7"
+    assert SyncroClient(active).list_customers(business_name="x\n").result.status == "failed"
+    assert _remote_id({"nested": [{"nothing": 1}]}) == ""
 
 
 def test_syncro_reads_report_missing_credentials(settings) -> None:
