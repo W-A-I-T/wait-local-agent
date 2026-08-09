@@ -641,8 +641,11 @@ changes are exposed through `POST /connectors/m365/users/license-drafts` or
 `draft-m365-license-change`; only explicit add/remove operations using immutable
 user IDs and SKU GUIDs are supported. Approved session revocation is exposed
 through `POST /connectors/m365/users/session-revocation-drafts` or
-`draft-m365-session-revocation`; broader message actions and other Intune
-mutations remain separate future actions.
+`draft-m365-session-revocation`. The bounded message move, read-state, and
+delete actions plus Intune managed-device sync, reboot, retirement, and
+remote-lock actions are also implemented through dedicated approval APIs and
+the shared smart-action catalog. Broader message content, send, wipe, and
+other Graph resources remain intentionally unavailable.
 Managed-device reads return
 selected inventory/compliance context only; serial numbers, IMEI values,
 remote-assistance URLs, and action results are not requested. Group reads

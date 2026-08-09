@@ -122,9 +122,11 @@ or automation stays here forever. Existing optional integration packs and cloud
 features may remain separately packaged, but parity functionality implemented in
 this public repository is not hidden behind a paid pack.
 
-### Layer B — WAIT MSP Pack ($99/month per appliance, paid proprietary)
+### Layer B — WAIT MSP Pack (historical commercial packaging plan)
 
-Built in private repo `W-A-I-T/wait-local-agent-packs`. Installed as a signed tarball via `wait packs install msp --license <key>`.
+The following list is retained from the original commercial packaging plan. It
+is not a current price, availability, or absence-of-capability claim. Current
+public-core coverage is tracked in `docs/status.md` and the parity matrix.
 
 Includes:
 - IT Glue connector (read-only articles, configurations, assets, organizations)
@@ -141,9 +143,10 @@ Includes:
 - White-label branding config (`WAIT_PRODUCT_NAME`, logo, color scheme)
 - Premium MSP workflow templates (15+ beyond the 9 in open core)
 
-### Layer C — WAIT Founder Pack ($49/month per workspace, paid proprietary)
+### Layer C — WAIT Founder Pack (historical commercial packaging plan)
 
-Built in private repo `W-A-I-T/wait-local-agent-packs`. Installed as signed tarball.
+The following list is retained from the original commercial packaging plan and
+is not a current price or availability claim.
 
 Includes:
 - **Project workspace scanner** — reads file tree, manifests, CI presence, route patterns; never reads file contents
