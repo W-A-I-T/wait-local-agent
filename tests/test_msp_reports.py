@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -10,6 +11,9 @@ from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.reports.msp import (
+    _in_period,
+    _period,
+    _qbr_evidence_status,
     build_automation_opportunity_report,
     build_qbr_report,
 )
@@ -97,6 +101,44 @@ def test_qbr_and_automation_reports_use_local_evidence_and_label_estimates(setti
     assert qbr_metadata["evidence_status"] in {"partial", "completed"}
     assert opportunity_sections[0].findings[0]["action_id"] == "ticket-triage"
     assert opportunity_metadata["estimated_minutes_saved"]["estimate"] is True
+
+
+def test_msp_reports_fail_closed_for_empty_and_malformed_period_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_smart_action_run(
+        "ticket-triage",
+        "technician",
+        "failed",
+        "digest",
+        {"status": "failed"},
+        [],
+        client_id="acme",
+    )
+
+    _, qbr_metadata = build_qbr_report(
+        store,
+        {"ticket-triage": 4},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-08-31",
+    )
+    _, opportunity_metadata = build_automation_opportunity_report(
+        store,
+        {"ticket-triage": 4},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-08-31",
+    )
+
+    assert qbr_metadata["evidence_status"] == "no_evidence"
+    assert opportunity_metadata["evidence_status"] == "no_evidence"
+    assert not _in_period("", *_period("2026-08-01", "2026-08-31"))
+    assert not _in_period("not-a-date", *_period("2026-08-01", "2026-08-31"))
+    assert _qbr_evidence_status([], [object()], {"with_duration": 1}) == "completed"
+    with pytest.raises(ValueError, match="ISO dates"):
+        _period("not-a-date", "2026-08-31")
+    with pytest.raises(ValueError, match="on or after"):
+        _period("2026-08-31", "2026-08-01")
 
 
 def test_report_generation_api_is_client_scoped_and_audited(settings, tmp_path) -> None:
