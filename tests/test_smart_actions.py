@@ -1397,6 +1397,13 @@ def test_servicenow_incident_writes_are_approval_gated_and_validated(settings) -
     assert provider.calls[-1] == ServiceNowWriteRequest(
         "TCK-1001", "update_resolution", resolution_fields
     )
+    assert resolution.run(
+        replace(context, servicenow_client=provider),
+        {
+            "ticket_id": "TCK-1001",
+            "fields": {"close_code": "Solved", "close_notes": "\x00"},
+        },
+    ).status == "failed"
 
 
 def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> None:
