@@ -51,11 +51,24 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         id="inactive-ticket-follow-up",
         name="Inactive Ticket Follow-up",
         trigger="schedule.daily",
-        description="Find stale tickets and draft a safe client or internal follow-up.",
+        description=(
+            "Prepare an approval-gated follow-up for a stale ticket. The default is a "
+            "local ticket note; configured communication adapters may be selected explicitly."
+        ),
         action_type="ticket.follow_up",
         approval_required=True,
         risk_level="medium",
         preview_fields=("ticket_id", "message"),
+        tool_id="communication-send",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "body": "optional follow-up body; a deterministic local draft is used when omitted",
+            },
+        },
     ),
     WorkflowTemplate(
         id="p1-alert",
@@ -478,6 +491,8 @@ def _workflow_message(
     if tool_result is not None:
         if tool_result.status == "success":
             return f"Completed {template.name.lower()} for {ticket.id}."
+        if tool_result.status == "pending_approval":
+            return f"Prepared {template.name.lower()} for {ticket.id}; approval required before execution."
         detail = redact_text(tool_result.error_detail).strip()
         suffix = f": {detail}" if detail else "."
         return f"{template.name} for {ticket.id} {tool_result.status}{suffix}"
@@ -515,6 +530,14 @@ def _run_template_tool(
     if tool_executor is None:
         raise RuntimeError(f"workflow tool {template.tool_id} is not configured")
     payload = dict(input_payload)
+    if template.id == "inactive-ticket-follow-up":
+        if "channel" not in payload:
+            payload["channel"] = "ticket_note"
+        if "body" not in payload:
+            payload["body"] = (
+                f'Following up on inactive ticket "{ticket.subject}". '
+                "Please reply with an update or let us know if assistance is still needed."
+            )
     payload["ticket_id"] = ticket.id
     return tool_executor.invoke(
         template.tool_id,
