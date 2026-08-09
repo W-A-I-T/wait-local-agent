@@ -64,6 +64,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     tools = {tool.id: tool for tool in service.list_tools()}
 
     assert set(tools) == {
+        "autotask-ticket-add-note",
         "autotask-ticket-lookup",
         "ticket-triage",
         "ticket-summary",
@@ -2131,8 +2132,18 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     tools_response = client.get("/tools")
     assert tools_response.status_code == 200
     tool_ids = {tool["id"] for tool in tools_response.json()}
-    assert {"syncro-ticket-lookup", "servicenow-incident-lookup", "autotask-ticket-lookup"} <= tool_ids
-    assert tools_response.json()[0]["access_mode"] == "read"
+    assert {
+        "syncro-ticket-lookup",
+        "servicenow-incident-lookup",
+        "autotask-ticket-lookup",
+        "autotask-ticket-add-note",
+    } <= tool_ids
+    assert (
+        next(
+            tool for tool in tools_response.json() if tool["id"] == "autotask-ticket-lookup"
+        )["access_mode"]
+        == "read"
+    )
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
     run = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})

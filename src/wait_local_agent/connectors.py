@@ -66,6 +66,10 @@ SERVICENOW_ACTION_TYPES = {
     "update_state",
 }
 
+AUTOTASK_ACTION_TYPES = {
+    "add_note",
+}
+
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
 M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
@@ -371,12 +375,15 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="Autotask PSA",
             status=autotask_status,
             message=(
-                "Autotask credentials are configured for read-only ticket and company lookup."
+                "Autotask credentials are configured for ticket/company lookup and "
+                "approval-gated ticket-note creation."
                 if autotask_status == "configured"
-                else "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                else "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING "
+                "and writes also require WAIT_ALLOW_WRITE_ACTIONS."
                 if autotask_status == "blocked"
-                else "Set WAIT_AUTOTASK_* values to enable Autotask PSA reads."
+                else "Set WAIT_AUTOTASK_* values to enable Autotask PSA reads and approved ticket notes."
             ),
+            write_actions_enabled=settings.allow_write_actions and autotask_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -1835,6 +1842,31 @@ def validate_servicenow_action_fields(action_type: str, fields: dict[str, object
         raise ValueError(f"ServiceNow {action_type} field is invalid")
     if any(ord(character) < 32 for character in value):
         raise ValueError(f"ServiceNow {action_type} field contains control characters")
+
+
+def validate_autotask_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in AUTOTASK_ACTION_TYPES:
+        raise ValueError(f"unsupported Autotask action type: {action_type}")
+    if not isinstance(fields, dict) or not {"description", "note_type", "publish"} <= set(fields):
+        raise ValueError(
+            "Autotask add_note requires description, note_type, and publish fields"
+        )
+    if set(fields) - {"description", "note_type", "publish", "title"}:
+        raise ValueError("Autotask add_note contains unsupported fields")
+    description = fields["description"]
+    title = fields.get("title", "")
+    if not isinstance(description, str) or not description.strip() or len(description.strip()) > 32_000:
+        raise ValueError("Autotask note description is invalid")
+    if any(ord(character) < 32 for character in description):
+        raise ValueError("Autotask note description contains control characters")
+    if not isinstance(title, str) or len(title.strip()) > 250:
+        raise ValueError("Autotask note title is invalid")
+    if any(ord(character) < 32 for character in title):
+        raise ValueError("Autotask note title contains control characters")
+    for field in ("note_type", "publish"):
+        value = fields[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"Autotask note field {field} must be a non-negative integer")
 
 
 def _first_present(fields: dict[str, object], *keys: str) -> object:

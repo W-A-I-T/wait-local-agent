@@ -2697,6 +2697,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_autotask_read("health", result.status, result.count)
         return asdict(result)
 
+    @app.get("/connectors/autotask/write-health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def autotask_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = autotask_client.write_health()
+        store.add_audit_event("autotask.write_health", "autotask", result.status)
+        return asdict(result)
+
     @app.get("/connectors/autotask/tickets")
     @limiter.limit(active_settings.rate_limit_connector)
     def autotask_tickets(

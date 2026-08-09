@@ -1,8 +1,8 @@
-"""Bounded, read-only Autotask REST API adapter.
+"""Bounded Autotask REST API adapter.
 
-Autotask supports mutations, but this public adapter deliberately exposes only
-GET-based ticket and company reads. Any future mutation must use the existing
-approval and execution gates.
+The adapter exposes ticket and company reads plus one approval-gated ticket
+note mutation. Mutations remain behind both local write gates and the existing
+smart-action approval runtime.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from urllib.parse import urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.models import (
+    AutotaskWriteRequest,
+    AutotaskWriteResult,
+    ConnectorReadResult,
+)
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
@@ -56,6 +60,14 @@ class AutotaskReadProvider(Protocol):
         ...
 
 
+class AutotaskWriteProvider(Protocol):
+    def write_health(self) -> ConnectorReadResult:
+        ...
+
+    def execute_write(self, request: AutotaskWriteRequest) -> AutotaskWriteResult:
+        ...
+
+
 class AutotaskReadError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -63,7 +75,7 @@ class AutotaskReadError(Exception):
 
 
 class AutotaskClient:
-    """Read-only Autotask REST client with bounded request inputs."""
+    """Bounded Autotask REST client for reads and approved ticket notes."""
 
     def __init__(
         self,
@@ -119,6 +131,41 @@ class AutotaskClient:
             _normalize_company,
             page=page,
             page_size=page_size,
+        )
+
+    def write_health(self) -> ConnectorReadResult:
+        blocked = self._write_blocked_result()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_result()
+        if missing is not None:
+            return missing
+        return ConnectorReadResult("ready", "Autotask ticket-note write prerequisites are ready.")
+
+    def execute_write(self, request: AutotaskWriteRequest) -> AutotaskWriteResult:
+        blocked = self._write_blocked_write_result(request)
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_write_result(request)
+        if missing is not None:
+            return missing
+        try:
+            ticket_id = _safe_numeric_id(request.ticket_id)
+            payload = _write_payload(request.action_type, ticket_id, request.fields)
+            endpoint = "TicketNotes"
+            response_payload, status_code = self._post(endpoint, payload)
+        except AutotaskReadError as exc:
+            return AutotaskWriteResult(
+                "failed", exc.message, request.action_type, request.ticket_id
+            )
+        return AutotaskWriteResult(
+            "succeeded",
+            f"Autotask {request.action_type} write succeeded.",
+            request.action_type,
+            request.ticket_id,
+            endpoint=endpoint,
+            status_code=status_code,
+            remote_id=_remote_id(response_payload),
         )
 
     def _list(
@@ -231,12 +278,103 @@ class AutotaskClient:
                 f"Autotask GET {safe_endpoint} returned malformed JSON."
             ) from exc
 
+    def _post(
+        self,
+        endpoint: str,
+        payload: dict[str, object],
+    ) -> tuple[object, int]:
+        if not self.settings.allow_http_probing:
+            raise AutotaskReadError(
+                "Autotask live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
+        if not self.settings.allow_write_actions:
+            raise AutotaskReadError(
+                "Autotask live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            raise AutotaskReadError(missing.message)
+        try:
+            safe_endpoint = _safe_endpoint(endpoint)
+            with httpx.Client(
+                timeout=self.settings.connector_timeout_seconds,
+                transport=self.transport,
+            ) as client:
+                response = client.post(
+                    f"{_api_base_url(self.settings.autotask_base_url)}/{safe_endpoint}",
+                    headers={
+                        "Username": self.settings.autotask_username,
+                        "Secret": self.settings.autotask_secret,
+                        "APIIntegrationcode": self.settings.autotask_integration_code,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise AutotaskReadError(
+                "Autotask request failed before receiving a response."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise AutotaskReadError("Autotask request failed.") from exc
+        if response.status_code >= 400:
+            raise AutotaskReadError(
+                f"Autotask POST {endpoint} failed with HTTP {response.status_code}."
+            )
+        if response.status_code != 200:
+            raise AutotaskReadError(
+                f"Autotask POST {endpoint} returned unexpected HTTP {response.status_code}."
+            )
+        if not response.content:
+            return {}, response.status_code
+        try:
+            return response.json(), response.status_code
+        except ValueError as exc:
+            raise AutotaskReadError(
+                f"Autotask POST {endpoint} returned malformed JSON."
+            ) from exc
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
         return ConnectorReadResult(
             "blocked",
             "Autotask live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+        )
+
+    def _write_blocked_result(self) -> ConnectorReadResult | None:
+        missing_flags = []
+        if not self.settings.allow_http_probing:
+            missing_flags.append("WAIT_ALLOW_HTTP_PROBING=true")
+        if not self.settings.allow_write_actions:
+            missing_flags.append("WAIT_ALLOW_WRITE_ACTIONS=true")
+        if missing_flags:
+            return ConnectorReadResult(
+                "blocked",
+                f"Autotask live writes are blocked until {' and '.join(missing_flags)}.",
+            )
+        return None
+
+    def _write_blocked_write_result(
+        self,
+        request: AutotaskWriteRequest,
+    ) -> AutotaskWriteResult | None:
+        blocked = self._write_blocked_result()
+        if blocked is None:
+            return None
+        return AutotaskWriteResult(
+            "blocked", blocked.message, request.action_type, request.ticket_id
+        )
+
+    def _not_configured_write_result(
+        self,
+        request: AutotaskWriteRequest,
+    ) -> AutotaskWriteResult | None:
+        missing = self._not_configured_result()
+        if missing is None:
+            return None
+        return AutotaskWriteResult(
+            "not_configured", missing.message, request.action_type, request.ticket_id
         )
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
@@ -310,6 +448,62 @@ def _safe_segment(value: str) -> str:
             "Autotask resource identifiers contain unsafe characters."
         )
     return stripped
+
+
+def _safe_numeric_id(value: str) -> int:
+    stripped = value.strip()
+    if not stripped or not stripped.isdigit() or len(stripped) > 19 or int(stripped) < 1:
+        raise AutotaskReadError("Autotask ticket identifiers must be positive numeric IDs.")
+    return int(stripped)
+
+
+def _write_payload(
+    action_type: str,
+    ticket_id: int,
+    fields: Mapping[str, object],
+) -> dict[str, object]:
+    if action_type != "add_note":
+        raise AutotaskReadError(f"Autotask ticket action is not supported: {action_type}.")
+    allowed = {"description", "note_type", "publish", "title"}
+    if set(fields) - allowed or not {"description", "note_type", "publish"} <= set(fields):
+        raise AutotaskReadError(
+            "Autotask add_note requires description, note_type, and publish fields."
+        )
+    description = fields["description"]
+    title = fields.get("title", "")
+    if (
+        not isinstance(description, str)
+        or not description.strip()
+        or len(description.strip()) > 32_000
+        or any(ord(character) < 32 for character in description)
+    ):
+        raise AutotaskReadError("Autotask note description is invalid.")
+    if not isinstance(title, str) or len(title.strip()) > 250 or any(
+        ord(character) < 32 for character in title
+    ):
+        raise AutotaskReadError("Autotask note title is invalid.")
+    values: dict[str, object] = {"ticketID": ticket_id, "description": description.strip()}
+    for source, target in (("note_type", "noteType"), ("publish", "publish")):
+        value = fields[source]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise AutotaskReadError(f"Autotask note field {source} must be a non-negative integer.")
+        values[target] = value
+    if title.strip():
+        values["title"] = title.strip()
+    return values
+
+
+def _remote_id(payload: object) -> str:
+    if not isinstance(payload, Mapping):
+        return ""
+    value = payload.get("itemId")
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int) and value >= 0:
+        return str(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return value.strip()
+    return ""
 
 
 def _bounded_page_size(value: int) -> int:
@@ -411,4 +605,5 @@ __all__ = [
     "AutotaskReadError",
     "AutotaskReadProvider",
     "AutotaskReadResponse",
+    "AutotaskWriteProvider",
 ]
