@@ -562,7 +562,9 @@ to Graph. Deletion is separately admin-approved through
 `POST /connectors/m365/mail-messages/delete-drafts` or
 `draft-m365-mail-message-delete`; it sends no request body and only deletes the
 explicitly identified message. Permanent deletion, send, and message-content
-operations remain unavailable.
+operations remain unavailable. These same three bounded message mutations are
+also available through the shared smart-action catalog for planner and agent
+use.
 User creation requires `WAIT_ALLOW_WRITE_ACTIONS=true`, an admin approval, and
 an encrypted-vault reference to the temporary password. Create a draft through
 `POST /connectors/m365/users/drafts`, approve it through the approval queue, and
@@ -599,6 +601,9 @@ The shared catalog also exposes admin-only `m365-mail-message-move`, which
 accepts one explicit user, source folder, message, and destination folder ID.
 Message moves are previewed and approval-gated, and provider failures remain
 explicit failures.
+The shared catalog also exposes admin-only `m365-mail-message-read-state` with
+a boolean read state and `m365-mail-message-delete` for one explicit message.
+Both are previewed and approval-gated, with provider failures remaining explicit.
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and

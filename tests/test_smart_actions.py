@@ -50,7 +50,9 @@ from wait_local_agent.smart_actions import (
     M365LicenseChangeAction,
     M365LiveContextAction,
     M365MailboxSettingsAction,
+    M365MailMessageDeleteAction,
     M365MailMessageMoveAction,
+    M365MailMessageReadStateAction,
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -958,13 +960,15 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "hudu-documentation-search",
         "itglue-documentation-search",
         "knowledge-search",
-        "m365-group-membership",
-            "m365-identity-lookup",
-            "m365-license-change",
-            "m365-live-context",
+            "m365-group-membership",
+        "m365-identity-lookup",
+        "m365-license-change",
+        "m365-live-context",
+        "m365-mail-message-delete",
             "m365-mail-message-move",
-            "m365-mailbox-settings",
-            "m365-session-revocation",
+        "m365-mail-message-read-state",
+        "m365-mailbox-settings",
+        "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
         "rmm-alert-lookup",
@@ -1347,11 +1351,19 @@ def test_m365_mail_message_move_is_approval_gated_and_explicitly_scoped(settings
             health_error=False,
             move_status="succeeded",
             move_error=False,
+            read_state_status="succeeded",
+            read_state_error=False,
+            delete_status="succeeded",
+            delete_error=False,
         ) -> None:
             self.health_status = health_status
             self.health_error = health_error
             self.move_status = move_status
             self.move_error = move_error
+            self.read_state_status = read_state_status
+            self.read_state_error = read_state_error
+            self.delete_status = delete_status
+            self.delete_error = delete_error
             self.calls: list[dict[str, str]] = []
 
         def write_health(self):
@@ -1367,6 +1379,35 @@ def test_m365_mail_message_move_is_approval_gated_and_explicitly_scoped(settings
                 status=self.move_status,
                 message="message moved" if self.move_status == "succeeded" else "provider rejected move",
                 status_code=201 if self.move_status == "succeeded" else 400,
+            )
+
+        def update_mail_message_read_state(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.read_state_error:
+                raise RuntimeError("read state unavailable")
+            return SimpleNamespace(
+                status=self.read_state_status,
+                message=(
+                    "message read state updated"
+                    if self.read_state_status == "succeeded"
+                    else "provider rejected read state"
+                ),
+                is_read=kwargs["is_read"],
+                status_code=200 if self.read_state_status == "succeeded" else 400,
+            )
+
+        def delete_mail_message(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.delete_error:
+                raise RuntimeError("delete unavailable")
+            return SimpleNamespace(
+                status=self.delete_status,
+                message=(
+                    "message deleted"
+                    if self.delete_status == "succeeded"
+                    else "provider rejected delete"
+                ),
+                status_code=204 if self.delete_status == "succeeded" else 400,
             )
 
     store = Store(settings.data_path)
@@ -1433,6 +1474,57 @@ def test_m365_mail_message_move_is_approval_gated_and_explicitly_scoped(settings
     assert M365MailMessageMoveAction().run(
         replace(context, m365_client=FakeM365MessageWrites(move_status="failed")),
         {**payload, "_approval_completed": True},
+    ).status == "failed"
+
+    read_payload: dict[str, object] = {
+        "user_identity": "user@example.test",
+        "source_folder_id": "inbox-id",
+        "message_id": "message-id",
+        "is_read": True,
+    }
+    assert service.invoke(
+        "m365-mail-message-read-state", read_payload, "requester", client_id="acme"
+    ).status == "pending_approval"
+    assert M365MailMessageReadStateAction().run(
+        replace(context, m365_client=provider),
+        {**read_payload, "_approval_completed": True},
+    ).status == "success"
+    assert M365MailMessageReadStateAction().run(
+        replace(context, m365_client=provider),
+        {**read_payload, "is_read": "true"},
+    ).status == "failed"
+    assert M365MailMessageReadStateAction().run(
+        replace(context, m365_client=FakeM365MessageWrites(read_state_status="failed")),
+        {**read_payload, "_approval_completed": True},
+    ).status == "failed"
+    assert M365MailMessageReadStateAction().run(
+        replace(context, m365_client=FakeM365MessageWrites(read_state_error=True)),
+        {**read_payload, "_approval_completed": True},
+    ).status == "failed"
+
+    delete_payload: dict[str, object] = {
+        "user_identity": "user@example.test",
+        "source_folder_id": "inbox-id",
+        "message_id": "message-id",
+    }
+    assert service.invoke(
+        "m365-mail-message-delete", delete_payload, "requester", client_id="acme"
+    ).status == "pending_approval"
+    assert M365MailMessageDeleteAction().run(
+        replace(context, m365_client=provider),
+        {**delete_payload, "_approval_completed": True},
+    ).status == "success"
+    assert M365MailMessageDeleteAction().run(
+        replace(context, m365_client=provider),
+        {**delete_payload, "message_id": ""},
+    ).status == "failed"
+    assert M365MailMessageDeleteAction().run(
+        replace(context, m365_client=FakeM365MessageWrites(delete_status="failed")),
+        {**delete_payload, "_approval_completed": True},
+    ).status == "failed"
+    assert M365MailMessageDeleteAction().run(
+        replace(context, m365_client=FakeM365MessageWrites(delete_error=True)),
+        {**delete_payload, "_approval_completed": True},
     ).status == "failed"
 
 

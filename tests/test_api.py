@@ -2513,6 +2513,23 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
                 "destination_folder_id": "archive-id",
             },
         ),
+        (
+            "m365-mail-message-read-state",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+                "is_read": True,
+            },
+        ),
+        (
+            "m365-mail-message-delete",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+            },
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
