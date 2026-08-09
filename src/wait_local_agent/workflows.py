@@ -74,11 +74,24 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         id="p1-alert",
         name="P1 Alert",
         trigger="ticket.priority_changed",
-        description="Detect urgent tickets and prepare an internal alert payload.",
+        description=(
+            "Prepare an approval-gated internal alert. The default is a local ticket note; "
+            "configured communication adapters may be selected explicitly."
+        ),
         action_type="ticket.alert",
         approval_required=True,
         risk_level="high",
         preview_fields=("ticket_id", "priority", "message"),
+        tool_id="communication-send",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "body": "optional alert body; a deterministic local alert is used when omitted",
+            },
+        },
     ),
     WorkflowTemplate(
         id="documentation-assisted-response",
@@ -530,12 +543,15 @@ def _run_template_tool(
     if tool_executor is None:
         raise RuntimeError(f"workflow tool {template.tool_id} is not configured")
     payload = dict(input_payload)
-    if template.id == "inactive-ticket-follow-up":
+    if template.id in {"inactive-ticket-follow-up", "p1-alert"}:
         if "channel" not in payload:
             payload["channel"] = "ticket_note"
         if "body" not in payload:
             payload["body"] = (
-                f'Following up on inactive ticket "{ticket.subject}". '
+                f'P1 alert for ticket "{ticket.subject}". '
+                "Review and acknowledge this urgent ticket."
+                if template.id == "p1-alert"
+                else f'Following up on inactive ticket "{ticket.subject}". '
                 "Please reply with an update or let us know if assistance is still needed."
             )
     payload["ticket_id"] = ticket.id

@@ -547,7 +547,13 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
             actor="scheduler",
             tool_executor=SmartActionService(store, settings),
         )
-        alert_run = run_workflow_template(store, "p1-alert", "TCK-1001")
+        alert_run = run_workflow_template(
+            store,
+            "p1-alert",
+            "TCK-1001",
+            actor="scheduler",
+            tool_executor=SmartActionService(store, settings),
+        )
 
         assert paused_job.id is not None
         assert jobs[0].paused is True
@@ -560,7 +566,11 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         follow_up_approval = store.get_approval_request(follow_up_run.approval_request_id or 0)
         assert follow_up_approval is not None
         assert follow_up_approval.action_type == "smart_action:communication-send"
-        assert "priority alert" in alert_run.message
+        assert alert_run.status == "pending_approval"
+        assert "approval required" in alert_run.message
+        alert_approval = store.get_approval_request(alert_run.approval_request_id or 0)
+        assert alert_approval is not None
+        assert alert_approval.action_type == "smart_action:communication-send"
 
         manager.shutdown()
 
@@ -636,6 +646,54 @@ def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
 
     assert run.status == "pending_approval"
     assert "Drafted inactive ticket follow-up" in run.message
+
+    p1_template = get_workflow_template("p1-alert")
+    assert p1_template is not None
+    p1_run = run_workflow_template(
+        store,
+        "p1-alert",
+        "TCK-1001",
+        template_override=replace(p1_template, tool_id=None),
+    )
+    assert p1_run.status == "pending_approval"
+    assert "Prepared priority alert" in p1_run.message
+
+
+def test_p1_alert_executes_local_note_only_after_approval(settings, tmp_path: Path) -> None:
+    store = Store(tmp_path / "p1-alert.db")
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = SmartActionService(store, replace(settings, allow_write_actions=True))
+
+    run = run_workflow_template(
+        store,
+        "p1-alert",
+        "TCK-1001",
+        client_id="acme",
+        actor="monitor",
+        tool_executor=service,
+    )
+
+    assert run.status == "pending_approval"
+    approval = store.get_approval_request(run.approval_request_id or 0)
+    assert approval is not None
+    payload = json.loads(approval.payload_json)
+    assert payload["payload"]["channel"] == "ticket_note"
+    assert payload["payload"]["body"].startswith('P1 alert for ticket "')
+    assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
+
+    result = service.update_approval(
+        run.approval_request_id or 0,
+        "approved",
+        approver="technician",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert result.status == "approved"
+    notes = store.list_ticket_notes("TCK-1001", client_id="acme")
+    assert len(notes) == 1
+    assert notes[0].body.startswith('P1 alert for ticket "')
 
 
 def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:
