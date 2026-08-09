@@ -307,8 +307,8 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
             "properties": {
                 "user_identity": "string",
                 "temporary_vault_name": "local vault key name",
-                "force_change_password_next_sign_in": "boolean",
-                "force_change_password_next_sign_in_with_mfa": "boolean",
+                "force_change_password_next_sign_in": "boolean",  # nosec B105 - schema descriptor
+                "force_change_password_next_sign_in_with_mfa": "boolean",  # nosec B105 - schema descriptor
             },
         },
     ),
