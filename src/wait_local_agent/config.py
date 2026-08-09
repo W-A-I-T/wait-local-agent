@@ -83,6 +83,8 @@ class Settings:
     end_user_client_id: str = ""
     end_user_user_id: str = ""
     end_user_support_enabled: bool = False
+    end_user_brand_name: str = "WAIT Support"
+    end_user_brand_tagline: str = "Private help desk"
     communication_email_host: str = ""
     communication_email_port: int = 587
     communication_email_username: str = ""
@@ -218,6 +220,12 @@ def load_settings() -> Settings:
         end_user_client_id=os.getenv("WAIT_END_USER_CLIENT_ID", "").strip(),
         end_user_user_id=os.getenv("WAIT_END_USER_USER_ID", "").strip(),
         end_user_support_enabled=_bool_env("WAIT_END_USER_SUPPORT_ENABLED"),
+        end_user_brand_name=os.getenv("WAIT_END_USER_BRAND_NAME", "WAIT Support").strip()
+        or "WAIT Support",
+        end_user_brand_tagline=os.getenv(
+            "WAIT_END_USER_BRAND_TAGLINE", "Private help desk"
+        ).strip()
+        or "Private help desk",
         communication_email_host=_secret_value(
             "WAIT_COMMUNICATION_EMAIL_HOST",
             os.getenv("WAIT_COMMUNICATION_EMAIL_HOST", ""),

@@ -79,11 +79,16 @@ WAIT_END_USER_SUPPORT_ENABLED=true
 WAIT_END_USER_TOKEN=<end-user-token>
 WAIT_END_USER_CLIENT_ID=<client-id>
 WAIT_END_USER_USER_ID=<requester-id>
+WAIT_END_USER_BRAND_NAME=Acme Support
+WAIT_END_USER_BRAND_TAGLINE=Help for Acme teams
 ```
 
 The end-user token is not a technician or admin token. It cannot select a
 tenant in the request, invoke smart actions, or read tickets belonging to a
 different requester.
+`GET /end-user/config` uses the same token and fixed client/requester scope and
+returns only bounded display branding; it does not expose the client ID,
+credentials, or operator configuration.
 
 ## Secrets management
 
