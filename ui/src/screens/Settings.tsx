@@ -192,6 +192,14 @@ export function Settings() {
             <dd>{providers?.local_model_provider || "n/a"}</dd>
           </div>
           <div>
+            <dt>Remote fallback</dt>
+            <dd>
+              {providers?.cloud_fallback_enabled && providers.remote_model_configured
+                ? `${providers.remote_model_provider || "configured"} enabled`
+                : "disabled or not configured"}
+            </dd>
+          </div>
+          <div>
             <dt>Secret manager</dt>
             <dd>{providers?.vector_backend || "n/a"}</dd>
           </div>

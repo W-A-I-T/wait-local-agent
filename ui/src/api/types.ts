@@ -556,6 +556,9 @@ export type ProviderSettings = {
   local_model_name: string;
   local_model_timeout_seconds: number;
   llm_inference_enabled: boolean;
+  cloud_fallback_enabled?: boolean;
+  remote_model_provider?: string;
+  remote_model_configured?: boolean;
   vector_backend: string;
   document_parser: string;
   ocr_enabled: boolean;

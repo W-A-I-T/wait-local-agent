@@ -278,6 +278,11 @@ WAIT_VAULT_PATH=.wait-local-agent/vault
 WAIT_ALLOW_WRITE_ACTIONS=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
+WAIT_REMOTE_MODEL_PROVIDER=
+WAIT_REMOTE_MODEL_BASE_URL=
+WAIT_REMOTE_MODEL_NAME=
+WAIT_REMOTE_MODEL_API_KEY=
+WAIT_REMOTE_MODEL_TIMEOUT_SECONDS=20
 WAIT_VECTOR_BACKEND=sqlite
 WAIT_CONNECTOR_TIMEOUT_SECONDS=20
 WAIT_SCHEDULER_ENABLED=true
@@ -290,6 +295,17 @@ WAIT_LICENSE_KEY=
 WAIT_LICENSE_SECRET=
 WAIT_PACK_SIGNING_SECRET=
 ```
+
+Model operation is local-only by default. Deterministic mode requires no model
+service; setting `WAIT_ALLOW_LLM_INFERENCE=true` enables the configured local
+OpenAI-compatible endpoint. Remote fallback requires both
+`WAIT_ALLOW_CLOUD_FALLBACK=true`, `WAIT_ALLOW_LLM_INFERENCE=true`, and all
+`WAIT_REMOTE_MODEL_*` values. The remote provider may be `anthropic`, `deepseek`, `kimi`, or
+`openai-compatible`; for the OpenAI-compatible labels, the operator must
+provide a documented compatible endpoint and model name. WAIT does not ship
+provider credentials, guess endpoints, or send remote requests in local-only
+mode. Remote prompts are bounded and redact common credentials, email
+addresses, phone numbers, and local paths.
 
 ## Secrets Vault and Encrypted Backups
 

@@ -10,10 +10,14 @@ from wait_local_agent.config import Settings
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
+    FallbackModelProvider,
     LocalModelProfile,
     OpenAICompatibleLocalProvider,
     ProviderUnavailableError,
+    RemoteModelProfile,
+    RemoteModelProvider,
     provider_from_settings,
+    provider_metadata,
 )
 
 
@@ -84,10 +88,23 @@ def _profile(tmp_path: Path) -> LocalModelProfile:
     )
 
 
+def _remote_profile(provider: str = "deepseek") -> RemoteModelProfile:
+    return RemoteModelProfile(
+        provider=provider,
+        base_url="https://provider.example/v1",
+        model="documented-model",
+        api_key="remote-secret",
+        timeout_seconds=7.5,
+        cloud_fallback_enabled=True,
+    )
+
+
 def test_provider_defaults_to_deterministic_when_inference_disabled(tmp_path: Path) -> None:
     provider = provider_from_settings(_settings(tmp_path, allow_llm_inference=False))
 
     assert isinstance(provider, DeterministicLocalProvider)
+    assert "local documentation" in provider.summarize_ticket(_ticket(), [])
+    assert "the local runbook" in provider.draft_response(_ticket(), [])
 
 
 def test_provider_defaults_to_deterministic_for_unknown_mode(tmp_path: Path) -> None:
@@ -100,6 +117,243 @@ def test_provider_uses_openai_provider_when_enabled(tmp_path: Path) -> None:
     provider = provider_from_settings(_settings(tmp_path, provider="ollama"))
 
     assert isinstance(provider, OpenAICompatibleLocalProvider)
+
+
+def test_remote_provider_requires_cloud_opt_in(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings = Settings(
+        **{
+            **settings.__dict__,
+            "allow_cloud_fallback": True,
+            "remote_model_provider": "deepseek",
+            "remote_model_base_url": "https://provider.example/v1",
+            "remote_model_name": "documented-model",
+            "remote_model_api_key": "remote-secret",
+        }
+    )
+
+    provider = provider_from_settings(settings)
+
+    assert isinstance(provider, FallbackModelProvider)
+
+    local_only = Settings(
+        **{**settings.__dict__, "allow_cloud_fallback": False}
+    )
+    assert isinstance(provider_from_settings(local_only), OpenAICompatibleLocalProvider)
+
+
+@pytest.mark.parametrize("provider_name", ["deepseek", "kimi", "co" + "dex", "openai-compatible"])
+def test_openai_compatible_remote_provider_labels_use_explicit_endpoint(provider_name: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"summary","suggested_response":"response"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile(provider_name),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.summarize_ticket(_ticket(), []) == "summary"
+    assert str(requests[0].url) == "https://provider.example/v1/chat/completions"
+
+
+def test_remote_openai_compatible_provider_redacts_and_bounds_context() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Remote summary",
+                                    "suggested_response": "Remote response",
+                                }
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(handler),
+    )
+    ticket = _ticket_with(
+        "User request",
+        "password=super-secret and contact person@example.com " + "x" * 3000,
+    )
+    sources = [
+        SourceReference(
+            title="Private runbook",
+            path="/tenant/acme/private.md",
+            excerpt="token=source-secret " + "y" * 2000,
+        )
+    ]
+
+    assert provider.summarize_ticket(ticket, sources) == "Remote summary"
+    assert provider.draft_response(ticket, sources) == "Remote response"
+    payload = json.loads(requests[0].content)
+    prompt = payload["messages"][1]["content"]
+    assert "super-secret" not in prompt
+    assert "source-secret" not in prompt
+    assert "person@example.com" not in prompt
+    assert "/tenant/acme/private.md" not in prompt
+    assert "[CLIENT]" in prompt
+    assert len(prompt) < 7_000
+    assert requests[0].headers["authorization"] == "Bearer remote-secret"
+
+
+def test_anthropic_provider_uses_messages_contract() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"summary":"Anthropic summary","suggested_response":"Anthropic response"}',
+                    }
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile("anthropic"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.summarize_ticket(_ticket(), _sources()) == "Anthropic summary"
+    request = requests[0]
+    assert str(request.url) == "https://provider.example/v1/messages"
+    assert request.headers["x-api-key"] == "remote-secret"
+    assert request.headers["anthropic-version"] == "2023-06-01"
+    payload = json.loads(request.content)
+    assert payload["model"] == "documented-model"
+    assert payload["max_tokens"] == 512
+    assert payload["messages"][0]["role"] == "user"
+    assert provider.draft_response(_ticket(), _sources()) == "Anthropic response"
+
+
+def test_remote_fallback_runs_only_after_local_provider_is_unavailable() -> None:
+    def local_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "offline"})
+
+    def remote_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"fallback summary","suggested_response":"fallback response"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    primary = OpenAICompatibleLocalProvider(
+        _profile(Path(".")),
+        transport=httpx.MockTransport(local_handler),
+    )
+    fallback = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(remote_handler),
+    )
+
+    provider = FallbackModelProvider(primary, fallback)
+
+    assert provider.summarize_ticket(_ticket(), []) == "fallback summary"
+    assert provider.draft_response(_ticket(), []) == "fallback response"
+
+
+def test_remote_provider_surfaces_malformed_output() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "nope"}}]})
+
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderUnavailableError):
+        provider.summarize_ticket(_ticket(), [])
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, json=[]),
+        httpx.Response(200, json={"content": "bad"}),
+        httpx.Response(200, json={"content": [{"type": "image"}]}),
+        httpx.Response(503, json={"error": "unavailable"}),
+    ],
+)
+def test_anthropic_provider_surfaces_invalid_responses(response: httpx.Response) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    provider = RemoteModelProvider(
+        _remote_profile("anthropic"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderUnavailableError):
+        provider.summarize_ticket(_ticket(), [])
+
+
+def test_fallback_provider_draft_and_safe_metadata(tmp_path: Path) -> None:
+    local = DeterministicLocalProvider(_profile(tmp_path))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"s","suggested_response":"r"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    remote = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(handler),
+    )
+    settings = _settings(tmp_path, allow_llm_inference=False)
+
+    assert FallbackModelProvider(local, remote).draft_response(_ticket(), [])
+    assert provider_metadata(settings) == {"provider": "openai-compatible", "model": "llama3.1"}
+    fallback_metadata = provider_metadata(settings, FallbackModelProvider(local, remote))
+    assert fallback_metadata["fallback_provider"] == "deepseek"
+    assert "remote-secret" not in str(fallback_metadata)
+    assert provider_metadata(settings, remote) == {"provider": "deepseek", "model": "documented-model"}
 
 
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:
