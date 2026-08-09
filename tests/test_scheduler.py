@@ -718,6 +718,23 @@ def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
             "m365-user-offboarding",
         ),
         (
+            "m365-password-reset-review",
+            {
+                "user_identity": "user@example.com",
+                "temporary_vault_name": "WAIT_M365_TEMP_user",
+            },
+            "m365-password-reset",
+        ),
+        (
+            "m365-authentication-method-removal-review",
+            {
+                "user_identity": "user@example.com",
+                "method_type": "fido2",
+                "method_id": "method-1",
+            },
+            "m365-authentication-method-remove",
+        ),
+        (
             "m365-license-request-review",
             {
                 "user_id": "directory-user-1",

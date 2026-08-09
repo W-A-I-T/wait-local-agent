@@ -2083,6 +2083,7 @@ class M365PasswordResetAction:
             "temporary_vault_name",
             "force_change_password_next_sign_in",
             "force_change_password_next_sign_in_with_mfa",
+            "ticket_id",
             "_approval_completed",
         }:
             return _failed("M365 password reset payload contains unsupported fields")
@@ -2230,7 +2231,7 @@ class M365AuthenticationMethodDeleteAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        if set(payload) - {"user_identity", "method_type", "method_id", "_approval_completed"}:
+        if set(payload) - {"user_identity", "method_type", "method_id", "ticket_id", "_approval_completed"}:
             return _failed("M365 authentication method payload contains unsupported fields")
         remove_payload = {
             "connector": "m365",

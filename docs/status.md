@@ -105,7 +105,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   operations and binary/office extraction remain unavailable.
 - Microsoft Graph bounded user, group, tenant-license, per-user license-detail, mailbox-folder, message-metadata, and Intune
   context lookup with externally supplied delegated or application bearer
-  credentials, plus admin-approved user creation, disable/offboarding, and
+  credentials, plus admin-approved user creation, disable/offboarding, password
+  reset, and explicit authentication-method removal, and
   strict-ID group membership add/remove, direct user license add/remove, and
   approved session revocation, Intune managed-device sync/reboot/retirement/
   remote-lock, and
@@ -247,7 +248,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read
   tool, including tenant and per-user license context, plus the admin-only
-  approval-gated `m365-user-onboarding`, `m365-user-offboarding`, and
+  approval-gated `m365-user-onboarding`, `m365-user-offboarding`,
+  `m365-password-reset`, `m365-authentication-method-remove`, and
   `m365-group-membership` tools. Group membership accepts only immutable
   directory object IDs and an explicit add/remove operation; it remains
   approval-gated and records provider failures without reporting success.
@@ -308,7 +310,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 - Live RMM, Hudu, IT Glue, Confluence, or SharePoint write synchronization;
   Microsoft Graph broader-resource reads and M365 writes other than approved
-  user creation, disable/offboarding, group membership, direct license changes,
+  user creation, disable/offboarding, password reset, explicit
+  authentication-method removal, group membership, direct license changes,
   session revocation, Intune managed-device sync/reboot/retirement, mailbox-settings,
   message-move, message-read-state, and message-delete updates remain
   unavailable.
@@ -356,7 +359,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and bounded N-central inventory/direct-task adapters built; broader vendor coverage future |
-| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/license-request workflow templates; broader resources and mutations future |
+| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built; provider-backed lifecycle enrichment and PDF export remain future work |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |

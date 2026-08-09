@@ -35,6 +35,8 @@ ActionKind = Literal[
     "ticket.stale_sweep",
     "m365.user_onboarding",
     "m365.user_offboarding",
+    "m365.password_reset",
+    "m365.authentication_method_removal",
     "m365.license_request",
     "client.recurring_service_review",
 ]

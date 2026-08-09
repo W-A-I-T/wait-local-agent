@@ -289,6 +289,53 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         },
     ),
     WorkflowTemplate(
+        id="m365-password-reset-review",
+        name="Microsoft 365 Password Reset Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare an approval-gated Microsoft 365 password reset using a temporary "
+            "credential reference held in WAIT's local encrypted vault."
+        ),
+        action_type="m365.password_reset",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "temporary_vault_name", "approval_required"),
+        tool_id="m365-password-reset",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "temporary_vault_name"],
+            "properties": {
+                "user_identity": "string",
+                "temporary_vault_name": "local vault key name",
+                "force_change_password_next_sign_in": "boolean",  # nosec B105 - schema descriptor
+                "force_change_password_next_sign_in_with_mfa": "boolean",  # nosec B105 - schema descriptor
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-authentication-method-removal-review",
+        name="Microsoft 365 Authentication Method Removal Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare an approval-gated removal of one explicitly identified Microsoft 365 "
+            "authentication method; broad MFA reset operations are not performed."
+        ),
+        action_type="m365.authentication_method_removal",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "method_type", "method_id", "approval_required"),
+        tool_id="m365-authentication-method-remove",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "method_type", "method_id"],
+            "properties": {
+                "user_identity": "string",
+                "method_type": "fido2, microsoft_authenticator, phone, or software_oath",
+                "method_id": "immutable authentication method ID",
+            },
+        },
+    ),
+    WorkflowTemplate(
         id="m365-license-request-review",
         name="Microsoft 365 License Request Review",
         trigger="ticket.created",
