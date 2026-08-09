@@ -710,6 +710,15 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
     assessment = cast(dict[str, object], result.output["assessment"])
     assert assessment["state"] == "at_risk"
     assert assessment["threshold_minutes"] == 60
+    assert TicketSlaAssessmentAction().run(context, {}).status == "failed"
+    assert TicketSlaAssessmentAction().run(
+        context, {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 0}}
+    ).status == "failed"
+    unknown_priority = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-OLD", "thresholds_minutes": {"low": 60}},
+    )
+    assert unknown_priority.output["assessment"]["reason"] == "priority_threshold_not_supplied"  # type: ignore[index]
     missing = TicketSlaAssessmentAction().run(
         context,
         {"ticket_id": "TCK-NO-TIME", "thresholds_minutes": {"high": 60}},
@@ -718,6 +727,16 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
     assert missing.output["evidence_status"] == "insufficient"
     missing_assessment = cast(dict[str, object], missing.output["assessment"])
     assert missing_assessment["reason"] == "missing_created_at"
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set status = 'closed' where id = ?",
+            ("TCK-OLD",),
+        )
+    closed = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 60}},
+    )
+    assert closed.output["assessment"]["state"] == "resolved"  # type: ignore[index]
 
 
 def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
@@ -744,6 +763,22 @@ def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
     tickets = cast(list[dict[str, object]], result.output["tickets"])
     assert [item["ticket_id"] for item in tickets] == ["TCK-STALE"]
     assert result.output["count"] == 1
+    assert StaleTicketSweepAction().run(
+        _action_context(store, settings, client_id="acme"), {"stale_after_minutes": 0}
+    ).status == "failed"
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("TCK-MISSING-TIME", "Acme", "Missing", "Unknown", "low", "open", "acme", "bad-date"),
+        )
+    with_missing = StaleTicketSweepAction().run(
+        _action_context(store, settings, client_id="acme"), {"stale_after_minutes": 60}
+    )
+    assert with_missing.output["excluded_missing_timestamp"] == 1
 
 
 def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
