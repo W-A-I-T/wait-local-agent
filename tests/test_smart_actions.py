@@ -3378,6 +3378,25 @@ def test_recurring_service_review_action_is_read_only_and_tenant_scoped(settings
     assert result.evidence[0]["claims_excluded"]
     assert service.store.list_execution_runs(client_id="acme", run_kind="smart_action")
 
+    action = RecurringServiceReviewAction()
+    assert action.run(_action_context(store, settings, client_id="acme"), {"unexpected": True}).status == "failed"
+    assert action.run(
+        _action_context(store, settings),
+        {"period_start": "2026-01-01", "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"ticket_id": 123, "period_start": "2026-01-01", "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"period_start": None, "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"period_start": "2026-01-01", "period_end": "2026-03-31", "follow_up_after_days": True},
+    ).status == "failed"
+
     invalid = RecurringServiceReviewAction().run(
         _action_context(store, settings, client_id="acme"),
         {"period_start": "2026-01-01", "period_end": "not-a-date", "follow_up_after_days": 14},

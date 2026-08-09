@@ -1047,6 +1047,25 @@ def test_recurring_service_review_report_route_is_bounded_and_client_scoped(sett
             context,
             follow_up_after_days=0,
         )
+    with pytest.raises(HTTPException, match="client_id is required"):
+        endpoint(
+            ClientReportRequest(
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 3, 31),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
+    with pytest.raises(HTTPException, match="on or after"):
+        endpoint(
+            ClientReportRequest(
+                client_id="acme",
+                period_start=date(2026, 3, 31),
+                period_end=date(2026, 1, 1),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
 
     assert response["report_type"] == "recurring_service_review"
     assert response["client_id"] == "acme"
