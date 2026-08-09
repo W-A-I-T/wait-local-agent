@@ -33,6 +33,9 @@ ActionKind = Literal[
     "ticket.duplicate_review",
     "ticket.sla_assessment",
     "ticket.stale_sweep",
+    "m365.user_onboarding",
+    "m365.user_offboarding",
+    "m365.license_request",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]

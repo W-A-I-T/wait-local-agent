@@ -1782,7 +1782,7 @@ class M365LicenseChangeAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        if set(payload) - {"user_id", "sku_ids", "operation", "_approval_completed"}:
+        if set(payload) - {"user_id", "sku_ids", "operation", "ticket_id", "_approval_completed"}:
             return _failed("M365 license payload contains unsupported fields")
         operation = payload.get("operation")
         if not isinstance(operation, str) or operation not in {"add", "remove"}:
@@ -2062,6 +2062,7 @@ class M365UserOnboardingAction:
             "temporary_vault_name",
             "account_enabled",
             "force_change_password_next_sign_in",
+            "ticket_id",
             "_approval_completed",
         }
         if any(key not in allowed for key in payload):
