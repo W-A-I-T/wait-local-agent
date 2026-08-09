@@ -196,6 +196,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   `m365-group-membership` tools. Group membership accepts only immutable
   directory object IDs and an explicit add/remove operation; it remains
   approval-gated and records provider failures without reporting success.
+  The catalog also exposes admin-only `m365-license-change` for immutable user
+  IDs and one to fifty SKU GUIDs with an explicit add/remove operation; it is
+  approval-gated and reports provider failures without fake success.
   Onboarding accepts only a validated local-vault reference for the temporary
   credential and reads the secret after approval; offboarding accepts only an
   explicit user identity and directory ID, disables the account, then revokes

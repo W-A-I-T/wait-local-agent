@@ -108,6 +108,20 @@ class M365GroupMembershipWriteProvider(Protocol):
         """Add or remove one explicitly identified group membership."""
 
 
+class M365LicenseWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def change_user_licenses(
+        self,
+        *,
+        user_id: str,
+        sku_ids: list[str],
+        operation: str,
+    ) -> object:
+        """Add or remove explicitly identified license SKU IDs for one user."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -177,6 +191,7 @@ class ActionContext:
         | M365LifecycleWriteProvider
         | M365UserCreateProvider
         | M365GroupMembershipWriteProvider
+        | M365LicenseWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -793,6 +808,135 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365LicenseChangeAction:
+    manifest = SmartActionManifest(
+        action_id="m365-license-change",
+        title="Microsoft 365 user license change",
+        description=(
+            "Prepare an approval-gated Microsoft Graph direct license add or remove "
+            "operation using immutable user and SKU IDs."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_id", "sku_ids", "operation"],
+            "properties": {
+                "user_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "sku_ids": {"type": "array", "minItems": 1, "maxItems": 50},
+                "operation": {"type": "string", "enum": ["add", "remove"]},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_id": "string",
+            "sku_ids": "array",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=3,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"user_id", "sku_ids", "operation", "_approval_completed"}:
+            return _failed("M365 license payload contains unsupported fields")
+        operation = payload.get("operation")
+        if not isinstance(operation, str) or operation not in {"add", "remove"}:
+            return _failed("M365 license operation must be add or remove")
+        license_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": (
+                "users.licenses.add" if operation == "add" else "users.licenses.remove"
+            ),
+            "sku_ids": payload.get("sku_ids"),
+            "user_id": payload.get("user_id"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_license_change_payload
+
+            validate_m365_license_change_payload(license_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_id = str(license_payload["user_id"]).strip()
+        sku_ids = [str(sku_id) for sku_id in cast(list[object], license_payload["sku_ids"])]
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365LicenseWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": operation,
+            "connector_status": connector_status,
+            "user_id": user_id,
+            "sku_ids": sku_ids,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": f"license_{operation}",
+                "client_id": context.client_id,
+                "scope": {"user_id": user_id, "sku_ids": sku_ids},
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.change_user_licenses(
+                user_id=user_id,
+                sku_ids=sku_ids,
+                operation=operation,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph license change failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph license change failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -2752,6 +2896,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),
         M365GroupMembershipAction(),
+        M365LicenseChangeAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -2798,6 +2943,7 @@ class SmartActionService:
             | M365LifecycleWriteProvider
             | M365UserCreateProvider
             | M365GroupMembershipWriteProvider
+            | M365LicenseWriteProvider
             | None
         ) = None,
     ) -> None:
