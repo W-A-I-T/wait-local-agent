@@ -582,7 +582,10 @@ The same catalog exposes admin-only `m365-user-onboarding`, which accepts the
 same validated user fields as the dedicated creation API plus a
 `WAIT_M365_TEMP_...` local-vault reference. The temporary password is read
 only after approval and is never persisted in the action payload, output, or
-audit record. Intune managed-device retirement is exposed through
+audit record. The same catalog also exposes admin-only `m365-group-membership`, which accepts
+only immutable group and user directory object IDs plus an explicit `add` or
+`remove` operation; membership changes remain approval-gated and report
+provider failure without fake success. Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
 does not expose wipe or delete. Approved Intune managed-device sync is exposed

@@ -192,7 +192,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read
   tool, including tenant and per-user license context, plus the admin-only
-  approval-gated `m365-user-onboarding` and `m365-user-offboarding` tools.
+  approval-gated `m365-user-onboarding`, `m365-user-offboarding`, and
+  `m365-group-membership` tools. Group membership accepts only immutable
+  directory object IDs and an explicit add/remove operation; it remains
+  approval-gated and records provider failures without reporting success.
   Onboarding accepts only a validated local-vault reference for the temporary
   credential and reads the secret after approval; offboarding accepts only an
   explicit user identity and directory ID, disables the account, then revokes
