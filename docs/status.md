@@ -43,6 +43,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - The shared smart-action catalog reuses those governed HaloPSA writes through
   tenant-scoped ticket note, response, status, assignment, and field-update
   actions with action-specific validation.
+- The shared catalog also exposes governed ConnectWise PSA status, assignment,
+  and ticket-field writes with the same tenant and approval boundaries.
 - Hudu read-only connector configuration surface for tenant-scoped documentation
   lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common

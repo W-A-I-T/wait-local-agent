@@ -28,6 +28,7 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseWriteRequest,
     HaloTicket,
     HaloWriteRequest,
     HuduArticle,
@@ -46,6 +47,7 @@ from wait_local_agent.smart_actions import (
     CollectorPreviewAction,
     ConfluenceDocumentationSearchAction,
     ConnectWiseTicketLookupAction,
+    ConnectWiseTicketWriteAction,
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     HaloPSATicketLookupAction,
@@ -962,7 +964,10 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "communication-draft",
         "communication-send",
         "confluence-documentation-search",
+        "connectwise-ticket-assign-technician",
         "connectwise-ticket-lookup",
+        "connectwise-ticket-status-update",
+        "connectwise-ticket-update-fields",
         "dispatch-suggestion",
         "find-similar-tickets",
         "halopsa-ticket-add-note",
@@ -1009,6 +1014,90 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) -> None:
+    class FakeConnectWiseWrites:
+        def __init__(self, *, health_status="ready", result_status="succeeded", result_error=False):
+            self.health_status = health_status
+            self.result_status = result_status
+            self.result_error = result_error
+            self.calls: list[ConnectWiseWriteRequest] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            if self.result_error:
+                raise RuntimeError("write unavailable")
+            return SimpleNamespace(
+                status=self.result_status,
+                message="write completed" if self.result_status == "succeeded" else "provider rejected write",
+                status_code=200 if self.result_status == "succeeded" else 400,
+                remote_id="remote-1",
+            )
+
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = FakeConnectWiseWrites()
+    context = _action_context(store, settings, client_id="acme")
+    specs = [
+        ("assign_technician", {"owner_id": "owner-1"}),
+        ("update_status", {"status_id": "status-1"}),
+        ("update_ticket_fields", {"priority_id": 3}),
+    ]
+    for action_type, fields in specs:
+        action = ConnectWiseTicketWriteAction(
+            action_id="test-connectwise",
+            title="test",
+            action_type=action_type,
+        )
+        preview = action.run(
+            replace(context, connectwise_client=provider),
+            {"ticket_id": "TCK-1001", "fields": fields},
+        )
+        assert preview.status == "success", preview.error_detail
+        assert action.run(
+            replace(context, connectwise_client=provider),
+            {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
+        ).status == "success"
+    assert provider.calls[0] == ConnectWiseWriteRequest(
+        ticket_id="TCK-1001",
+        action_type="assign_technician",
+        fields={"owner_id": "owner-1"},
+    )
+    assert ConnectWiseTicketWriteAction(
+        action_id="test-connectwise",
+        title="test",
+        action_type="update_status",
+    ).run(
+        replace(context, client_id="other", connectwise_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}},
+    ).status == "failed"
+    action = ConnectWiseTicketWriteAction(
+        action_id="test-connectwise",
+        title="test",
+        action_type="update_status",
+    )
+    assert action.run(
+        replace(context, connectwise_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {}},
+    ).status == "failed"
+    assert action.run(
+        replace(context, connectwise_client=FakeConnectWiseWrites(health_status="blocked")),
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}},
+    ).status == "failed"
+    assert action.run(
+        replace(context, connectwise_client=FakeConnectWiseWrites(result_status="failed")),
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
+    ).status == "failed"
+    assert action.run(
+        replace(context, connectwise_client=FakeConnectWiseWrites(result_error=True)),
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
+    ).status == "failed"
 
 
 def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> None:
@@ -1063,6 +1152,9 @@ def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> Non
         ),
     ]
     store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
     provider = FakeHaloWrites()
     service = SmartActionService(store, settings, halopsa_client=provider)
     context = _action_context(store, settings, client_id="acme")
@@ -1102,6 +1194,10 @@ def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> Non
     assert first_action.run(
         replace(context, halopsa_client=provider),
         {"ticket_id": "TCK-1001", "fields": {}},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, client_id="other", halopsa_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}},
     ).status == "failed"
     assert first_action.run(
         replace(context, halopsa_client=provider),
