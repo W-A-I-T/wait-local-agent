@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { apiFetch, ApiRequestError } from "../api/client";
-import type { EndUserTicket } from "../api/types";
+import type { EndUserMessage, EndUserTicket } from "../api/types";
 
 const tokenStorageKey = "wait-local-agent-end-user-token";
 
@@ -31,9 +31,11 @@ export function EndUserSupport() {
   const [body, setBody] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [ticket, setTicket] = useState<EndUserTicket | null>(null);
+  const [messages, setMessages] = useState<EndUserMessage[]>([]);
+  const [replyBody, setReplyBody] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState<"create" | "lookup" | "escalate" | null>(null);
+  const [busy, setBusy] = useState<"create" | "lookup" | "message" | "escalate" | null>(null);
 
   function saveToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,6 +68,7 @@ export function EndUserSupport() {
         body: JSON.stringify({ subject: subject.trim(), body: body.trim() })
       });
       setTicket(created);
+      setMessages([]);
       setLookupId(created.ticket_id);
       setSubject("");
       setBody("");
@@ -92,10 +95,39 @@ export function EndUserSupport() {
     setError("");
     setMessage("");
     try {
-      setTicket(await endUserFetch<EndUserTicket>(token, `/end-user/tickets/${encodeURIComponent(ticketId)}`));
+      const [ticketResult, messageResults] = await Promise.all([
+        endUserFetch<EndUserTicket>(token, `/end-user/tickets/${encodeURIComponent(ticketId)}`),
+        endUserFetch<EndUserMessage[]>(token, `/end-user/tickets/${encodeURIComponent(ticketId)}/messages`)
+      ]);
+      setTicket(ticketResult);
+      setMessages(messageResults);
     } catch (requestError) {
       setTicket(null);
       setError(userFacingError(requestError, "We couldn't find that request."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticket || !token.trim() || !replyBody.trim()) {
+      return;
+    }
+    setBusy("message");
+    setError("");
+    setMessage("");
+    try {
+      const created = await endUserFetch<EndUserMessage>(token, `/end-user/tickets/${encodeURIComponent(ticket.ticket_id)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: replyBody.trim() })
+      });
+      setMessages((current) => [...current, created]);
+      setReplyBody("");
+      setMessage("Your message was sent to the support team.");
+    } catch (requestError) {
+      setError(userFacingError(requestError, "We couldn't send your message."));
     } finally {
       setBusy(null);
     }
@@ -159,6 +191,7 @@ export function EndUserSupport() {
             <button type="submit" disabled={busy !== null || !token.trim()}>{busy === "lookup" ? "Checking…" : "Check status"}</button>
           </form>
           {ticket ? <div className="end-user-ticket" aria-live="polite"><strong>{ticket.ticket_id}</strong><span>{ticket.subject}</span><span>Status: {ticket.status}</span><span>Priority: {ticket.priority}</span><button type="button" disabled={busy !== null || ticket.status === "escalated"} onClick={() => void escalateTicket()}>{busy === "escalate" ? "Escalating…" : ticket.status === "escalated" ? "Already escalated" : "Ask for technician attention"}</button></div> : <p className="screen-note">Your request details will appear here after a successful lookup.</p>}
+          {ticket ? <div className="end-user-messages"><strong>Conversation</strong>{messages.length ? messages.map((item) => <p key={item.id}>{item.body}</p>) : <span>No follow-up messages yet.</span>}<form className="draft-form" onSubmit={(event) => void sendMessage(event)}><label>Send a follow-up<textarea required maxLength={10000} rows={3} value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Add information for your support team" /></label><button type="submit" disabled={busy !== null || !replyBody.trim()}>{busy === "message" ? "Sending…" : "Send message"}</button></form></div> : null}
         </section>
       </div>
     </main>

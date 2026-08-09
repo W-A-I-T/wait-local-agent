@@ -238,6 +238,9 @@ not implied by enabling it.
 The React client surface is available at `/end-user` when the mode is enabled.
 It uses the separate token, supports local request creation, requester-scoped
 status lookup, and technician escalation, and does not load the operator shell.
+Follow-up messages use a separate `end_user_messages` table and are scoped to
+the same requester and client; internal `ticket_notes` are never returned by
+the end-user message routes.
 Live PSA synchronization, outbound delivery, and tenant-configurable branding
 are separate capabilities and are not implied by this surface.
 

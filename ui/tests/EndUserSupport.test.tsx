@@ -13,6 +13,8 @@ describe("EndUserSupport", () => {
     fetchMock
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "new", priority: "normal" }))
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "new", priority: "normal" }))
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json({ id: 1, ticket_id: "EUS-1", body: "More details", created_at: "2026-08-09T00:00:00Z" }))
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "escalated", priority: "normal" }));
 
     render(<EndUserSupport />);
@@ -25,11 +27,14 @@ describe("EndUserSupport", () => {
     expect(await screen.findByText("Your request EUS-1 was submitted.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check status" }));
     expect(await screen.findByText("Status: new")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Send a follow-up"), { target: { value: "More details" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("Your message was sent to the support team.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ask for technician attention" }));
     expect(await screen.findByText("Your request was marked for technician attention.")).toBeInTheDocument();
 
     const firstCall = fetchMock.mock.calls[0];
-    const escalationCall = fetchMock.mock.calls[2];
+    const escalationCall = fetchMock.mock.calls[4];
     expect(firstCall?.[0]).toBe("/end-user/tickets");
     expect(new Headers(firstCall?.[1]?.headers).get("Authorization")).toBe("Bearer scoped-token");
     expect(escalationCall?.[0]).toBe("/end-user/tickets/EUS-1/escalate");
@@ -38,7 +43,7 @@ describe("EndUserSupport", () => {
 
   it("handles missing access, empty results, and denied requests without fake success", async () => {
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ detail: "end-user access required" }), { status: 403 }));
+    fetchMock.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ detail: "end-user access required" }), { status: 403 })));
 
     render(<EndUserSupport />);
     fireEvent.change(screen.getByLabelText("Request number"), { target: { value: "EUS-404" } });
@@ -48,7 +53,7 @@ describe("EndUserSupport", () => {
     fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "wrong-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     fireEvent.click(screen.getByRole("button", { name: "Check status" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to do that.");
     expect(screen.getByText("Your request details will appear here after a successful lookup.")).toBeInTheDocument();
   });
