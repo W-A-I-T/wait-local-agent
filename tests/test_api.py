@@ -3079,6 +3079,9 @@ def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None
         def health(self):
             return ConnectorReadResult("ready", "Autotask ready", 0)
 
+        def write_health(self):
+            return ConnectorReadResult("ready", "Autotask writes ready", 0)
+
         def list_tickets(self, **kwargs):
             return AutotaskReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
@@ -3107,6 +3110,7 @@ def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None
     client = TestClient(create_app(settings))
 
     health = client.get("/connectors/autotask/health")
+    write_health = client.get("/connectors/autotask/write-health")
     tickets = client.get(
         "/connectors/autotask/tickets",
         params={"page": 2, "page_size": 10},
@@ -3119,12 +3123,15 @@ def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None
 
     assert health.status_code == 200
     assert health.json()["status"] == "ready"
+    assert write_health.status_code == 200
+    assert write_health.json()["message"] == "Autotask writes ready"
     assert tickets.json()["items"][0]["ticket_number"] == "T-7"
     assert ticket.json()["items"][0]["id"] == "7"
     assert companies.json()["items"][0]["name"] == "Contoso"
     assert company.json()["items"][0]["id"] == "3"
     assert any(connector["id"] == "autotask" for connector in connectors.json())
     assert any(event["event_type"] == "autotask.read" for event in audit.json())
+    assert any(event["event_type"] == "autotask.write_health" for event in audit.json())
 
 
 def test_autotask_routes_keep_viewer_auth_boundary(settings) -> None:

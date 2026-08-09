@@ -235,6 +235,10 @@ def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
         servicenow_base_url="https://service-now.example.test",
         servicenow_username="api-user",
         servicenow_password="api-password",
+        autotask_base_url="https://autotask.example.test",
+        autotask_username="api-user",
+        autotask_secret="api-secret",
+        autotask_integration_code="integration-code",
     )
 
     statuses = {status.id: status for status in list_connector_statuses(active)}
@@ -242,6 +246,7 @@ def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
     assert statuses["halopsa"].write_actions_enabled is True
     assert statuses["connectwise"].write_actions_enabled is False
     assert statuses["servicenow"].write_actions_enabled is True
+    assert statuses["autotask"].write_actions_enabled is True
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:

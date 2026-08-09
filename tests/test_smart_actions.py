@@ -27,6 +27,7 @@ from wait_local_agent.m365_graph import (
     M365GraphUser,
 )
 from wait_local_agent.models import (
+    AutotaskWriteRequest,
     ConnectorReadResult,
     ConnectWiseWriteRequest,
     HaloTicket,
@@ -45,6 +46,7 @@ from wait_local_agent.smart_actions import (
     ActionContext,
     ActionResult,
     AutotaskTicketLookupAction,
+    AutotaskTicketWriteAction,
     CollectorPreviewAction,
     ConfluenceDocumentationSearchAction,
     ConnectWiseTicketLookupAction,
@@ -997,6 +999,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
     assert [manifest.action_id for manifest in service.list()] == [
+        "autotask-ticket-add-note",
         "autotask-ticket-lookup",
         "collector-preview",
         "communication-draft",
@@ -1055,6 +1058,67 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> None:
+    class FakeAutotaskWrites:
+        def __init__(self, *, health_status="ready", result_status="succeeded"):
+            self.health_status = health_status
+            self.result_status = result_status
+            self.calls: list[AutotaskWriteRequest] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            return SimpleNamespace(
+                status=self.result_status,
+                message="write completed" if self.result_status == "succeeded" else "provider rejected write",
+                status_code=200 if self.result_status == "succeeded" else 400,
+                remote_id="456",
+            )
+
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set id = '123', client_id = 'acme' where id = 'TCK-1001'")
+    provider = FakeAutotaskWrites()
+    context = _action_context(store, settings, client_id="acme")
+    action = AutotaskTicketWriteAction(
+        action_id="test-autotask",
+        title="test",
+        action_type="add_note",
+    )
+    fields: dict[str, object] = {"description": "note", "note_type": 3, "publish": 0}
+    preview = action.run(
+        replace(context, autotask_client=provider),
+        {"ticket_id": "123", "fields": fields},
+    )
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    completed = action.run(
+        replace(context, autotask_client=provider),
+        {"ticket_id": "123", "fields": fields, "_approval_completed": True},
+    )
+    assert completed.status == "success"
+    assert provider.calls == [AutotaskWriteRequest("123", "add_note", fields)]
+    assert action.run(
+        replace(context, client_id="other", autotask_client=provider),
+        {"ticket_id": "123", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, autotask_client=provider),
+        {"ticket_id": "123", "fields": {"description": "bad"}},
+    ).status == "failed"
+    assert action.run(
+        replace(context, autotask_client=FakeAutotaskWrites(health_status="blocked")),
+        {"ticket_id": "123", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, autotask_client=FakeAutotaskWrites(result_status="failed")),
+        {"ticket_id": "123", "fields": fields, "_approval_completed": True},
+    ).status == "failed"
 
 
 def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) -> None:
