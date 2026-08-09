@@ -49,6 +49,7 @@ from wait_local_agent.smart_actions import (
     M365IdentityLookupAction,
     M365LicenseChangeAction,
     M365LiveContextAction,
+    M365MailboxSettingsAction,
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -960,6 +961,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-identity-lookup",
         "m365-license-change",
         "m365-live-context",
+        "m365-mailbox-settings",
         "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
@@ -1240,6 +1242,96 @@ def test_m365_session_revocation_is_approval_gated_and_user_scoped(settings) -> 
     ).status == "failed"
     assert M365SessionRevocationAction().run(
         replace(context, m365_client=FakeM365SessionWrites(revoke_status="failed")),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_m365_mailbox_settings_is_approval_gated_and_allowlisted(settings) -> None:
+    class FakeM365MailboxWrites:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            update_status="succeeded",
+            update_error=False,
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.update_status = update_status
+            self.update_error = update_error
+            self.calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def update_mailbox_settings(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.update_error:
+                raise RuntimeError("update unavailable")
+            return SimpleNamespace(
+                status=self.update_status,
+                message="settings updated" if self.update_status == "succeeded" else "provider rejected settings",
+                settings=kwargs["settings"],
+                status_code=200 if self.update_status == "succeeded" else 400,
+            )
+
+    store = Store(settings.data_path)
+    provider = FakeM365MailboxWrites()
+    service = SmartActionService(store, settings, m365_client=provider)
+    payload: dict[str, object] = {
+        "user_identity": "user@example.test",
+        "settings": {"locale": "en-US", "time_zone": "Pacific Standard Time"},
+    }
+
+    pending = service.invoke("m365-mailbox-settings", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.calls == [{"user_identity": "user@example.test", "settings": payload["settings"]}]
+
+    context = _action_context(store, settings, client_id="acme")
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "_approval_completed": True},
+    ).status == "success"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "settings": {"unsupported": "value"}},
+    ).status == "failed"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "unexpected": "field"},
+    ).status == "failed"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=FakeM365MailboxWrites(health_status="blocked")),
+        payload,
+    ).status == "failed"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=FakeM365MailboxWrites(health_error=True)),
+        payload,
+    ).status == "failed"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=FakeM365MailboxWrites(update_error=True)),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+    assert M365MailboxSettingsAction().run(
+        replace(context, m365_client=FakeM365MailboxWrites(update_status="failed")),
         {**payload, "_approval_completed": True},
     ).status == "failed"
 

@@ -130,6 +130,19 @@ class M365SessionRevocationWriteProvider(Protocol):
         """Revoke sessions for one explicitly identified user."""
 
 
+class M365MailboxSettingsWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def update_mailbox_settings(
+        self,
+        *,
+        user_identity: str,
+        settings: dict[str, str],
+    ) -> object:
+        """Update only the allowlisted mailbox settings for one user."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -201,6 +214,7 @@ class ActionContext:
         | M365GroupMembershipWriteProvider
         | M365LicenseWriteProvider
         | M365SessionRevocationWriteProvider
+        | M365MailboxSettingsWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -817,6 +831,132 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365MailboxSettingsAction:
+    manifest = SmartActionManifest(
+        action_id="m365-mailbox-settings",
+        title="Microsoft 365 mailbox settings update",
+        description=(
+            "Prepare an approval-gated Microsoft Graph mailbox settings update using "
+            "only the supported locale, time zone, date-format, and time-format fields."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "settings"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "settings": {"type": "object", "minProperties": 1},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "settings": "object",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=3,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"user_identity", "settings", "_approval_completed"}:
+            return _failed("M365 mailbox settings payload contains unsupported fields")
+        raw_settings = payload.get("settings")
+        settings = dict(raw_settings) if isinstance(raw_settings, dict) else raw_settings
+        mailbox_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "users.mailbox-settings.update",
+            "settings": settings,
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_mailbox_settings_update_payload
+
+            validate_m365_mailbox_settings_update_payload(mailbox_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(mailbox_payload["user_identity"]).strip()
+        validated_settings = cast(dict[str, str], mailbox_payload["settings"])
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365MailboxSettingsWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "mailbox_settings_update",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "settings": validated_settings,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "mailbox_settings_update",
+                "client_id": context.client_id,
+                "scope": {"user_identity": user_identity},
+                "fields": sorted(validated_settings),
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.update_mailbox_settings(
+                user_identity=user_identity,
+                settings=validated_settings,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph mailbox settings update failed",
+            )
+        result_output = {
+            **output,
+            "settings": dict(getattr(result, "settings", validated_settings)),
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph mailbox settings update failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -3021,6 +3161,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
         M365SessionRevocationAction(),
+        M365MailboxSettingsAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -3069,6 +3210,7 @@ class SmartActionService:
             | M365GroupMembershipWriteProvider
             | M365LicenseWriteProvider
             | M365SessionRevocationWriteProvider
+            | M365MailboxSettingsWriteProvider
             | None
         ) = None,
     ) -> None:
