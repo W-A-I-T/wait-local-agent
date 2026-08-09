@@ -27,7 +27,7 @@ from wait_local_agent.reports.renderers import (
     render_report,
 )
 from wait_local_agent.reports.schemas import REPORT_JSON_SCHEMA, validate_report_payload
-from wait_local_agent.reports.service import ReportService
+from wait_local_agent.reports.service import ReportService, _metadata_evidence_status
 from wait_local_agent.store import Store
 
 
@@ -42,6 +42,10 @@ def _sections() -> list[ReportSection]:
         ),
         ReportSection(title="Empty Section", summary="No findings in this pass."),
     ]
+
+
+def test_unknown_report_evidence_metadata_is_safe_by_default() -> None:
+    assert _metadata_evidence_status({"evidence_status": "invented"}) == "not_run"
 
 
 def _service(settings) -> ReportService:

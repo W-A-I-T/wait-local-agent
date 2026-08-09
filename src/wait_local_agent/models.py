@@ -38,6 +38,7 @@ MAX_APPROVAL_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_EVENT_MAX_RETRIES = 3
 DEFAULT_EVENT_RETRY_DELAY_SECONDS = 60
 MAX_EVENT_RETRY_DELAY_SECONDS = 60 * 60
+MAX_EVENT_RETRIES = 10
 EVENT_RETRY_POLL_SECONDS = 30
 EVENT_RETRY_BATCH_SIZE = 10
 
@@ -147,6 +148,7 @@ class EventDelivery:
     agent_attempts_json: str = "{}"
     retry_count: int = 0
     max_retries: int = DEFAULT_EVENT_MAX_RETRIES
+    retry_delay_seconds: int = DEFAULT_EVENT_RETRY_DELAY_SECONDS
     next_retry_at: str | None = None
 
 

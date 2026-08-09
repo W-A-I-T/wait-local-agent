@@ -3,6 +3,15 @@
 > Produced: 2026-06-10  
 > Based on direct repo inspection + live NeoAgent/competitor research
 
+> **Current-state note (2026-08-09):** This document retains the original
+> packaging and architecture proposal, but it is not the authoritative shipped
+> capability list. The current implementation truth is in
+> [`docs/status.md`](status.md), [`docs/neoagent-parity-matrix.md`](neoagent-parity-matrix.md),
+> and [`docs/ui-feature-evidence.md`](ui-feature-evidence.md). The staged rows
+> below are historical planning context unless they are marked as implemented
+> in those documents. Parity functionality that is in this public repository
+> remains open-source core and is not hidden behind a paid pack.
+
 ---
 
 ## Why This Product Exists
@@ -103,12 +112,15 @@ Everything in the current repo at `W-A-I-T/wait-local-agent`. Full feature list:
 | React/Vite dashboard | ✓ Built | `ui/src/App.tsx` |
 | Backup/restore | ✓ Built | `src/wait_local_agent/backup.py` |
 | CI/CD (ruff, mypy, bandit, pytest 95%+) | ✓ Built | `.github/workflows/test.yml` |
-| API authentication (Bearer token) | Phase 1 | Missing — must fix before promotion |
-| Encrypted local secrets (Fernet) | Phase 1 | Missing — must fix before promotion |
-| RBAC (admin/technician/viewer) | Phase 2 | Missing |
-| Audit export (CSV/JSON) | Phase 2 | Missing |
+| API authentication (Bearer token) | Implemented | `src/wait_local_agent/security.py`, `rbac.py`, and API dependencies; demo mode remains explicit |
+| Encrypted local secrets (Fernet) | Implemented | `src/wait_local_agent/vault.py` and CLI/API secret boundaries |
+| RBAC (admin/technician/viewer) | Implemented | Scoped role dependencies and tenant-aware records |
+| Audit export (CSV/JSON) | Implemented | API/CLI export paths with redaction and scope checks |
 
-**Public core rule**: Anything that enables local-only operation, inspection, or automation stays here forever. Integration packs and cloud features are paid.
+**Public core rule**: Anything that enables local-only operation, inspection,
+or automation stays here forever. Existing optional integration packs and cloud
+features may remain separately packaged, but parity functionality implemented in
+this public repository is not hidden behind a paid pack.
 
 ### Layer B — WAIT MSP Pack ($99/month per appliance, paid proprietary)
 
@@ -201,7 +213,7 @@ Execution happens only in `connectors.py` after:
 2. `WAIT_ALLOW_WRITE_ACTIONS=true`
 3. ApprovalRequest status = `approved`
 
-### RBAC Model (Phase 2)
+### RBAC Model
 
 | Role | Approve queue | Read all | Configure connectors | Manage RBAC | Export audit |
 |------|--------------|---------|---------------------|-------------|-------------|

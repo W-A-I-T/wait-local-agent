@@ -1400,12 +1400,16 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
             "event_type": "ticket.created",
             "entity_id": "TCK-1001",
             "client_id": "acme",
+            "max_retries": 2,
+            "retry_delay_seconds": 7,
             "payload": {"priority": "P1", "api_token": "secret-value"},
         },
     )
     assert event.status_code == 200
     assert event.json()["duplicate"] is False
     assert event.json()["delivery"]["status"] == "completed"
+    assert event.json()["delivery"]["max_retries"] == 2
+    assert event.json()["delivery"]["retry_delay_seconds"] == 7
     assert event.json()["run_ids"]
     assert "secret-value" not in event.text
 
@@ -1434,6 +1438,17 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
         json={"event_type": "ticket.created", "entity_id": "TCK-1001"},
     )
     assert missing_key.status_code == 422
+
+    invalid_policy = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-invalid-policy"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "max_retries": 11,
+        },
+    )
+    assert invalid_policy.status_code == 422
 
     unsupported = client.post(
         "/automation/events",
