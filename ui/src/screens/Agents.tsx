@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { AgentDefinition, AgentPlan, AgentRunDetail, AgentTool } from "../api/types";
+import type { AgentDefinition, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
 const contextOptions = [
   ["ticket", "Ticket details"],
@@ -27,6 +27,9 @@ export function Agents() {
   const [planInstruction, setPlanInstruction] = useState("");
   const [planTicket, setPlanTicket] = useState("");
   const [plan, setPlan] = useState<AgentPlan | null>(null);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [revisions, setRevisions] = useState<Record<string, AgentRevision[]>>({});
+  const [diffs, setDiffs] = useState<Record<string, AgentRevisionDiff>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -49,6 +52,62 @@ export function Agents() {
     return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
   }
 
+  function resetAgentForm() {
+    setEditingAgentId(null);
+    setName("");
+    setDescription("");
+    setClientId("");
+    setSelectedTools([]);
+    setContextSources(["ticket"]);
+    setApprovalExpiryHours("");
+    setApprovalRequiredTools([]);
+    setResultAware(false);
+  }
+
+  function editAgent(agent: AgentDefinition) {
+    setEditingAgentId(agent.id);
+    setName(agent.name);
+    setDescription(agent.description);
+    setClientId(agent.client_id ?? "");
+    setSelectedTools(agent.enabled_tools.slice(0, 8));
+    setContextSources(agent.context_sources.length ? agent.context_sources : ["ticket"]);
+    setApprovalExpiryHours(agent.approval_expiry_seconds ? String(agent.approval_expiry_seconds / 3600) : "");
+    setApprovalRequiredTools(agent.approval_required_tools ?? []);
+    setResultAware(agent.result_aware);
+    setMessage(`Editing ${agent.name} version ${agent.version}. Save to create a new version.`);
+  }
+
+  function agentPayload(agent?: AgentDefinition) {
+    const boundedTools = selectedTools.slice(0, 8);
+    const parsedApprovalExpiryHours = approvalExpiryHours.trim()
+      ? Number(approvalExpiryHours)
+      : undefined;
+    return {
+      name: name.trim(),
+      description,
+      enabled: agent?.enabled ?? true,
+      trigger: agent?.trigger ?? "manual",
+      entity_type: agent?.entity_type ?? "ticket",
+      filters: agent?.filters ?? {},
+      enabled_tools: boundedTools,
+      steps: boundedTools.map((tool_id) => ({ tool_id, payload: agent?.steps.find((step) => step.tool_id === tool_id)?.payload ?? {} })),
+      max_steps: boundedTools.length,
+      execution_timeout_seconds: agent?.execution_timeout_seconds ?? 30,
+      context_sources: contextSources,
+      approval_expiry_seconds: parsedApprovalExpiryHours === undefined
+        ? undefined
+        : parsedApprovalExpiryHours * 60 * 60,
+      approval_required_tools: approvalRequiredTools.filter((tool_id) => boundedTools.includes(tool_id)),
+      result_aware: resultAware,
+      client_id: clientId || undefined,
+      run_once_per_entity: agent?.run_once_per_entity ?? true,
+      depends_on_agent_ids: agent?.depends_on_agent_ids ?? [],
+      execution_window_start: agent?.execution_window_start,
+      execution_window_end: agent?.execution_window_end,
+      execution_window_timezone: agent?.execution_window_timezone ?? "UTC"
+    };
+  }
+
   async function createAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const boundedTools = selectedTools.slice(0, 8);
@@ -66,35 +125,20 @@ export function Agents() {
       setMessage("Approval deadline must be a whole number of hours from 1 to 720.");
       return;
     }
+    const existing = editingAgentId ? agents.find((agent) => agent.id === editingAgentId) : undefined;
+    if (editingAgentId && !existing) {
+      setMessage("This agent is no longer available. Refresh the list before saving.");
+      return;
+    }
     try {
-      await apiFetch<AgentDefinition>("/agents", {
-        method: "POST",
+      await apiFetch<AgentDefinition>(existing ? `/agents/${encodeURIComponent(existing.id)}` : "/agents", {
+        method: existing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          description,
-          enabled: true,
-          trigger: "manual",
-          entity_type: "ticket",
-          filters: {},
-          enabled_tools: boundedTools,
-          steps: boundedTools.map((tool_id) => ({ tool_id, payload: {} })),
-          max_steps: boundedTools.length,
-          execution_timeout_seconds: 30,
-          context_sources: contextSources,
-          approval_expiry_seconds: parsedApprovalExpiryHours === undefined
-            ? undefined
-            : parsedApprovalExpiryHours * 60 * 60,
-          approval_required_tools: approvalRequiredTools,
-          result_aware: resultAware,
-          client_id: clientId || undefined
-        })
+        body: JSON.stringify(agentPayload(existing))
       });
-      setName("");
-      setDescription("");
-      setResultAware(false);
-      setApprovalRequiredTools([]);
-      setMessage("Agent created.");
+      const action = existing ? "updated" : "created";
+      resetAgentForm();
+      setMessage(existing ? `Agent ${action}; a new revision is now available.` : "Agent created.");
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to create agent.");
@@ -112,6 +156,40 @@ export function Agents() {
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to change agent availability.");
+    }
+  }
+
+  async function showRevisions(agent: AgentDefinition) {
+    try {
+      const rows = await apiFetch<AgentRevision[]>(`/agents/${encodeURIComponent(agent.id)}/revisions`);
+      setRevisions((current) => ({ ...current, [agent.id]: rows }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load agent history.");
+    }
+  }
+
+  async function compareRevision(agent: AgentDefinition, version: number) {
+    try {
+      const diff = await apiFetch<AgentRevisionDiff>(
+        `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/diff/${agent.version}`
+      );
+      setDiffs((current) => ({ ...current, [agent.id]: diff }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to compare agent history.");
+    }
+  }
+
+  async function restoreRevision(agent: AgentDefinition, version: number) {
+    try {
+      const restored = await apiFetch<AgentDefinition>(
+        `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/restore`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+      );
+      setAgents((current) => current.map((item) => item.id === restored.id ? restored : item));
+      setMessage(`Restored ${agent.name} version ${version} as version ${restored.version}.`);
+      await showRevisions(restored);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to restore agent history.");
     }
   }
 
@@ -173,7 +251,7 @@ export function Agents() {
     <div className="screen-stack">
       <section className="panel">
         <div className="panel-heading"><h2>Agents</h2><span>{agents.length} definitions</span></div>
-        <p className="screen-note">Create bounded ticket agents from the existing tool catalog. Selected context is tenant-scoped and recorded with each run.</p>
+        <p className="screen-note">Create and review bounded ticket agents from the existing tool catalog. Saving an existing agent creates a recoverable revision; selected context is tenant-scoped and recorded with each run.</p>
         <form className="draft-form" onSubmit={createAgent}>
           <div className="grid">
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="MFA triage" /></label>
@@ -198,7 +276,10 @@ export function Agents() {
             }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
           })}</fieldset>
           <fieldset className="agent-option-group"><legend>Additional approval rules</legend><p className="screen-note">Require approval for selected tools even when their catalog policy is read-only. Built-in approval requirements cannot be disabled.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`approval-${tool.id}`}><input type="checkbox" checked={approvalRequiredTools.includes(tool.id)} onChange={() => setApprovalRequiredTools((current) => toggleValue(current, tool.id))} />{tool.name}{tool.approval_required ? " · already required" : " · require approval"}</label>)}</fieldset>
-          <button type="submit" disabled={!canWrite}>Create agent</button>
+          <div className="row-actions">
+            <button type="submit" disabled={!canWrite}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
+            {editingAgentId ? <button type="button" className="secondary-button" onClick={resetAgentForm}>Cancel edit</button> : null}
+          </div>
         </form>
         {message ? <div className="notice">{message}</div> : null}
       </section>
@@ -216,7 +297,8 @@ export function Agents() {
             <p className="screen-note">Approval deadline: {agent.approval_expiry_seconds ? `${agent.approval_expiry_seconds / 3600} hours maximum` : "tool default"}</p>
             <p className="screen-note">Additional approval: {additionalApprovalTools.length ? additionalApprovalTools.join(", ") : "none"}</p>
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
-            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button></div>
+            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} onClick={() => editAgent(agent)}>Edit</button><button type="button" className="secondary-button" onClick={() => void showRevisions(agent)}>History</button></div>
+            {revisions[agent.id] ? <div className="agent-history" aria-live="polite"><strong>Revision history</strong>{revisions[agent.id].map((revision) => <div className="agent-history-row" key={`${agent.id}-${revision.version}`}><span>Version {revision.version} · {revision.created_at}</span><div className="row-actions">{revision.version !== agent.version ? <><button type="button" className="secondary-button" onClick={() => void compareRevision(agent, revision.version)}>Compare to current</button><button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void restoreRevision(agent, revision.version)}>Restore</button></> : <span>current</span>}</div></div>)}{diffs[agent.id] ? <div className="agent-diff"><strong>{diffs[agent.id].changed ? "Changes" : "No changes"}</strong>{diffs[agent.id].changes.length ? diffs[agent.id].changes.map((change) => <div key={change.field}><span>{change.field}</span><small>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</small></div>) : <span>No persisted fields differ.</span>}</div> : null}</div> : null}
             {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}
           </article>;
         })}
