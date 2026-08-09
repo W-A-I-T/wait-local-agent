@@ -115,6 +115,130 @@ def test_itglue_read_contract_uses_json_api_and_normalizes_resources(settings) -
     assert paths.count("/organizations") == 2
 
 
+def test_itglue_content_search_uses_all_folder_listing_and_bounded_detail_sections(settings) -> None:
+    requests: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.url.path, request.url.params.get("filter[document_folder_id]")))
+        if request.url.path.endswith("/relationships/documents"):
+            assert request.url.params["filter[document_folder_id]"] == "null"
+            assert request.url.params["page[size]"] == "12"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "9",
+                            "attributes": {
+                                "name": "VPN runbook",
+                                "organization-id": "1",
+                                "document-folder-id": "7",
+                            },
+                        },
+                        {
+                            "id": "10",
+                            "attributes": {
+                                "name": "Printer guide",
+                                "organization-id": "1",
+                            },
+                        },
+                    ]
+                },
+            )
+        if request.url.path == "/documents/9":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "9",
+                        "attributes": {
+                            "name": "VPN runbook",
+                            "organization-id": "1",
+                            "sections": [
+                                {"attributes": {"resource-type": "Document::Heading", "content": "VPN"}},
+                                {
+                                    "attributes": {
+                                        "resource-type": "Document::Text",
+                                        "content": "MFA reset instructions",
+                                    }
+                                },
+                                {
+                                    "attributes": {
+                                        "resource-type": "Document::Gallery",
+                                        "content": "must not be searched",
+                                    }
+                                },
+                            ],
+                        },
+                    }
+                },
+            )
+        if request.url.path == "/documents/10":
+            return httpx.Response(
+                200,
+                json={"data": {"id": "10", "attributes": {"name": "Printer guide", "organization-id": "1"}}},
+            )
+        raise AssertionError(request.url)
+
+    client = ItGlueClient(_configured(settings), transport=httpx.MockTransport(handler))
+    response = client.search_documents("1", "mfa", limit=3)
+
+    assert response.result.status == "ready"
+    assert response.result.count == 1
+    assert isinstance(response.items[0], ItGlueDocument)
+    assert response.items[0].name == "VPN runbook"
+    assert response.items[0].content == "VPN\nMFA reset instructions"
+    assert requests[0] == ("/organizations/1/relationships/documents", "null")
+    assert ("/documents/9", None) in requests
+    assert ("/documents/10", None) in requests
+
+
+def test_itglue_content_search_rejects_unbounded_or_failed_reads(settings) -> None:
+    configured = _configured(settings)
+    assert ItGlueClient(configured).search_documents("1", "", limit=1).result.status == "failed"
+    assert ItGlueClient(configured).search_documents("bad/id", "vpn", limit=1).result.status == "failed"
+    assert ItGlueClient(configured).search_documents("1", "x" * 201, limit=1).result.status == "failed"
+    assert (
+        ItGlueClient(configured).search_documents("1", "vpn", folder_id="bad/id", limit=1).result.status
+        == "failed"
+    )
+    assert ItGlueClient(configured).search_documents("1", "vpn", limit=0).result.status == "failed"
+
+    def failed_detail(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/relationships/documents"):
+            return httpx.Response(200, json={"data": [{"id": "9", "attributes": {"name": "VPN"}}]})
+        return httpx.Response(500)
+
+    response = ItGlueClient(configured, transport=httpx.MockTransport(failed_detail)).search_documents(
+        "1", "vpn", limit=1
+    )
+    assert response.result.status == "failed"
+    assert "could not retrieve document" in response.result.message
+
+    def malformed_detail(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/relationships/documents"):
+            return httpx.Response(200, json={"data": [{"id": "9", "attributes": {"name": "VPN"}}]})
+        return httpx.Response(200, json={"data": {"attributes": {"name": "VPN"}}})
+
+    malformed = ItGlueClient(configured, transport=httpx.MockTransport(malformed_detail)).search_documents(
+        "1", "vpn", limit=1
+    )
+    assert malformed.result.status == "failed"
+    assert "malformed document" in malformed.result.message
+
+    def foreign_document(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "9", "attributes": {"name": "VPN", "organization-id": "2"}}]},
+        )
+
+    scoped = ItGlueClient(configured, transport=httpx.MockTransport(foreign_document)).search_documents(
+        "1", "vpn", limit=1
+    )
+    assert scoped.result.status == "ready"
+    assert scoped.items == []
+
+
 def test_itglue_sanitizes_failures_and_bounds_paths(settings) -> None:
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("private timeout")

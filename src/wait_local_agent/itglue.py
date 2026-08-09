@@ -20,6 +20,7 @@ DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 MAX_PAGE = 1_000_000
 MAX_DOCUMENT_CONTENT_LENGTH = 20_000
+MAX_CONTENT_SEARCH_CANDIDATES = 50
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,16 @@ class ItGlueClientProtocol(Protocol):
         folder_id: str | None = None,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> ItGlueReadResponse:
+        ...
+
+    def search_documents(
+        self,
+        organization_id: str,
+        query: str,
+        *,
+        folder_id: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
     ) -> ItGlueReadResponse:
         ...
 
@@ -132,6 +143,111 @@ class ItGlueClient:
             page=page,
             page_size=page_size,
             params=params,
+        )
+
+    def search_documents(
+        self,
+        organization_id: str,
+        query: str,
+        *,
+        folder_id: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
+    ) -> ItGlueReadResponse:
+        """Search a bounded organization-scoped set of documents and content.
+
+        IT Glue does not document a full-text document filter. The adapter
+        therefore lists the explicitly scoped organization documents, then
+        inspects the bounded document payloads returned by the provider. When
+        a list item does not include content, it retrieves that document's
+        documented detail representation, which includes its sections.
+        """
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return ItGlueReadResponse(
+                ConnectorReadResult("failed", "IT Glue search query must be 1 to 200 characters."),
+                [],
+            )
+        if isinstance(limit, bool) or limit < 1:
+            return ItGlueReadResponse(
+                ConnectorReadResult("failed", "IT Glue search limit must be at least 1."),
+                [],
+            )
+        result_limit = limit
+        candidate_limit = min(max(limit * 4, 10), MAX_CONTENT_SEARCH_CANDIDATES)
+        try:
+            safe_organization_id = _safe_segment(organization_id)
+        except ItGlueReadError as exc:
+            return ItGlueReadResponse(ConnectorReadResult("failed", exc.message), [])
+        params: dict[str, str | int] = {"filter[document_folder_id]": "null"}
+        if folder_id is not None:
+            try:
+                params["filter[document_folder_id]"] = _safe_segment(folder_id)
+            except ItGlueReadError as exc:
+                return ItGlueReadResponse(ConnectorReadResult("failed", exc.message), [])
+        listed = self._list(
+            f"organizations/{safe_organization_id}/relationships/documents",
+            _normalize_document,
+            page=1,
+            page_size=candidate_limit,
+            params=params,
+        )
+        if listed.result.status != "ready":
+            return listed
+
+        matches: list[ItGlueOrganization | ItGlueDocument | ItGlueFolder] = []
+        query_value = query.strip().casefold()
+        for item in listed.items:
+            if not isinstance(item, ItGlueDocument):
+                continue
+            document = item
+            if not document.content:
+                detail = self.get_document(document.id)
+                if detail.result.status != "ready":
+                    return ItGlueReadResponse(
+                        ConnectorReadResult(
+                            "failed",
+                            f"IT Glue content search could not retrieve document {document.id}.",
+                            len(matches),
+                        ),
+                        matches,
+                    )
+                detail_item = next(
+                    (candidate for candidate in detail.items if isinstance(candidate, ItGlueDocument)),
+                    None,
+                )
+                if detail_item is None:
+                    return ItGlueReadResponse(
+                        ConnectorReadResult(
+                            "failed",
+                            f"IT Glue content search returned malformed document {document.id}.",
+                            len(matches),
+                        ),
+                        matches,
+                    )
+                document = detail_item
+            scoped_document = document
+            if not scoped_document.organization_id:
+                scoped_document = ItGlueDocument(
+                    scoped_document.id,
+                    scoped_document.name,
+                    safe_organization_id,
+                    scoped_document.folder_id,
+                    scoped_document.updated_at,
+                    scoped_document.url,
+                    scoped_document.content,
+                )
+            if scoped_document.organization_id != safe_organization_id:
+                continue
+            if query_value in scoped_document.name.casefold() or query_value in scoped_document.content.casefold():
+                matches.append(scoped_document)
+                if len(matches) >= result_limit:
+                    break
+        return ItGlueReadResponse(
+            ConnectorReadResult(
+                "ready",
+                "IT Glue bounded document content search succeeded.",
+                len(matches),
+            ),
+            matches,
         )
 
     def get_document(self, document_id: str) -> ItGlueReadResponse:
@@ -340,7 +456,7 @@ def _normalize_document(row: Mapping[str, object]) -> ItGlueDocument | None:
     if not item_id:
         return None
     attributes = _attributes(row)
-    content = _string_value(attributes, "content")[:MAX_DOCUMENT_CONTENT_LENGTH]
+    content = _document_content(attributes)
     return ItGlueDocument(
         id=item_id,
         name=_string_value(attributes, "name", "title"),
@@ -350,6 +466,31 @@ def _normalize_document(row: Mapping[str, object]) -> ItGlueDocument | None:
         url=_string_value(attributes, "resource-url", "resource_url", "url"),
         content=content,
     )
+
+
+def _document_content(attributes: Mapping[str, object]) -> str:
+    direct_content = _string_value(attributes, "content")
+    if direct_content:
+        return direct_content[:MAX_DOCUMENT_CONTENT_LENGTH]
+    sections = attributes.get("sections")
+    if not isinstance(sections, list):
+        return ""
+    section_content: list[str] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        section_attributes = _attributes(section)
+        resource_type = _string_value(section_attributes, "resource-type", "resource_type")
+        if resource_type and resource_type not in {
+            "Document::Heading",
+            "Document::Text",
+            "Document::Step",
+        }:
+            continue
+        value = _string_value(section_attributes, "content")
+        if value:
+            section_content.append(value)
+    return "\n".join(section_content)[:MAX_DOCUMENT_CONTENT_LENGTH]
 
 
 def _normalize_folder(row: Mapping[str, object]) -> ItGlueFolder | None:
