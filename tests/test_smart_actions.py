@@ -26,7 +26,14 @@ from wait_local_agent.m365_graph import (
     M365GraphSubscribedSku,
     M365GraphUser,
 )
-from wait_local_agent.models import ConnectorReadResult, HaloTicket, HuduArticle, SourceReference, Ticket
+from wait_local_agent.models import (
+    ConnectorReadResult,
+    HaloTicket,
+    HaloWriteRequest,
+    HuduArticle,
+    SourceReference,
+    Ticket,
+)
 from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
@@ -42,6 +49,7 @@ from wait_local_agent.smart_actions import (
     DispatchSuggestionAction,
     FindSimilarTicketsAction,
     HaloPSATicketLookupAction,
+    HaloPSATicketWriteAction,
     HuduDocumentationSearchAction,
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
@@ -957,7 +965,12 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "connectwise-ticket-lookup",
         "dispatch-suggestion",
         "find-similar-tickets",
+        "halopsa-ticket-add-note",
+        "halopsa-ticket-assign-technician",
+        "halopsa-ticket-draft-response",
         "halopsa-ticket-lookup",
+        "halopsa-ticket-status-update",
+        "halopsa-ticket-update-fields",
         "hudu-documentation-search",
         "itglue-documentation-search",
         "knowledge-search",
@@ -996,6 +1009,120 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> None:
+    class FakeHaloWrites:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            result_status="succeeded",
+            result_error=False,
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.result_status = result_status
+            self.result_error = result_error
+            self.calls: list[HaloWriteRequest] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            if self.result_error:
+                raise RuntimeError("write unavailable")
+            return SimpleNamespace(
+                status=self.result_status,
+                message=(
+                    "ticket write succeeded"
+                    if self.result_status == "succeeded"
+                    else "provider rejected ticket write"
+                ),
+                status_code=200 if self.result_status == "succeeded" else 400,
+                remote_id="remote-1",
+            )
+
+    specs = [
+        ("add_note", "halopsa-ticket-add-note", {"note": "hello"}),
+        (
+            "assign_technician",
+            "halopsa-ticket-assign-technician",
+            {"technician_id": "tech-1"},
+        ),
+        ("draft_response", "halopsa-ticket-draft-response", {"response": "hello"}),
+        ("update_status", "halopsa-ticket-status-update", {"status_id": "status-1"}),
+        (
+            "update_ticket_fields",
+            "halopsa-ticket-update-fields",
+            {"priority": "high"},
+        ),
+    ]
+    store = Store(settings.data_path)
+    provider = FakeHaloWrites()
+    service = SmartActionService(store, settings, halopsa_client=provider)
+    context = _action_context(store, settings, client_id="acme")
+    first_action = None
+    for action_type, action_id, fields in specs:
+        action = HaloPSATicketWriteAction(
+            action_id=f"test-{action_type}",
+            title="test",
+            action_type=action_type,
+        )
+        first_action = first_action or action
+        pending = service.invoke(
+            action_id,
+            {"ticket_id": "TCK-1001", "fields": fields},
+            "requester",
+            client_id="acme",
+        )
+        if action_type == "add_note":
+            assert pending.status == "pending_approval"
+            assert pending.approval_id is not None
+            service.update_approval(
+                pending.approval_id,
+                "approved",
+                approver="technician",
+                approver_role=Role.TECHNICIAN,
+            )
+        assert action.run(
+            replace(context, halopsa_client=provider),
+            {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
+        ).status == "success"
+    assert first_action is not None
+    assert provider.calls[0] == HaloWriteRequest(
+        ticket_id="TCK-1001",
+        action_type="add_note",
+        fields={"note": "hello"},
+    )
+    assert first_action.run(
+        replace(context, halopsa_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {}},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, halopsa_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}, "unexpected": True},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, halopsa_client=FakeHaloWrites(health_status="blocked")),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, halopsa_client=FakeHaloWrites(health_error=True)),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, halopsa_client=FakeHaloWrites(result_status="failed")),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}, "_approval_completed": True},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, halopsa_client=FakeHaloWrites(result_error=True)),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}, "_approval_completed": True},
+    ).status == "failed"
 
 
 def test_m365_group_membership_is_approval_gated_and_immutable_id_scoped(settings) -> None:

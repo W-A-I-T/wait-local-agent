@@ -40,6 +40,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Connector setup validation commands for HaloPSA and Hudu.
 - HaloPSA read-only connector surface behind `WAIT_ALLOW_HTTP_PROBING=true`.
 - HaloPSA safe write draft surface with approved live execution for ticket notes, responses, status/category fields, and technician assignment.
+- The shared smart-action catalog reuses those governed HaloPSA writes through
+  tenant-scoped ticket note, response, status, assignment, and field-update
+  actions with action-specific validation.
 - Hudu read-only connector configuration surface for tenant-scoped documentation
   lookup, bounded article content extraction, and content search.
 - IT Glue read-only organization-scoped documentation lookup through the common

@@ -26,6 +26,7 @@ from wait_local_agent.models import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
     ApprovalRequest,
+    HaloWriteRequest,
     SourceReference,
     Ticket,
 )
@@ -282,7 +283,7 @@ class ActionContext:
         | M365ManagedDeviceWriteProvider
         | None
     ) = None
-    halopsa_client: HaloPSAReadProvider | None = None
+    halopsa_client: HaloPSAReadProvider | HaloPSAWriteProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
     communication_sender: CommunicationSender | None = None
@@ -291,6 +292,14 @@ class ActionContext:
 class HaloPSAReadProvider(Protocol):
     def get_ticket(self, ticket_id: str) -> object:
         """Read one PSA ticket through the existing guarded client."""
+
+
+class HaloPSAWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded HaloPSA write readiness result."""
+
+    def execute_write(self, request: HaloWriteRequest) -> object:
+        """Execute one explicitly approved HaloPSA ticket write."""
 
 
 class HuduReadProvider(Protocol):
@@ -2560,7 +2569,10 @@ class HaloPSATicketLookupAction:
             return _failed("ticket_id must identify an existing ticket in the tenant scope")
         from wait_local_agent.halopsa import HaloPSAClient
 
-        provider = context.halopsa_client or HaloPSAClient(context.settings)
+        provider = cast(
+            HaloPSAReadProvider,
+            context.halopsa_client or HaloPSAClient(context.settings),
+        )
         try:
             response = provider.get_ticket(ticket.id)
         except Exception:
@@ -2608,6 +2620,140 @@ class HaloPSATicketLookupAction:
                     "ticket_id": ticket.id,
                 }
             ],
+        )
+
+
+class HaloPSATicketWriteAction:
+    def __init__(self, *, action_id: str, title: str, action_type: str) -> None:
+        self.action_type = action_type
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=(
+                f"Prepare an approval-gated HaloPSA {action_type} for one explicit "
+                "tenant-scoped ticket."
+            ),
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["ticket_id", "fields"],
+                "properties": {
+                    "ticket_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "fields": {"type": "object", "minProperties": 1},
+                },
+            },
+            output_schema={
+                "operation": "string",
+                "connector_status": "string",
+                "ticket_id": "string",
+                "action_type": "string",
+                "status_code": "number",
+                "remote_id": "string",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=3,
+            risk_level="high",
+            required_role="technician",
+            access_mode="write",
+        )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "fields", "_approval_completed"}:
+            return _failed(f"HaloPSA {self.action_type} payload contains unsupported fields")
+        ticket_id = payload.get("ticket_id")
+        fields = payload.get("fields")
+        if (
+            not isinstance(ticket_id, str)
+            or not ticket_id.strip()
+            or len(ticket_id) > 320
+            or any(ord(character) < 32 or character.isspace() for character in ticket_id)
+            or not isinstance(fields, dict)
+        ):
+            return _failed("HaloPSA ticket write payload is invalid")
+        ticket_id = ticket_id.strip()
+        fields = dict(fields)
+        try:
+            from wait_local_agent.connectors import validate_halopsa_action_fields
+
+            validate_halopsa_action_fields(self.action_type, fields)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        from wait_local_agent.halopsa import HaloPSAClient
+
+        provider = cast(
+            HaloPSAWriteProvider,
+            context.halopsa_client or HaloPSAClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("HaloPSA write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "HaloPSA writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "ticket_write",
+            "connector_status": connector_status,
+            "ticket_id": ticket_id,
+            "action_type": self.action_type,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "halopsa",
+                "operation": self.action_type,
+                "client_id": context.client_id,
+                "ticket_id": ticket_id,
+                "field_names": sorted(str(name) for name in fields),
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.execute_write(
+                HaloWriteRequest(
+                    ticket_id=ticket_id,
+                    action_type=self.action_type,
+                    fields=fields,
+                )
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=f"HaloPSA {self.action_type} failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+            "remote_id": getattr(result, "remote_id", ""),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", f"HaloPSA {self.action_type} failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -3790,6 +3936,31 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptExecuteAction(),
         RmmScriptExecutionLookupAction(),
         HaloPSATicketLookupAction(),
+        HaloPSATicketWriteAction(
+            action_id="halopsa-ticket-add-note",
+            title="HaloPSA add ticket note",
+            action_type="add_note",
+        ),
+        HaloPSATicketWriteAction(
+            action_id="halopsa-ticket-assign-technician",
+            title="HaloPSA assign ticket",
+            action_type="assign_technician",
+        ),
+        HaloPSATicketWriteAction(
+            action_id="halopsa-ticket-draft-response",
+            title="HaloPSA draft ticket response",
+            action_type="draft_response",
+        ),
+        HaloPSATicketWriteAction(
+            action_id="halopsa-ticket-status-update",
+            title="HaloPSA update ticket status",
+            action_type="update_status",
+        ),
+        HaloPSATicketWriteAction(
+            action_id="halopsa-ticket-update-fields",
+            title="HaloPSA update ticket fields",
+            action_type="update_ticket_fields",
+        ),
         ConnectWiseTicketLookupAction(),
         SyncroTicketLookupAction(),
         ServiceNowIncidentLookupAction(),
@@ -3868,7 +4039,7 @@ class SmartActionService:
         registry: SmartActionRegistry | None = None,
         provider_configured: bool | None = None,
         collector_service: CollectorPreviewProvider | None = None,
-        halopsa_client: HaloPSAReadProvider | None = None,
+        halopsa_client: HaloPSAReadProvider | HaloPSAWriteProvider | None = None,
         hudu_client: HuduReadProvider | None = None,
         communication_provider: CommunicationProvider | None = None,
         communication_sender: CommunicationSender | None = None,

@@ -402,6 +402,13 @@ Live HaloPSA writes require:
 - a pending draft
 - explicit approval
 
+The shared smart-action catalog also exposes approval-gated
+`halopsa-ticket-add-note`, `halopsa-ticket-draft-response`,
+`halopsa-ticket-status-update`, `halopsa-ticket-assign-technician`, and
+`halopsa-ticket-update-fields`. Each action remains tenant-scoped to one
+ticket, validates its action-specific fields, and reports provider failures
+without fake success.
+
 ### Hudu
 
 Required settings:
