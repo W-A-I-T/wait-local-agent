@@ -43,7 +43,7 @@ unverifiable product claim.
 | --- | --- | --- | --- |
 | Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence; M365 onboarding/offboarding are admin-only, approval-gated, and never persist credentials |
 | Event ingestion and delivery retry | `/automation/*`, API | No standalone screen; retry policy is intentionally API-only | Authenticated event types, idempotency, tenant checks, persisted `max_retries` 0-10, persisted `retry_delay_seconds` 1-3600, and bounded automatic retries |
-| Technician chat and persisted sessions | `/technician/chat*`, CLI | No standalone screen | Technician role, tenant/principal scope, bounded parser and history |
+| Technician chat and persisted sessions | `/technician/chat*`, `/technician-chat`, CLI | Dedicated technician screen supports session create/select/send/close; the CLI and API remain available | Technician role, tenant/principal scope, bounded parser and history; the screen reuses the same audited smart-action runtime |
 | End-user local ticket support | `/end-user/tickets*`, `/end-user` | Dedicated end-user surface supports token save, ticket creation, status lookup, requester-only follow-up messages, and technician escalation; it is separate from the operator shell | Separate end-user token, fixed requester and tenant scope, isolated end-user message store, end-user-safe responses, and no technician/admin tools |
 | Ticket lifecycle history and historical resolution metrics | `/tickets/{ticket_id}/status-history`, `/analytics/summary`, CLI analytics summary | Analytics metric on dashboard; history remains an API/CLI detail surface | Uses only explicit local/imported transitions; existing snapshots are not treated as historical evidence |
 | Syncro, ServiceNow, Autotask, IT Glue, Confluence, SharePoint, M365, and RMM provider detail routes | API, CLI, Agents tool catalog | No provider-specific dashboard screen | Read-only or approval-gated provider contracts; disabled live calls remain reported as blocked |
@@ -51,7 +51,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 18 files, 68 tests passed.
+- UI tests: 19 files, 70 tests passed.
 - UI production build: passed.
 - Ruff, mypy, Bandit, and public-surface audit: passed in the isolated project
   environment.

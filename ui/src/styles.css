@@ -138,6 +138,100 @@ a {
   font-size: 0.88rem;
 }
 
+.technician-chat-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+}
+
+.technician-session-list,
+.technician-conversation,
+.technician-messages {
+  display: grid;
+  gap: 12px;
+}
+
+.technician-session {
+  align-items: flex-start;
+  background: #f7faf8;
+  border: 1px solid #dce5e1;
+  color: #253633;
+  display: grid;
+  gap: 4px;
+  justify-items: flex-start;
+  text-align: left;
+  width: 100%;
+}
+
+.technician-session.selected {
+  border-color: #1f8261;
+  box-shadow: inset 0 0 0 1px #1f8261;
+}
+
+.technician-session span,
+.technician-session em {
+  color: #60706a;
+  font-size: 0.82rem;
+  font-style: normal;
+}
+
+.technician-message {
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  max-width: 85%;
+  padding: 10px 12px;
+}
+
+.technician-message.user {
+  background: #e4f5ed;
+  justify-self: end;
+}
+
+.technician-message.assistant {
+  background: #f1f4f2;
+  justify-self: start;
+}
+
+.technician-message p,
+.technician-message small {
+  margin: 0;
+}
+
+.technician-message small {
+  color: #60706a;
+  font-size: 0.76rem;
+}
+
+.technician-composer {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.technician-composer textarea {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.empty-state {
+  align-items: center;
+  color: #60706a;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 260px;
+  text-align: center;
+}
+
+.empty-state h3,
+.empty-state p {
+  margin: 0;
+}
+
 .end-user-ticket button {
   margin-top: 6px;
 }
@@ -1481,6 +1575,7 @@ dd svg {
 @media (max-width: 760px) {
   .shell,
   .end-user-grid,
+  .technician-chat-layout,
   .grid,
   .analytics-filters,
   .overview-cards,
@@ -1504,6 +1599,10 @@ dd svg {
 
   .agent-run-row {
     flex-direction: column;
+  }
+
+  .technician-composer {
+    grid-template-columns: 1fr;
   }
 
   .sidebar {
