@@ -111,6 +111,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-escalation",
         "ticket-sentiment",
         "ticket-sla-assessment",
+        "recurring-service-review",
         "stale-ticket-sweep",
         "communication-draft",
         "communication-send",

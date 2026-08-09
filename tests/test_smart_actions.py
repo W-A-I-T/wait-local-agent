@@ -73,6 +73,7 @@ from wait_local_agent.smart_actions import (
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
+    RecurringServiceReviewAction,
     RmmDeviceLookupAction,
     SecurityAlertAssessmentAction,
     ServiceNowIncidentLookupAction,
@@ -1045,6 +1046,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
+        "recurring-service-review",
         "rmm-alert-lookup",
         "rmm-device-lookup",
         "rmm-script-catalog",
@@ -3349,6 +3351,75 @@ def test_recorder_failure_does_not_change_action_outcome(settings, monkeypatch) 
     assert store.get_smart_action_run(result.run_id or 0) is not None
 
 
+def test_recurring_service_review_action_is_read_only_and_tenant_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
+            ("acme", "2026-01-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", "TCK-1001"),
+        )
+
+    service = SmartActionService(store, settings)
+    result = service.invoke(
+        "recurring-service-review",
+        {
+            "period_start": "2026-01-01",
+            "period_end": "2026-03-31",
+            "follow_up_after_days": 14,
+        },
+        "viewer",
+        client_id="acme",
+    )
+
+    assert result.status == "success"
+    assert result.output["report_type"] == "recurring_service_review"
+    assert result.output["client_id"] == "acme"
+    assert result.evidence[0]["claims_excluded"]
+    assert service.store.list_execution_runs(client_id="acme", run_kind="smart_action")
+    action = RecurringServiceReviewAction()
+    scoped_ticket_result = action.run(
+        _action_context(store, settings, client_id="acme"),
+        {
+            "ticket_id": "TCK-1001",
+            "period_start": "2026-01-01",
+            "period_end": "2026-03-31",
+        },
+    )
+    assert scoped_ticket_result.status == "success"
+
+    assert action.run(_action_context(store, settings, client_id="acme"), {"unexpected": True}).status == "failed"
+    assert action.run(
+        _action_context(store, settings),
+        {"period_start": "2026-01-01", "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"ticket_id": 123, "period_start": "2026-01-01", "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"period_start": None, "period_end": "2026-03-31"},
+    ).status == "failed"
+    assert action.run(
+        _action_context(store, settings, client_id="acme"),
+        {"period_start": "2026-01-01", "period_end": "2026-03-31", "follow_up_after_days": True},
+    ).status == "failed"
+
+    invalid = RecurringServiceReviewAction().run(
+        _action_context(store, settings, client_id="acme"),
+        {"period_start": "2026-01-01", "period_end": "not-a-date", "follow_up_after_days": 14},
+    )
+    assert invalid.status == "failed"
+    cross_tenant = RecurringServiceReviewAction().run(
+        _action_context(store, settings, client_id="globex"),
+        {
+            "ticket_id": "TCK-1001",
+            "period_start": "2026-01-01",
+            "period_end": "2026-03-31",
+        },
+    )
+    assert cross_tenant.status == "failed"
 def test_m365_password_reset_and_authentication_method_removal_are_admin_approval_gated(
     settings, tmp_path
 ) -> None:

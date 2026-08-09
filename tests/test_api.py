@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -11,7 +12,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
-from wait_local_agent.api.app import ScheduledJobCreateRequest, create_app
+from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
     default_registry,
@@ -815,7 +816,7 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 18
+    assert len(templates.json()) == 19
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert any(item["tool_id"] == "dispatch-suggestion" for item in templates.json())
     assert {
@@ -1008,6 +1009,67 @@ def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
     assert created["template_id"] == "qbr"
     assert created["client_id"] == "acme"
     assert created["params"]["client_id"] == "acme"
+
+
+def test_recurring_service_review_report_route_is_bounded_and_client_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1001"),
+        )
+    endpoint = next(
+        route.endpoint
+        for route in create_app(settings).routes
+        if isinstance(route, APIRoute)
+        and route.path == "/reports/recurring-service-review"
+        and route.methods is not None
+        and "POST" in route.methods
+    )
+    context = AuthContext(role=Role.ADMIN, presented_token="demo")
+    response = endpoint(
+        ClientReportRequest(
+            client_id="acme",
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 3, 31),
+        ),
+        context,
+        follow_up_after_days=14,
+    )
+    with pytest.raises(HTTPException, match="between 1 and 90"):
+        endpoint(
+            ClientReportRequest(
+                client_id="acme",
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 3, 31),
+            ),
+            context,
+            follow_up_after_days=0,
+        )
+    with pytest.raises(HTTPException, match="client_id is required"):
+        endpoint(
+            ClientReportRequest(
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 3, 31),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
+    with pytest.raises(HTTPException, match="on or after"):
+        endpoint(
+            ClientReportRequest(
+                client_id="acme",
+                period_start=date(2026, 3, 31),
+                period_end=date(2026, 1, 1),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
+
+    assert response["report_type"] == "recurring_service_review"
+    assert response["client_id"] == "acme"
+    assert response["metadata"]["scope"] == "single client"
 
 
 def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_id(settings) -> None:

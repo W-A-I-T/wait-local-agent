@@ -149,11 +149,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   history path. Only redacted operational messages, action IDs, statuses, and
   ticket references are stored.
 - Operators can generate deterministic client reports from the existing local
-  evidence at `/reports`: QBR and automation-opportunity reports are also
-  available through `POST /reports/qbr`, `POST /reports/automation-opportunity`,
-  `wait-local-agent reports qbr`, and
-  `wait-local-agent reports automation-opportunity`. Repeated actions are
-  review candidates only, and declared time-saved values are labeled estimates.
+  evidence at `/reports`: QBR, automation-opportunity, and recurring service
+  review reports are also available through their matching `/reports/*` API
+  routes and `wait-local-agent reports ...` commands. Repeated actions and
+  follow-up candidates are review outputs only, and declared time-saved values
+  are labeled estimates.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.
@@ -948,7 +948,8 @@ the run is created. Schedule requests accept an IANA `timezone` (default
 one-time `run_at` timestamps remain absolute instants.
 
 Client reports can use the same scheduler with a deterministic, tenant-scoped
-report target. Set `report_type` to `qbr` or `automation_opportunity` and pass
+report target. Set `report_type` to `qbr`, `automation_opportunity`, or
+`recurring_service_review` and pass
 `params.client_id` plus either a dynamic `period_days` value from 1 through 366
 or explicit ISO `period_start` and `period_end` dates:
 
@@ -957,7 +958,7 @@ wait-local-agent reports schedule qbr --cron "0 9 * * *" --client-id acme --peri
 ```
 
 The equivalent API request is `POST /scheduled-jobs` with
-`{"report_type":"qbr","cron":"0 9 * * *","params":{"client_id":"acme","period_days":90}}`.
+`{"report_type":"recurring_service_review","cron":"0 9 * * *","params":{"client_id":"acme","period_days":90,"follow_up_after_days":14}}`.
 Scheduled reports reuse the local report builders and audit the created report
 or the bounded failure; they do not call a remote model or provider.
 

@@ -184,6 +184,41 @@ describe("Reports evidence views", () => {
       && String(init.body).includes('"period_start":"2026-08-01"')
     ))).toBe(true);
   });
+
+  it("generates a recurring service review through the bounded report API", async () => {
+    const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init]);
+      if (String(input) === "/reports/recurring-service-review" && init?.method === "POST") {
+        return json({
+          id: "review-1",
+          report_type: "recurring_service_review",
+          client_id: "acme",
+          project_id: "",
+          created_at: "2026-08-09T10:00:00Z",
+          title: "Recurring service review — acme",
+          evidence_status: "partial",
+          metadata: { evidence_status: "partial", follow_up_after_days: 14 },
+          sections: []
+        });
+      }
+      return evidenceFetch(String(input), "completed");
+    }));
+
+    render(<Reports />);
+    await screen.findByText("Client reports");
+    fireEvent.change(screen.getByLabelText("Client scope (admin only; others are bound)"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Period start"), { target: { value: "2026-08-01" } });
+    fireEvent.change(screen.getByLabelText("Period end"), { target: { value: "2026-08-31" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate service review" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Recurring service review report generated from local evidence.");
+    expect(calls.some(([input, init]) => (
+      String(input) === "/reports/recurring-service-review"
+      && init?.method === "POST"
+      && String(init.body).includes('"client_id":"acme"')
+    ))).toBe(true);
+  });
 });
 
 function baseFetch(input: RequestInfo | URL): Response {

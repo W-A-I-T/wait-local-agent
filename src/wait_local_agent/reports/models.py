@@ -18,6 +18,7 @@ class ReportType(StrEnum):
     AUDIT_EXPORT = "audit_export"
     QBR = "qbr"
     AUTOMATION_OPPORTUNITY = "automation_opportunity"
+    RECURRING_SERVICE_REVIEW = "recurring_service_review"
     FOUNDER_PREFLIGHT = "founder_preflight"
     DEVELOPER_HANDOFF = "developer_handoff"
     COLLECTOR_BUNDLE = "collector_bundle"
