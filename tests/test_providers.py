@@ -800,7 +800,7 @@ def test_remote_anthropic_provider_selects_continuation_tool(tmp_path: Path) -> 
         RemoteModelProfile(
             provider="anthropic",
             base_url="https://api.anthropic.com",
-            model="claude-test",
+            model="remote-model-test",
             api_key="remote-secret",
             timeout_seconds=5,
             cloud_fallback_enabled=True,
@@ -880,7 +880,7 @@ def test_remote_continuation_rejects_malformed_and_http_errors(tmp_path: Path) -
             RemoteModelProfile(
                 provider="anthropic",
                 base_url="https://api.anthropic.com",
-                model="claude-test",
+                model="remote-model-test",
                 api_key="remote-secret",
                 timeout_seconds=5,
                 cloud_fallback_enabled=True,
