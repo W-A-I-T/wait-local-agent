@@ -70,6 +70,7 @@ AUTOTASK_ACTION_TYPES = {
     "add_note",
     "update_status",
     "update_resolution",
+    "assign_technician",
 }
 
 M365_USER_CREATE_ACTION = "users.create"
@@ -1867,6 +1868,15 @@ def validate_autotask_action_fields(action_type: str, fields: dict[str, object])
             or any(ord(character) < 32 for character in value)
         ):
             raise ValueError("Autotask ticket resolution is invalid")
+        return
+    if action_type == "assign_technician":
+        if set(fields) != {"assigned_resource_id"}:
+            raise ValueError(
+                "Autotask assign_technician requires only an assigned_resource_id field"
+            )
+        value = fields["assigned_resource_id"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError("Autotask assigned_resource_id must be a positive integer")
         return
     if not isinstance(fields, dict) or not {"description", "note_type", "publish"} <= set(fields):
         raise ValueError(
