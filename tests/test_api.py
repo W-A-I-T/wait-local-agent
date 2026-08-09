@@ -25,6 +25,7 @@ from wait_local_agent.itglue import (
     ItGlueReadResponse,
 )
 from wait_local_agent.m365_graph import (
+    M365GraphAuthenticationMethodDeleteResult,
     M365GraphGroup,
     M365GraphGroupMembershipResult,
     M365GraphGroupReadResponse,
@@ -46,6 +47,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceRemoteLockResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
+    M365GraphPasswordResetResult,
     M365GraphReadResponse,
     M365GraphSessionRevokeResult,
     M365GraphSubscribedSku,
@@ -3751,6 +3753,103 @@ def test_m365_user_disable_requires_admin_and_auto_executes_after_approval(setti
     assert admin_approval.json()["output"]["status_code"] == 204
     assert calls == [{"user_identity": "adele.vance@example.test"}]
     assert "password" not in admin_approval.text.lower()
+
+
+def test_m365_password_and_authentication_method_routes_require_admin_approval(
+    settings, monkeypatch, tmp_path
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def reset_user_password(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphPasswordResetResult(
+                "succeeded", "reset", user_identity=str(kwargs["user_identity"]), status_code=204
+            )
+
+        def delete_authentication_method(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphAuthenticationMethodDeleteResult(
+                "succeeded",
+                "removed",
+                user_identity=str(kwargs["user_identity"]),
+                method_type=str(kwargs["method_type"]),
+                method_id=str(kwargs["method_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+        vault_path=tmp_path / "vault",
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    headers = _auth("admin-token")
+
+    password_draft = client.post(
+        "/connectors/m365/users/password-reset-drafts",
+        headers=headers,
+        json={
+            "user_identity": "adele.vance@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            "force_change_password_next_sign_in_with_mfa": True,
+        },
+    )
+    assert password_draft.status_code == 200
+    assert "Temporary-Password-123!" not in password_draft.text
+    password_approval = client.post(
+        f"/approval-requests/{password_draft.json()['id']}",
+        headers=headers,
+        json={"status": "approved"},
+    )
+    assert password_approval.status_code == 200
+
+    method_draft = client.post(
+        "/connectors/m365/users/authentication-method-drafts",
+        headers=headers,
+        json={
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    )
+    assert method_draft.status_code == 200
+    method_approval = client.post(
+        f"/approval-requests/{method_draft.json()['id']}",
+        headers=headers,
+        json={"status": "approved"},
+    )
+    assert method_approval.status_code == 200
+    assert calls == [
+        {
+            "user_identity": "adele.vance@example.test",
+            "temporary_password": "Temporary-Password-123!",
+            "force_change_password_next_sign_in": True,
+            "force_change_password_next_sign_in_with_mfa": True,
+        },
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    ]
+    assert "Temporary-Password-123!" not in password_approval.text
 
 
 def test_m365_group_membership_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
