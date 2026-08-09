@@ -409,6 +409,11 @@ The shared smart-action catalog also exposes approval-gated
 ticket, validates its action-specific fields, and reports provider failures
 without fake success.
 
+ConnectWise PSA status, assignment, and allowlisted ticket-field updates are
+also exposed through the shared catalog as approval-gated
+`connectwise-ticket-status-update`, `connectwise-ticket-assign-technician`, and
+`connectwise-ticket-update-fields` actions.
+
 ### Hudu
 
 Required settings:

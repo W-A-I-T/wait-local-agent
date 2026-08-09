@@ -19,13 +19,14 @@ from wait_local_agent.communication import (
 )
 from wait_local_agent.config import Settings
 from wait_local_agent.confluence import ConfluenceClientProtocol
-from wait_local_agent.connectwise import ConnectWiseReadProvider
+from wait_local_agent.connectwise import ConnectWiseReadProvider, ConnectWiseWriteProvider
 from wait_local_agent.itglue import ItGlueClientProtocol
 from wait_local_agent.m365_graph import M365GraphReadProvider
 from wait_local_agent.models import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
     ApprovalRequest,
+    ConnectWiseWriteRequest,
     HaloWriteRequest,
     SourceReference,
     Ticket,
@@ -262,7 +263,7 @@ class ActionContext:
     provider_available: bool = False
     collector_service: CollectorPreviewProvider | None = None
     rmm_provider: RmmInventoryProvider | None = None
-    connectwise_client: ConnectWiseReadProvider | None = None
+    connectwise_client: ConnectWiseReadProvider | ConnectWiseWriteProvider | None = None
     syncro_client: SyncroReadProvider | None = None
     servicenow_client: ServiceNowReadProvider | None = None
     autotask_client: AutotaskReadProvider | None = None
@@ -2757,6 +2758,140 @@ class HaloPSATicketWriteAction:
         )
 
 
+class ConnectWiseTicketWriteAction:
+    def __init__(self, *, action_id: str, title: str, action_type: str) -> None:
+        self.action_type = action_type
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=(
+                f"Prepare an approval-gated ConnectWise PSA {action_type} for one "
+                "explicit tenant-scoped ticket."
+            ),
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["ticket_id", "fields"],
+                "properties": {
+                    "ticket_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "fields": {"type": "object", "minProperties": 1},
+                },
+            },
+            output_schema={
+                "operation": "string",
+                "connector_status": "string",
+                "ticket_id": "string",
+                "action_type": "string",
+                "status_code": "number",
+                "remote_id": "string",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=3,
+            risk_level="high",
+            required_role="technician",
+            access_mode="write",
+        )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "fields", "_approval_completed"}:
+            return _failed(f"ConnectWise {self.action_type} payload contains unsupported fields")
+        ticket_id = payload.get("ticket_id")
+        fields = payload.get("fields")
+        if (
+            not isinstance(ticket_id, str)
+            or not ticket_id.strip()
+            or len(ticket_id) > 320
+            or any(ord(character) < 32 or character.isspace() for character in ticket_id)
+            or not isinstance(fields, dict)
+        ):
+            return _failed("ConnectWise ticket write payload is invalid")
+        ticket_id = ticket_id.strip()
+        fields = dict(fields)
+        try:
+            from wait_local_agent.connectors import validate_connectwise_action_fields
+
+            validate_connectwise_action_fields(self.action_type, fields)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        from wait_local_agent.connectwise import ConnectWiseClient
+
+        provider = cast(
+            ConnectWiseWriteProvider,
+            context.connectwise_client or ConnectWiseClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("ConnectWise write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "ConnectWise writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "ticket_write",
+            "connector_status": connector_status,
+            "ticket_id": ticket_id,
+            "action_type": self.action_type,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "connectwise",
+                "operation": self.action_type,
+                "client_id": context.client_id,
+                "ticket_id": ticket_id,
+                "field_names": sorted(str(name) for name in fields),
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.execute_write(
+                ConnectWiseWriteRequest(
+                    ticket_id=ticket_id,
+                    action_type=self.action_type,
+                    fields=fields,
+                )
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=f"ConnectWise {self.action_type} failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+            "remote_id": getattr(result, "remote_id", ""),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", f"ConnectWise {self.action_type} failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
+        )
+
+
 class ConnectWiseTicketLookupAction:
     manifest = SmartActionManifest(
         action_id="connectwise-ticket-lookup",
@@ -2778,7 +2913,10 @@ class ConnectWiseTicketLookupAction:
             return _failed("ticket_id must identify an existing ticket in the tenant scope")
         from wait_local_agent.connectwise import ConnectWiseClient
 
-        provider = context.connectwise_client or ConnectWiseClient(context.settings)
+        provider = cast(
+            ConnectWiseReadProvider,
+            context.connectwise_client or ConnectWiseClient(context.settings),
+        )
         try:
             response = provider.get_ticket(ticket.id)
         except Exception:
@@ -3961,6 +4099,21 @@ def _build_default_registry() -> SmartActionRegistry:
             title="HaloPSA update ticket fields",
             action_type="update_ticket_fields",
         ),
+        ConnectWiseTicketWriteAction(
+            action_id="connectwise-ticket-assign-technician",
+            title="ConnectWise assign ticket",
+            action_type="assign_technician",
+        ),
+        ConnectWiseTicketWriteAction(
+            action_id="connectwise-ticket-status-update",
+            title="ConnectWise update ticket status",
+            action_type="update_status",
+        ),
+        ConnectWiseTicketWriteAction(
+            action_id="connectwise-ticket-update-fields",
+            title="ConnectWise update ticket fields",
+            action_type="update_ticket_fields",
+        ),
         ConnectWiseTicketLookupAction(),
         SyncroTicketLookupAction(),
         ServiceNowIncidentLookupAction(),
@@ -4044,7 +4197,7 @@ class SmartActionService:
         communication_provider: CommunicationProvider | None = None,
         communication_sender: CommunicationSender | None = None,
         rmm_provider: RmmInventoryProvider | None = None,
-        connectwise_client: ConnectWiseReadProvider | None = None,
+        connectwise_client: ConnectWiseReadProvider | ConnectWiseWriteProvider | None = None,
         syncro_client: SyncroReadProvider | None = None,
         servicenow_client: ServiceNowReadProvider | None = None,
         autotask_client: AutotaskReadProvider | None = None,
