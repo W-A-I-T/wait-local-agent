@@ -79,6 +79,9 @@ function apiErrorMessage(status: number): string {
   if (status === 409) {
     return "That action conflicts with the appliance's current state. Refresh and try again.";
   }
+  if (status === 429) {
+    return "The appliance is handling too many requests right now. Wait a moment and try again.";
+  }
   if (status >= 500) {
     return "The appliance couldn't complete the request. Try again shortly.";
   }

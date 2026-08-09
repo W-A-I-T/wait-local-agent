@@ -12,4 +12,16 @@ describe("apiFetch", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("explains rate limiting instead of presenting it as an unknown failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "slow down" }), { status: 429 }))));
+
+    await expect(apiFetch("/connectors/halopsa/tickets")).rejects.toMatchObject({
+      message: "The appliance is handling too many requests right now. Wait a moment and try again.",
+      technicalDetail: "/connectors/halopsa/tickets failed with HTTP 429: slow down",
+      status: 429
+    } satisfies Partial<ApiRequestError>);
+
+    vi.unstubAllGlobals();
+  });
 });
