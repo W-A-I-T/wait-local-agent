@@ -690,6 +690,45 @@ def test_workflow_payload_requires_declared_fields_and_preserves_client_scope(se
         )
 
 
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ({"thresholds_minutes": {}}, "positive minutes"),
+        ({"thresholds_minutes": {"high": "1"}}, "positive minutes"),
+        ({"thresholds_minutes": {"high": 1}, **{f"extra_{index}": index for index in range(16)}}, "at most 16"),
+        ({"thresholds_minutes": {"high": 1}, "notes": "x" * 8_000}, "at most 8000 bytes"),
+        ({"thresholds_minutes": {"high": 1}, "unsupported": object()}, "JSON-compatible"),
+    ],
+)
+def test_workflow_payload_rejects_unsafe_or_unbounded_values(settings, payload, error) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+
+    with pytest.raises(ValueError, match=error):
+        run_workflow_template(
+            store,
+            "ticket-sla-risk-review",
+            "TCK-1001",
+            client_id="acme",
+            input_payload=payload,
+        )
+
+
+def test_workflow_payload_requires_json_object(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+
+    with pytest.raises(ValueError, match="JSON object"):
+        run_workflow_template(
+            store,
+            "ticket-triage",
+            "TCK-1001",
+            input_payload=[],  # type: ignore[arg-type]
+        )
+
+
 def test_scheduled_threshold_workflow_uses_bounded_input_payload(settings, tmp_path: Path) -> None:
     db_path = tmp_path / "threshold-schedule.db"
     _seed_tickets(db_path)
