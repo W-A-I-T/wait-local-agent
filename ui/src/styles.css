@@ -24,6 +24,103 @@ a {
   min-height: 100vh;
 }
 
+.end-user-shell {
+  background: #f3f5f2;
+  min-height: 100vh;
+  padding: 28px clamp(18px, 5vw, 72px) 64px;
+}
+
+.end-user-header,
+.end-user-brand,
+.end-user-secure {
+  align-items: center;
+  display: flex;
+}
+
+.end-user-header {
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 auto 72px;
+  max-width: 1080px;
+}
+
+.end-user-brand {
+  color: #1c2b31;
+  gap: 11px;
+}
+
+.end-user-brand strong,
+.end-user-brand span {
+  display: block;
+}
+
+.end-user-brand span,
+.end-user-secure {
+  color: #60706a;
+  font-size: 0.86rem;
+}
+
+.end-user-brand strong {
+  font-size: 1.05rem;
+}
+
+.end-user-secure {
+  gap: 6px;
+}
+
+.end-user-intro,
+.end-user-grid {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1080px;
+}
+
+.end-user-intro {
+  margin-bottom: 28px;
+  max-width: 760px;
+  text-align: center;
+}
+
+.end-user-intro h1 {
+  color: #1c2b31;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  margin-bottom: 10px;
+}
+
+.end-user-intro p:last-child {
+  font-size: 1.05rem;
+}
+
+.eyebrow {
+  color: #1f6f55;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  margin-bottom: 10px;
+}
+
+.end-user-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.end-user-ticket {
+  border-top: 1px solid #e4ebe8;
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.end-user-ticket span {
+  color: #60706a;
+}
+
+.end-user-ticket button {
+  margin-top: 6px;
+}
+
 .sidebar {
   background: #1c2b31;
   color: #f3f7f4;
@@ -1362,6 +1459,7 @@ dd svg {
 
 @media (max-width: 760px) {
   .shell,
+  .end-user-grid,
   .grid,
   .analytics-filters,
   .overview-cards,
@@ -1405,5 +1503,15 @@ dd svg {
 
   .export-actions {
     margin-left: 0;
+  }
+
+  .end-user-header {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 44px;
+  }
+
+  .end-user-intro {
+    text-align: left;
   }
 }

@@ -161,7 +161,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   through the existing RMM action; free-form planning, external Teams
   conversation delivery, and an end-user conversational agent are not shipped.
 - Optional end-user support can create and track requester-scoped local tickets
-  and request technician escalation; live PSA sync and outbound delivery remain
+  and request technician escalation through both `/end-user/tickets*` and the
+  separate `/end-user` React surface; it does not load the operator shell.
+  Live PSA sync, outbound delivery, and tenant-configurable branding remain
   unavailable.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and

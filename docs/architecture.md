@@ -235,6 +235,12 @@ actions, or access technician/admin routes. The local ticket boundary is ready
 for a governed PSA adapter; live PSA synchronization and outbound delivery are
 not implied by enabling it.
 
+The React client surface is available at `/end-user` when the mode is enabled.
+It uses the separate token, supports local request creation, requester-scoped
+status lookup, and technician escalation, and does not load the operator shell.
+Live PSA synchronization, outbound delivery, and tenant-configurable branding
+are separate capabilities and are not implied by this surface.
+
 ## Event-triggered agents
 
 - `POST /automation/events` accepts supported ticket events with an
