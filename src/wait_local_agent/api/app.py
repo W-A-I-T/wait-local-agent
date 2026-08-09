@@ -124,7 +124,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
-from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import AuthContext, Role, require_end_user, require_role
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
@@ -690,6 +690,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "embedding_model": active_settings.embedding_model,
             "qdrant_collection": active_settings.qdrant_collection,
         }
+
+    @app.get("/settings/providers/health")
+    def provider_health(_: AdminAccess) -> dict[str, object]:
+        result = probe_model_providers(active_settings)
+        for name, status in result.items():
+            if isinstance(status, dict):
+                store.add_audit_event(
+                    "model_provider.health",
+                    str(name),
+                    str(status.get("status", "unknown")),
+                )
+        return result
 
     @app.get("/update-status")
     def update_status(_: AdminAccess) -> dict[str, object]:

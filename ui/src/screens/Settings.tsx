@@ -5,13 +5,14 @@ import { projectLaunchPassportStatus } from "../api/founder";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
-import { type LaunchPassportStatus, type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
+import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
 export function Settings() {
   const { isAdmin, loading, role } = useDashboard();
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
   const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
+  const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
@@ -72,6 +73,16 @@ export function Settings() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function checkProviderHealth() {
+    try {
+      setStatusMessage("Checking configured model providers…");
+      setProviderHealth(await apiFetch<ProviderHealth>("/settings/providers/health"));
+      setStatusMessage("Provider health check complete.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to check provider health.");
+    }
+  }
 
   async function installPack(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -262,7 +273,10 @@ export function Settings() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Providers</h2>
-          <span>runtime stack</span>
+          <div className="row-actions">
+            <span>runtime stack</span>
+            {isAdmin ? <button className="icon-button" type="button" onClick={() => void checkProviderHealth()}>Check model health</button> : null}
+          </div>
         </div>
         <div className="settings-list">
           {providers ? (
@@ -274,6 +288,14 @@ export function Settings() {
             ))
           ) : <p>No provider data available.</p>}
         </div>
+        {providerHealth ? (
+          <div className="connection-state" aria-live="polite">
+            <strong>Model provider health</strong>
+            <span>Local: {providerHealth.local.status}{providerHealth.local.probe === "models" ? ` · ${providerHealth.local.model}` : ""}</span>
+            <span>Remote: {providerHealth.remote.status}{providerHealth.remote.probe === "models" ? ` · ${providerHealth.remote.model}` : ""}</span>
+            <p className="screen-note">Checks use only the configured provider’s documented model-list endpoint. Disabled, offline, unsupported, and unavailable states are reported without exposing credentials.</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

@@ -22,6 +22,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   calls remain disabled unless cloud fallback and a complete remote provider
   configuration are enabled; `WAIT_OFFLINE_MODE=true` denies them even when
   that configuration is present.
+- Admin-triggered model provider health checks use the configured provider's
+  documented model-list contract, report missing models and malformed or
+  unavailable responses explicitly, and never probe remote providers while
+  offline or when remote fallback is disabled.
 - Preview-only bounded planning through `POST /agents/plan` and the React
   Agents screen selects existing approved tools from a natural-language
   instruction using the configured model provider when available and bounded

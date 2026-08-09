@@ -1034,6 +1034,128 @@ def provider_from_settings(settings: Settings) -> ModelProvider:
     return local_provider
 
 
+def probe_model_providers(
+    settings: Settings,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[str, object]:
+    """Return safe, explicit readiness results for configured model providers.
+
+    The active probe uses the documented ``GET /models`` contract for the
+    configured OpenAI-compatible or Anthropic API base URL. Deterministic mode
+    is local and needs no probe. Remote probing is only attempted when the
+    existing explicit cloud opt-ins are enabled; offline mode never makes a
+    remote request.
+    """
+    local = _local_provider_health(settings, transport=transport)
+    remote = _remote_provider_health(settings, transport=transport)
+    return {"local": local, "remote": remote}
+
+
+def _local_provider_health(
+    settings: Settings,
+    *,
+    transport: httpx.BaseTransport | None,
+) -> dict[str, object]:
+    provider = settings.local_model_provider.strip().lower() or "deterministic"
+    base = {"provider": provider, "model": settings.local_model_name}
+    if not settings.allow_llm_inference or provider not in SUPPORTED_LOCAL_MODEL_PROVIDERS:
+        return {**base, "status": "ready", "probe": "not_required", "detail": "deterministic local mode"}
+    return _probe_models_endpoint(
+        provider,
+        settings.local_model_name,
+        settings.local_model_base_url,
+        timeout_seconds=settings.local_model_timeout_seconds,
+        headers={},
+        transport=transport,
+    )
+
+
+def _remote_provider_health(
+    settings: Settings,
+    *,
+    transport: httpx.BaseTransport | None,
+) -> dict[str, object]:
+    provider = settings.remote_model_provider.strip().lower()
+    configured = bool(
+        provider
+        and settings.remote_model_base_url.strip()
+        and settings.remote_model_name.strip()
+        and settings.remote_model_api_key.strip()
+    )
+    base = {"provider": provider or None, "model": settings.remote_model_name or None}
+    if not configured:
+        return {**base, "status": "not_configured", "probe": "not_run"}
+    if settings.offline_mode:
+        return {**base, "status": "blocked_offline", "probe": "not_run"}
+    if not settings.allow_llm_inference or not settings.allow_cloud_fallback:
+        return {**base, "status": "disabled", "probe": "not_run"}
+    if provider not in SUPPORTED_REMOTE_MODEL_PROVIDERS:
+        return {**base, "status": "unsupported_provider", "probe": "not_run"}
+    headers = {"Authorization": f"Bearer {settings.remote_model_api_key}"}
+    if provider == "anthropic":
+        headers = {
+            "x-api-key": settings.remote_model_api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    return _probe_models_endpoint(
+        provider,
+        settings.remote_model_name,
+        settings.remote_model_base_url,
+        timeout_seconds=settings.remote_model_timeout_seconds,
+        headers=headers,
+        transport=transport,
+    )
+
+
+def _probe_models_endpoint(
+    provider: str,
+    model: str,
+    base_url: str,
+    *,
+    timeout_seconds: float,
+    headers: dict[str, str],
+    transport: httpx.BaseTransport | None,
+) -> dict[str, object]:
+    if not base_url.strip():
+        return {"provider": provider, "model": model, "status": "not_configured", "probe": "not_run"}
+    try:
+        with httpx.Client(timeout=timeout_seconds, transport=transport, headers=headers) as client:
+            response = client.get(f"{base_url.rstrip('/')}/models")
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {
+            "provider": provider,
+            "model": model,
+            "status": "unavailable",
+            "probe": "models",
+            "model_available": None,
+        }
+    models = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return {
+            "provider": provider,
+            "model": model,
+            "status": "malformed_response",
+            "probe": "models",
+            "model_available": None,
+        }
+    model_ids = {
+        str(item.get("id"))
+        for item in models
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    available = model in model_ids
+    return {
+        "provider": provider,
+        "model": model,
+        "status": "ready" if available else "model_unavailable",
+        "probe": "models",
+        "model_available": available,
+    }
+
+
 def _remote_provider_from_settings(settings: Settings) -> RemoteModelProvider | None:
     provider = settings.remote_model_provider.strip().lower()
     if not (

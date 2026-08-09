@@ -195,6 +195,25 @@ def test_provider_settings_report_remote_fallback_disabled_in_offline_mode(setti
     assert "do-not-return" not in response.text
 
 
+def test_provider_health_is_admin_triggered_and_audited(settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "probe_model_providers",
+        lambda active_settings: {
+            "local": {"provider": "deterministic", "model": "llama3.1", "status": "ready", "probe": "not_required"},
+            "remote": {"provider": None, "model": None, "status": "not_configured", "probe": "not_run"},
+        },
+    )
+    client = TestClient(create_app(settings))
+
+    response = client.get("/settings/providers/health")
+
+    assert response.status_code == 200
+    assert response.json()["local"]["status"] == "ready"
+    assert response.json()["remote"]["status"] == "not_configured"
+    assert any(event["event_type"] == "model_provider.health" for event in client.get("/audit").json())
+
+
 def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
     priced_settings = replace(
         settings,

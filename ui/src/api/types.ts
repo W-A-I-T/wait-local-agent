@@ -655,6 +655,24 @@ export type ProviderSettings = {
   qdrant_collection: string;
 };
 
+export type ProviderHealth = {
+  local: {
+    provider: string | null;
+    model: string | null;
+    status: string;
+    probe: string;
+    detail?: string;
+    model_available?: boolean | null;
+  };
+  remote: {
+    provider: string | null;
+    model: string | null;
+    status: string;
+    probe: string;
+    model_available?: boolean | null;
+  };
+};
+
 export type SecuritySettings = {
   api_token_configured: boolean;
   admin_token_configured: boolean;
