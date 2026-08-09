@@ -686,6 +686,7 @@ class AgentDefinition:
     context_sources: list[str] = field(default_factory=list)
     approval_expiry_seconds: int | None = None
     result_aware: bool = False
+    approval_required_tools: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

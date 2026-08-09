@@ -19,6 +19,7 @@ export function Agents() {
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
   const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
+  const [approvalRequiredTools, setApprovalRequiredTools] = useState<string[]>([]);
   const [resultAware, setResultAware] = useState(false);
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [runDetails, setRunDetails] = useState<Record<string, AgentRunDetail>>({});
@@ -84,6 +85,7 @@ export function Agents() {
           approval_expiry_seconds: parsedApprovalExpiryHours === undefined
             ? undefined
             : parsedApprovalExpiryHours * 60 * 60,
+          approval_required_tools: approvalRequiredTools,
           result_aware: resultAware,
           client_id: clientId || undefined
         })
@@ -91,6 +93,7 @@ export function Agents() {
       setName("");
       setDescription("");
       setResultAware(false);
+      setApprovalRequiredTools([]);
       setMessage("Agent created.");
       await refresh();
     } catch (error) {
@@ -189,8 +192,12 @@ export function Agents() {
                 return;
               }
               setSelectedTools((current) => toggleValue(current, tool.id));
+              if (selected) {
+                setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
+              }
             }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
           })}</fieldset>
+          <fieldset className="agent-option-group"><legend>Additional approval rules</legend><p className="screen-note">Require approval for selected tools even when their catalog policy is read-only. Built-in approval requirements cannot be disabled.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`approval-${tool.id}`}><input type="checkbox" checked={approvalRequiredTools.includes(tool.id)} onChange={() => setApprovalRequiredTools((current) => toggleValue(current, tool.id))} />{tool.name}{tool.approval_required ? " · already required" : " · require approval"}</label>)}</fieldset>
           <button type="submit" disabled={!canWrite}>Create agent</button>
         </form>
         {message ? <div className="notice">{message}</div> : null}
@@ -200,12 +207,14 @@ export function Agents() {
         {agents.length === 0 ? <p className="panel">No agents yet.</p> : null}
         {agents.map((agent) => {
           const detail = runDetails[agent.id];
+          const additionalApprovalTools = agent.approval_required_tools ?? [];
           return <article className="panel agent-card" key={agent.id}>
             <div className="panel-heading"><h3>{agent.name}</h3><span>v{agent.version} · {agent.enabled ? "enabled" : "disabled"}</span></div>
             <p className="screen-note">{agent.description || "No description"}</p>
             <p className="screen-note">Context: {agent.context_sources.join(", ") || "none"}</p>
             <p className="screen-note">Tools: {agent.enabled_tools.join(", ")}</p>
             <p className="screen-note">Approval deadline: {agent.approval_expiry_seconds ? `${agent.approval_expiry_seconds / 3600} hours maximum` : "tool default"}</p>
+            <p className="screen-note">Additional approval: {additionalApprovalTools.length ? additionalApprovalTools.join(", ") : "none"}</p>
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
             <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button></div>
             {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}

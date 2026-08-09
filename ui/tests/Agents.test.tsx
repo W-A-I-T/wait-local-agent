@@ -26,7 +26,8 @@ describe("Agents", () => {
     depends_on_agent_ids: [],
     execution_window_timezone: "UTC",
     context_sources: ["ticket"],
-    approval_expiry_seconds: null
+    approval_expiry_seconds: null,
+    approval_required_tools: []
   };
 
   beforeEach(() => {
@@ -97,6 +98,7 @@ describe("Agents", () => {
     fireEvent.change(screen.getByLabelText("Approval deadline (hours, optional)"), { target: { value: "4" } });
     fireEvent.click(screen.getByLabelText("Local knowledge"));
     fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage · require approval" }));
     fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 
     await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
@@ -110,6 +112,9 @@ describe("Agents", () => {
     )).toBe(true);
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("14400")
+    )).toBe(true);
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("approval_required_tools")
     )).toBe(true);
   });
 });

@@ -312,6 +312,7 @@ class AgentService:
         context_sources: list[str] | None = None,
         approval_expiry_seconds: int | None = None,
         result_aware: bool = False,
+        approval_required_tools: list[str] | None = None,
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -332,6 +333,7 @@ class AgentService:
             execution_window_timezone=execution_window_timezone,
             context_sources=context_sources or [],
             approval_expiry_seconds=approval_expiry_seconds,
+            approval_required_tools=approval_required_tools or [],
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -363,6 +365,7 @@ class AgentService:
             context_sources=list(context_sources or []),
             approval_expiry_seconds=approval_expiry_seconds,
             result_aware=result_aware,
+            approval_required_tools=list(approval_required_tools or []),
         )
         return self.store.create_agent_definition(definition)
 
@@ -388,6 +391,7 @@ class AgentService:
         context_sources: list[str] | None = None,
         approval_expiry_seconds: int | None = None,
         result_aware: bool = False,
+        approval_required_tools: list[str] | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -407,6 +411,7 @@ class AgentService:
             execution_window_timezone=execution_window_timezone,
             context_sources=context_sources or [],
             approval_expiry_seconds=approval_expiry_seconds,
+            approval_required_tools=approval_required_tools or [],
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -437,6 +442,7 @@ class AgentService:
             context_sources=list(context_sources or []),
             approval_expiry_seconds=approval_expiry_seconds,
             result_aware=result_aware,
+            approval_required_tools=list(approval_required_tools or []),
         )
         return self.store.update_agent_definition(updated)
 
@@ -662,9 +668,12 @@ class AgentService:
         enabled_tools = payload.get("enabled_tools", [])
         steps = payload.get("steps", [])
         dependencies = payload.get("depends_on_agent_ids", [])
+        approval_required_tools = payload.get("approval_required_tools", [])
         if not isinstance(filters, dict) or not isinstance(enabled_tools, list):
             raise AgentDefinitionError("agent run definition revision is malformed")
         if not isinstance(steps, list) or not isinstance(dependencies, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        if not isinstance(approval_required_tools, list):
             raise AgentDefinitionError("agent run definition revision is malformed")
         return AgentDefinition(
             id=definition.id,
@@ -708,6 +717,7 @@ class AgentService:
                 else definition.approval_expiry_seconds
             ),
             result_aware=bool(payload.get("result_aware", definition.result_aware)),
+            approval_required_tools=cast(list[str], approval_required_tools),
         )
 
     def _continue(
@@ -767,6 +777,7 @@ class AgentService:
                     actor,
                     client_id=definition.client_id,
                     approval_expiry_seconds=definition.approval_expiry_seconds,
+                    require_approval=tool_id in definition.approval_required_tools,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -869,6 +880,7 @@ class AgentService:
                     actor,
                     client_id=definition.client_id,
                     approval_expiry_seconds=definition.approval_expiry_seconds,
+                    require_approval=tool_id in definition.approval_required_tools,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -1128,6 +1140,7 @@ class AgentService:
         execution_window_timezone: str,
         context_sources: list[str],
         approval_expiry_seconds: int | None,
+        approval_required_tools: list[str],
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -1152,6 +1165,19 @@ class AgentService:
         unknown = sorted(set(enabled_tools) - available)
         if unknown:
             raise AgentDefinitionError(f"unknown tools: {', '.join(unknown)}")
+        if not isinstance(approval_required_tools, list) or len(approval_required_tools) > MAX_AGENT_STEPS:
+            raise AgentDefinitionError(
+                f"approval_required_tools must contain 0-{MAX_AGENT_STEPS} tools"
+            )
+        if any(not isinstance(tool_id, str) or not tool_id.strip() for tool_id in approval_required_tools):
+            raise AgentDefinitionError("approval_required_tools must contain non-empty strings")
+        if len(set(approval_required_tools)) != len(approval_required_tools):
+            raise AgentDefinitionError("approval_required_tools must not contain duplicates")
+        outside_enabled = sorted(set(approval_required_tools) - set(enabled_tools))
+        if outside_enabled:
+            raise AgentDefinitionError(
+                "approval_required_tools must be enabled tools: " + ", ".join(outside_enabled)
+            )
         if not steps or len(steps) > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"steps must contain 1-{MAX_AGENT_STEPS} steps")
         if max_steps < 1 or max_steps > MAX_AGENT_STEPS or len(steps) > max_steps:
