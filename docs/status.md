@@ -61,9 +61,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   retrieval; write operations remain unavailable.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
-- SharePoint read-only site and drive-item metadata plus explicitly requested,
-  tenant-scoped text-document content retrieval bounded to 20,000 characters;
-  binary/office extraction and list-wide content search remain unavailable.
+- SharePoint read-only site and drive-item metadata plus tenant-scoped Graph
+  drive search across a site or folder hierarchy, and explicitly requested
+  text-document content retrieval bounded to 20,000 characters; binary/office
+  extraction remains unavailable.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
   ticket status, assignment, and field updates through the common guarded HTTP
   boundary.
@@ -92,8 +93,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   mapping; task execution and execution-status lookup remain unavailable.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
-- SharePoint read-only site and document metadata through Microsoft Graph; file
-  downloads and write operations remain unavailable.
+- SharePoint read-only site and document metadata through Microsoft Graph, plus
+  bounded site/folder search and supported text-file retrieval; write
+  operations and binary/office extraction remain unavailable.
 - Microsoft Graph bounded user, group, tenant-license, per-user license-detail, mailbox-folder, message-metadata, and Intune
   context lookup with externally supplied delegated or application bearer
   credentials, plus admin-approved user creation, disable/offboarding, and
@@ -334,7 +336,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
 | Confluence connector | Read-only core surface built |
-| SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
+| SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
