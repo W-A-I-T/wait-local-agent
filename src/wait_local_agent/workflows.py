@@ -159,6 +159,20 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         preview_fields=("ticket_id", "matches"),
         tool_id="find-similar-tickets",
     ),
+    WorkflowTemplate(
+        id="technician-dispatch-review",
+        name="Technician Dispatch Review",
+        trigger="ticket.unassigned",
+        description=(
+            "Draft a workload-aware technician recommendation for human approval; "
+            "the workflow never assigns a technician by itself."
+        ),
+        action_type="ticket.assign",
+        approval_required=True,
+        risk_level="medium",
+        preview_fields=("ticket_id", "recommendation", "approved"),
+        tool_id="dispatch-suggestion",
+    ),
 )
 
 

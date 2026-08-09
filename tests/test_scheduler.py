@@ -577,13 +577,16 @@ def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
 
 
 @pytest.mark.parametrize(
-    ("template_id", "tool_id"),
+    ("template_id", "tool_id", "expected_status"),
     [
-        ("l1-resolution-review", "suggest-resolution"),
-        ("duplicate-ticket-review", "find-similar-tickets"),
+        ("l1-resolution-review", "suggest-resolution", "completed"),
+        ("duplicate-ticket-review", "find-similar-tickets", "completed"),
+        ("technician-dispatch-review", "dispatch-suggestion", "pending_approval"),
     ],
 )
-def test_msp_review_templates_reuse_existing_local_tools(settings, template_id, tool_id) -> None:
+def test_msp_review_templates_reuse_existing_local_tools(
+    settings, template_id, tool_id, expected_status
+) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
@@ -599,11 +602,11 @@ def test_msp_review_templates_reuse_existing_local_tools(settings, template_id, 
         tool_executor=service,
     )
 
-    assert run.status == "completed"
+    assert run.status == expected_status
     action_runs = store.list_smart_action_runs(client_id="acme")
     assert len(action_runs) == 1
     assert action_runs[0].action_id == tool_id
-    assert action_runs[0].status == "success"
+    assert action_runs[0].status == "pending_approval" if expected_status == "pending_approval" else "success"
 
 
 def test_tool_backed_workflow_requires_executor(settings) -> None:
