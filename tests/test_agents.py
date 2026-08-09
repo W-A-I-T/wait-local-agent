@@ -66,6 +66,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     assert set(tools) == {
         "autotask-ticket-add-note",
         "autotask-ticket-lookup",
+        "autotask-ticket-update-status",
         "ticket-triage",
         "ticket-summary",
         "suggest-resolution",
@@ -2137,6 +2138,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "servicenow-incident-lookup",
         "autotask-ticket-lookup",
         "autotask-ticket-add-note",
+        "autotask-ticket-update-status",
     } <= tool_ids
     assert (
         next(
