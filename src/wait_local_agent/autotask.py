@@ -7,8 +7,10 @@ and the existing smart-action approval runtime.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -154,6 +156,9 @@ class AutotaskClient:
             payload = _write_payload(request.action_type, ticket_id, request.fields)
             if request.action_type == "add_note":
                 endpoint = "TicketNotes"
+                response_payload, status_code = self._post(endpoint, payload)
+            elif request.action_type == "add_time_entry":
+                endpoint = "TimeEntries"
                 response_payload, status_code = self._post(endpoint, payload)
             else:
                 endpoint = "Tickets"
@@ -512,6 +517,80 @@ def _write_payload(
                 "Autotask assigned_resource_id must be a positive integer."
             )
         return {"id": ticket_id, "assignedResourceID": value}
+    if action_type == "add_time_entry":
+        allowed = {
+            "resource_id",
+            "role_id",
+            "date_worked",
+            "hours_worked",
+            "summary_notes",
+            "billing_code_id",
+            "is_non_billable",
+            "show_on_invoice",
+        }
+        required = {"resource_id", "role_id", "date_worked", "hours_worked", "summary_notes"}
+        if set(fields) - allowed or not required <= set(fields):
+            raise AutotaskReadError(
+                "Autotask add_time_entry requires resource_id, role_id, date_worked, "
+                "hours_worked, and summary_notes."
+            )
+        resource_id = fields["resource_id"]
+        role_id = fields["role_id"]
+        for name, value in (("resource_id", resource_id), ("role_id", role_id)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise AutotaskReadError(f"Autotask time entry {name} must be a positive integer.")
+        date_worked = fields["date_worked"]
+        if (
+            not isinstance(date_worked, str)
+            or not date_worked.strip()
+            or any(ord(character) < 32 for character in date_worked)
+        ):
+            raise AutotaskReadError("Autotask time entry date_worked is invalid.")
+        try:
+            normalized_date = date.fromisoformat(date_worked.strip()).isoformat()
+        except ValueError as exc:
+            raise AutotaskReadError(
+                "Autotask time entry date_worked must be an ISO date."
+            ) from exc
+        hours = fields["hours_worked"]
+        if (
+            isinstance(hours, bool)
+            or not isinstance(hours, (int, float))
+            or not math.isfinite(float(hours))
+            or float(hours) <= 0
+            or float(hours) > 24
+        ):
+            raise AutotaskReadError("Autotask time entry hours_worked must be greater than 0 and at most 24.")
+        summary = fields["summary_notes"]
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or len(summary.strip()) > 32_000
+            or any(ord(character) < 32 for character in summary)
+        ):
+            raise AutotaskReadError("Autotask time entry summary_notes is invalid.")
+        time_values: dict[str, object] = {
+            "ticketID": ticket_id,
+            "resourceID": resource_id,
+            "roleID": role_id,
+            "dateWorked": normalized_date,
+            "hoursWorked": hours,
+            "summaryNotes": summary.strip(),
+        }
+        for source, target in (
+            ("billing_code_id", "billingCodeID"),
+            ("is_non_billable", "isNonBillable"),
+            ("show_on_invoice", "showOnInvoice"),
+        ):
+            if source in fields:
+                value = fields[source]
+                if source.endswith("_id"):
+                    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                        raise AutotaskReadError(f"Autotask time entry {source} must be a positive integer.")
+                elif not isinstance(value, bool):
+                    raise AutotaskReadError(f"Autotask time entry {source} must be boolean.")
+                time_values[target] = value
+        return time_values
     if action_type != "add_note":
         raise AutotaskReadError(f"Autotask ticket action is not supported: {action_type}.")
     allowed = {"description", "note_type", "publish", "title"}

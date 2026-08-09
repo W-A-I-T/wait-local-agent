@@ -4465,6 +4465,11 @@ def _build_default_registry() -> SmartActionRegistry:
             action_type="add_note",
         ),
         AutotaskTicketWriteAction(
+            action_id="autotask-ticket-add-time-entry",
+            title="Autotask add time entry",
+            action_type="add_time_entry",
+        ),
+        AutotaskTicketWriteAction(
             action_id="autotask-ticket-update-status",
             title="Autotask update ticket status",
             action_type="update_status",

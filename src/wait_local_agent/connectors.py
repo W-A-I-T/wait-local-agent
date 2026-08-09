@@ -68,6 +68,7 @@ SERVICENOW_ACTION_TYPES = {
 
 AUTOTASK_ACTION_TYPES = {
     "add_note",
+    "add_time_entry",
     "update_status",
     "update_resolution",
     "assign_technician",
@@ -1877,6 +1878,67 @@ def validate_autotask_action_fields(action_type: str, fields: dict[str, object])
         value = fields["assigned_resource_id"]
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError("Autotask assigned_resource_id must be a positive integer")
+        return
+    if action_type == "add_time_entry":
+        allowed = {
+            "resource_id",
+            "role_id",
+            "date_worked",
+            "hours_worked",
+            "summary_notes",
+            "billing_code_id",
+            "is_non_billable",
+            "show_on_invoice",
+        }
+        required = {"resource_id", "role_id", "date_worked", "hours_worked", "summary_notes"}
+        if set(fields) - allowed or not required <= set(fields):
+            raise ValueError(
+                "Autotask add_time_entry requires resource_id, role_id, date_worked, "
+                "hours_worked, and summary_notes"
+            )
+        for name in ("resource_id", "role_id"):
+            value = fields[name]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"Autotask time entry {name} must be a positive integer")
+        date_worked = fields["date_worked"]
+        if (
+            not isinstance(date_worked, str)
+            or not date_worked.strip()
+            or len(date_worked.strip()) != 10
+            or any(ord(character) < 32 for character in date_worked)
+        ):
+            raise ValueError("Autotask time entry date_worked is invalid")
+        from datetime import date
+        try:
+            date.fromisoformat(date_worked.strip())
+        except ValueError as exc:
+            raise ValueError("Autotask time entry date_worked must be an ISO date") from exc
+        hours = fields["hours_worked"]
+        import math
+        if (
+            isinstance(hours, bool)
+            or not isinstance(hours, (int, float))
+            or not math.isfinite(float(hours))
+            or float(hours) <= 0
+            or float(hours) > 24
+        ):
+            raise ValueError("Autotask time entry hours_worked must be greater than 0 and at most 24")
+        summary = fields["summary_notes"]
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or len(summary.strip()) > 32_000
+            or any(ord(character) < 32 for character in summary)
+        ):
+            raise ValueError("Autotask time entry summary_notes is invalid")
+        for name in ("billing_code_id",):
+            if name in fields:
+                value = fields[name]
+                if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                    raise ValueError(f"Autotask time entry {name} must be a positive integer")
+        for name in ("is_non_billable", "show_on_invoice"):
+            if name in fields and not isinstance(fields[name], bool):
+                raise ValueError(f"Autotask time entry {name} must be boolean")
         return
     if not isinstance(fields, dict) or not {"description", "note_type", "publish"} <= set(fields):
         raise ValueError(
