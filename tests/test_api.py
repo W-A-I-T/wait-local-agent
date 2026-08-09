@@ -2451,7 +2451,7 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
-def test_m365_user_offboarding_requires_admin_at_invoke_boundary(settings) -> None:
+def test_m365_user_lifecycle_actions_require_admin_at_invoke_boundary(settings) -> None:
     secure_settings = settings.__class__(
         **{
             **settings.__dict__,
@@ -2463,19 +2463,31 @@ def test_m365_user_offboarding_requires_admin_at_invoke_boundary(settings) -> No
     )
     client = TestClient(create_app(secure_settings))
 
-    denied = client.post(
-        "/smart-actions/m365-user-offboarding/invoke",
-        headers=_auth("tech-token"),
-        json={
-            "client_id": "acme",
-            "payload": {"user_identity": "user@example.test", "user_id": "graph-user-1"},
-        },
-    )
-    detail = client.get("/smart-actions/m365-user-offboarding", headers=_auth("tech-token"))
+    for action_id, payload in (
+        (
+            "m365-user-offboarding",
+            {"user_identity": "user@example.test", "user_id": "graph-user-1"},
+        ),
+        (
+            "m365-user-onboarding",
+            {
+                "user_principal_name": "user@example.test",
+                "display_name": "User Example",
+                "mail_nickname": "user.example",
+                "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            },
+        ),
+    ):
+        denied = client.post(
+            f"/smart-actions/{action_id}/invoke",
+            headers=_auth("tech-token"),
+            json={"client_id": "acme", "payload": payload},
+        )
+        detail = client.get(f"/smart-actions/{action_id}", headers=_auth("tech-token"))
 
-    assert denied.status_code == 403
-    assert detail.status_code == 200
-    assert detail.json()["required_role"] == "admin"
+        assert denied.status_code == 403
+        assert detail.status_code == 200
+        assert detail.json()["required_role"] == "admin"
 
 
 def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings) -> None:

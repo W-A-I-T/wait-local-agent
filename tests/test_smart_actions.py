@@ -48,6 +48,7 @@ from wait_local_agent.smart_actions import (
     M365IdentityLookupAction,
     M365LiveContextAction,
     M365UserOffboardingAction,
+    M365UserOnboardingAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
     SharePointDocumentationContentAction,
@@ -69,6 +70,7 @@ from wait_local_agent.smart_actions import (
     _stored_action_status,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVault
 
 
 def test_redacts_embedded_secrets_in_free_text_payload_values() -> None:
@@ -954,6 +956,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-identity-lookup",
         "m365-live-context",
         "m365-user-offboarding",
+        "m365-user-onboarding",
         "rmm-alert-lookup",
         "rmm-device-lookup",
         "rmm-script-catalog",
@@ -974,6 +977,166 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_m365_user_onboarding_is_vault_backed_and_approval_gated(settings, tmp_path) -> None:
+    class FakeM365Create:
+        def __init__(self, status: str = "succeeded") -> None:
+            self.status = status
+            self.calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="write ready")
+
+        def create_user(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                status=self.status,
+                message="created" if self.status == "succeeded" else "provider rejected user",
+                remote_id="user-1",
+                status_code=201 if self.status == "succeeded" else 400,
+            )
+
+    active_settings = replace(settings, vault_path=tmp_path / "vault")
+    SecretVault.initialize(active_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    store = Store(active_settings.data_path)
+    provider = FakeM365Create()
+    service = SmartActionService(store, active_settings, m365_client=provider)
+    payload: dict[str, object] = {
+        "user_principal_name": "adele.vance@example.test",
+        "display_name": "Adele Vance",
+        "mail_nickname": "adele.vance",
+        "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+    }
+
+    pending = service.invoke("m365-user-onboarding", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    pending_request = store.get_approval_request(pending.approval_id)
+    assert pending_request is not None
+    assert "Temporary-Password-123!" not in pending_request.payload_json
+    assert "WAIT_M365_TEMP_ADELE" in pending_request.payload_json
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.calls == [
+        {
+            "user_principal_name": "adele.vance@example.test",
+            "display_name": "Adele Vance",
+            "mail_nickname": "adele.vance",
+            "temporary_password": "Temporary-Password-123!",
+            "account_enabled": True,
+            "force_change_password_next_sign_in": True,
+        }
+    ]
+    run = store.get_smart_action_run(pending.run_id or 0)
+    assert run is not None and run.status == "success"
+    assert "Temporary-Password-123!" not in run.output_json
+    assert "Temporary-Password-123!" not in run.evidence_json
+
+    unsupported = service.invoke(
+        "m365-user-onboarding",
+        {**payload, "temporary_password": "should-never-be-accepted"},
+        "requester",
+        client_id="acme",
+    )
+    assert unsupported.status == "failed"
+    assert provider.calls[0]["temporary_password"] == "Temporary-Password-123!"
+
+    missing_secret_settings = replace(settings, vault_path=tmp_path / "missing-vault")
+    missing_provider = FakeM365Create()
+    missing_service = SmartActionService(
+        Store(missing_secret_settings.data_path),
+        missing_secret_settings,
+        m365_client=missing_provider,
+    )
+    missing = missing_service.invoke(
+        "m365-user-onboarding", payload, "requester", client_id="acme"
+    )
+    assert missing.approval_id is not None
+    missing_service.update_approval(
+        missing.approval_id,
+        "approved",
+        approver="admin-2",
+        approver_role=Role.ADMIN,
+    )
+    assert missing_provider.calls == []
+    missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
+    assert missing_run is not None and missing_run.status == "failed"
+
+
+def test_m365_user_onboarding_rejects_unready_and_failed_provider_paths(settings, tmp_path) -> None:
+    class FakeM365Create:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            create_error=False,
+            create_status="succeeded",
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.create_error = create_error
+            self.create_status = create_status
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="provider unavailable")
+
+        def create_user(self, **kwargs):
+            del kwargs
+            if self.create_error:
+                raise RuntimeError("create unavailable")
+            return SimpleNamespace(
+                status=self.create_status,
+                message="provider rejected user",
+                remote_id="user-1",
+                status_code=400,
+            )
+
+    vault_path = tmp_path / "vault"
+    SecretVault.initialize(vault_path).set("WAIT_M365_TEMP_EDGE", "Temporary-Password-123!")
+    valid_payload: dict[str, object] = {
+        "user_principal_name": "edge@example.test",
+        "display_name": "Edge User",
+        "mail_nickname": "edge.user",
+        "temporary_vault_name": "WAIT_M365_TEMP_EDGE",
+        "_approval_completed": True,
+    }
+
+    def run(payload, provider, *, path=vault_path):
+        action_settings = replace(settings, vault_path=path)
+        context = replace(
+            _action_context(Store(action_settings.data_path), action_settings),
+            m365_client=provider,
+            client_id="acme",
+        )
+        return M365UserOnboardingAction().run(context, payload)
+
+    assert run({**valid_payload, "account_enabled": "yes"}, FakeM365Create()).status == "failed"
+    assert run({**valid_payload, "user_principal_name": ""}, FakeM365Create()).status == "failed"
+    assert run(valid_payload, FakeM365Create(health_error=True)).status == "failed"
+    assert run(valid_payload, FakeM365Create(health_status="blocked")).status == "failed"
+    missing_vault = tmp_path / "missing-vault"
+    SecretVault.initialize(missing_vault)
+    assert run(valid_payload, FakeM365Create(), path=missing_vault).status == "failed"
+    assert run(valid_payload, FakeM365Create(create_error=True)).status == "failed"
+    assert run(valid_payload, FakeM365Create(create_status="failed")).status == "failed"
 
 
 def test_m365_user_offboarding_is_approval_gated_and_reports_partial_failure(settings) -> None:

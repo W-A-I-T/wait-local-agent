@@ -77,6 +77,23 @@ class M365LifecycleWriteProvider(Protocol):
         """Revoke sessions for one explicitly identified Microsoft 365 user."""
 
 
+class M365UserCreateProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def create_user(
+        self,
+        *,
+        user_principal_name: str,
+        display_name: str,
+        mail_nickname: str,
+        temporary_password: str,
+        account_enabled: bool,
+        force_change_password_next_sign_in: bool,
+    ) -> object:
+        """Create one explicitly approved Microsoft 365 user."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -141,7 +158,12 @@ class ActionContext:
     itglue_client: ItGlueClientProtocol | None = None
     confluence_client: ConfluenceClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
-    m365_client: M365GraphReadProvider | M365LifecycleWriteProvider | None = None
+    m365_client: (
+        M365GraphReadProvider
+        | M365LifecycleWriteProvider
+        | M365UserCreateProvider
+        | None
+    ) = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -756,6 +778,185 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365UserOnboardingAction:
+    manifest = SmartActionManifest(
+        action_id="m365-user-onboarding",
+        title="Microsoft 365 user onboarding",
+        description=(
+            "Prepare an approval-gated Microsoft Graph user creation operation using a "
+            "temporary password held in WAIT's local encrypted vault."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": [
+                "user_principal_name",
+                "display_name",
+                "mail_nickname",
+                "temporary_vault_name",
+            ],
+            "properties": {
+                "user_principal_name": {"type": "string", "minLength": 3, "maxLength": 320},
+                "display_name": {"type": "string", "minLength": 1, "maxLength": 256},
+                "mail_nickname": {"type": "string", "minLength": 1, "maxLength": 64},
+                "temporary_vault_name": {"type": "string", "minLength": 14, "maxLength": 128},
+                "account_enabled": {"type": "boolean"},
+                "force_change_password_next_sign_in": {"type": "boolean"},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_principal_name": "string",
+            "display_name": "string",
+            "remote_id": "string",
+            "temporary_credential_source": "string",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=10,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "user_principal_name",
+            "display_name",
+            "mail_nickname",
+            "temporary_vault_name",
+            "account_enabled",
+            "force_change_password_next_sign_in",
+            "_approval_completed",
+        }
+        if any(key not in allowed for key in payload):
+            return _failed("M365 user onboarding payload contains unsupported fields")
+        account_enabled = payload.get("account_enabled", True)
+        force_change = payload.get("force_change_password_next_sign_in", True)
+        if not isinstance(account_enabled, bool) or not isinstance(force_change, bool):
+            return _failed("M365 user onboarding flags are invalid")
+        onboarding_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "users.create",
+            "account_enabled": account_enabled,
+            "display_name": payload.get("display_name"),
+            "force_change_next_sign_in": force_change,
+            "mail_nickname": payload.get("mail_nickname"),
+            "temporary_vault_name": payload.get("temporary_vault_name"),
+            "user_principal_name": payload.get("user_principal_name"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_user_creation_payload
+
+            validate_m365_user_creation_payload(onboarding_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_principal_name = str(onboarding_payload["user_principal_name"]).strip()
+        display_name = str(onboarding_payload["display_name"]).strip()
+        mail_nickname = str(onboarding_payload["mail_nickname"]).strip()
+        vault_name = str(onboarding_payload["temporary_vault_name"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365UserCreateProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        base_output = {
+            "operation": "user_onboarding",
+            "connector_status": connector_status,
+            "user_principal_name": user_principal_name,
+            "display_name": display_name,
+            "mail_nickname": mail_nickname,
+            "account_enabled": account_enabled,
+            "force_change_password_next_sign_in": force_change,
+            "temporary_credential_source": "local_encrypted_vault",
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "user_onboarding",
+                "client_id": context.client_id,
+                "credential_source": "local_encrypted_vault",
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=base_output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**base_output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            from wait_local_agent.vault import SecretVault, SecretVaultError
+
+            temporary_password = SecretVault(context.settings.vault_path).get(vault_name)
+        except (SecretVaultError, ValueError):
+            return ActionResult(
+                status="failed",
+                output=base_output,
+                evidence=evidence,
+                error_detail="M365 temporary credential could not be read from the local vault",
+            )
+        if not temporary_password:
+            return ActionResult(
+                status="failed",
+                output=base_output,
+                evidence=evidence,
+                error_detail="M365 temporary credential is missing from the local vault",
+            )
+        try:
+            created = provider.create_user(
+                user_principal_name=user_principal_name,
+                display_name=display_name,
+                mail_nickname=mail_nickname,
+                temporary_password=temporary_password,
+                account_enabled=account_enabled,
+                force_change_password_next_sign_in=force_change,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=base_output,
+                evidence=evidence,
+                error_detail="Microsoft Graph user creation failed",
+            )
+        create_status = str(getattr(created, "status", "failed"))
+        result_output = {
+            **base_output,
+            "remote_id": str(getattr(created, "remote_id", "")),
+            "status_code": getattr(created, "status_code", None),
+        }
+        if create_status != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(created, "message", "Microsoft Graph user creation failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -2400,6 +2601,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),
+        M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
@@ -2440,7 +2642,12 @@ class SmartActionService:
         itglue_client: ItGlueClientProtocol | None = None,
         confluence_client: ConfluenceClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
-        m365_client: M365GraphReadProvider | M365LifecycleWriteProvider | None = None,
+        m365_client: (
+            M365GraphReadProvider
+            | M365LifecycleWriteProvider
+            | M365UserCreateProvider
+            | None
+        ) = None,
     ) -> None:
         self.store = store
         self.settings = settings

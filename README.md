@@ -577,8 +577,12 @@ not remove group memberships or licenses or delete mailbox data. The shared
 smart-action catalog also exposes the admin-only `m365-user-offboarding`
 operation for an explicit user identity plus directory ID. After approval it
 disables the account and then revokes active sessions; if the second step
-fails, the run records a partial failure and does not report success. Approved
-Intune managed-device retirement is exposed through
+fails, the run records a partial failure and does not report success.
+The same catalog exposes admin-only `m365-user-onboarding`, which accepts the
+same validated user fields as the dedicated creation API plus a
+`WAIT_M365_TEMP_...` local-vault reference. The temporary password is read
+only after approval and is never persisted in the action payload, output, or
+audit record. Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
 does not expose wipe or delete. Approved Intune managed-device sync is exposed
