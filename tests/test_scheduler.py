@@ -576,6 +576,36 @@ def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
     assert action_runs[0].status == "success"
 
 
+@pytest.mark.parametrize(
+    ("template_id", "tool_id"),
+    [
+        ("l1-resolution-review", "suggest-resolution"),
+        ("duplicate-ticket-review", "find-similar-tickets"),
+    ],
+)
+def test_msp_review_templates_reuse_existing_local_tools(settings, template_id, tool_id) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    service = SmartActionService(store, settings)
+
+    run = run_workflow_template(
+        store,
+        template_id,
+        "TCK-1001",
+        actor="technician",
+        client_id="acme",
+        tool_executor=service,
+    )
+
+    assert run.status == "completed"
+    action_runs = store.list_smart_action_runs(client_id="acme")
+    assert len(action_runs) == 1
+    assert action_runs[0].action_id == tool_id
+    assert action_runs[0].status == "success"
+
+
 def test_tool_backed_workflow_requires_executor(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)

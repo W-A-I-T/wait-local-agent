@@ -771,7 +771,7 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 10
+    assert len(templates.json()) == 12
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert run.status_code == 200
     assert run.json()["status"] == "pending_approval"

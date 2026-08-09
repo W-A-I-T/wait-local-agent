@@ -107,7 +107,7 @@ Everything in the current repo at `W-A-I-T/wait-local-agent`. Full feature list:
 | Approval lifecycle + payload preview | ✓ Built | `src/wait_local_agent/models.py` |
 | HaloPSA: read + draft-write + execution | ✓ Built | `src/wait_local_agent/halopsa.py` |
 | Hudu: read-only | ✓ Built | `src/wait_local_agent/hudu.py` |
-| 10 MSP workflow templates, including five tool-backed reviews | ✓ Built | `src/wait_local_agent/workflows.py` |
+| 12 MSP workflow templates, including seven tool-backed reviews | ✓ Built | `src/wait_local_agent/workflows.py` |
 | Docker Compose appliance | ✓ Built | `docker-compose.yml` |
 | React/Vite dashboard | ✓ Built | `ui/src/App.tsx` |
 | Backup/restore | ✓ Built | `src/wait_local_agent/backup.py` |

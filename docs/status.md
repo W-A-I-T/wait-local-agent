@@ -183,9 +183,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   operational metadata when the provider supplies it; pricing remains explicitly
   unavailable unless configured. Credentials and hidden reasoning are not
   persisted.
-- The public workflow catalog now includes five executable, low-risk review
-  templates for ticket quality, sentiment, escalation, similar-ticket, and
-  security-alert analysis. They reuse the existing smart-action registry and persist both the
+- The public workflow catalog now includes seven executable, low-risk review
+  templates for ticket quality, sentiment, escalation, similar-ticket,
+  security-alert, L1-resolution, and duplicate-ticket analysis. They reuse the existing smart-action registry and persist both the
   workflow run and the tenant-scoped smart-action execution; no write action is
   implied by these review templates.
 - The smart-action catalog also includes local-only, read-only
