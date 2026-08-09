@@ -94,6 +94,20 @@ class M365UserCreateProvider(Protocol):
         """Create one explicitly approved Microsoft 365 user."""
 
 
+class M365GroupMembershipWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def change_group_membership(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        operation: str,
+    ) -> object:
+        """Add or remove one explicitly identified group membership."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -162,6 +176,7 @@ class ActionContext:
         M365GraphReadProvider
         | M365LifecycleWriteProvider
         | M365UserCreateProvider
+        | M365GroupMembershipWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -778,6 +793,141 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365GroupMembershipAction:
+    manifest = SmartActionManifest(
+        action_id="m365-group-membership",
+        title="Microsoft 365 group membership change",
+        description=(
+            "Prepare an approval-gated Microsoft Graph group membership add or remove "
+            "operation using immutable directory object IDs."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["group_id", "user_id", "operation"],
+            "properties": {
+                "group_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "user_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "operation": {"type": "string", "enum": ["add", "remove"]},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "group_id": "string",
+            "user_id": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=3,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"group_id", "user_id", "operation", "_approval_completed"}:
+            return _failed("M365 group membership payload contains unsupported fields")
+        operation = payload.get("operation")
+        if not isinstance(operation, str) or operation not in {"add", "remove"}:
+            return _failed("M365 group membership operation must be add or remove")
+        membership_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": (
+                "groups.members.add" if operation == "add" else "groups.members.remove"
+            ),
+            "group_id": payload.get("group_id"),
+            "user_id": payload.get("user_id"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_group_membership_payload
+
+            validate_m365_group_membership_payload(membership_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        group_id = str(membership_payload["group_id"]).strip()
+        user_id = str(membership_payload["user_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365GroupMembershipWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": operation,
+            "connector_status": connector_status,
+            "group_id": group_id,
+            "user_id": user_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": f"group_membership_{operation}",
+                "client_id": context.client_id,
+                "scope": {"group_id": group_id, "user_id": user_id},
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.change_group_membership(
+                group_id=group_id,
+                user_id=user_id,
+                operation=operation,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph group membership change failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(
+                        getattr(
+                            result,
+                            "message",
+                            "Microsoft Graph group membership change failed",
+                        )
+                    )
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -2601,6 +2751,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),
+        M365GroupMembershipAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -2646,6 +2797,7 @@ class SmartActionService:
             M365GraphReadProvider
             | M365LifecycleWriteProvider
             | M365UserCreateProvider
+            | M365GroupMembershipWriteProvider
             | None
         ) = None,
     ) -> None:

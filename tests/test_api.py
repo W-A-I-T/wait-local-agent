@@ -2451,7 +2451,7 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
-def test_m365_user_lifecycle_actions_require_admin_at_invoke_boundary(settings) -> None:
+def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
     secure_settings = settings.__class__(
         **{
             **settings.__dict__,
@@ -2475,6 +2475,14 @@ def test_m365_user_lifecycle_actions_require_admin_at_invoke_boundary(settings) 
                 "display_name": "User Example",
                 "mail_nickname": "user.example",
                 "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            },
+        ),
+        (
+            "m365-group-membership",
+            {
+                "group_id": "group-immutable-id",
+                "user_id": "user-immutable-id",
+                "operation": "add",
             },
         ),
     ):

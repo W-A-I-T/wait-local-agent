@@ -45,6 +45,7 @@ from wait_local_agent.smart_actions import (
     HuduDocumentationSearchAction,
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
+    M365GroupMembershipAction,
     M365IdentityLookupAction,
     M365LiveContextAction,
     M365UserOffboardingAction,
@@ -953,6 +954,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "hudu-documentation-search",
         "itglue-documentation-search",
         "knowledge-search",
+        "m365-group-membership",
         "m365-identity-lookup",
         "m365-live-context",
         "m365-user-offboarding",
@@ -977,6 +979,83 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_m365_group_membership_is_approval_gated_and_immutable_id_scoped(settings) -> None:
+    class FakeM365GroupWrites:
+        def __init__(self, *, health_status="ready", change_status="succeeded") -> None:
+            self.health_status = health_status
+            self.change_status = change_status
+            self.calls: list[dict[str, str]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def change_group_membership(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                status=self.change_status,
+                message="membership changed" if self.change_status == "succeeded" else "provider rejected membership",
+                status_code=204 if self.change_status == "succeeded" else 400,
+            )
+
+    store = Store(settings.data_path)
+    provider = FakeM365GroupWrites()
+    service = SmartActionService(store, settings, m365_client=provider)
+    payload: dict[str, object] = {
+        "group_id": "group-immutable-id",
+        "user_id": "user-immutable-id",
+        "operation": "add",
+    }
+
+    pending = service.invoke("m365-group-membership", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.calls == [
+        {
+            "group_id": "group-immutable-id",
+            "user_id": "user-immutable-id",
+            "operation": "add",
+        }
+    ]
+    run = store.get_smart_action_run(pending.run_id or 0)
+    assert run is not None and run.status == "success"
+
+    context = _action_context(store, settings, client_id="acme")
+    assert M365GroupMembershipAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "operation": "remove", "_approval_completed": True},
+    ).status == "success"
+    assert M365GroupMembershipAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "operation": "invalid"},
+    ).status == "failed"
+    assert M365GroupMembershipAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "unexpected": "field"},
+    ).status == "failed"
+    assert M365GroupMembershipAction().run(
+        replace(context, m365_client=FakeM365GroupWrites(health_status="blocked")),
+        payload,
+    ).status == "failed"
+    assert M365GroupMembershipAction().run(
+        replace(context, m365_client=FakeM365GroupWrites(change_status="failed")),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
 
 
 def test_m365_user_onboarding_is_vault_backed_and_approval_gated(settings, tmp_path) -> None:
