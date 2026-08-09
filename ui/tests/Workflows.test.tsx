@@ -18,7 +18,27 @@ describe("Workflows", () => {
         ]), { status: 200 }));
       }
       if (path === "/workflows/templates") {
-        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            id: "ticket-sla-risk-review",
+            name: "Ticket SLA Risk Review",
+            trigger: "schedule.daily",
+            description: "Review ticket age.",
+            action_type: "ticket.sla_assessment",
+            approval_required: false,
+            risk_level: "low",
+            preview_fields: [],
+            tool_id: "ticket-sla-assessment",
+            payload_schema: {
+              type: "object",
+              required: ["thresholds_minutes"],
+              properties: { thresholds_minutes: "object" }
+            }
+          }
+        ]), { status: 200 }));
+      }
+      if (path === "/workflows/templates/ticket-sla-risk-review/runs") {
+        return Promise.resolve(new Response(JSON.stringify({ id: 3, status: "completed" }), { status: 200 }));
       }
       if (path === "/workflow-runs/1/compare/2") {
         return Promise.resolve(new Response(JSON.stringify({
@@ -47,5 +67,29 @@ describe("Workflows", () => {
       "/workflow-runs/1/compare/2",
       expect.objectContaining({ headers: expect.anything() })
     );
+  });
+
+  it("submits the selected template payload through the workflow UI", async () => {
+    render(<MemoryRouter><Workflows /></MemoryRouter>);
+
+    await screen.findByRole("option", { name: "Ticket SLA Risk Review" });
+    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "ticket-sla-risk-review" } });
+    fireEvent.change(screen.getByLabelText("Ticket id"), { target: { value: "TCK-1" } });
+    fireEvent.change(screen.getByLabelText("Template payload JSON"), {
+      target: { value: '{"thresholds_minutes":{"high":1}}' }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start Workflow" }));
+
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/workflows/templates/ticket-sla-risk-review/runs",
+      expect.objectContaining({
+        body: JSON.stringify({
+          template_id: "ticket-sla-risk-review",
+          ticket_id: "TCK-1",
+          client_id: undefined,
+          payload: { thresholds_minutes: { high: 1 } }
+        })
+      })
+    ));
   });
 });
