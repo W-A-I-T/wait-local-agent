@@ -2833,7 +2833,7 @@ class Store:
                    execution_window_start, execution_window_end, execution_window_timezone,
                    context_sources_json, approval_expiry_seconds, result_aware,
                    approval_required_tools_json)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
