@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Protocol
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
@@ -23,6 +23,7 @@ MAX_PAGE_SIZE = 200
 MAX_CURSOR_LENGTH = 4096
 MAX_SEGMENT_LENGTH = 256
 MAX_CONTENT_LENGTH = 20_000
+MAX_SEARCH_PAGE_SIZE = 50
 TEXT_FILE_SUFFIXES = frozenset({
     ".csv",
     ".html",
@@ -82,6 +83,16 @@ class SharePointClientProtocol(Protocol):
         ...
 
     def get_document_content(self, site_id: str, item_id: str) -> SharePointReadResponse:
+        ...
+
+    def search_documents(
+        self,
+        site_id: str,
+        query: str,
+        *,
+        parent_item_id: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
+    ) -> SharePointReadResponse:
         ...
 
 
@@ -181,6 +192,40 @@ class SharePointClient:
         return SharePointReadResponse(
             ConnectorReadResult("ready", "SharePoint text document content retrieved.", 1),
             [replace(item, content=content)],
+        )
+
+    def search_documents(
+        self,
+        site_id: str,
+        query: str,
+        *,
+        parent_item_id: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
+    ) -> SharePointReadResponse:
+        """Search a bounded site or folder hierarchy through Graph drive search."""
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return SharePointReadResponse(
+                ConnectorReadResult("failed", "SharePoint search query must be 1 to 200 characters."),
+                [],
+            )
+        if isinstance(limit, bool) or limit < 1:
+            return SharePointReadResponse(
+                ConnectorReadResult("failed", "SharePoint search limit must be at least 1."),
+                [],
+            )
+        try:
+            safe_site_id = _safe_segment(site_id)
+            parent = None if parent_item_id is None else _safe_segment(parent_item_id)
+        except SharePointReadError as exc:
+            return SharePointReadResponse(ConnectorReadResult("failed", exc.message), [])
+        bounded_limit = min(limit, MAX_SEARCH_PAGE_SIZE)
+        scope = f"sites/{safe_site_id}/drive/root" if parent is None else f"sites/{safe_site_id}/drive/items/{parent}"
+        encoded_query = quote(query.strip(), safe="")
+        endpoint = f"{scope}/search(q='{encoded_query}')"
+        return self._request_items(
+            endpoint,
+            lambda row: _normalize_document(row, safe_site_id),
+            params={"$top": bounded_limit},
         )
 
     def _request_items(
@@ -336,7 +381,10 @@ def _safe_endpoint(endpoint: str) -> str:
     if not parts or any(not part or part in {".", ".."} for part in parts):
         raise SharePointReadError("SharePoint endpoint is invalid.")
     if any(
-        not all(character.isalnum() or character in {"_", "-", ",", ".", "!"} for character in part)
+        not all(
+            character.isalnum() or character in {"_", "-", ",", ".", "!", "(", ")", "'", "%", "="}
+            for character in part
+        )
         for part in parts
     ):
         raise SharePointReadError("SharePoint endpoint contains unsafe characters.")
