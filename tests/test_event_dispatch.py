@@ -488,3 +488,62 @@ def test_event_dispatch_retry_records_ineligible_agent(settings) -> None:
     retry = dispatcher.retry(failed.delivery.id or 0, client_id="acme")
     assert retry.delivery.status == "failed"
     assert "no longer eligible" in retry.errors[0]
+
+
+def test_event_dispatch_persists_bounded_retry_policy(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    _event_agent(settings, store)
+
+    class AlwaysFailingAgentService:
+        def run(self, *args, **kwargs):
+            raise RuntimeError("temporary failure")
+
+    dispatcher = EventDispatcher(store, AlwaysFailingAgentService())  # type: ignore[arg-type]
+    configured = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="configured-retry-policy",
+        client_id="acme",
+        max_retries=2,
+        retry_delay_seconds=7,
+    )
+    assert configured.delivery.max_retries == 2
+    assert configured.delivery.retry_delay_seconds == 7
+    assert configured.delivery.next_retry_at is not None
+
+    no_retry = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1002",
+        payload={"priority": "P1"},
+        idempotency_key="no-retry-policy",
+        client_id="acme",
+        max_retries=0,
+        retry_delay_seconds=1,
+    )
+    assert no_retry.delivery.max_retries == 0
+    assert no_retry.delivery.next_retry_at is None
+
+    with pytest.raises(ValueError, match="max_retries"):
+        dispatcher.dispatch(
+            event_type="ticket.created",
+            entity_type="ticket",
+            entity_id="TCK-1001",
+            payload={},
+            idempotency_key="invalid-max-retries",
+            client_id="acme",
+            max_retries=11,
+        )
+    with pytest.raises(ValueError, match="retry_delay_seconds"):
+        dispatcher.dispatch(
+            event_type="ticket.created",
+            entity_type="ticket",
+            entity_id="TCK-1001",
+            payload={},
+            idempotency_key="invalid-retry-delay",
+            client_id="acme",
+            retry_delay_seconds=3601,
+        )

@@ -108,7 +108,11 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
+    DEFAULT_EVENT_MAX_RETRIES,
+    DEFAULT_EVENT_RETRY_DELAY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
+    MAX_EVENT_RETRIES,
+    MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
     WorkflowRun,
 )
@@ -401,6 +405,12 @@ class EventIngestRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     idempotency_key: str | None = None
     client_id: str | None = None
+    max_retries: int = Field(default=DEFAULT_EVENT_MAX_RETRIES, ge=0, le=MAX_EVENT_RETRIES)
+    retry_delay_seconds: int = Field(
+        default=DEFAULT_EVENT_RETRY_DELAY_SECONDS,
+        ge=1,
+        le=MAX_EVENT_RETRY_DELAY_SECONDS,
+    )
 
 
 class ScheduledJobCreateRequest(BaseModel):
@@ -1338,6 +1348,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 idempotency_key=idempotency_key,
                 client_id=scoped_client_id,
                 actor=context.approver_id or "webhook",
+                max_retries=payload.max_retries,
+                retry_delay_seconds=payload.retry_delay_seconds,
             )
         except EventDispatchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4046,6 +4058,7 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
         "retry_count": delivery.retry_count,
         "max_retries": delivery.max_retries,
+        "retry_delay_seconds": delivery.retry_delay_seconds,
         "next_retry_at": delivery.next_retry_at,
         "received_at": delivery.received_at,
         "processed_at": delivery.processed_at,

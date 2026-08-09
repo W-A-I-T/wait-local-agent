@@ -78,7 +78,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `/automation/event-deliveries`, with deterministic filters, redacted payloads,
   tenant checks, auditable delivery history, a technician-only bounded retry
   route for failed deliveries, and a local scheduler that automatically retries
-  due failures in batches of ten with a three-attempt cap and capped backoff.
+  due failures in batches of ten. Each delivery may select `max_retries` from
+  0-10 and `retry_delay_seconds` from 1-3600; defaults remain three attempts and
+  60 seconds with capped exponential backoff.
 - Agent revision history, redacted revision diffs, run-to-version links, and
   bounded rollback under `/agents/{id}/revisions`, with immutable snapshots and
   tenant-scoped restore-as-new-version.

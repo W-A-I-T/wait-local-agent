@@ -235,10 +235,11 @@ not implied by enabling it.
   `workflow_run_id`, `workflow_template_id`, and `status` fields; these can be
   used in deterministic filters to trigger the next bounded agent.
 - Deliveries persist redacted payloads, matched definitions, run IDs, status,
-  errors, tenant scope, and the next bounded retry time in SQLite. Duplicate
-  keys do not execute again. APScheduler runs a single local retry worker every
-  30 seconds; it claims at most ten due failures per pass and applies the same
-  three-attempt cap used by the technician retry route.
+  errors, tenant scope, retry policy, and the next bounded retry time in SQLite.
+  Duplicate keys do not execute again. APScheduler runs a single local retry
+  worker every 30 seconds; it claims at most ten due failures per pass. API
+  callers may choose 0-10 retries and a 1-3600 second base delay per delivery;
+  defaults remain three attempts and 60 seconds with capped exponential backoff.
 
 ## Bounded agents
 

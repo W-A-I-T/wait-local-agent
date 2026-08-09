@@ -82,6 +82,7 @@ export type EventDelivery = {
   status: string;
   retry_count: number;
   max_retries: number;
+  retry_delay_seconds: number;
   next_retry_at?: string | null;
   client_id?: string | null;
 };

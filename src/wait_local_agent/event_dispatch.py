@@ -11,6 +11,7 @@ from wait_local_agent.agents import (
     AgentService,
 )
 from wait_local_agent.models import (
+    DEFAULT_EVENT_MAX_RETRIES,
     DEFAULT_EVENT_RETRY_DELAY_SECONDS,
     EVENT_RETRY_BATCH_SIZE,
     MAX_EVENT_RETRY_DELAY_SECONDS,
@@ -50,6 +51,8 @@ class EventDispatcher:
         idempotency_key: str,
         client_id: str | None = None,
         actor: str = "webhook",
+        max_retries: int = DEFAULT_EVENT_MAX_RETRIES,
+        retry_delay_seconds: int = DEFAULT_EVENT_RETRY_DELAY_SECONDS,
     ) -> EventDispatchResult:
         self._validate_request(
             event_type=event_type,
@@ -70,6 +73,8 @@ class EventDispatcher:
             entity_id=entity_id,
             payload=payload,
             client_id=effective_client_id,
+            max_retries=max_retries,
+            retry_delay_seconds=retry_delay_seconds,
         )
         if not created:
             if (
@@ -268,7 +273,11 @@ class EventDispatcher:
             pending = [definition for definition, _unmet in next_pending]
 
         status = "failed" if errors else "completed"
-        next_retry_at = _next_retry_at(delivery.retry_count) if status == "failed" else ""
+        next_retry_at = (
+            _next_retry_at(delivery.retry_count, delivery.retry_delay_seconds)
+            if status == "failed" and delivery.retry_count < delivery.max_retries
+            else ""
+        )
         delivery = self.store.update_event_delivery(
             delivery.id or 0,
             status=status,
@@ -367,9 +376,16 @@ def _attempts_from_json(payload_json: str) -> dict[str, dict[str, object]]:
     }
 
 
-def _next_retry_at(retry_count: int) -> str:
+def _next_retry_at(retry_count: int, retry_delay_seconds: int = DEFAULT_EVENT_RETRY_DELAY_SECONDS) -> str:
+    if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, int):
+        raise ValueError("event retry_delay_seconds must be an integer")
+    if retry_delay_seconds < 1 or retry_delay_seconds > MAX_EVENT_RETRY_DELAY_SECONDS:
+        raise ValueError(
+            "event retry_delay_seconds must be between 1 and "
+            f"{MAX_EVENT_RETRY_DELAY_SECONDS} seconds"
+        )
     delay = min(
-        DEFAULT_EVENT_RETRY_DELAY_SECONDS * (2**max(retry_count, 0)),
+        retry_delay_seconds * (2**max(retry_count, 0)),
         MAX_EVENT_RETRY_DELAY_SECONDS,
     )
     return (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()

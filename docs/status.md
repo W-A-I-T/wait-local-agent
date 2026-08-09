@@ -107,8 +107,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   bounded retry route that retries only failed or dependency-blocked agents
   using persisted per-agent attempt state. Failed deliveries receive a
   persisted UTC due time and are retried automatically by one bounded local
-  scheduler worker with exponential backoff capped at one hour; the operator
-  route and worker share the same three-attempt claim limit. Conversational and
+  scheduler worker with exponential backoff capped at one hour; each delivery
+  may select a bounded 0-10 retry count and 1-3600 second base delay through
+  the event-ingestion API, with three attempts and 60 seconds as defaults. The
+  operator route and worker share the persisted policy. Conversational and
   unrestricted agent execution are not shipped. Immutable revision history,
   explainable redacted diffs, and restore-as-new-version are available under
   `/agents/{id}/revisions`; each new run records the definition version it

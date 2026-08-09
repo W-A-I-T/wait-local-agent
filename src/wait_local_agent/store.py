@@ -12,7 +12,10 @@ from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     DEFAULT_EVENT_MAX_RETRIES,
+    DEFAULT_EVENT_RETRY_DELAY_SECONDS,
     MAX_APPROVAL_EXPIRY_SECONDS,
+    MAX_EVENT_RETRIES,
+    MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
@@ -285,6 +288,7 @@ class Store:
                     agent_attempts_json text not null default '{}',
                     retry_count integer not null default 0,
                     max_retries integer not null default 3,
+                    retry_delay_seconds integer not null default 60,
                     next_retry_at text not null default ''
                 )
                 """
@@ -532,6 +536,12 @@ class Store:
                 "event_deliveries",
                 "max_retries",
                 f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
+            )
+            self._ensure_column(
+                connection,
+                "event_deliveries",
+                "retry_delay_seconds",
+                f"integer not null default {DEFAULT_EVENT_RETRY_DELAY_SECONDS}",
             )
             self._ensure_column(
                 connection,
@@ -2127,7 +2137,10 @@ class Store:
         entity_id: str,
         payload: dict[str, object],
         client_id: str | None = None,
+        max_retries: int = DEFAULT_EVENT_MAX_RETRIES,
+        retry_delay_seconds: int = DEFAULT_EVENT_RETRY_DELAY_SECONDS,
     ) -> tuple[EventDelivery, bool]:
+        _validate_event_retry_policy(max_retries, retry_delay_seconds)
         received_at = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         payload_json = _json_dumps(payload)
@@ -2138,8 +2151,8 @@ class Store:
                   (idempotency_key, event_type, entity_type, entity_id, payload_json,
                    status, matched_agent_count, agent_ids_json, run_ids_json,
                    error_detail, received_at, processed_at, client_id,
-                   agent_attempts_json, retry_count, max_retries, next_retry_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   agent_attempts_json, retry_count, max_retries, retry_delay_seconds, next_retry_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idempotency_key,
@@ -2157,7 +2170,8 @@ class Store:
                     normalized_client_id,
                     "{}",
                     0,
-                    DEFAULT_EVENT_MAX_RETRIES,
+                    max_retries,
+                    retry_delay_seconds,
                     "",
                 ),
             )
@@ -5760,7 +5774,16 @@ def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload = dict(row)
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
     payload["retry_count"] = int(payload.get("retry_count") or 0)
-    payload["max_retries"] = int(payload.get("max_retries") or DEFAULT_EVENT_MAX_RETRIES)
+    raw_max_retries = payload.get("max_retries")
+    payload["max_retries"] = (
+        int(raw_max_retries) if raw_max_retries is not None else DEFAULT_EVENT_MAX_RETRIES
+    )
+    raw_retry_delay = payload.get("retry_delay_seconds")
+    payload["retry_delay_seconds"] = (
+        int(raw_retry_delay)
+        if raw_retry_delay is not None
+        else DEFAULT_EVENT_RETRY_DELAY_SECONDS
+    )
     payload["next_retry_at"] = _optional_text(payload.get("next_retry_at"))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
@@ -6063,3 +6086,17 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _validate_event_retry_policy(max_retries: int, retry_delay_seconds: int) -> None:
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+        raise ValueError("event max_retries must be an integer")
+    if max_retries < 0 or max_retries > MAX_EVENT_RETRIES:
+        raise ValueError(f"event max_retries must be between 0 and {MAX_EVENT_RETRIES}")
+    if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, int):
+        raise ValueError("event retry_delay_seconds must be an integer")
+    if retry_delay_seconds < 1 or retry_delay_seconds > MAX_EVENT_RETRY_DELAY_SECONDS:
+        raise ValueError(
+            "event retry_delay_seconds must be between 1 and "
+            f"{MAX_EVENT_RETRY_DELAY_SECONDS} seconds"
+        )
