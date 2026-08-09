@@ -13,6 +13,7 @@ from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
 from wait_local_agent.itglue import ItGlueClient
 from wait_local_agent.m365_graph import (
+    M365GraphAuthenticationMethodDeleteResult,
     M365GraphClient,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
@@ -24,6 +25,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceRemoteLockResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
+    M365GraphPasswordResetResult,
     M365GraphSessionRevokeResult,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
@@ -80,6 +82,8 @@ SYNCRO_ACTION_TYPES = {"add_note"}
 
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
+M365_PASSWORD_RESET_ACTION = "users.password-reset"  # nosec B105 - action identifier, not a credential.
+M365_AUTHENTICATION_METHOD_DELETE_ACTION = "users.authentication-methods.remove"
 M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
 M365_GROUP_MEMBERSHIP_REMOVE_ACTION = "groups.members.remove"
 M365_LICENSE_ADD_ACTION = "users.licenses.add"
@@ -101,6 +105,13 @@ M365_USER_CREATE_FIELDS = {
     "temporary_vault_name",
     "user_principal_name",
 }
+M365_PASSWORD_RESET_FIELDS = {
+    "force_change_next_sign_in",
+    "force_change_next_sign_in_with_mfa",
+    "temporary_vault_name",
+    "user_identity",
+}
+M365_AUTHENTICATION_METHOD_DELETE_FIELDS = {"method_id", "method_type", "user_identity"}
 
 
 @dataclass(frozen=True)
@@ -942,6 +953,56 @@ def draft_m365_user_disable(
     )
 
 
+def draft_m365_password_reset(
+    store: Store,
+    *,
+    user_identity: str,
+    temporary_vault_name: str,
+    force_change_password_next_sign_in: bool = True,
+    force_change_password_next_sign_in_with_mfa: bool = False,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_PASSWORD_RESET_ACTION,
+        "force_change_next_sign_in": force_change_password_next_sign_in,
+        "force_change_next_sign_in_with_mfa": force_change_password_next_sign_in_with_mfa,
+        "temporary_vault_name": temporary_vault_name,
+        "user_identity": user_identity,
+    }
+    validate_m365_password_reset_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:password-reset",
+        f"m365.{M365_PASSWORD_RESET_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
+def draft_m365_authentication_method_delete(
+    store: Store,
+    *,
+    user_identity: str,
+    method_type: str,
+    method_id: str,
+    client_id: str | None = None,
+) -> ApprovalRequest:
+    payload: dict[str, object] = {
+        "connector": "m365",
+        "action_type": M365_AUTHENTICATION_METHOD_DELETE_ACTION,
+        "method_id": method_id,
+        "method_type": method_type,
+        "user_identity": user_identity,
+    }
+    validate_m365_authentication_method_delete_payload(payload)
+    return store.create_approval_request(
+        f"m365-user:{user_identity.strip()}:authentication:{method_type}:{method_id}",
+        f"m365.{M365_AUTHENTICATION_METHOD_DELETE_ACTION}",
+        payload,
+        client_id=client_id,
+    )
+
+
 def draft_m365_group_membership(
     store: Store,
     *,
@@ -1208,6 +1269,8 @@ def execute_m365_approval_request(
     if approval.action_type not in {
         f"m365.{M365_USER_CREATE_ACTION}",
         f"m365.{M365_USER_DISABLE_ACTION}",
+        f"m365.{M365_PASSWORD_RESET_ACTION}",
+        f"m365.{M365_AUTHENTICATION_METHOD_DELETE_ACTION}",
         f"m365.{M365_GROUP_MEMBERSHIP_ADD_ACTION}",
         f"m365.{M365_GROUP_MEMBERSHIP_REMOVE_ACTION}",
         f"m365.{M365_LICENSE_ADD_ACTION}",
@@ -1234,6 +1297,8 @@ def execute_m365_approval_request(
     if payload.get("connector") != "m365" or action_type not in {
         M365_USER_CREATE_ACTION,
         M365_USER_DISABLE_ACTION,
+        M365_PASSWORD_RESET_ACTION,
+        M365_AUTHENTICATION_METHOD_DELETE_ACTION,
         M365_GROUP_MEMBERSHIP_ADD_ACTION,
         M365_GROUP_MEMBERSHIP_REMOVE_ACTION,
         M365_LICENSE_ADD_ACTION,
@@ -1252,6 +1317,8 @@ def execute_m365_approval_request(
     result: (
         M365GraphUserCreateResult
         | M365GraphUserDisableResult
+        | M365GraphPasswordResetResult
+        | M365GraphAuthenticationMethodDeleteResult
         | M365GraphGroupMembershipResult
         | M365GraphLicenseChangeResult
         | M365GraphSessionRevokeResult
@@ -1293,6 +1360,41 @@ def execute_m365_approval_request(
         result = client.disable_user(user_identity=str(payload["user_identity"]))
         result_payload = {
             "user_identity": result.user_identity,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_PASSWORD_RESET_ACTION:
+        validate_m365_password_reset_payload(payload)
+        try:
+            temporary_password = vault.get(str(payload["temporary_vault_name"]))
+        except (SecretVaultError, ValueError) as exc:
+            raise RuntimeError("M365 temporary credential could not be read from the local vault") from exc
+        if not temporary_password:
+            raise RuntimeError("M365 temporary credential is missing from the local vault")
+        result = client.reset_user_password(
+            user_identity=str(payload["user_identity"]),
+            temporary_password=temporary_password,
+            force_change_password_next_sign_in=bool(payload["force_change_next_sign_in"]),
+            force_change_password_next_sign_in_with_mfa=bool(
+                payload["force_change_next_sign_in_with_mfa"]
+            ),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "force_change_password_next_sign_in": result.force_change_password_next_sign_in,
+            "force_change_password_next_sign_in_with_mfa": result.force_change_password_next_sign_in_with_mfa,
+            "status_code": result.status_code,
+        }
+    elif action_type == M365_AUTHENTICATION_METHOD_DELETE_ACTION:
+        validate_m365_authentication_method_delete_payload(payload)
+        result = client.delete_authentication_method(
+            user_identity=str(payload["user_identity"]),
+            method_type=str(payload["method_type"]),
+            method_id=str(payload["method_id"]),
+        )
+        result_payload = {
+            "user_identity": result.user_identity,
+            "method_type": result.method_type,
+            "method_id": result.method_id,
             "status_code": result.status_code,
         }
     elif action_type in {M365_GROUP_MEMBERSHIP_ADD_ACTION, M365_GROUP_MEMBERSHIP_REMOVE_ACTION}:
@@ -1473,6 +1575,69 @@ def validate_m365_user_creation_payload(payload: dict[str, object]) -> None:
         payload.get("force_change_next_sign_in"), bool
     ):
         raise ValueError("M365 user creation flags are invalid")
+
+
+def validate_m365_password_reset_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", *M365_PASSWORD_RESET_FIELDS}:
+        raise ValueError("M365 password reset payload contains unsupported fields")
+    if payload.get("connector") != "m365" or payload.get("action_type") != M365_PASSWORD_RESET_ACTION:
+        raise ValueError("M365 password reset payload is invalid")
+    user_identity = payload.get("user_identity")
+    vault_name = payload.get("temporary_vault_name")
+    if (
+        not isinstance(user_identity, str)
+        or not user_identity.strip()
+        or len(user_identity) > 320
+        or any(ord(character) < 32 or character.isspace() for character in user_identity)
+    ):
+        raise ValueError("M365 user_identity is invalid")
+    if (
+        not isinstance(vault_name, str)
+        or not vault_name.startswith("WAIT_M365_TEMP_")
+        or len(vault_name) > 128
+        or any(
+            character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+            for character in vault_name
+        )
+    ):
+        raise ValueError("M365 temporary_vault_name must name a WAIT_M365_TEMP_ vault entry")
+    force_change = payload.get("force_change_next_sign_in")
+    force_change_mfa = payload.get("force_change_next_sign_in_with_mfa")
+    if not isinstance(force_change, bool) or not isinstance(force_change_mfa, bool):
+        raise ValueError("M365 password reset flags are invalid")
+    if force_change_mfa and not force_change:
+        raise ValueError(
+            "M365 force_change_password_next_sign_in_with_mfa requires "
+            "force_change_password_next_sign_in"
+        )
+
+
+def validate_m365_authentication_method_delete_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"connector", "action_type", *M365_AUTHENTICATION_METHOD_DELETE_FIELDS}:
+        raise ValueError("M365 authentication method payload contains unsupported fields")
+    if (
+        payload.get("connector") != "m365"
+        or payload.get("action_type") != M365_AUTHENTICATION_METHOD_DELETE_ACTION
+    ):
+        raise ValueError("M365 authentication method payload is invalid")
+    for field_name in ("user_identity", "method_id"):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 320
+            or any(ord(character) < 32 or character.isspace() for character in value)
+        ):
+            raise ValueError(f"M365 {field_name} is invalid")
+    method_type = payload.get("method_type")
+    if method_type not in {"fido2", "microsoft_authenticator", "phone", "software_oath"}:
+        raise ValueError("M365 authentication method type is invalid")
+    if method_type == "phone" and str(payload["method_id"]).lower() not in {
+        "b6332ec1-7057-4abe-9331-3d72feddfe41",
+        "e37fc753-ff3b-4958-9484-eaa9425c82bc",
+        "3179e48a-750b-4051-897c-87b9720928f7",
+    }:
+        raise ValueError("M365 phone authentication method ID is invalid")
 
 
 def validate_m365_user_disable_payload(payload: dict[str, object]) -> None:

@@ -3344,3 +3344,85 @@ def test_recorder_failure_does_not_change_action_outcome(settings, monkeypatch) 
 
     assert result.status == "success"
     assert store.get_smart_action_run(result.run_id or 0) is not None
+
+
+def test_m365_password_reset_and_authentication_method_removal_are_admin_approval_gated(
+    settings, tmp_path
+) -> None:
+    class FakeM365SecurityWrites:
+        def __init__(self) -> None:
+            self.password_calls: list[dict[str, object]] = []
+            self.method_calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="write ready")
+
+        def reset_user_password(self, **kwargs):
+            self.password_calls.append(kwargs)
+            return SimpleNamespace(status="succeeded", message="reset", status_code=204)
+
+        def delete_authentication_method(self, **kwargs):
+            self.method_calls.append(kwargs)
+            return SimpleNamespace(status="succeeded", message="removed", status_code=204)
+
+    active_settings = replace(settings, vault_path=tmp_path / "vault")
+    SecretVault.initialize(active_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    provider = FakeM365SecurityWrites()
+    service = SmartActionService(
+        Store(active_settings.data_path), active_settings, m365_client=provider
+    )
+
+    password = service.invoke(
+        "m365-password-reset",
+        {
+            "user_identity": "adele.vance@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert password.status == "pending_approval"
+    assert password.approval_id is not None
+    service.update_approval(
+        password.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.password_calls[0]["temporary_password"] == "Temporary-Password-123!"
+    password_run = service.store.get_smart_action_run(password.run_id or 0)
+    assert password_run is not None and "Temporary-Password-123!" not in password_run.output_json
+
+    method = service.invoke(
+        "m365-authentication-method-remove",
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert method.status == "pending_approval"
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            method.approval_id or 0,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        method.approval_id or 0,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.method_calls == [
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        }
+    ]

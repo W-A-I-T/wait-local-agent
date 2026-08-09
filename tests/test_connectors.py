@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ import pytest
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
+    draft_m365_authentication_method_delete,
     draft_m365_group_membership,
     draft_m365_license_change,
     draft_m365_mail_message_delete,
@@ -18,6 +20,7 @@ from wait_local_agent.connectors import (
     draft_m365_managed_device_remote_lock,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
+    draft_m365_password_reset,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
@@ -29,6 +32,7 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
     validate_connectwise_action_fields,
     validate_halopsa_action_fields,
+    validate_m365_authentication_method_delete_payload,
     validate_m365_group_membership_payload,
     validate_m365_license_change_payload,
     validate_m365_mail_message_delete_payload,
@@ -39,12 +43,14 @@ from wait_local_agent.connectors import (
     validate_m365_managed_device_remote_lock_payload,
     validate_m365_managed_device_retirement_payload,
     validate_m365_managed_device_sync_payload,
+    validate_m365_password_reset_payload,
     validate_m365_session_revocation_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
     validate_syncro_action_fields,
 )
 from wait_local_agent.m365_graph import (
+    M365GraphAuthenticationMethodDeleteResult,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
@@ -55,6 +61,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceRemoteLockResult,
     M365GraphManagedDeviceRetireResult,
     M365GraphManagedDeviceSyncResult,
+    M365GraphPasswordResetResult,
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
 )
@@ -107,6 +114,26 @@ class FakeM365Client:
             "succeeded",
             "disabled",
             user_identity=str(kwargs["user_identity"]),
+            status_code=204,
+        )
+
+    def reset_user_password(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphPasswordResetResult(
+            "succeeded",
+            "password reset",
+            user_identity=str(kwargs["user_identity"]),
+            status_code=204,
+        )
+
+    def delete_authentication_method(self, **kwargs):
+        self.calls.append(kwargs)
+        return M365GraphAuthenticationMethodDeleteResult(
+            "succeeded",
+            "method removed",
+            user_identity=str(kwargs["user_identity"]),
+            method_type=str(kwargs["method_type"]),
+            method_id=str(kwargs["method_id"]),
             status_code=204,
         )
 
@@ -301,6 +328,68 @@ def test_m365_user_creation_rejects_unapproved_payload_fields(settings) -> None:
                 "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
                 "user_principal_name": "adele.vance@example.test",
                 "raw_endpoint": "users",
+            }
+        )
+
+
+def test_m365_password_reset_uses_vault_reference_and_never_persists_password(settings, tmp_path) -> None:
+    active_settings = settings.__class__(**{**settings.__dict__, "vault_path": tmp_path / "vault"})
+    store = Store(active_settings.data_path)
+    vault = SecretVault.initialize(active_settings.vault_path)
+    vault.set("WAIT_M365_TEMP_ADELE", "Temporary-Password-123!")
+    approval = draft_m365_password_reset(
+        store,
+        user_identity="adele.vance@example.test",
+        temporary_vault_name="WAIT_M365_TEMP_ADELE",
+        force_change_password_next_sign_in_with_mfa=True,
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None
+    assert "Temporary-Password-123!" not in persisted.payload_json
+    validate_m365_password_reset_payload(json.loads(persisted.payload_json))
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(store, cast(Any, client), vault, approval.id or 0)
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {
+            "user_identity": "adele.vance@example.test",
+            "temporary_password": "Temporary-Password-123!",
+            "force_change_password_next_sign_in": True,
+            "force_change_password_next_sign_in_with_mfa": True,
+        }
+    ]
+    assert "Temporary-Password-123!" not in executed.execution_result_json
+    assert all("Temporary-Password-123!" not in event.detail for event in store.list_audit_events())
+
+
+def test_m365_authentication_method_remove_is_strictly_allowlisted_and_approval_gated(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    vault = SecretVault.initialize(tmp_path / "vault")
+    approval = draft_m365_authentication_method_delete(
+        store,
+        user_identity="adele.vance@example.test",
+        method_type="fido2",
+        method_id="method-1",
+        client_id="tenant-a",
+    )
+    persisted = store.get_approval_request(approval.id or 0)
+    assert persisted is not None and persisted.client_id == "tenant-a"
+    store.update_approval_request(approval.id or 0, "approved")
+    client = FakeM365Client()
+    executed = execute_m365_approval_request(store, cast(Any, client), vault, approval.id or 0)
+    assert executed.execution_status == "succeeded"
+    assert client.calls == [
+        {"user_identity": "adele.vance@example.test", "method_type": "fido2", "method_id": "method-1"}
+    ]
+    with pytest.raises(ValueError, match="authentication method type"):
+        validate_m365_authentication_method_delete_payload(
+            {
+                "connector": "m365",
+                "action_type": "users.authentication-methods.remove",
+                "method_id": "method-1",
+                "method_type": "all",
+                "user_identity": "adele.vance@example.test",
             }
         )
 

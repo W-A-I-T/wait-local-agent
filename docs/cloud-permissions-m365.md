@@ -17,6 +17,8 @@ permissions:
 | Approved group membership changes | `GroupMember.ReadWrite.All` |
 | Approved direct user license changes | `LicenseAssignment.ReadWrite.All` |
 | Approved session revocation | `User.RevokeSessions.All` |
+| Approved password reset | `User-PasswordProfile.ReadWrite.All` |
+| Approved authentication-method removal | `UserAuthenticationMethod.ReadWrite.All` |
 | Applications | `Application.Read.All` |
 | Service principals | `Application.Read.All` |
 | Conditional Access policies | `Policy.Read.All` |
@@ -40,6 +42,11 @@ permission `User.RevokeSessions.All`.
 For approved disable/offboarding, grant only the least-privileged application
 combination `User.EnableDisableAccount.All` and `User.Read.All` described by
 Microsoft Graph; do not grant `Directory.ReadWrite.All`.
+For approved password reset, grant only `User-PasswordProfile.ReadWrite.All` and
+use the local-vault password flow; WAIT never accepts the password in an API
+payload. For approved authentication-method removal, grant only
+`UserAuthenticationMethod.ReadWrite.All`; the action accepts one method type and
+ID and does not remove all methods.
 
 ## Live identity, group, license, mailbox, and Intune lookup
 
@@ -110,3 +117,15 @@ and [user assignLicense](https://learn.microsoft.com/en-us/graph/api/user-assign
 and [revokeSignInSessions](https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions?view=graph-rest-1.0)
 for these lifecycle permissions. Session revocation is a separate
 `revokeSignInSessions` action and is intentionally not part of this slice.
+
+The password-reset action uses `PATCH /users/{id | userPrincipalName}` with only
+the documented `passwordProfile` fields. Authentication-method removal uses the
+documented method-specific `DELETE /users/{id | userPrincipalName}/authentication/...`
+resources for FIDO2, Microsoft Authenticator, phone, and software OATH methods.
+WAIT does not claim support for other method families or reset-all behavior. See
+Microsoft's [passwordProfile resource](https://learn.microsoft.com/en-us/graph/api/resources/passwordprofile?view=graph-rest-1.0),
+[authentication-method permissions](https://learn.microsoft.com/en-us/graph/api/authentication-list-methods?view=graph-rest-1.0),
+[FIDO2 deletion](https://learn.microsoft.com/en-us/graph/api/fido2authenticationmethod-delete?view=graph-rest-1.0),
+[phone deletion](https://learn.microsoft.com/en-us/graph/api/phoneauthenticationmethod-delete?view=graph-rest-1.0),
+and [software OATH deletion](https://learn.microsoft.com/en-us/graph/api/softwareoathauthenticationmethod-delete?view=graph-rest-1.0)
+for the provider contract.

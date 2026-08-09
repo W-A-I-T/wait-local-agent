@@ -150,6 +150,65 @@ def test_m365_graph_user_creation_is_write_gated_and_never_returns_password(sett
     assert "password" not in response.message.lower()
 
 
+def test_m365_graph_password_reset_uses_documented_password_profile_patch(settings) -> None:
+    active_settings = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == "/v1.0/users/adele.vance@example.test"
+        assert json.loads(request.content) == {
+            "passwordProfile": {
+                "password": "Temporary-Password-123!",
+                "forceChangePasswordNextSignIn": True,
+                "forceChangePasswordNextSignInWithMfa": True,
+            }
+        }
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(handler)
+    ).reset_user_password(
+        user_identity="adele.vance@example.test",
+        temporary_password="Temporary-Password-123!",
+        force_change_password_next_sign_in=True,
+        force_change_password_next_sign_in_with_mfa=True,
+    )
+    assert response.status == "succeeded"
+    assert response.status_code == 204
+    assert "Temporary-Password-123!" not in response.message
+
+
+def test_m365_graph_authentication_method_delete_uses_allowlisted_endpoint(settings) -> None:
+    active_settings = replace(_configured(settings), allow_write_actions=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert (
+            request.url.path
+            == "/v1.0/users/adele.vance@example.test/authentication/fido2Methods/method-1"
+        )
+        return httpx.Response(204)
+
+    response = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(handler)
+    ).delete_authentication_method(
+        user_identity="adele.vance@example.test",
+        method_type="fido2",
+        method_id="method-1",
+    )
+    assert response.status == "succeeded"
+    assert response.method_type == "fido2"
+
+    blocked = M365GraphClient(
+        active_settings, transport=httpx.MockTransport(handler)
+    ).delete_authentication_method(
+        user_identity="adele.vance@example.test",
+        method_type="phone",
+        method_id="not-a-phone-resource-id",
+    )
+    assert blocked.status == "failed"
+
+
 def test_m365_graph_user_creation_blocks_when_write_flag_is_disabled(settings) -> None:
     active_settings = _configured(settings)
     response = M365GraphClient(active_settings).create_user(

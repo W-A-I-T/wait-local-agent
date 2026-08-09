@@ -24,6 +24,17 @@ MAX_CURSOR_LENGTH = 4096
 MAX_IDENTITY_LENGTH = 320
 MAX_LICENSE_ITEMS = 200
 MAX_LICENSE_DETAIL_ITEMS = 200
+_M365_AUTHENTICATION_METHOD_SEGMENTS = {
+    "fido2": "fido2Methods",
+    "microsoft_authenticator": "microsoftAuthenticatorMethods",
+    "phone": "phoneMethods",
+    "software_oath": "softwareOathMethods",
+}
+_M365_PHONE_METHOD_IDS = {
+    "b6332ec1-7057-4abe-9331-3d72feddfe41",
+    "e37fc753-ff3b-4958-9484-eaa9425c82bc",
+    "3179e48a-750b-4051-897c-87b9720928f7",
+}
 
 
 @dataclass(frozen=True)
@@ -188,6 +199,26 @@ class M365GraphUserDisableResult:
     status: str
     message: str
     user_identity: str = ""
+    status_code: int | None = None
+
+
+@dataclass(frozen=True)
+class M365GraphPasswordResetResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    force_change_password_next_sign_in: bool | None = None
+    force_change_password_next_sign_in_with_mfa: bool | None = None
+    status_code: int | None = None
+
+
+@dataclass(frozen=True)
+class M365GraphAuthenticationMethodDeleteResult:
+    status: str
+    message: str
+    user_identity: str = ""
+    method_type: str = ""
+    method_id: str = ""
     status_code: int | None = None
 
 
@@ -569,6 +600,70 @@ class M365GraphClient:
             "succeeded",
             "Microsoft Graph user disable succeeded.",
             user_identity=safe_identity,
+            status_code=status_code,
+        )
+
+    def reset_user_password(
+        self,
+        *,
+        user_identity: str,
+        temporary_password: str,
+        force_change_password_next_sign_in: bool,
+        force_change_password_next_sign_in_with_mfa: bool,
+    ) -> M365GraphPasswordResetResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphPasswordResetResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            payload = _password_reset_payload(
+                temporary_password=temporary_password,
+                force_change_password_next_sign_in=force_change_password_next_sign_in,
+                force_change_password_next_sign_in_with_mfa=force_change_password_next_sign_in_with_mfa,
+            )
+            endpoint = f"users/{quote(safe_identity, safe='')}"
+            _, status_code = self._patch(endpoint, payload)
+        except M365GraphReadError as exc:
+            return M365GraphPasswordResetResult("failed", exc.message)
+        return M365GraphPasswordResetResult(
+            "succeeded",
+            "Microsoft Graph user password reset succeeded.",
+            user_identity=safe_identity,
+            force_change_password_next_sign_in=force_change_password_next_sign_in,
+            force_change_password_next_sign_in_with_mfa=force_change_password_next_sign_in_with_mfa,
+            status_code=status_code,
+        )
+
+    def delete_authentication_method(
+        self,
+        *,
+        user_identity: str,
+        method_type: str,
+        method_id: str,
+    ) -> M365GraphAuthenticationMethodDeleteResult:
+        health = self.write_health()
+        if health.status != "ready":
+            return M365GraphAuthenticationMethodDeleteResult("blocked", health.message)
+        try:
+            safe_identity = _safe_user_target(user_identity)
+            safe_method_type = _safe_authentication_method_type(method_type)
+            safe_method_id = _safe_directory_object_id(method_id, "method_id")
+            if safe_method_type == "phone" and safe_method_id.lower() not in _M365_PHONE_METHOD_IDS:
+                raise M365GraphReadError("Microsoft Graph phone authentication method ID is invalid.")
+            endpoint = (
+                f"users/{quote(safe_identity, safe='')}/authentication/"
+                f"{_M365_AUTHENTICATION_METHOD_SEGMENTS[safe_method_type]}/"
+                f"{quote(safe_method_id, safe='')}"
+            )
+            _, status_code = self._delete(endpoint)
+        except M365GraphReadError as exc:
+            return M365GraphAuthenticationMethodDeleteResult("failed", exc.message)
+        return M365GraphAuthenticationMethodDeleteResult(
+            "succeeded",
+            "Microsoft Graph authentication method removal succeeded.",
+            user_identity=safe_identity,
+            method_type=safe_method_type,
+            method_id=safe_method_id,
             status_code=status_code,
         )
 
@@ -1321,6 +1416,15 @@ def _safe_endpoint(endpoint: str) -> str:
         and _safe_encoded_segment(endpoint_parts[1])
         and not any(ord(character) < 32 for character in endpoint)
     )
+    is_authentication_method_delete_endpoint = (
+        len(endpoint_parts) == 5
+        and endpoint_parts[0] == "users"
+        and endpoint_parts[2] == "authentication"
+        and endpoint_parts[3] in _M365_AUTHENTICATION_METHOD_SEGMENTS.values()
+        and _safe_encoded_segment(endpoint_parts[1])
+        and _safe_encoded_segment(endpoint_parts[4])
+        and not any(ord(character) < 32 for character in endpoint)
+    )
     is_managed_device_retire_endpoint = (
         len(endpoint_parts) == 4
         and endpoint_parts[0] == "deviceManagement"
@@ -1391,6 +1495,7 @@ def _safe_endpoint(endpoint: str) -> str:
         and not is_user_license_endpoint
         and not is_user_license_details_endpoint
         and not is_user_session_revoke_endpoint
+        and not is_authentication_method_delete_endpoint
         and not is_managed_device_retire_endpoint
         and not is_managed_device_sync_endpoint
         and not is_managed_device_reboot_endpoint
@@ -1439,6 +1544,36 @@ def _user_create_payload(
     }
 
 
+def _password_reset_payload(
+    *,
+    temporary_password: str,
+    force_change_password_next_sign_in: bool,
+    force_change_password_next_sign_in_with_mfa: bool,
+) -> dict[str, object]:
+    if (
+        not isinstance(temporary_password, str)
+        or not 8 <= len(temporary_password) <= 256
+        or any(ord(character) < 32 for character in temporary_password)
+    ):
+        raise M365GraphReadError("Microsoft Graph temporary password is invalid.")
+    if not isinstance(force_change_password_next_sign_in, bool) or not isinstance(
+        force_change_password_next_sign_in_with_mfa, bool
+    ):
+        raise M365GraphReadError("Microsoft Graph password reset flags are invalid.")
+    if force_change_password_next_sign_in_with_mfa and not force_change_password_next_sign_in:
+        raise M365GraphReadError(
+            "Microsoft Graph force_change_password_next_sign_in_with_mfa requires "
+            "force_change_password_next_sign_in."
+        )
+    return {
+        "passwordProfile": {
+            "password": temporary_password,
+            "forceChangePasswordNextSignIn": force_change_password_next_sign_in,
+            "forceChangePasswordNextSignInWithMfa": force_change_password_next_sign_in_with_mfa,
+        }
+    }
+
+
 def _safe_required_text(value: str, field: str, maximum: int) -> str:
     stripped = value.strip()
     if not stripped or len(stripped) > maximum or any(ord(character) < 32 for character in stripped):
@@ -1461,6 +1596,13 @@ def _safe_user_target(value: str) -> str:
         or any(ord(character) < 32 or character.isspace() for character in stripped)
     ):
         raise M365GraphReadError("Microsoft Graph user identity is invalid.")
+    return stripped
+
+
+def _safe_authentication_method_type(value: str) -> str:
+    stripped = value.strip()
+    if stripped not in _M365_AUTHENTICATION_METHOD_SEGMENTS:
+        raise M365GraphReadError("Microsoft Graph authentication method type is invalid.")
     return stripped
 
 
@@ -1873,8 +2015,10 @@ __all__ = [
     "M365GraphClient",
     "M365GraphGroup",
     "M365GraphGroupMembershipResult",
+    "M365GraphAuthenticationMethodDeleteResult",
     "M365GraphGroupReadResponse",
     "M365GraphLicenseChangeResult",
+    "M365GraphPasswordResetResult",
     "M365GraphManagedDeviceRetireResult",
     "M365GraphManagedDeviceRemoteLockResult",
     "M365GraphMailboxSettingsUpdateResult",

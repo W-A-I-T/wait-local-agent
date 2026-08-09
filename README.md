@@ -592,6 +592,8 @@ wait-local-agent connectors m365-managed-devices
 wait-local-agent connectors draft-m365-managed-device-sync device-1
 wait-local-agent connectors draft-m365-managed-device-reboot device-1
 wait-local-agent connectors draft-m365-managed-device-retirement device-1
+wait-local-agent connectors draft-m365-password-reset user@example.com WAIT_M365_TEMP_USER
+wait-local-agent connectors draft-m365-authentication-method-remove user@example.com --method-type fido2 --method-id method-1
 wait-local-agent connectors draft-m365-mailbox-settings user-1 --setting locale=en-US
 wait-local-agent connectors draft-m365-mail-message-move user-1 inbox-id message-id archive-id
 wait-local-agent connectors draft-m365-mail-message-read-state user-1 inbox-id message-id --unread
@@ -630,6 +632,16 @@ smart-action catalog also exposes the admin-only `m365-user-offboarding`
 operation for an explicit user identity plus directory ID. After approval it
 disables the account and then revokes active sessions; if the second step
 fails, the run records a partial failure and does not report success.
+Password reset is also admin-approved through
+`POST /connectors/m365/users/password-reset-drafts` or
+`draft-m365-password-reset`; the temporary password is resolved only from a
+`WAIT_M365_TEMP_...` local-vault entry. It uses Graph's documented user
+`passwordProfile` update and never stores or returns the password. MFA recovery
+is deliberately narrower: `POST /connectors/m365/users/authentication-method-drafts`
+or `draft-m365-authentication-method-remove` removes one explicitly identified
+FIDO2, Microsoft Authenticator, phone, or software OATH method. There is no
+reset-all operation; method type and ID are validated and every write remains
+approval-gated.
 The same catalog exposes admin-only `m365-user-onboarding`, which accepts the
 same validated user fields as the dedicated creation API plus a
 `WAIT_M365_TEMP_...` local-vault reference. The temporary password is read
@@ -896,7 +908,8 @@ the same object in `WorkflowRunRequest.payload`. The SLA-risk and stale-ticket
 review templates require explicit positive thresholds and never infer a vendor
 contract or silently treat missing ticket timestamps as evidence.
 The catalog also includes approval-gated Microsoft 365 onboarding, offboarding,
-and license-request reviews; these use the existing admin-only smart actions,
+password-reset, authentication-method removal, and license-request reviews;
+these use the existing admin-only smart actions,
 tenant scope, and local-vault/provider readiness checks.
 
 Scheduled template jobs use the same bounded object under `params.input`, for
