@@ -122,6 +122,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   device ID, sends no request body, and does not expose wipe or delete. A
   separate approval-gated managed-device reboot action follows the same
   strict-ID and bodyless-write boundary; wipe and delete remain unavailable. A
+  shared smart-action catalog reuses these four managed-device operations with
+  the same strict-ID, health, and approval boundaries. A
   separate approval-gated mailbox-settings action accepts only timezone,
   locale, date-format, and time-format fields; message contents and forwarding
   are not exposed. A separate approval-gated message-move action accepts only

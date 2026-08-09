@@ -604,6 +604,10 @@ explicit failures.
 The shared catalog also exposes admin-only `m365-mail-message-read-state` with
 a boolean read state and `m365-mail-message-delete` for one explicit message.
 Both are previewed and approval-gated, with provider failures remaining explicit.
+The shared catalog also exposes admin-only `m365-managed-device-sync`,
+`m365-managed-device-reboot`, `m365-managed-device-retire`, and
+`m365-managed-device-remote-lock`; each accepts one explicit device ID and
+reuses the same approval and provider-health boundaries.
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and
