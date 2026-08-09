@@ -2497,6 +2497,13 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
             "m365-session-revocation",
             {"user_id": "user-immutable-id"},
         ),
+        (
+            "m365-mailbox-settings",
+            {
+                "user_identity": "user@example.test",
+                "settings": {"locale": "en-US"},
+            },
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
