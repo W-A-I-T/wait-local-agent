@@ -223,6 +223,12 @@ action IDs, statuses, and ticket references; hidden reasoning and provider
 payloads are not persisted. Sessions can be closed, after which new messages
 are rejected.
 
+The operator dashboard exposes the same session lifecycle at
+`/technician-chat`. It creates, selects, sends messages to, and closes sessions
+through these routes; it does not introduce a second planner, tool catalog, or
+provider path. Viewer tokens receive an access explanation and no chat request
+is made.
+
 ## End-user support mode
 
 End-user support is disabled by default. When explicitly enabled with

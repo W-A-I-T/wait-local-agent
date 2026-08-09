@@ -43,6 +43,38 @@ export type EndUserMessage = {
   created_at: string;
 };
 
+export type TechnicianChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  message: string;
+  action_id?: string | null;
+  status: string;
+  ticket_id?: string | null;
+  created_at: string;
+};
+
+export type TechnicianChatSession = {
+  id: string;
+  status: "active" | "closed";
+  ticket_id?: string | null;
+  client_id: string;
+  created_at: string;
+  updated_at: string;
+  messages: TechnicianChatMessage[];
+};
+
+export type TechnicianChatResponse = {
+  status: string;
+  message: string;
+  action_id?: string;
+  session_id?: string;
+  result?: {
+    status: string;
+    output?: Record<string, unknown>;
+    error_detail?: string;
+  };
+};
+
 export type TicketSummarySource = {
   title: string;
   path: string;

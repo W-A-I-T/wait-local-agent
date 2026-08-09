@@ -139,7 +139,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - Technician operators can use `/technician/chat` or
   `wait-local-agent technician-chat` for bounded requests over the existing
   smart-action catalog. Persisted, tenant-scoped technician sessions are
-  available through `/technician/chat/sessions`; the CLI supports
+  available through `/technician/chat/sessions`, and the operator dashboard
+  exposes the same session flow at `/technician-chat`; the CLI supports
   `--new-session`, `--session-id`, and `--client-id` for the same bounded
   history path. Only redacted operational messages, action IDs, statuses, and
   ticket references are stored.

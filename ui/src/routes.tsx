@@ -16,6 +16,7 @@ import { Workflows } from "./screens/Workflows";
 import { Tickets } from "./screens/Tickets";
 import { Templates } from "./screens/Templates";
 import { Settings } from "./screens/Settings";
+import { TechnicianChat } from "./screens/TechnicianChat";
 
 export function AppRoutes() {
   return (
@@ -34,6 +35,7 @@ export function AppRoutes() {
       <Route path="approvals" element={<Approvals />} />
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
+      <Route path="technician-chat" element={<TechnicianChat />} />
       <Route path="backfills" element={<Backfills />} />
       <Route path="executions" element={<Executions />} />
       <Route path="settings" element={<Settings />} />
