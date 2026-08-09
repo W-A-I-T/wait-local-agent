@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -706,15 +707,17 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
         {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 60}},
     )
     assert result.status == "success"
-    assert result.output["assessment"]["state"] == "at_risk"
-    assert result.output["assessment"]["threshold_minutes"] == 60
+    assessment = cast(dict[str, object], result.output["assessment"])
+    assert assessment["state"] == "at_risk"
+    assert assessment["threshold_minutes"] == 60
     missing = TicketSlaAssessmentAction().run(
         context,
         {"ticket_id": "TCK-NO-TIME", "thresholds_minutes": {"high": 60}},
     )
     assert missing.status == "success"
     assert missing.output["evidence_status"] == "insufficient"
-    assert missing.output["assessment"]["reason"] == "missing_created_at"
+    missing_assessment = cast(dict[str, object], missing.output["assessment"])
+    assert missing_assessment["reason"] == "missing_created_at"
 
 
 def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
@@ -738,7 +741,8 @@ def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
         {"stale_after_minutes": 60},
     )
     assert result.status == "success"
-    assert [item["ticket_id"] for item in result.output["tickets"]] == ["TCK-STALE"]
+    tickets = cast(list[dict[str, object]], result.output["tickets"])
+    assert [item["ticket_id"] for item in tickets] == ["TCK-STALE"]
     assert result.output["count"] == 1
 
 
