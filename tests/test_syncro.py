@@ -141,6 +141,73 @@ def test_syncro_write_validation_and_failures_are_sanitized(settings) -> None:
             raise AssertionError("invalid Syncro write was accepted")
 
 
+def test_syncro_write_boundaries_cover_transport_and_payload_edges(settings) -> None:
+    from wait_local_agent.models import SyncroWriteRequest
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    assert SyncroClient(active).write_health().status == "ready"
+    request = SyncroWriteRequest("42", "add_note", {"subject": "Internal", "body": "Reviewed"})
+    for blocked_settings, expected in (
+        (replace(active, allow_http_probing=False), "WAIT_ALLOW_HTTP_PROBING"),
+        (replace(active, allow_write_actions=False), "WAIT_ALLOW_WRITE_ACTIONS"),
+        (replace(active, syncro_api_token=""), "WAIT_SYNCRO_API_TOKEN"),
+    ):
+        try:
+            SyncroClient(blocked_settings)._post("tickets/42/comment", {"subject": "x"})
+        except SyncroReadError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError("blocked Syncro POST was accepted")
+
+    def connect_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("token=must-not-leak", request=request)
+
+    disconnected = SyncroClient(
+        active,
+        transport=httpx.MockTransport(connect_failure),
+    ).execute_write(request)
+    assert disconnected.status == "failed"
+    assert disconnected.message.endswith("before receiving a response.")
+    assert "token=" not in disconnected.message
+
+    generic = SyncroClient(
+        active,
+        transport=httpx.MockTransport(
+            lambda request: (_ for _ in ()).throw(httpx.ReadError("read failed", request=request))
+        ),
+    ).execute_write(request)
+    assert generic.message == "Syncro POST request failed."
+
+    unexpected = SyncroClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(202)),
+    ).execute_write(request)
+    assert unexpected.status == "failed"
+    assert "unexpected HTTP 202" in unexpected.message
+
+    empty = SyncroClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"")),
+    ).execute_write(request)
+    assert empty.status == "succeeded"
+    assert empty.remote_id == ""
+
+    invalid_fields = (
+        {"subject": "x" * 251, "body": "ok"},
+        {"subject": "ok", "body": "x" * 32_001},
+        {"subject": "ok\x00", "body": "ok"},
+        {"subject": "ok", "body": "ok", "do_not_email": 1},
+    )
+    for fields in invalid_fields:
+        try:
+            _write_payload("add_note", fields)
+        except SyncroReadError:
+            pass
+        else:
+            raise AssertionError("invalid Syncro comment edge was accepted")
+    assert _remote_id([{"nested": {"comment_id": 7}}]) == "7"
+
+
 def test_syncro_reads_report_missing_credentials(settings) -> None:
     client = SyncroClient(
         replace(_settings(settings), syncro_api_token=""),
@@ -285,7 +352,7 @@ def test_syncro_helpers_and_invalid_inputs(settings) -> None:
     active = _settings(settings)
     invalid_page = SyncroClient(active).list_tickets(page=0)
     invalid_filter = SyncroClient(active).list_tickets(query="\n")
-    invalid_customer_filter = SyncroClient(active).list_customers(business_name="\n")
+    invalid_customer_filter = SyncroClient(active).list_customers(business_name="x\n")
     invalid_customer = SyncroClient(active).list_tickets(customer_id="7/8")
     invalid_ticket = SyncroClient(active).get_ticket("not-a-number")
     invalid_customer_id = SyncroClient(active).get_customer("not-a-number")
