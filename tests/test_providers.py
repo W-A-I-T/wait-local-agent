@@ -16,6 +16,7 @@ from wait_local_agent.providers import (
     ProviderUnavailableError,
     RemoteModelProfile,
     RemoteModelProvider,
+    _response_usage_metadata,
     provider_from_settings,
     provider_metadata,
 )
@@ -577,6 +578,49 @@ def test_fallback_metadata_uses_primary_local_usage(tmp_path: Path) -> None:
     assert metadata["input_tokens"] == 3
     assert metadata["output_tokens"] == 2
     assert metadata["total_tokens"] == 5
+
+
+def test_fallback_metadata_uses_remote_usage_after_local_failure(tmp_path: Path) -> None:
+    def local_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("local provider unavailable", request=request)
+
+    def remote_success(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    fallback = FallbackModelProvider(
+        OpenAICompatibleLocalProvider(
+            _profile(tmp_path), transport=httpx.MockTransport(local_failure)
+        ),
+        RemoteModelProvider(
+            _remote_profile(), transport=httpx.MockTransport(remote_success)
+        ),
+    )
+    fallback.draft_response(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), fallback)
+    assert metadata["usage_status"] == "reported"
+    assert metadata["total_tokens"] == 9
+
+
+def test_usage_metadata_handles_partial_and_explicit_totals() -> None:
+    explicit = _response_usage_metadata(
+        httpx.Response(200, json={"usage": {"total_tokens": 4}})
+    )
+    assert explicit["usage_status"] == "reported"
+    assert explicit["total_tokens"] == 4
+    partial = _response_usage_metadata(
+        httpx.Response(200, json={"usage": {"prompt_tokens": 2}})
+    )
+    assert partial["usage_status"] == "reported"
+    assert partial["input_tokens"] == 2
 
 
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:
