@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
@@ -23,6 +24,7 @@ from wait_local_agent.connectors import (
     execute_connectwise_approval_request,
     execute_halopsa_approval_request,
     execute_m365_approval_request,
+    list_connector_statuses,
     update_connectwise_approval_fields,
     update_halopsa_approval_fields,
     validate_connectwise_action_fields,
@@ -106,6 +108,7 @@ class FakeM365Client:
             user_identity=str(kwargs["user_identity"]),
             status_code=204,
         )
+
 
     def change_group_membership(self, **kwargs):
         self.calls.append(kwargs)
@@ -218,6 +221,23 @@ class FakeM365Client:
             user_id=str(kwargs["user_id"]),
             status_code=200,
         )
+
+
+def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
+    active = replace(
+        settings,
+        allow_write_actions=True,
+        halopsa_base_url="https://halo.example.test",
+        halopsa_client_id="halo-client",
+        halopsa_client_secret="halo-secret",
+        halopsa_tenant="halo-tenant",
+        connectwise_base_url="",
+    )
+
+    statuses = {status.id: status for status in list_connector_statuses(active)}
+
+    assert statuses["halopsa"].write_actions_enabled is True
+    assert statuses["connectwise"].write_actions_enabled is False
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:
