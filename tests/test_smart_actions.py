@@ -2628,17 +2628,24 @@ def test_deterministic_action_persists_run_and_audit(settings) -> None:
     assert "smart_action.completed" in event_types
 
 
-def test_ai_actions_report_missing_provider(settings) -> None:
+def test_ai_actions_use_deterministic_local_fallback(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
     service = SmartActionService(store, settings)
 
     result = service.invoke("ticket-summary", {"ticket_id": "TCK-1001"}, "technician")
+    resolution = service.invoke("suggest-resolution", {"ticket_id": "TCK-1001"}, "technician")
 
-    assert result.status == "provider_not_configured"
-    assert result.error_detail
+    assert result.status == "success"
+    assert result.output["ai_assisted"] is False
+    assert result.output["provider_id"] == "deterministic"
+    assert result.output["summary"]
+    assert resolution.status == "success"
+    assert resolution.output["ai_assisted"] is False
+    assert resolution.output["provider_id"] == "deterministic"
+    assert resolution.output["suggestion"]
     assert result.run_id is not None
-    assert store.get_smart_action_run(result.run_id).status == "provider_not_configured"  # type: ignore[union-attr]
+    assert store.get_smart_action_run(result.run_id).status == "success"  # type: ignore[union-attr]
 
 
 def test_deterministic_provider_never_reports_ai_when_inference_is_enabled(settings) -> None:
@@ -2648,8 +2655,9 @@ def test_deterministic_provider_never_reports_ai_when_inference_is_enabled(setti
 
     result = service.invoke("ticket-summary", {"ticket_id": "TCK-1001"}, "technician")
 
-    assert result.status == "provider_not_configured"
-    assert result.output == {}
+    assert result.status == "success"
+    assert result.output["ai_assisted"] is False
+    assert result.output["provider_id"] == "deterministic"
 
 
 def test_suggest_resolution_rejects_zero_positive_retrieval_hits(settings, tmp_path) -> None:

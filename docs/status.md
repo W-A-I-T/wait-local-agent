@@ -12,6 +12,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Optional Docling parser/OCR configuration for scanned or richer documents when the optional dependency is installed and OCR is explicitly enabled.
 - SQLite FTS5 knowledge retrieval by default, with optional Qdrant vector backend configuration.
 - Deterministic ticket intelligence with indexed citations.
+- Ticket summary and resolution smart actions run through the same deterministic
+  local provider when no model is configured; their output is labeled as
+  deterministic rather than AI-assisted. Configured local or remote model
+  providers remain optional enhancements.
 - Optional local OpenAI-compatible provider with deterministic fallback, plus
   explicit remote fallback adapters for Anthropic Messages and documented
   OpenAI-compatible DeepSeek, Kimi, or documented coding-model-compatible endpoints. Remote
