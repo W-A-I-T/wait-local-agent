@@ -137,6 +137,7 @@ class OpenAICompatibleLocalProvider:
     ) -> None:
         self.profile = profile
         self._transport = transport
+        self._last_call_metadata: dict[str, object] = {"usage_status": "not_called"}
         self._cached_request_key: tuple[str, ...] = ()
         self._cached_completion: ModelCompletion | None = None
         self._cached_plan_request_key: tuple[str, ...] = ()
@@ -240,8 +241,10 @@ class OpenAICompatibleLocalProvider:
                 response = client.post(url, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning("local model provider request failed: %s", exc)
             return None
+        self._last_call_metadata = _response_usage_metadata(response)
         return _completion_from_response(response)
 
     def _request_tool_selection(
@@ -278,8 +281,10 @@ class OpenAICompatibleLocalProvider:
                 response = client.post(url, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning("local model planner request failed: %s", exc)
             return None
+        self._last_call_metadata = _response_usage_metadata(response)
         return _tool_selection_from_response(response, max_tools=max_tools)
 
     def _request_next_tool_selection(
@@ -319,8 +324,10 @@ class OpenAICompatibleLocalProvider:
                 response = client.post(url, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning("local model continuation request failed: %s", exc)
             return None
+        self._last_call_metadata = _response_usage_metadata(response)
         return _next_tool_selection_from_response(response)
 
 
@@ -341,6 +348,7 @@ class RemoteModelProvider:
     ) -> None:
         self.profile = profile
         self._transport = transport
+        self._last_call_metadata: dict[str, object] = {"usage_status": "not_called"}
         self._cached_request_key: tuple[str, ...] = ()
         self._cached_completion: ModelCompletion | None = None
         self._cached_plan_request_key: tuple[str, ...] = ()
@@ -453,8 +461,10 @@ class RemoteModelProvider:
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning("remote model provider request failed: provider=%s error=%s", self.profile.provider, exc)
             return None
+        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
         return (
             _completion_from_anthropic_response(response)
             if is_anthropic
@@ -518,12 +528,14 @@ class RemoteModelProvider:
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning(
                 "remote model planner request failed: provider=%s error=%s",
                 self.profile.provider,
                 exc,
             )
             return None
+        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
         return _tool_selection_from_response(
             response,
             max_tools=max_tools,
@@ -584,12 +596,14 @@ class RemoteModelProvider:
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            self._last_call_metadata = _provider_error_metadata()
             LOGGER.warning(
                 "remote model continuation request failed: provider=%s error=%s",
                 self.profile.provider,
                 exc,
             )
             return None
+        self._last_call_metadata = _response_usage_metadata(response, anthropic=is_anthropic)
         return _next_tool_selection_from_response(response, anthropic=is_anthropic)
 
 
@@ -1044,9 +1058,9 @@ def _remote_provider_from_settings(settings: Settings) -> RemoteModelProvider | 
     )
 
 
-def provider_metadata(settings: Settings, provider: ModelProvider | None = None) -> dict[str, str]:
+def provider_metadata(settings: Settings, provider: ModelProvider | None = None) -> dict[str, object]:
     """Return safe provider/model labels for operational audit records."""
-    metadata = {
+    metadata: dict[str, object] = {
         "provider": settings.local_model_provider or "deterministic",
         "model": settings.local_model_name,
     }
@@ -1055,7 +1069,80 @@ def provider_metadata(settings: Settings, provider: ModelProvider | None = None)
         metadata["fallback_model"] = provider.fallback.profile.model
     elif isinstance(provider, RemoteModelProvider):
         metadata = {"provider": provider.profile.provider, "model": provider.profile.model}
+    call_metadata = _provider_call_metadata(provider)
+    if call_metadata is not None:
+        metadata.update(call_metadata)
     return metadata
+
+
+def _provider_call_metadata(provider: ModelProvider | None) -> dict[str, object] | None:
+    if provider is None:
+        return None
+    if isinstance(provider, FallbackModelProvider):
+        fallback_metadata = getattr(provider.fallback, "_last_call_metadata", None)
+        if isinstance(fallback_metadata, dict) and fallback_metadata.get("usage_status") != "not_called":
+            return dict(fallback_metadata)
+        primary_metadata = getattr(provider.primary, "_last_call_metadata", None)
+        if isinstance(primary_metadata, dict) and primary_metadata.get("usage_status") != "not_called":
+            return dict(primary_metadata)
+        return None
+    call_metadata = getattr(provider, "_last_call_metadata", None)
+    if isinstance(call_metadata, dict) and call_metadata.get("usage_status") != "not_called":
+        return dict(call_metadata)
+    return None
+
+
+def _provider_error_metadata() -> dict[str, object]:
+    return {
+        "usage_status": "provider_error",
+        "cost_status": "not_configured",
+        "cost_usd": None,
+    }
+
+
+def _response_usage_metadata(
+    response: httpx.Response, *, anthropic: bool = False
+) -> dict[str, object]:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {
+            "usage_status": "not_reported",
+            "cost_status": "not_configured",
+            "cost_usd": None,
+        }
+    input_key = "input_tokens" if anthropic else "prompt_tokens"
+    output_key = "output_tokens" if anthropic else "completion_tokens"
+    input_tokens = _nonnegative_int(usage.get(input_key))
+    output_tokens = _nonnegative_int(usage.get(output_key))
+    total_tokens = _nonnegative_int(usage.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    metadata: dict[str, object] = {
+        "usage_status": (
+            "reported"
+            if any(value is not None for value in (input_tokens, output_tokens, total_tokens))
+            else "not_reported"
+        ),
+        "cost_status": "not_configured",
+        "cost_usd": None,
+    }
+    if input_tokens is not None:
+        metadata["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        metadata["output_tokens"] = output_tokens
+    if total_tokens is not None:
+        metadata["total_tokens"] = total_tokens
+    return metadata
+
+
+def _nonnegative_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _endpoint(base_url: str, path: str) -> str:

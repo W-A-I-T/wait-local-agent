@@ -161,8 +161,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   filters, redacted step detail, generated artifact metadata, and technician
   artifact downloads through the existing tenant-scoped observability API.
   Smart-action records include
-  configured provider/model labels as redacted operational metadata; credentials
-  and hidden reasoning are not persisted.
+  configured provider/model labels and provider-reported token usage as redacted
+  operational metadata when the provider supplies it; pricing remains explicitly
+  unavailable unless configured. Credentials and hidden reasoning are not
+  persisted.
 - The public workflow catalog now includes four executable, low-risk review
   templates for ticket quality, sentiment, escalation, and similar-ticket
   analysis. They reuse the existing smart-action registry and persist both the

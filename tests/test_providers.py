@@ -529,6 +529,32 @@ def test_fallback_provider_draft_and_safe_metadata(tmp_path: Path) -> None:
     assert provider_metadata(settings, remote) == {"provider": "deepseek", "model": "documented-model"}
 
 
+def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path), transport=httpx.MockTransport(handler)
+    )
+    provider.summarize_ticket(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), provider)
+    assert metadata["usage_status"] == "reported"
+    assert metadata["input_tokens"] == 11
+    assert metadata["output_tokens"] == 7
+    assert metadata["total_tokens"] == 18
+    assert metadata["cost_status"] == "not_configured"
+    assert metadata["cost_usd"] is None
+
+
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:
     requests: list[httpx.Request] = []
 
