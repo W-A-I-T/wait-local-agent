@@ -54,6 +54,12 @@ TICKET_METRICS_DERIVATION = (
     "is not inferred."
 )
 
+TICKET_LIFECYCLE_DERIVATION = (
+    "Historical resolution metrics use explicit local ticket status transitions "
+    "recorded during ticket ingestion or local end-user actions. Existing tickets "
+    "start with a snapshot and do not receive an inferred historical transition."
+)
+
 
 @dataclass(frozen=True)
 class StepRecord:
@@ -476,6 +482,7 @@ def build_analytics_summary(
     rejected = approval_status_counts.get("rejected", 0)
     decided = approved + rejected
     ticket_activity = store.execution_ticket_activity(started_from, started_to, client_id)
+    lifecycle = store.ticket_lifecycle_metrics(started_from, started_to, client_id)
     resolved_tickets = sum(
         1 for _, status in ticket_activity if status.strip().lower() in {"resolved", "closed"}
     )
@@ -532,6 +539,10 @@ def build_analytics_summary(
             "resolved": resolved_tickets,
             "resolution_rate": (resolved_tickets / len(ticket_activity)) if ticket_activity else 0.0,
             "derivation": TICKET_METRICS_DERIVATION,
+            "historical_resolution": {
+                **lifecycle,
+                "derivation": TICKET_LIFECYCLE_DERIVATION,
+            },
         },
         "activity_by_workflow": activity_by_workflow,
         "estimated_minutes_saved": {

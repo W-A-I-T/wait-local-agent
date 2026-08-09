@@ -45,6 +45,7 @@ unverifiable product claim.
 | Event ingestion and delivery retry | `/automation/*`, CLI | No standalone screen | Authenticated event types, idempotency, tenant checks, bounded retries |
 | Technician chat and persisted sessions | `/technician/chat*`, CLI | No standalone screen | Technician role, tenant/principal scope, bounded parser and history |
 | End-user local ticket support | `/end-user/tickets*` | No operator screen; separate end-user API | Separate end-user token, requester and tenant scope |
+| Ticket lifecycle history and historical resolution metrics | `/tickets/{ticket_id}/status-history`, `/analytics/summary`, CLI analytics summary | Analytics metric on dashboard; history remains an API/CLI detail surface | Uses only explicit local/imported transitions; existing snapshots are not treated as historical evidence |
 | Syncro, ServiceNow, Autotask, IT Glue, Confluence, SharePoint, M365, and RMM provider detail routes | API, CLI, Agents tool catalog | No provider-specific dashboard screen | Read-only or approval-gated provider contracts; disabled live calls remain reported as blocked |
 | Founder Pack implementation | Public `/founder/*` contract | Founder screen reports pack boundary | Stable `501`/unconfigured responses; no fake scan result |
 

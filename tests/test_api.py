@@ -4573,6 +4573,32 @@ def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(set
     ).status_code == 403
 
 
+def test_ticket_status_history_api_exposes_recorded_transitions(settings, tmp_path) -> None:
+    ticket_file = tmp_path / "ticket.json"
+    ticket_file.write_text(
+        "[{\"id\":\"TCK-HISTORY\",\"client\":\"Acme\",\"subject\":\"History\","
+        "\"body\":\"Status tracking\",\"priority\":\"normal\",\"status\":\"open\","
+        "\"client_id\":\"acme\",\"created_at\":\"2026-08-08T10:00:00+00:00\","
+        "\"updated_at\":\"2026-08-08T10:00:00+00:00\"}]",
+        encoding="utf-8",
+    )
+    Store(settings.data_path).ingest_ticket_file(ticket_file)
+    client = TestClient(create_app(settings))
+
+    response = client.get("/tickets/TCK-HISTORY/status-history")
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "id": 1,
+        "ticket_id": "TCK-HISTORY",
+        "client_id": "acme",
+        "from_status": "",
+        "to_status": "open",
+        "changed_at": "2026-08-08T10:00:00+00:00",
+        "source": "ticket_ingest",
+    }]
+
+
 def _read_response(items):
     return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 

@@ -289,6 +289,12 @@ export type AnalyticsSummary = {
     resolved: number;
     resolution_rate: number;
     derivation: string;
+    historical_resolution: {
+      resolved_with_history: number;
+      with_duration: number;
+      average_minutes: number | null;
+      derivation: string;
+    };
   };
   activity_by_workflow: Array<{
     run_kind: string;

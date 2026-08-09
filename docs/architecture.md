@@ -170,8 +170,11 @@ outcome. Pending-approval runs do not emit completion.
 Analytics reads the same tenant-scoped execution and approval records. It
 reports approval decisions, distinct tickets referenced by normalized sources
 or explicit redacted step-input `ticket_id` fields, current `resolved`/`closed`
-ticket counts, and grouped workflow/agent/smart-action activity. It does not
-infer historical resolution timestamps or measured time saved.
+ticket counts, explicit tenant-scoped local/imported ticket status history, and
+grouped workflow/agent/smart-action activity. Historical resolution duration is
+calculated only from an explicit non-terminal-to-terminal status transition and
+a valid creation timestamp; it does not infer provider history or measured time
+saved.
 
 ## Template gallery
 
