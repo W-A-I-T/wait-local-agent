@@ -1,8 +1,8 @@
 """Bounded Autotask REST API adapter.
 
-The adapter exposes ticket and company reads plus one approval-gated ticket
-note mutation. Mutations remain behind both local write gates and the existing
-smart-action approval runtime.
+The adapter exposes ticket and company reads plus explicitly allowlisted,
+approval-gated ticket mutations. Mutations remain behind both local write gates
+and the existing smart-action approval runtime.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class AutotaskReadError(Exception):
 
 
 class AutotaskClient:
-    """Bounded Autotask REST client for reads and approved ticket notes."""
+    """Bounded Autotask REST client for reads and approved ticket mutations."""
 
     def __init__(
         self,
@@ -140,7 +140,7 @@ class AutotaskClient:
         missing = self._not_configured_result()
         if missing is not None:
             return missing
-        return ConnectorReadResult("ready", "Autotask ticket-note/status write prerequisites are ready.")
+        return ConnectorReadResult("ready", "Autotask ticket write prerequisites are ready.")
 
     def execute_write(self, request: AutotaskWriteRequest) -> AutotaskWriteResult:
         blocked = self._write_blocked_write_result(request)
@@ -501,6 +501,17 @@ def _write_payload(
         ):
             raise AutotaskReadError("Autotask ticket resolution is invalid.")
         return {"id": ticket_id, "resolution": value.strip()}
+    if action_type == "assign_technician":
+        if set(fields) != {"assigned_resource_id"}:
+            raise AutotaskReadError(
+                "Autotask assign_technician requires only an assigned_resource_id field."
+            )
+        value = fields["assigned_resource_id"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise AutotaskReadError(
+                "Autotask assigned_resource_id must be a positive integer."
+            )
+        return {"id": ticket_id, "assignedResourceID": value}
     if action_type != "add_note":
         raise AutotaskReadError(f"Autotask ticket action is not supported: {action_type}.")
     allowed = {"description", "note_type", "publish", "title"}

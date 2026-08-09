@@ -1000,6 +1000,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
 
     assert [manifest.action_id for manifest in service.list()] == [
         "autotask-ticket-add-note",
+        "autotask-ticket-assign-technician",
         "autotask-ticket-lookup",
         "autotask-ticket-update-resolution",
         "autotask-ticket-update-status",
@@ -1136,6 +1137,27 @@ def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> No
     ).status == "success"
     assert provider.calls[-1] == AutotaskWriteRequest(
         "123", "update_resolution", resolution_fields
+    )
+    assignment_action = AutotaskTicketWriteAction(
+        action_id="test-autotask-assignment",
+        title="test assignment",
+        action_type="assign_technician",
+    )
+    assignment_fields: dict[str, object] = {"assigned_resource_id": 456}
+    assert assignment_action.run(
+        replace(context, autotask_client=provider),
+        {"ticket_id": "123", "fields": assignment_fields},
+    ).output["approval_required"] is True
+    assert assignment_action.run(
+        replace(context, autotask_client=provider),
+        {
+            "ticket_id": "123",
+            "fields": assignment_fields,
+            "_approval_completed": True,
+        },
+    ).status == "success"
+    assert provider.calls[-1] == AutotaskWriteRequest(
+        "123", "assign_technician", assignment_fields
     )
     assert action.run(
         replace(context, client_id="other", autotask_client=provider),

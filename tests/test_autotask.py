@@ -55,6 +55,7 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
             assert body in (
                 {"id": 123, "status": 7},
                 {"id": 123, "resolution": "Resolved by local runbook."},
+                {"id": 123, "assignedResourceID": 456},
             )
             return httpx.Response(200)
         assert request.method == "POST"
@@ -112,10 +113,20 @@ def test_autotask_writes_require_both_flags_and_create_bounded_ticket_note(setti
         )
     )
     assert resolution_result.status == "succeeded"
+    assignment_result = client.execute_write(
+        AutotaskWriteRequest(
+            "123", "assign_technician", {"assigned_resource_id": 456}
+        )
+    )
+    assert assignment_result.status == "succeeded"
+    assert assignment_result.endpoint == "Tickets"
     assert client.execute_write(
         AutotaskWriteRequest(
             "123", "add_note", {"description": "unsafe", "note_type": 3, "publish": 0, "extra": 1}
         )
+    ).status == "failed"
+    assert client.execute_write(
+        AutotaskWriteRequest("123", "assign_technician", {"assigned_resource_id": 0})
     ).status == "failed"
 
 

@@ -65,6 +65,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
 
     assert set(tools) == {
         "autotask-ticket-add-note",
+        "autotask-ticket-assign-technician",
         "autotask-ticket-lookup",
         "autotask-ticket-update-status",
         "autotask-ticket-update-resolution",
