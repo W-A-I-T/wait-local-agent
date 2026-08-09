@@ -1461,6 +1461,22 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
 
 
+def test_read_only_smart_action_can_be_made_approval_gated(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    pending = service.invoke(
+        "ticket-triage",
+        {"ticket_id": "TCK-1001"},
+        "technician",
+        require_approval=True,
+    )
+
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+
+
 def test_expired_smart_action_approval_rejects_without_execution(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)

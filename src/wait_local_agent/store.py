@@ -417,7 +417,8 @@ class Store:
                     execution_window_timezone text not null default 'UTC',
                     context_sources_json text not null default '[]',
                     approval_expiry_seconds integer,
-                    result_aware integer not null default 0
+                    result_aware integer not null default 0,
+                    approval_required_tools_json text not null default '[]'
                 )
                 """
             )
@@ -425,6 +426,12 @@ class Store:
                 connection,
                 "agent_definitions",
                 "context_sources_json",
+                "text not null default '[]'",
+            )
+            self._ensure_column(
+                connection,
+                "agent_definitions",
+                "approval_required_tools_json",
                 "text not null default '[]'",
             )
             connection.execute(
@@ -2824,8 +2831,9 @@ class Store:
                    execution_timeout_seconds, client_id, version, created_at, updated_at,
                    run_once_per_entity, depends_on_agent_ids_json,
                    execution_window_start, execution_window_end, execution_window_timezone,
-                   context_sources_json, approval_expiry_seconds, result_aware)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   context_sources_json, approval_expiry_seconds, result_aware,
+                   approval_required_tools_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     definition.id,
@@ -2851,6 +2859,7 @@ class Store:
                     _json_dumps_value(definition.context_sources),
                     definition.approval_expiry_seconds,
                     int(definition.result_aware),
+                    _json_dumps_value(definition.approval_required_tools),
                 ),
             )
             self._add_audit_event(
@@ -2906,7 +2915,8 @@ class Store:
                     run_once_per_entity = ?, depends_on_agent_ids_json = ?,
                     execution_window_start = ?, execution_window_end = ?,
                     execution_window_timezone = ?, context_sources_json = ?,
-                    approval_expiry_seconds = ?, result_aware = ?
+                    approval_expiry_seconds = ?, result_aware = ?,
+                    approval_required_tools_json = ?
                 where id = ?
                 """,
                 (
@@ -2931,6 +2941,7 @@ class Store:
                     _json_dumps_value(definition.context_sources),
                     definition.approval_expiry_seconds,
                     int(definition.result_aware),
+                    _json_dumps_value(definition.approval_required_tools),
                     definition.id,
                 ),
             )
@@ -5819,6 +5830,9 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload["context_sources"] = cast(
         list[str], _json_list_or_empty(payload.pop("context_sources_json"))
     )
+    payload["approval_required_tools"] = cast(
+        list[str], _json_list_or_empty(payload.pop("approval_required_tools_json"))
+    )
     return AgentDefinition(**payload)
 
 
@@ -5919,6 +5933,7 @@ def _agent_definition_snapshot(definition: AgentDefinition) -> str:
             "context_sources": definition.context_sources,
             "approval_expiry_seconds": definition.approval_expiry_seconds,
             "result_aware": definition.result_aware,
+            "approval_required_tools": definition.approval_required_tools,
         }
     )
 

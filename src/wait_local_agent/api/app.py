@@ -367,6 +367,7 @@ class AgentDefinitionRequest(BaseModel):
         default=None, ge=1, le=MAX_APPROVAL_EXPIRY_SECONDS
     )
     result_aware: bool = False
+    approval_required_tools: list[str] = Field(default_factory=list, max_length=8)
 
 
 class AgentRunStartRequest(BaseModel):
@@ -794,6 +795,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 context_sources=list(payload.context_sources),
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
+                approval_required_tools=payload.approval_required_tools,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -883,6 +885,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 context_sources=list(payload.context_sources),
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
+                approval_required_tools=payload.approval_required_tools,
             )
         except (AgentDefinitionError, ValidationError) as exc:
             raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
@@ -923,6 +926,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 context_sources=list(payload.context_sources),
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
+                approval_required_tools=payload.approval_required_tools,
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4025,6 +4029,7 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "context_sources": definition.context_sources,
                 "approval_expiry_seconds": definition.approval_expiry_seconds,
                 "result_aware": definition.result_aware,
+                "approval_required_tools": definition.approval_required_tools,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }

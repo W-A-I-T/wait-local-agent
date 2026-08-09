@@ -96,6 +96,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   existing tool call as data; it is never treated as executable instructions.
 - Each tool call delegates to `SmartActionService`, so existing approval,
   redaction, tenancy, and provider behavior is reused rather than duplicated.
+  Agent definitions may add a persisted, revisioned approval rule for selected
+  enabled tools. The rule only makes execution stricter: catalog-required
+  approvals remain required, and the policy cannot grant access or change a
+  tool's role, risk, or write boundary.
 - Existing HaloPSA, ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket
   reads, plus Hudu article and IT Glue document reads, are exposed through the
   same tool contract. The actions reuse the guarded connector clients, require

@@ -2339,6 +2339,7 @@ class SmartActionService:
         confirm: bool = False,
         client_id: str | None = None,
         approval_expiry_seconds: int | None = None,
+        require_approval: bool = False,
     ) -> ActionResult:
         action = self.registry.get(action_id)
         normalized_id = action.manifest.action_id
@@ -2397,7 +2398,7 @@ class SmartActionService:
             )
             return _result_with_run(result, run.id)
 
-        if action.manifest.requires_approval:
+        if action.manifest.requires_approval or require_approval:
             draft = _safe_run(action, context, normalized_payload)
             if draft.status != "success":
                 return self._persist_result(

@@ -669,6 +669,37 @@ def test_write_like_action_stops_for_approval_and_resumes_only_with_other_approv
     assert resumed.final_result["status"] == "success"
 
 
+def test_agent_can_add_approval_to_a_read_only_tool(settings) -> None:
+    service = _service(settings)
+    definition = service.create(
+        name="Reviewed triage",
+        description="Require a human review before a read-only triage result is accepted.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_required_tools=["ticket-triage"],
+    )
+
+    assert service.get(definition.id, client_id="acme").approval_required_tools == ["ticket-triage"]  # type: ignore[union-attr]
+    pending = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+
+    resumed = service.resume(
+        definition,
+        service.store.get_agent_run(pending.run_id, client_id="acme"),  # type: ignore[arg-type]
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert resumed.status == "completed"
+
+
 def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
     service = _service(settings)
     definition = service.create(
@@ -745,6 +776,43 @@ def test_agent_approval_policy_bounds_are_enforced(settings) -> None:
             client_id="acme",
             approval_expiry_seconds=0,
         )
+
+    with pytest.raises(AgentDefinitionError, match="enabled tools"):
+        service.create(
+            name="Invalid tool approval policy",
+            description="",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            approval_required_tools=["dispatch-suggestion"],
+        )
+
+    for invalid_policy, message in (
+        (["ticket-triage"] * 9, "contain 0-8"),
+        (cast(list[str], [123]), "non-empty strings"),
+        (["ticket-triage", "ticket-triage"], "duplicates"),
+    ):
+        with pytest.raises(AgentDefinitionError, match=message):
+            service.create(
+                name="Invalid additional approval policy",
+                description="",
+                enabled=True,
+                trigger="manual",
+                entity_type="ticket",
+                filters={},
+                enabled_tools=["ticket-triage"],
+                steps=[{"tool_id": "ticket-triage", "payload": {}}],
+                max_steps=1,
+                execution_timeout_seconds=30,
+                client_id="acme",
+                approval_required_tools=invalid_policy,
+            )
 
 
 def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
@@ -923,10 +991,12 @@ def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -
             "max_steps": 1,
             "client_id": "acme",
             "approval_expiry_seconds": 1800,
+            "approval_required_tools": ["dispatch-suggestion"],
         },
     )
     assert created.status_code == 200
     assert created.json()["approval_expiry_seconds"] == 1800
+    assert created.json()["approval_required_tools"] == ["dispatch-suggestion"]
     agent_id = created.json()["id"]
     pending = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
     assert pending.status_code == 200

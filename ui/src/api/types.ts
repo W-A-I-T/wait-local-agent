@@ -556,6 +556,7 @@ export type AgentDefinition = {
   context_sources: string[];
   approval_expiry_seconds?: number | null;
   result_aware: boolean;
+  approval_required_tools: string[];
 };
 
 export type AgentPlan = {
