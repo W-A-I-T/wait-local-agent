@@ -81,7 +81,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 ## Bounded agents
 
 - Agent definitions persist a short, explicit sequence of existing smart
-  actions in SQLite.
+  actions in SQLite. An explicitly reviewed definition may opt into bounded
+  result-aware continuation through the same provider boundary; each next tool
+  is validated against the definition, duplicate tools are not re-executed, and
+  provider failure falls back to the reviewed sequence.
 - The first public agent mode is ticket-scoped. Definitions allow only
   registered tools, cap runs at eight steps and 120 seconds, and retain the
   configured client scope. Manual runs and persisted five-field cron schedules

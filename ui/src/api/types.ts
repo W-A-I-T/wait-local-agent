@@ -548,6 +548,7 @@ export type AgentDefinition = {
   execution_window_timezone?: string;
   context_sources: string[];
   approval_expiry_seconds?: number | null;
+  result_aware: boolean;
 };
 
 export type AgentPlan = {

@@ -19,6 +19,7 @@ export function Agents() {
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
   const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
+  const [resultAware, setResultAware] = useState(false);
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [runDetails, setRunDetails] = useState<Record<string, AgentRunDetail>>({});
   const [message, setMessage] = useState("");
@@ -83,11 +84,13 @@ export function Agents() {
           approval_expiry_seconds: parsedApprovalExpiryHours === undefined
             ? undefined
             : parsedApprovalExpiryHours * 60 * 60,
+          result_aware: resultAware,
           client_id: clientId || undefined
         })
       });
       setName("");
       setDescription("");
+      setResultAware(false);
       setMessage("Agent created.");
       await refresh();
     } catch (error) {
@@ -175,6 +178,7 @@ export function Agents() {
           </div>
           <label>Description<textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>
+          <label><input type="checkbox" checked={resultAware} onChange={(event) => setResultAware(event.target.checked)} /> Continue from each approved result using the bounded catalog</label>
           <fieldset className="agent-option-group"><legend>Context sources</legend>{contextOptions.map(([value, label]) => <label key={value}><input type="checkbox" checked={contextSources.includes(value)} onChange={() => setContextSources((current) => toggleValue(current, value))} />{label}</label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Enabled tools (maximum 8 steps)</legend>{tools.map((tool) => {
             const selected = selectedTools.includes(tool.id);
@@ -202,6 +206,7 @@ export function Agents() {
             <p className="screen-note">Context: {agent.context_sources.join(", ") || "none"}</p>
             <p className="screen-note">Tools: {agent.enabled_tools.join(", ")}</p>
             <p className="screen-note">Approval deadline: {agent.approval_expiry_seconds ? `${agent.approval_expiry_seconds / 3600} hours maximum` : "tool default"}</p>
+            <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
             <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button></div>
             {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}
           </article>;
