@@ -118,6 +118,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "connectwise-ticket-update-fields",
         "confluence-documentation-search",
         "syncro-ticket-lookup",
+        "syncro-ticket-add-note",
         "servicenow-incident-add-work-note",
         "servicenow-incident-assign",
         "servicenow-incident-lookup",
@@ -2140,6 +2141,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     tool_ids = {tool["id"] for tool in tools_response.json()}
     assert {
         "syncro-ticket-lookup",
+        "syncro-ticket-add-note",
         "servicenow-incident-lookup",
         "servicenow-incident-assign",
         "autotask-ticket-lookup",

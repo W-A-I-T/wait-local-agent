@@ -46,8 +46,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - ConnectWise PSA ticket and company lookup plus an allowlisted,
   approval-gated ticket PATCH path through a guarded, credential-isolated
   adapter.
-- Syncro read-only ticket and customer lookup through the same guarded,
-  credential-isolated boundary; mutation endpoints are intentionally absent.
+- Syncro ticket and customer lookup plus the documented ticket-comment endpoint
+  through the same guarded, credential-isolated boundary; the comment action
+  remains allowlisted, tenant-scoped, and approval-gated, while broader
+  mutation endpoints are intentionally absent.
 - ServiceNow read-only incident and company lookup through the same guarded,
   credential-isolated Table API boundary; mutation endpoints are intentionally absent.
 - Autotask read-only ticket and company lookup through the same guarded,

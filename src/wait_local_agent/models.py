@@ -15,6 +15,9 @@ ServiceNowWriteStatus = Literal[
 AutotaskWriteStatus = Literal[
     "not_started", "blocked", "not_configured", "succeeded", "failed"
 ]
+SyncroWriteStatus = Literal[
+    "not_started", "blocked", "not_configured", "succeeded", "failed"
+]
 ActionKind = Literal[
     "ticket.triage",
     "ticket.assign",
@@ -247,6 +250,14 @@ class AutotaskWriteRequest:
 
 
 @dataclass(frozen=True)
+class SyncroWriteRequest:
+    ticket_id: str
+    action_type: str
+    fields: dict[str, object]
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
 class HaloWriteResult:
     status: HaloWriteStatus
     message: str
@@ -282,6 +293,17 @@ class ServiceNowWriteResult:
 @dataclass(frozen=True)
 class AutotaskWriteResult:
     status: AutotaskWriteStatus
+    message: str
+    action_type: str
+    ticket_id: str
+    endpoint: str = ""
+    status_code: int | None = None
+    remote_id: str = ""
+
+
+@dataclass(frozen=True)
+class SyncroWriteResult:
+    status: SyncroWriteStatus
     message: str
     action_type: str
     ticket_id: str

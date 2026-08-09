@@ -42,6 +42,7 @@ from wait_local_agent.connectors import (
     validate_m365_session_revocation_payload,
     validate_m365_user_creation_payload,
     validate_m365_user_disable_payload,
+    validate_syncro_action_fields,
 )
 from wait_local_agent.m365_graph import (
     M365GraphGroupMembershipResult,
@@ -1094,6 +1095,28 @@ def test_halopsa_field_edit_validation_edges(settings) -> None:
     validate_halopsa_action_fields("update_status", {"status_id": "1"})
     validate_halopsa_action_fields("assign_technician", {"team_id": "2"})
     validate_halopsa_action_fields("update_ticket_fields", {"custom_field": "value"})
+
+
+def test_syncro_comment_field_validation_edges() -> None:
+    validate_syncro_action_fields(
+        "add_note",
+        {"subject": "Internal", "body": "Reviewed", "hidden": True, "do_not_email": False},
+    )
+    invalid_cases: list[tuple[str, dict[str, object]]] = [
+        ("unknown", {"subject": "x", "body": "y"}),
+        ("add_note", {}),
+        ("add_note", {"subject": "x"}),
+        ("add_note", {"subject": "x", "body": "y", "extra": "no"}),
+        ("add_note", {"subject": 1, "body": "y"}),
+        ("add_note", {"subject": "\x00", "body": "y"}),
+        ("add_note", {"subject": "x", "body": 1}),
+        ("add_note", {"subject": "x", "body": "\x00"}),
+        ("add_note", {"subject": "x", "body": "y", "hidden": "yes"}),
+        ("add_note", {"subject": "x", "body": "y", "do_not_email": 1}),
+    ]
+    for action_type, fields in invalid_cases:
+        with pytest.raises(ValueError):
+            validate_syncro_action_fields(action_type, fields)
 
 
 def test_connectwise_drafts_edits_and_approval_execution(settings) -> None:

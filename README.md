@@ -22,8 +22,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - HaloPSA read paths, approval-gated write drafts, and execution history.
 - ConnectWise PSA ticket and company lookup plus an allowlisted,
   approval-gated ticket update path with explicit HTTP probing opt-in.
-- Syncro read-only ticket and customer lookup with explicit HTTP probing
-  opt-in; no Syncro mutation path is enabled.
+- Syncro ticket and customer lookup plus one approval-gated, tenant-scoped
+  ticket-comment action (`syncro-ticket-add-note`) with explicit HTTP probing
+  and write-action opt-ins. The public contract is limited to documented
+  comment fields; broader Syncro mutations remain unavailable.
 - ServiceNow incident reads plus approval-gated work-note, state, assignment, and resolution-metadata updates, and
   Autotask ticket reads plus approval-gated ticket-note, status, and resolution actions, are
   available through the same bounded connector and agent-tool surfaces;
@@ -728,7 +730,29 @@ WAIT_SYNCRO_API_TOKEN=
 
 Read commands are available through the CLI and `/connectors/syncro/*` API
 routes. The adapter uses bearer authentication, keeps the token out of query
-strings and request payloads, and exposes no mutation endpoint.
+strings and request payloads, and exposes the governed
+`syncro-ticket-add-note` smart action through `/tools` and the existing
+approval workflow. This action uses Syncro's documented
+`POST /tickets/{id}/comment` endpoint and requires an existing local ticket in
+the caller's tenant scope, `WAIT_ALLOW_HTTP_PROBING=true`,
+`WAIT_ALLOW_WRITE_ACTIONS=true`, and an approved smart-action request.
+
+The supported comment fields are `subject`, `body`, `hidden`, and
+`do_not_email`; `subject` and `body` are required. Credentials are read from
+settings/vault and are never accepted in action payloads. See the
+[Syncro API documentation](https://api-docs.syncromsp.com/) and
+[Syncro scripting API reference](https://syncro.helpjuice.com/scripting-apis/scripts-reference)
+for the provider contract. The same action is available from the existing
+CLI contract:
+
+```bash
+wait-local-agent smart-actions describe syncro-ticket-add-note
+wait-local-agent smart-actions invoke syncro-ticket-add-note \
+  --payload '{"ticket_id":"42","fields":{"subject":"Internal review","body":"Reviewed locally"}}'
+```
+
+The first invocation creates the normal approval request; execution is only
+performed after that request is approved through the existing approval path.
 
 ### ServiceNow
 
