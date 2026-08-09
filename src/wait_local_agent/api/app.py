@@ -355,6 +355,11 @@ class AgentStepRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
 
 
+class AgentApprovalRuleRequest(BaseModel):
+    tool_id: str = Field(min_length=1, max_length=120)
+    when: dict[str, list[str]] = Field(min_length=1, max_length=2)
+
+
 class AgentDefinitionRequest(BaseModel):
     name: str
     description: str = ""
@@ -380,6 +385,7 @@ class AgentDefinitionRequest(BaseModel):
     )
     result_aware: bool = False
     approval_required_tools: list[str] = Field(default_factory=list, max_length=8)
+    approval_rules: list[AgentApprovalRuleRequest] = Field(default_factory=list, max_length=8)
 
 
 class AgentRunStartRequest(BaseModel):
@@ -822,6 +828,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
                 approval_required_tools=payload.approval_required_tools,
+                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -912,6 +919,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
                 approval_required_tools=payload.approval_required_tools,
+                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
             )
         except (AgentDefinitionError, ValidationError) as exc:
             raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
@@ -953,6 +961,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 approval_expiry_seconds=payload.approval_expiry_seconds,
                 result_aware=payload.result_aware,
                 approval_required_tools=payload.approval_required_tools,
+                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4173,6 +4182,7 @@ def _agent_definition_view(definition) -> dict[str, object]:
                 "approval_expiry_seconds": definition.approval_expiry_seconds,
                 "result_aware": definition.result_aware,
                 "approval_required_tools": definition.approval_required_tools,
+                "approval_rules": definition.approval_rules,
                 "created_at": definition.created_at,
                 "updated_at": definition.updated_at,
             }

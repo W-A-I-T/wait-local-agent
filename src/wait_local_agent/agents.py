@@ -62,6 +62,9 @@ EVENT_FILTER_FIELDS = frozenset(
 SUPPORTED_CONTEXT_SOURCES = frozenset({"ticket", "client", "knowledge"})
 MAX_CONTEXT_SOURCES = 3
 EXECUTION_WINDOW_TIME_FORMAT = "%H:%M"
+MAX_APPROVAL_RULES = MAX_AGENT_STEPS
+MAX_APPROVAL_RULE_VALUES = MAX_AGENT_STEPS
+APPROVAL_RULE_FIELDS = frozenset({"priority", "status"})
 
 
 @dataclass(frozen=True)
@@ -313,6 +316,7 @@ class AgentService:
         approval_expiry_seconds: int | None = None,
         result_aware: bool = False,
         approval_required_tools: list[str] | None = None,
+        approval_rules: list[dict[str, object]] | None = None,
     ) -> AgentDefinition:
         agent_id = f"agent-{uuid.uuid4().hex}"
         self._validate_definition(
@@ -334,6 +338,7 @@ class AgentService:
             context_sources=context_sources or [],
             approval_expiry_seconds=approval_expiry_seconds,
             approval_required_tools=approval_required_tools or [],
+            approval_rules=approval_rules or [],
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -366,6 +371,7 @@ class AgentService:
             approval_expiry_seconds=approval_expiry_seconds,
             result_aware=result_aware,
             approval_required_tools=list(approval_required_tools or []),
+            approval_rules=_normalize_approval_rules(approval_rules or []),
         )
         return self.store.create_agent_definition(definition)
 
@@ -392,6 +398,7 @@ class AgentService:
         approval_expiry_seconds: int | None = None,
         result_aware: bool = False,
         approval_required_tools: list[str] | None = None,
+        approval_rules: list[dict[str, object]] | None = None,
     ) -> AgentDefinition:
         self._validate_definition(
             name=name,
@@ -412,6 +419,7 @@ class AgentService:
             context_sources=context_sources or [],
             approval_expiry_seconds=approval_expiry_seconds,
             approval_required_tools=approval_required_tools or [],
+            approval_rules=approval_rules or [],
         )
         window_start, window_end, window_timezone = _normalized_execution_window(
             execution_window_start,
@@ -443,6 +451,7 @@ class AgentService:
             approval_expiry_seconds=approval_expiry_seconds,
             result_aware=result_aware,
             approval_required_tools=list(approval_required_tools or []),
+            approval_rules=_normalize_approval_rules(approval_rules or []),
         )
         return self.store.update_agent_definition(updated)
 
@@ -669,11 +678,14 @@ class AgentService:
         steps = payload.get("steps", [])
         dependencies = payload.get("depends_on_agent_ids", [])
         approval_required_tools = payload.get("approval_required_tools", [])
+        approval_rules = payload.get("approval_rules", [])
         if not isinstance(filters, dict) or not isinstance(enabled_tools, list):
             raise AgentDefinitionError("agent run definition revision is malformed")
         if not isinstance(steps, list) or not isinstance(dependencies, list):
             raise AgentDefinitionError("agent run definition revision is malformed")
         if not isinstance(approval_required_tools, list):
+            raise AgentDefinitionError("agent run definition revision is malformed")
+        if not isinstance(approval_rules, list):
             raise AgentDefinitionError("agent run definition revision is malformed")
         return AgentDefinition(
             id=definition.id,
@@ -718,6 +730,7 @@ class AgentService:
             ),
             result_aware=bool(payload.get("result_aware", definition.result_aware)),
             approval_required_tools=cast(list[str], approval_required_tools),
+            approval_rules=cast(list[dict[str, object]], approval_rules),
         )
 
     def _continue(
@@ -770,6 +783,12 @@ class AgentService:
                     {**state, "error_detail": f"tool {tool_id} is not enabled for this agent"},
                     actor=actor,
                 )
+            approval_policy = _approval_policy_for_ticket(
+                definition,
+                tool_id,
+                run.entity_id,
+                self.store,
+            )
             try:
                 action_result = self.smart_actions.invoke(
                     tool_id,
@@ -777,7 +796,7 @@ class AgentService:
                     actor,
                     client_id=definition.client_id,
                     approval_expiry_seconds=definition.approval_expiry_seconds,
-                    require_approval=tool_id in definition.approval_required_tools,
+                    require_approval=approval_policy is not None,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -786,6 +805,8 @@ class AgentService:
                 "tool_id": tool_id,
                 "input": redact_value(payload),
             }
+            if approval_policy is not None:
+                step["approval_policy"] = approval_policy
             self._apply_result(step, action_result)
             state["final_result"] = _final_result_from_action(tool_id, action_result)
             steps.append(step)
@@ -873,6 +894,12 @@ class AgentService:
                     {**state, "error_detail": f"tool {tool_id} is not enabled for this agent"},
                     actor=actor,
                 )
+            approval_policy = _approval_policy_for_ticket(
+                definition,
+                tool_id,
+                run.entity_id,
+                self.store,
+            )
             try:
                 action_result = self.smart_actions.invoke(
                     tool_id,
@@ -880,7 +907,7 @@ class AgentService:
                     actor,
                     client_id=definition.client_id,
                     approval_expiry_seconds=definition.approval_expiry_seconds,
-                    require_approval=tool_id in definition.approval_required_tools,
+                    require_approval=approval_policy is not None,
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -893,6 +920,8 @@ class AgentService:
                     "reason": "selected from the remaining reviewed tool catalog",
                 },
             }
+            if approval_policy is not None:
+                step["approval_policy"] = approval_policy
             self._apply_result(step, action_result)
             state["final_result"] = _final_result_from_action(tool_id, action_result)
             steps.append(step)
@@ -1141,6 +1170,7 @@ class AgentService:
         context_sources: list[str],
         approval_expiry_seconds: int | None,
         approval_required_tools: list[str],
+        approval_rules: list[dict[str, object]],
     ) -> None:
         if not name.strip() or len(name.strip()) > 120:
             raise AgentDefinitionError("name must contain 1-120 characters")
@@ -1178,6 +1208,7 @@ class AgentService:
             raise AgentDefinitionError(
                 "approval_required_tools must be enabled tools: " + ", ".join(outside_enabled)
             )
+        _normalize_approval_rules(approval_rules, enabled_tools=enabled_tools)
         if not steps or len(steps) > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"steps must contain 1-{MAX_AGENT_STEPS} steps")
         if max_steps < 1 or max_steps > MAX_AGENT_STEPS or len(steps) > max_steps:
@@ -1381,6 +1412,84 @@ def _validate_context_sources(context_sources: list[str]) -> None:
     unknown = sorted(set(context_sources) - SUPPORTED_CONTEXT_SOURCES)
     if unknown:
         raise AgentDefinitionError(f"unsupported context sources: {', '.join(unknown)}")
+
+
+def _normalize_approval_rules(
+    rules: list[dict[str, object]],
+    *,
+    enabled_tools: list[str] | None = None,
+) -> list[dict[str, object]]:
+    """Normalize a small, additive approval policy for explicit ticket fields."""
+    if not isinstance(rules, list) or len(rules) > MAX_APPROVAL_RULES:
+        raise AgentDefinitionError(
+            f"approval_rules must contain 0-{MAX_APPROVAL_RULES} rules"
+        )
+    normalized: list[dict[str, object]] = []
+    seen_tools: set[str] = set()
+    enabled = set(enabled_tools or [])
+    for rule in rules:
+        if not isinstance(rule, dict) or set(rule) - {"tool_id", "when"}:
+            raise AgentDefinitionError("approval rules may only contain tool_id and when")
+        tool_id = rule.get("tool_id")
+        if not isinstance(tool_id, str) or not tool_id.strip():
+            raise AgentDefinitionError("approval rule tool_id must be a non-empty string")
+        tool_id = tool_id.strip()
+        if enabled_tools is not None and tool_id not in enabled:
+            raise AgentDefinitionError(f"approval rule tool must be enabled: {tool_id}")
+        if tool_id in seen_tools:
+            raise AgentDefinitionError(f"approval rules must not duplicate tool: {tool_id}")
+        seen_tools.add(tool_id)
+        conditions = rule.get("when")
+        if not isinstance(conditions, dict) or not conditions:
+            raise AgentDefinitionError("approval rule when must contain at least one condition")
+        unknown_fields = sorted(set(conditions) - APPROVAL_RULE_FIELDS)
+        if unknown_fields:
+            raise AgentDefinitionError(
+                "unsupported approval rule fields: " + ", ".join(unknown_fields)
+            )
+        normalized_conditions: dict[str, object] = {}
+        for field_name, raw_values in conditions.items():
+            if not isinstance(raw_values, list) or not raw_values or len(raw_values) > MAX_APPROVAL_RULE_VALUES:
+                raise AgentDefinitionError(
+                    f"approval rule {field_name} must contain 1-{MAX_APPROVAL_RULE_VALUES} values"
+                )
+            values: list[str] = []
+            for raw_value in raw_values:
+                if not isinstance(raw_value, str) or not raw_value.strip() or len(raw_value.strip()) > 40:
+                    raise AgentDefinitionError(
+                        f"approval rule {field_name} values must be non-empty strings of at most 40 characters"
+                    )
+                value = raw_value.strip().casefold()
+                if value not in values:
+                    values.append(value)
+            normalized_conditions[field_name] = values
+        normalized.append({"tool_id": tool_id, "when": normalized_conditions})
+    return normalized
+
+
+def _approval_policy_for_ticket(
+    definition: AgentDefinition,
+    tool_id: str,
+    entity_id: str,
+    store: Store,
+) -> dict[str, object] | None:
+    if tool_id in definition.approval_required_tools:
+        return {"type": "agent", "mode": "always"}
+    if not definition.approval_rules:
+        return None
+    ticket = store.get_ticket(entity_id, client_id=definition.client_id)
+    if ticket is None:
+        return None
+    for rule in _normalize_approval_rules(definition.approval_rules):
+        if rule["tool_id"] != tool_id:
+            continue
+        conditions = cast(dict[str, list[str]], rule["when"])
+        if all(
+            str(getattr(ticket, field_name, "")).strip().casefold() in values
+            for field_name, values in conditions.items()
+        ):
+            return {"type": "conditional", "tool_id": tool_id, "when": conditions}
+    return None
 
 
 def _bounded_context_text(value: str, limit: int) -> str:

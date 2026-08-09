@@ -67,6 +67,7 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "execution_window_timezone" in _columns(connection, "agent_definitions")
     assert "context_sources_json" in _columns(connection, "agent_definitions")
     assert "approval_expiry_seconds" in _columns(connection, "agent_definitions")
+    assert "approval_rules_json" in _columns(connection, "agent_definitions")
     assert "failed_entity_ids_json" in backfill_columns
     assert "max_concurrency" in backfill_columns
     assert "requester_id" in _columns(connection, "tickets")
