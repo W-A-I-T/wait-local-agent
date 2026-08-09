@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -268,7 +269,10 @@ def test_result_aware_agent_uses_model_selection_and_never_repeats_tools(setting
 
     assert result.status == "completed"
     assert [step["tool_id"] for step in result.steps] == ["ticket-summary", "ticket-triage"]
-    assert [step["continuation"]["selection_mode"] for step in result.steps] == ["model", "model"]
+    assert [
+        cast(dict[str, object], step["continuation"]).get("selection_mode")
+        for step in result.steps
+    ] == ["model", "model"]
     assert definition.result_aware is True
     persisted = service.store.get_agent_definition(definition.id, client_id="acme")
     assert persisted is not None and persisted.result_aware is True
