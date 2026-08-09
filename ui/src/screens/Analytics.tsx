@@ -23,7 +23,13 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
     touched: 0,
     resolved: 0,
     resolution_rate: 0,
-    derivation: "No execution-referenced tickets in the selected range."
+    derivation: "No execution-referenced tickets in the selected range.",
+    historical_resolution: {
+      resolved_with_history: 0,
+      with_duration: 0,
+      average_minutes: null,
+      derivation: "No local status transitions in the selected range."
+    }
   },
   activity_by_workflow: [],
   estimated_minutes_saved: {
@@ -72,6 +78,15 @@ export function Analytics() {
   const successRate = formatPercent(summary.success_rate.rate);
   const approvalRate = formatPercent(summary.approval_rate.rate);
   const resolutionRate = formatPercent(summary.ticket_metrics.resolution_rate);
+  const historicalResolution = summary.ticket_metrics.historical_resolution ?? {
+    resolved_with_history: 0,
+    with_duration: 0,
+    average_minutes: null,
+    derivation: "No local status transitions in the selected range."
+  };
+  const averageResolution = historicalResolution.average_minutes === null
+    ? "No recorded duration"
+    : `${historicalResolution.average_minutes} min average`;
 
   return (
     <div className="screen-stack">
@@ -87,6 +102,7 @@ export function Analytics() {
         <div className="analytics-metrics">
           <Metric icon={<Activity size={18} aria-hidden="true" />} label="Executions" value={String(summary.success_rate.total)} detail={`${successRate} successful`} />
           <Metric icon={<CheckCircle2 size={18} aria-hidden="true" />} label="Tickets resolved" value={String(summary.ticket_metrics.resolved)} detail={`${summary.ticket_metrics.touched} touched · ${resolutionRate}`} />
+          <Metric icon={<TicketCheck size={18} aria-hidden="true" />} label="Recorded resolution" value={String(historicalResolution.resolved_with_history)} detail={`${averageResolution} · ${historicalResolution.with_duration} timed`} />
           <Metric icon={<ShieldCheck size={18} aria-hidden="true" />} label="Approval rate" value={approvalRate} detail={`${summary.approval_rate.requested} requested · ${summary.approval_rate.pending} pending`} />
           <Metric icon={<Clock3 size={18} aria-hidden="true" />} label="Estimated time saved" value={`${summary.estimated_minutes_saved.minutes} min`} detail="Estimate, not measured time" />
         </div>

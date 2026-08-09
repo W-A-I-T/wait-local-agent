@@ -115,6 +115,7 @@ from wait_local_agent.models import (
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
+    TICKET_LIFECYCLE_DERIVATION,
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
@@ -1661,6 +1662,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             for note in notes
         ]
+
+    @app.get("/tickets/{ticket_id}/status-history")
+    def ticket_status_history(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if scoped_client_id is None and context.role >= Role.ADMIN:
+            ticket = store.get_ticket(ticket_id)
+            scoped_client_id = ticket.client_id if ticket is not None else None
+        if scoped_client_id is None:
+            return []
+        return store.list_ticket_status_history(ticket_id, client_id=scoped_client_id)
 
     @app.post("/tickets/{ticket_id}/approvals")
     def update_approval(
@@ -4462,6 +4473,12 @@ def _empty_analytics_summary(
             "resolved": 0,
             "resolution_rate": 0.0,
             "derivation": TICKET_METRICS_DERIVATION,
+            "historical_resolution": {
+                "resolved_with_history": 0,
+                "with_duration": 0,
+                "average_minutes": None,
+                "derivation": TICKET_LIFECYCLE_DERIVATION,
+            },
         },
         "activity_by_workflow": [],
         "estimated_minutes_saved": {

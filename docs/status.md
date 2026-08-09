@@ -152,10 +152,14 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics. It also reports approval decisions, distinct
-  execution-referenced tickets, current `resolved`/`closed` ticket counts, and
-  grouped activity by workflow, agent, or smart action. Resolution is a
-  current-status aggregate and does not infer historical resolution time. The
-  React dashboard exposes these local metrics at `/analytics`, including
+  execution-referenced tickets, current `resolved`/`closed` ticket counts,
+  explicit local/imported ticket status transitions, recorded historical
+  resolution counts, and grouped activity by workflow, agent, or smart action.
+  Historical resolution duration is calculated only from an explicit recorded
+  non-terminal-to-terminal transition and a valid ticket creation timestamp;
+  existing snapshots do not receive inferred history. The
+  `/tickets/{ticket_id}/status-history` API exposes the tenant-scoped records,
+  and the React dashboard exposes the historical metrics at `/analytics` with
   server-side date-range and client filters within the permitted tenant scope.
 - The React dashboard exposes `/executions` history with run-kind/status
   filters, redacted step detail, generated artifact metadata, and technician

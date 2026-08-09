@@ -200,6 +200,12 @@ def test_analytics_summary_reports_approvals_tickets_and_workflow_views(settings
     assert summary["ticket_metrics"]["touched"] == 2
     assert summary["ticket_metrics"]["resolved"] == 1
     assert summary["ticket_metrics"]["resolution_rate"] == 0.5
+    assert summary["ticket_metrics"]["historical_resolution"] == {
+        "resolved_with_history": 0,
+        "with_duration": 0,
+        "average_minutes": None,
+        "derivation": summary["ticket_metrics"]["historical_resolution"]["derivation"],
+    }
     assert summary["activity_by_workflow"] == [
         {
             "run_kind": "agent",
@@ -216,3 +222,100 @@ def test_analytics_summary_reports_approvals_tickets_and_workflow_views(settings
             "status_counts": [{"status": "completed", "count": 1}],
         },
     ]
+
+
+def test_ticket_lifecycle_metrics_use_explicit_status_transitions(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    ticket_file = tmp_path / "ticket.json"
+    ticket_file.write_text(
+        json.dumps([{
+            "id": "TCK-LIFECYCLE",
+            "client": "Acme",
+            "subject": "Lifecycle",
+            "body": "Track this ticket",
+            "priority": "normal",
+            "status": "open",
+            "client_id": "acme",
+            "created_at": "2026-08-08T10:00:00+00:00",
+            "updated_at": "2026-08-08T10:00:00+00:00",
+        }]),
+        encoding="utf-8",
+    )
+    store.ingest_ticket_file(ticket_file)
+    ticket_file.write_text(
+        json.dumps([{
+            "id": "TCK-LIFECYCLE",
+            "client": "Acme",
+            "subject": "Lifecycle",
+            "body": "Track this ticket",
+            "priority": "normal",
+            "status": "resolved",
+            "created_at": "2026-08-08T10:00:00+00:00",
+            "updated_at": "2026-08-08T11:00:00+00:00",
+        }]),
+        encoding="utf-8",
+    )
+    store.ingest_ticket_file(ticket_file)
+    store.ingest_ticket_file(ticket_file)
+
+    history = store.list_ticket_status_history("TCK-LIFECYCLE", client_id="acme")
+    assert [(item["from_status"], item["to_status"], item["source"]) for item in history] == [
+        ("", "open", "ticket_ingest"),
+        ("open", "resolved", "ticket_ingest"),
+    ]
+    assert store.list_ticket_status_history("TCK-LIFECYCLE") == history
+    summary = cast(
+        dict[str, Any],
+        build_analytics_summary(
+            store,
+            {},
+            started_from="2026-08-08",
+            started_to="2026-08-08",
+            client_id="acme",
+        ),
+    )
+    assert summary["ticket_metrics"]["historical_resolution"]["resolved_with_history"] == 1
+    assert summary["ticket_metrics"]["historical_resolution"]["with_duration"] == 1
+    assert summary["ticket_metrics"]["historical_resolution"]["average_minutes"] == 60.0
+
+
+def test_ticket_lifecycle_metrics_bound_duration_and_deduplicate_reopened_tickets(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(
+        Path("examples/sample_tickets/tickets.json")
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set created_at = ?, updated_at = ? where id = ?",
+            ("2026-08-08T10:00:00", "2026-08-08T10:00:00", "TCK-1001"),
+        )
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("TCK-1001", None, "open", "resolved", "2026-08-08T11:00:00", "test"),
+        )
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("TCK-1001", None, "resolved", "open", "2026-08-08T12:00:00", "test"),
+        )
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("TCK-1001", None, "open", "closed", "2026-08-08T13:00:00", "test"),
+        )
+    metrics = store.ticket_lifecycle_metrics("2026-08-08", "2026-08-08")
+    assert metrics == {
+        "resolved_with_history": 1,
+        "with_duration": 1,
+        "average_minutes": 60.0,
+    }

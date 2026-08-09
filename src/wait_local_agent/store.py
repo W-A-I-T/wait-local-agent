@@ -94,9 +94,42 @@ class Store:
                 )
                 """
             )
+            self._ensure_column(connection, "tickets", "client_id", "text")
             self._ensure_column(connection, "tickets", "requester_id", "text")
             self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
             self._ensure_column(connection, "tickets", "updated_at", "text not null default ''")
+            connection.execute(
+                """
+                create table if not exists ticket_status_history (
+                    id integer primary key autoincrement,
+                    ticket_id text not null,
+                    client_id text,
+                    from_status text not null default '',
+                    to_status text not null,
+                    changed_at text not null,
+                    source text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_ticket_status_history_scope
+                on ticket_status_history (client_id, changed_at, ticket_id)
+                """
+            )
+            connection.execute(
+                """
+                insert into ticket_status_history
+                  (ticket_id, client_id, from_status, to_status, changed_at, source)
+                select t.id, t.client_id, '', t.status,
+                       case when t.created_at <> '' then t.created_at else t.updated_at end,
+                       'existing_snapshot'
+                from tickets t
+                where not exists (
+                    select 1 from ticket_status_history h where h.ticket_id = t.id
+                )
+                """
+            )
             connection.execute(
                 """
                 create table if not exists ticket_notes (
@@ -1010,6 +1043,9 @@ class Store:
                 now = utc_now()
                 created_at = ticket.created_at.strip() or now
                 updated_at = ticket.updated_at.strip() or created_at
+                existing = connection.execute(
+                    "select status, client_id from tickets where id = ?", (ticket.id,)
+                ).fetchone()
                 connection.execute(
                     """
                     insert into tickets
@@ -1040,12 +1076,28 @@ class Store:
                         updated_at,
                     ),
                 )
+                previous_status = str(existing["status"]) if existing is not None else ""
+                effective_client_id = _normalize_client_id(ticket.client_id) or (
+                    _normalize_client_id(str(existing["client_id"]))
+                    if existing is not None and existing["client_id"] is not None
+                    else None
+                )
+                if existing is None or previous_status.strip().lower() != ticket.status.strip().lower():
+                    self._record_ticket_status_history(
+                        connection,
+                        ticket_id=ticket.id,
+                        client_id=effective_client_id,
+                        from_status=previous_status,
+                        to_status=ticket.status,
+                        changed_at=updated_at or now,
+                        source="ticket_ingest",
+                    )
                 self._add_audit_event(
                     connection,
                     "ticket.ingested",
                     ticket.id,
                     f"Imported {ticket.subject}",
-                    client_id=_normalize_client_id(ticket.client_id),
+                    client_id=effective_client_id,
                 )
         return len(tickets)
 
@@ -1456,6 +1508,15 @@ class Store:
                             now,
                         ),
                     )
+                    self._record_ticket_status_history(
+                        connection,
+                        ticket_id=ticket_id,
+                        client_id=normalized_client_id,
+                        from_status="",
+                        to_status="new",
+                        changed_at=now,
+                        source="end_user",
+                    )
                     self._add_audit_event(
                         connection,
                         "end_user.ticket.created",
@@ -1498,15 +1559,36 @@ class Store:
     ) -> Ticket | None:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
-            cursor = connection.execute(
+            current = connection.execute(
                 """
-                update tickets set status = 'escalated'
+                select status from tickets
                 where id = ? and client_id = ? and requester_id = ?
                 """,
                 (ticket_id, normalized_client_id, requester_id.strip()),
+            ).fetchone()
+            if current is None:
+                return None
+            previous_status = str(current["status"])
+            now = utc_now()
+            cursor = connection.execute(
+                """
+                update tickets set status = 'escalated', updated_at = ?
+                where id = ? and client_id = ? and requester_id = ?
+                """,
+                (now, ticket_id, normalized_client_id, requester_id.strip()),
             )
             if cursor.rowcount != 1:
                 return None
+            if previous_status.strip().lower() != "escalated":
+                self._record_ticket_status_history(
+                    connection,
+                    ticket_id=ticket_id,
+                    client_id=normalized_client_id,
+                    from_status=previous_status,
+                    to_status="escalated",
+                    changed_at=now,
+                    source="end_user",
+                )
             self._add_audit_event(
                 connection,
                 "end_user.ticket.escalated",
@@ -1515,6 +1597,111 @@ class Store:
                 client_id=normalized_client_id,
             )
         return self.get_ticket(ticket_id, normalized_client_id)
+
+    def list_ticket_status_history(
+        self, ticket_id: str, *, client_id: str | None = None
+    ) -> list[dict[str, object]]:
+        normalized_client_id = _normalize_client_id(client_id)
+        clauses = ["ticket_id = ?"]
+        params: list[object] = [ticket_id]
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select id, ticket_id, client_id, from_status, to_status, changed_at, source "
+                f"from ticket_status_history where {' and '.join(clauses)} "  # nosec B608: predicates are fixed internal strings and values are parameterized
+                "order by changed_at, id",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def ticket_lifecycle_metrics(
+        self,
+        started_from: str | None,
+        started_to: str | None,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        normalized_client_id = _normalize_client_id(client_id)
+        clauses = ["h.ticket_id = t.id"]
+        params: list[object] = []
+        if normalized_client_id is not None:
+            clauses.append("h.client_id = ?")
+            params.append(normalized_client_id)
+        if started_from:
+            clauses.append("date(h.changed_at) >= date(?)")
+            params.append(started_from)
+        if started_to:
+            clauses.append("date(h.changed_at) <= date(?)")
+            params.append(started_to)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select h.ticket_id, h.from_status, h.to_status, h.changed_at,
+                       h.source, t.created_at
+                from ticket_status_history h
+                join tickets t on t.id = h.ticket_id
+                where """ + " and ".join(clauses) + " order by h.ticket_id, h.changed_at, h.id",  # nosec B608: predicates are fixed internal strings and values are parameterized
+                params,
+            ).fetchall()
+        terminal = {"resolved", "closed"}
+        resolved_with_history = 0
+        durations: list[float] = []
+        seen_ticket: set[str] = set()
+        for row in rows:
+            from_status = str(row["from_status"]).strip().lower()
+            to_status = str(row["to_status"]).strip().lower()
+            if to_status not in terminal or from_status in terminal or not from_status:
+                continue
+            ticket_id = str(row["ticket_id"])
+            if ticket_id in seen_ticket:
+                continue
+            seen_ticket.add(ticket_id)
+            resolved_with_history += 1
+            try:
+                created_at = datetime.fromisoformat(str(row["created_at"]))
+                changed_at = datetime.fromisoformat(str(row["changed_at"]))
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=UTC)
+                if changed_at.tzinfo is None:
+                    changed_at = changed_at.replace(tzinfo=UTC)
+                minutes = (changed_at - created_at).total_seconds() / 60
+                if minutes >= 0:
+                    durations.append(minutes)
+            except (TypeError, ValueError):
+                continue
+        return {
+            "resolved_with_history": resolved_with_history,
+            "with_duration": len(durations),
+            "average_minutes": round(sum(durations) / len(durations), 2) if durations else None,
+        }
+
+    @staticmethod
+    def _record_ticket_status_history(
+        connection: sqlite3.Connection,
+        *,
+        ticket_id: str,
+        client_id: str | None,
+        from_status: str,
+        to_status: str,
+        changed_at: str,
+        source: str,
+    ) -> None:
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _redact_text(ticket_id),
+                _normalize_client_id(client_id),
+                _redact_text(from_status),
+                _redact_text(to_status),
+                changed_at,
+                _redact_text(source),
+            ),
+        )
 
     def set_approval(self, ticket_id: str, status: str, comment: str = "") -> None:
         safe_comment = _redact_text(comment)

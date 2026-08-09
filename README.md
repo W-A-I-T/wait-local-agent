@@ -96,9 +96,13 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   continue a bounded chain; pending-approval runs do not emit completion.
 - `GET /analytics/summary` and `wait-local-agent analytics summary` include
   tenant-scoped approval decisions, distinct tickets referenced by executions,
-  current `resolved`/`closed` ticket counts, and grouped activity by workflow,
-  agent, or smart action. These are explainable aggregates, not historical
-  lifecycle or wall-clock measurements.
+  current `resolved`/`closed` ticket counts, explicit local ticket status
+  transitions, recorded historical resolution counts, and grouped activity by
+  workflow, agent, or smart action. Historical duration is calculated only when
+  an explicit local/imported transition and ticket creation timestamp exist;
+  existing snapshots never receive an inferred history.
+- `GET /tickets/{ticket_id}/status-history` exposes the redacted,
+  tenant-scoped lifecycle records used by those historical metrics.
 - The React dashboard exposes the same local analytics at `/analytics`, with
   role-scoped metric cards, workflow activity, outcome details, and server-side
   date/client filters.
