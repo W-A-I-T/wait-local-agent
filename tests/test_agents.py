@@ -2138,7 +2138,12 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "autotask-ticket-lookup",
         "autotask-ticket-add-note",
     } <= tool_ids
-    assert tools_response.json()[0]["access_mode"] == "read"
+    assert (
+        next(
+            tool for tool in tools_response.json() if tool["id"] == "autotask-ticket-lookup"
+        )["access_mode"]
+        == "read"
+    )
     assert client.get("/agents").json()[0]["client_id"] == "acme"
 
     run = client.post(f"/agents/{agent_id}/run", json={"entity_id": "TCK-1001"})
