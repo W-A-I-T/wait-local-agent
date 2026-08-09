@@ -41,7 +41,7 @@ unverifiable product claim.
 
 | Capability | Current interface | UI status | Safety boundary |
 | --- | --- | --- | --- |
-| Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output |
+| Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence |
 | Event ingestion and delivery retry | `/automation/*`, CLI | No standalone screen | Authenticated event types, idempotency, tenant checks, bounded retries |
 | Technician chat and persisted sessions | `/technician/chat*`, CLI | No standalone screen | Technician role, tenant/principal scope, bounded parser and history |
 | End-user local ticket support | `/end-user/tickets*` | No operator screen; separate end-user API | Separate end-user token, requester and tenant scope |

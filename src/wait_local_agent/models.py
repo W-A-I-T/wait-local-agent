@@ -52,6 +52,8 @@ class Ticket:
     status: str
     client_id: str | None = None
     requester_id: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)

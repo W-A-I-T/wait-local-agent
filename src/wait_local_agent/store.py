@@ -88,11 +88,15 @@ class Store:
                     priority text not null,
                     status text not null,
                     client_id text,
-                    requester_id text
+                    requester_id text,
+                    created_at text not null default '',
+                    updated_at text not null default ''
                 )
                 """
             )
             self._ensure_column(connection, "tickets", "requester_id", "text")
+            self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
+            self._ensure_column(connection, "tickets", "updated_at", "text not null default ''")
             connection.execute(
                 """
                 create table if not exists ticket_notes (
@@ -1003,10 +1007,15 @@ class Store:
         tickets = [Ticket(**item) for item in payload]
         with self._connect() as connection:
             for ticket in tickets:
+                now = utc_now()
+                created_at = ticket.created_at.strip() or now
+                updated_at = ticket.updated_at.strip() or created_at
                 connection.execute(
                     """
-                    insert into tickets (id, client, subject, body, priority, status, client_id, requester_id)
-                    values (?, ?, ?, ?, ?, ?, ?, ?)
+                    insert into tickets
+                      (id, client, subject, body, priority, status, client_id,
+                       requester_id, created_at, updated_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(id) do update set
                       client=excluded.client,
                       subject=excluded.subject,
@@ -1014,7 +1023,9 @@ class Store:
                       priority=excluded.priority,
                       status=excluded.status,
                       client_id=coalesce(excluded.client_id, tickets.client_id),
-                      requester_id=coalesce(excluded.requester_id, tickets.requester_id)
+                      requester_id=coalesce(excluded.requester_id, tickets.requester_id),
+                      created_at=case when tickets.created_at = '' then excluded.created_at else tickets.created_at end,
+                      updated_at=excluded.updated_at
                     """,
                     (
                         ticket.id,
@@ -1025,6 +1036,8 @@ class Store:
                         ticket.status,
                         _normalize_client_id(ticket.client_id),
                         ticket.requester_id,
+                        created_at,
+                        updated_at,
                     ),
                 )
                 self._add_audit_event(
@@ -1420,6 +1433,7 @@ class Store:
             raise ValueError("end-user tickets require a requester identity")
         safe_subject = _redact_text(subject.strip())
         safe_body = _redact_text(body.strip())
+        now = utc_now()
         for _ in range(3):
             ticket_id = f"EUS-{uuid.uuid4().hex[:12].upper()}"
             try:
@@ -1427,8 +1441,9 @@ class Store:
                     connection.execute(
                         """
                         insert into tickets
-                          (id, client, subject, body, priority, status, client_id, requester_id)
-                        values (?, ?, ?, ?, 'normal', 'new', ?, ?)
+                          (id, client, subject, body, priority, status, client_id,
+                           requester_id, created_at, updated_at)
+                        values (?, ?, ?, ?, 'normal', 'new', ?, ?, ?, ?)
                         """,
                         (
                             ticket_id,
@@ -1437,6 +1452,8 @@ class Store:
                             safe_body,
                             normalized_client_id,
                             _redact_text(requester_id.strip()),
+                            now,
+                            now,
                         ),
                     )
                     self._add_audit_event(

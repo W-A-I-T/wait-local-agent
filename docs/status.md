@@ -168,8 +168,15 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   analysis. They reuse the existing smart-action registry and persist both the
   workflow run and the tenant-scoped smart-action execution; no write action is
   implied by these review templates.
+- The smart-action catalog also includes local-only, read-only
+  `ticket-sla-assessment` and `stale-ticket-sweep` tools. Operators must provide
+  positive thresholds; WAIT does not infer a vendor SLA contract. Ticket age is
+  calculated only from an explicit ticket timestamp. Records without one return
+  insufficient evidence or are counted as excluded rather than being treated as
+  stale.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
-  read-only local knowledge search, ticket-quality, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
+  read-only local knowledge search, ticket-quality, explicit-threshold SLA-risk
+  and stale-ticket checks, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
   and read/write classification. The catalog also exposes a technician-gated,
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read
