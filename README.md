@@ -24,9 +24,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   approval-gated ticket update path with explicit HTTP probing opt-in.
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
-- ServiceNow incident and Autotask ticket reads are available through the same
-  bounded, read-only connector and agent-tool surfaces; no mutation path is
-  enabled for either connector.
+- ServiceNow incident reads plus approval-gated work-note/state updates, and
+  Autotask ticket reads plus one approval-gated ticket-note action, are
+  available through the same bounded connector and agent-tool surfaces;
+  broader mutations remain unavailable.
 - Hudu read-only documentation context.
 - A preview and approval-gated communication tool for local ticket notes,
   email, Microsoft Teams, Slack, and SMS. Local notes stay tenant-scoped;
@@ -768,7 +769,11 @@ wait-local-agent connectors autotask-company <company-id>
 
 The API mirrors these commands under `/connectors/autotask/*`. Credentials are
 sent only in the documented request headers, network access remains gated by
-`WAIT_ALLOW_HTTP_PROBING`, and no mutation endpoint is exposed ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm)).
+`WAIT_ALLOW_HTTP_PROBING`, and the Agents catalog exposes an approval-gated
+`add_note` action only when `WAIT_ALLOW_WRITE_ACTIONS=true`. The action posts
+the documented `TicketNotes` fields; `noteType` and `publish` are explicit
+operator-supplied instance values rather than invented defaults. Broader
+Autotask mutations remain unavailable ([Autotask REST API](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/REST_API_Home.htm), [TicketNotes entity](https://psa.datto.com/help/DeveloperHelp/Content/APIs/REST/Entities/TicketNotesEntity.htm)).
 
 ### NinjaOne RMM
 

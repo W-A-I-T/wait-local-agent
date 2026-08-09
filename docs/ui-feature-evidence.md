@@ -15,7 +15,7 @@ visible here instead of being presented as a completed UI feature.
 | `/tickets` | Ticket lookup, summary, approval draft | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
 | `/analytics` | Filtered operational metrics and operator-priced model usage estimates | `/analytics/summary` | Existing UI tests; browser route render |
-| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; local Chromium smoke verified render, requester-role entry, agent creation, and visible ServiceNow approval tools against a fresh local database |
+| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; local Chromium smoke verified render and visible ServiceNow and Autotask approval tools against a fresh local database |
 | `/backfills` | Preview, queue, pause, cancel, rerun | `/agent-backfills/*` | Existing UI tests; browser route render |
 | `/executions` | Run history, detail, artifact download | `/executions/*` | Existing UI tests; browser route render |
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
@@ -57,9 +57,10 @@ unverifiable product claim.
   environment.
 - Browser: Agents create/run flow completed against the real local API; all
   sidebar routes rendered through in-app navigation.
-- Local Chromium smoke: passed for `/agents`, including conditional
-  requester-role entry, agent creation, and ServiceNow approval-tool visibility
-  through the real local API. All observed API requests returned HTTP 200. A
+- Local Chromium smoke after merged commit `26250ba`: passed for `/agents`; the
+  real local API returned HTTP 200 for `/agents`, `/tools`, `/connectors`, and
+  the dashboard's supporting requests, and the tool catalog visibly included
+  `Autotask add ticket note · approval` and the ServiceNow approval tools. A
   full post-change route/control sweep remains a separate validation item.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
