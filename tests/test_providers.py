@@ -821,6 +821,8 @@ def test_remote_anthropic_provider_selects_continuation_tool(tmp_path: Path) -> 
 def test_continuation_provider_failure_shapes_and_deterministic_mode(tmp_path: Path) -> None:
     deterministic = DeterministicLocalProvider(_profile(tmp_path))
     with pytest.raises(ProviderUnavailableError):
+        deterministic.select_tools("Plan", _ticket(), [], [], max_tools=1)
+    with pytest.raises(ProviderUnavailableError):
         deterministic.select_next_tool("Continue", _ticket(), [], [], None, [])
 
     for response in [
@@ -856,6 +858,17 @@ def test_remote_openai_compatible_continuation_and_fallback(tmp_path: Path) -> N
     primary = DeterministicLocalProvider(_profile(tmp_path))
     fallback = FallbackModelProvider(primary, remote)
     assert fallback.select_next_tool("Continue", _ticket(), [], [], None, []) == "ticket-summary"
+
+    class NoPlanningProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "summary"
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "response"
+
+    assert FallbackModelProvider(NoPlanningProvider(), remote).select_next_tool(
+        "Continue", _ticket(), [], [], None, []
+    ) == "ticket-summary"
 
 
 def test_remote_continuation_rejects_malformed_and_http_errors(tmp_path: Path) -> None:
