@@ -83,6 +83,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
+        "ticket-sla-assessment",
+        "stale-ticket-sweep",
         "communication-draft",
         "communication-send",
         "connectwise-ticket-lookup",

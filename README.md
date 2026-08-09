@@ -39,8 +39,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   tenant-scoped reschedule, cancel/delete, linked ticket or agent targets, and
   auditable schedule history.
 - Bounded agent definitions under `/agents`, an existing-tool catalog under
-  `/tools` including read-only local knowledge search, ticket-quality and
-  deterministic sentiment/escalation checks, collector previews, a
+  `/tools` including read-only local knowledge search, ticket-quality,
+  explicit-threshold SLA-risk and stale-ticket checks, deterministic
+  sentiment/escalation checks, collector previews, a
   technician-gated Microsoft 365 identity lookup over collected read-only
   inventory plus a separate bounded live Graph user/group/license/mailbox-read
   connector and `m365-live-context` tool, and a

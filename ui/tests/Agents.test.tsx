@@ -36,15 +36,35 @@ describe("Agents", () => {
         return Promise.resolve(new Response(JSON.stringify([agent]), { status: 200 }));
       }
       if (path === "/tools" && !init?.method) {
-        return Promise.resolve(new Response(JSON.stringify([{
-          id: "ticket-triage",
-          name: "Ticket Triage",
-          description: "Classify tickets.",
-          risk_level: "low",
-          required_role: "viewer",
-          approval_required: false,
-          access_mode: "read"
-        }]), { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            id: "ticket-triage",
+            name: "Ticket Triage",
+            description: "Classify tickets.",
+            risk_level: "low",
+            required_role: "viewer",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
+            id: "ticket-sla-assessment",
+            name: "Assess ticket SLA risk",
+            description: "Compare age with explicit thresholds.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
+            id: "stale-ticket-sweep",
+            name: "Sweep stale tickets",
+            description: "Find old open tickets.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          }
+        ]), { status: 200 }));
       }
       if (path === "/agents" && init?.method === "POST") {
         return Promise.resolve(new Response(JSON.stringify({ ...agent, context_sources: ["ticket", "knowledge"] }), { status: 200 }));
@@ -71,6 +91,8 @@ describe("Agents", () => {
     render(<MemoryRouter><Agents /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "Assess ticket SLA risk" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Sweep stale tickets" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New triage" } });
     fireEvent.change(screen.getByLabelText("Approval deadline (hours, optional)"), { target: { value: "4" } });
     fireEvent.click(screen.getByLabelText("Local knowledge"));

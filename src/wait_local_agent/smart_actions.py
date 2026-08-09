@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from wait_local_agent.autotask import AutotaskReadProvider
@@ -1824,6 +1825,161 @@ class TicketQualityAction:
         )
 
 
+class TicketSlaAssessmentAction:
+    manifest = SmartActionManifest(
+        action_id="ticket-sla-assessment",
+        title="Assess ticket SLA risk",
+        description=(
+            "Compare a ticket's age and priority with explicit operator-supplied "
+            "thresholds; this does not infer a vendor SLA contract."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id", "thresholds_minutes"],
+            "properties": {
+                "ticket_id": "string",
+                "thresholds_minutes": "object of priority to positive minutes",
+            },
+        },
+        output_schema={
+            "ticket_id": "string",
+            "assessment": "object",
+            "evidence_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+        thresholds = _positive_thresholds(payload.get("thresholds_minutes"))
+        if thresholds is None:
+            return _failed("thresholds_minutes must map priorities to positive minutes")
+        created_at = _parse_ticket_timestamp(ticket.created_at)
+        if created_at is None:
+            return ActionResult(
+                status="success",
+                output={
+                    "ticket_id": ticket.id,
+                    "assessment": {"state": "unknown", "reason": "missing_created_at"},
+                    "evidence_status": "insufficient",
+                    "estimate": self.manifest.estimated_minutes_saved,
+                },
+                evidence=[_ticket_evidence(ticket, ["priority", "status"])],
+            )
+        threshold = thresholds.get(ticket.priority.strip().lower())
+        if threshold is None:
+            return ActionResult(
+                status="success",
+                output={
+                    "ticket_id": ticket.id,
+                    "assessment": {
+                        "state": "unknown",
+                        "reason": "priority_threshold_not_supplied",
+                        "priority": ticket.priority,
+                    },
+                    "evidence_status": "insufficient",
+                    "estimate": self.manifest.estimated_minutes_saved,
+                },
+                evidence=[_ticket_evidence(ticket, ["priority", "status", "created_at"])],
+            )
+        age_minutes = max(0, int((datetime.now(UTC) - created_at).total_seconds() // 60))
+        terminal = ticket.status.strip().lower() in {"resolved", "closed"}
+        at_risk = not terminal and age_minutes >= threshold
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "assessment": {
+                    "state": "resolved" if terminal else "at_risk" if at_risk else "within_threshold",
+                    "priority": ticket.priority,
+                    "status": ticket.status,
+                    "age_minutes": age_minutes,
+                    "threshold_minutes": threshold,
+                },
+                "evidence_status": "complete",
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[_ticket_evidence(ticket, ["priority", "status", "created_at"])],
+        )
+
+
+class StaleTicketSweepAction:
+    manifest = SmartActionManifest(
+        action_id="stale-ticket-sweep",
+        title="Sweep stale tickets",
+        description=(
+            "Find open local tickets older than an explicit threshold within the "
+            "current tenant scope; missing timestamps are excluded and reported."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["stale_after_minutes"],
+            "properties": {"stale_after_minutes": "positive integer"},
+        },
+        output_schema={
+            "tickets": "array",
+            "count": "number",
+            "excluded_missing_timestamp": "number",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        threshold = payload.get("stale_after_minutes")
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold <= 0:
+            return _failed("stale_after_minutes must be a positive integer")
+        now = datetime.now(UTC)
+        stale: list[dict[str, object]] = []
+        excluded = 0
+        for ticket in context.store.list_tickets(client_id=context.client_id):
+            if ticket.status.strip().lower() in {"resolved", "closed"}:
+                continue
+            created_at = _parse_ticket_timestamp(ticket.created_at)
+            if created_at is None:
+                excluded += 1
+                continue
+            age_minutes = max(0, int((now - created_at).total_seconds() // 60))
+            if age_minutes >= threshold:
+                stale.append(
+                    {
+                        "ticket_id": ticket.id,
+                        "subject": ticket.subject,
+                        "priority": ticket.priority,
+                        "status": ticket.status,
+                        "age_minutes": age_minutes,
+                    }
+                )
+        stale.sort(key=lambda item: (-int(cast(int, item["age_minutes"])), str(item["ticket_id"])))
+        return ActionResult(
+            status="success",
+            output={
+                "tickets": stale[:100],
+                "count": len(stale),
+                "excluded_missing_timestamp": excluded,
+                "stale_after_minutes": threshold,
+                "estimate": self.manifest.estimated_minutes_saved,
+            },
+            evidence=[
+                {
+                    "type": "local_ticket_sweep",
+                    "scope": context.client_id or "local",
+                    "threshold_minutes": threshold,
+                    "returned": min(len(stale), 100),
+                }
+            ],
+        )
+
+
 class TicketSentimentAction:
     manifest = SmartActionManifest(
         action_id="ticket-sentiment",
@@ -2099,6 +2255,8 @@ def _build_default_registry() -> SmartActionRegistry:
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
+        TicketSlaAssessmentAction(),
+        StaleTicketSweepAction(),
         TicketSentimentAction(),
         TicketEscalationAction(),
         CollectorPreviewAction(),
@@ -2714,6 +2872,35 @@ def _source_citation(source: SourceReference) -> dict[str, object]:
 def _provider_id(context: ActionContext) -> str:
     configured = context.settings.local_model_provider.strip()
     return configured or "configured-provider"
+
+
+def _positive_thresholds(value: object) -> dict[str, int] | None:
+    if not isinstance(value, dict) or not value:
+        return None
+    thresholds: dict[str, int] = {}
+    for priority, minutes in value.items():
+        if (
+            not isinstance(priority, str)
+            or not priority.strip()
+            or isinstance(minutes, bool)
+            or not isinstance(minutes, int)
+            or minutes <= 0
+        ):
+            return None
+        thresholds[priority.strip().lower()] = minutes
+    return thresholds
+
+
+def _parse_ticket_timestamp(value: str) -> datetime | None:
+    if not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _workload_value(candidate: dict[str, object]) -> float:

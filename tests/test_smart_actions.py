@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -53,11 +54,13 @@ from wait_local_agent.smart_actions import (
     SmartActionManifest,
     SmartActionRegistry,
     SmartActionService,
+    StaleTicketSweepAction,
     SuggestResolutionAction,
     SyncroTicketLookupAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
+    TicketSlaAssessmentAction,
     TicketSummaryAction,
     TicketTriageAction,
     _json_list,
@@ -674,6 +677,110 @@ def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
     assert result.output["quality_score"] == 0
 
 
+def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "TCK-OLD",
+                "Acme",
+                "Old request",
+                "Waiting",
+                "high",
+                "open",
+                "acme",
+                "2020-01-01T00:00:00+00:00",
+            ),
+        )
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-NO-TIME", "Acme", "No timestamp", "Unknown age", "high", "open", "acme"),
+        )
+    context = _action_context(store, settings, client_id="acme")
+    result = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 60}},
+    )
+    assert result.status == "success"
+    assessment = cast(dict[str, object], result.output["assessment"])
+    assert assessment["state"] == "at_risk"
+    assert assessment["threshold_minutes"] == 60
+    assert TicketSlaAssessmentAction().run(context, {}).status == "failed"
+    assert TicketSlaAssessmentAction().run(
+        context, {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 0}}
+    ).status == "failed"
+    unknown_priority = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-OLD", "thresholds_minutes": {"low": 60}},
+    )
+    assert unknown_priority.output["assessment"]["reason"] == "priority_threshold_not_supplied"  # type: ignore[index]
+    missing = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-NO-TIME", "thresholds_minutes": {"high": 60}},
+    )
+    assert missing.status == "success"
+    assert missing.output["evidence_status"] == "insufficient"
+    missing_assessment = cast(dict[str, object], missing.output["assessment"])
+    assert missing_assessment["reason"] == "missing_created_at"
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set status = 'closed' where id = ?",
+            ("TCK-OLD",),
+        )
+    closed = TicketSlaAssessmentAction().run(
+        context,
+        {"ticket_id": "TCK-OLD", "thresholds_minutes": {"high": 60}},
+    )
+    assert closed.output["assessment"]["state"] == "resolved"  # type: ignore[index]
+
+
+def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.executemany(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("TCK-STALE", "Acme", "Old", "Needs follow-up", "high", "open", "acme", "2020-01-01T00:00:00+00:00"),
+                ("TCK-FRESH", "Acme", "New", "Recent", "low", "open", "acme", "2099-01-01T00:00:00+00:00"),
+                ("TCK-FOREIGN", "Beta", "Old", "Private", "high", "open", "beta", "2020-01-01T00:00:00+00:00"),
+                ("TCK-CLOSED", "Acme", "Old", "Done", "high", "closed", "acme", "2020-01-01T00:00:00+00:00"),
+            ],
+        )
+    result = StaleTicketSweepAction().run(
+        _action_context(store, settings, client_id="acme"),
+        {"stale_after_minutes": 60},
+    )
+    assert result.status == "success"
+    tickets = cast(list[dict[str, object]], result.output["tickets"])
+    assert [item["ticket_id"] for item in tickets] == ["TCK-STALE"]
+    assert result.output["count"] == 1
+    assert StaleTicketSweepAction().run(
+        _action_context(store, settings, client_id="acme"), {"stale_after_minutes": 0}
+    ).status == "failed"
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("TCK-MISSING-TIME", "Acme", "Missing", "Unknown", "low", "open", "acme", "bad-date"),
+        )
+    with_missing = StaleTicketSweepAction().run(
+        _action_context(store, settings, client_id="acme"), {"stale_after_minutes": 60}
+    )
+    assert with_missing.output["excluded_missing_timestamp"] == 1
+
+
 def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
@@ -854,11 +961,13 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "servicenow-incident-lookup",
         "sharepoint-document-content",
         "sharepoint-documentation-search",
+        "stale-ticket-sweep",
         "suggest-resolution",
         "syncro-ticket-lookup",
         "ticket-escalation",
         "ticket-quality",
         "ticket-sentiment",
+        "ticket-sla-assessment",
         "ticket-summary",
         "ticket-triage",
     ]
