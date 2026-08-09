@@ -66,8 +66,11 @@ export function Reports() {
   const [exportText, setExportText] = useState("");
   const [restoreSource, setRestoreSource] = useState("");
   const [restoreEncrypted, setRestoreEncrypted] = useState(false);
+  const [reportPeriodStart, setReportPeriodStart] = useState("");
+  const [reportPeriodEnd, setReportPeriodEnd] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [runningAction, setRunningAction] = useState<"hardening" | "restore" | null>(null);
+  const [reportGeneration, setReportGeneration] = useState<"qbr" | "automation-opportunity" | null>(null);
   const [loadState, setLoadState] = useState<EvidenceLoadState>("loading");
   const [technicalError, setTechnicalError] = useState("");
 
@@ -181,6 +184,37 @@ export function Reports() {
     }
   }
 
+  async function generateClientReport(reportType: "qbr" | "automation-opportunity") {
+    if (!reportPeriodStart || !reportPeriodEnd) {
+      setStatusMessage("Choose a start and end date before generating a client report.");
+      return;
+    }
+    if (reportPeriodEnd < reportPeriodStart) {
+      setStatusMessage("The report end date must be on or after the start date.");
+      return;
+    }
+    setReportGeneration(reportType);
+    try {
+      const report = await apiFetch<EvidenceReport>(`/reports/${reportType}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId.trim() || undefined,
+          period_start: reportPeriodStart,
+          period_end: reportPeriodEnd
+        })
+      });
+      setSelectedReport(report);
+      setSelectedDetail(report);
+      setStatusMessage(`${humanize(reportType)} report generated from local evidence.`);
+      await refresh();
+    } catch (error) {
+      showError(error, "The client report could not be generated.", setStatusMessage, setTechnicalError);
+    } finally {
+      setReportGeneration(null);
+    }
+  }
+
   return (
     <div className="screen-stack">
       {statusMessage ? <div className="notice" role="status">{statusMessage}</div> : null}
@@ -257,6 +291,26 @@ export function Reports() {
           <h2>All reports</h2>
           <span>{visibleReports.length} reports</span>
         </div>
+        <div className="report-generation panel-subsection">
+          <div>
+            <h3>Client reports</h3>
+            <p className="screen-note">Generate a deterministic QBR or automation-opportunity report from local ticket and execution evidence. Estimates are labeled and no workflow is enabled by report generation.</p>
+          </div>
+          <div className="grid">
+            <label>
+              Period start
+              <input type="date" value={reportPeriodStart} onChange={(event) => setReportPeriodStart(event.target.value)} />
+            </label>
+            <label>
+              Period end
+              <input type="date" value={reportPeriodEnd} onChange={(event) => setReportPeriodEnd(event.target.value)} />
+            </label>
+          </div>
+          <div className="row-actions">
+            <button type="button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("qbr")}>{reportGeneration === "qbr" ? "Generating…" : "Generate QBR"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("automation-opportunity")}>{reportGeneration === "automation-opportunity" ? "Generating…" : "Find automation opportunities"}</button>
+          </div>
+        </div>
         <form className="draft-form" onSubmit={openReport}>
           <div className="grid">
             <label>
@@ -264,7 +318,7 @@ export function Reports() {
               <input value={reportType} onChange={(event) => setReportType(event.target.value)} placeholder="Filter reports" />
             </label>
             <label>
-              Client
+              Client scope (admin only; others are bound)
               <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
             </label>
             <label>

@@ -215,7 +215,11 @@ Add `slowapi` to `pyproject.toml`. Add `@limiter.limit("100/minute")` to all rou
 
 **Goal**: A real MSP can install, connect HaloPSA + IT Glue, triage tickets, run weekly automated follow-ups, and produce a QBR report.
 
-Note: Phase 3 paid connector code (IT Glue, QBR) goes in `W-A-I-T/wait-local-agent-packs` (private). The public repo gets the connector framework updates and APScheduler integration.
+Historical note: the original Phase 3 plan placed the richer IT Glue and QBR
+implementation in `W-A-I-T/wait-local-agent-packs` (private). The current
+public core now provides a bounded deterministic JSON/Markdown QBR and
+automation-opportunity report from local evidence. Provider-backed lifecycle
+enrichment, measured ROI, and PDF export remain separate future capabilities.
 
 ### Task 3.1 — IT Glue Connector (private repo: packs/msp/itglue.py)
 
@@ -255,7 +259,7 @@ Migration: add `client_id TEXT` (nullable) to `tickets`, `approval_requests`, `a
 
 All list routes: accept `?client_id=` filter. Default: return all (backward compatible).
 
-### Task 3.4 — QBR Report Generator (private repo: packs/msp/reports/qbr.py)
+### Historical Task 3.4 — QBR Report Generator (superseded by the bounded open-core report)
 
 ```python
 class QBRReportBuilder:

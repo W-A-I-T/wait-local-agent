@@ -136,9 +136,9 @@ Includes:
 - Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
-- QBR report generator (per-client PDF: ticket count, resolution rate, top categories, automation savings)
+- Bounded per-client QBR report generator (JSON/Markdown ticket counts, explicit resolution evidence, automation estimates); provider-backed PDF remains a future extension
 - Automation opportunity report (pattern analysis → "you could automate X")
-- Time-saved / ROI dashboard
+- Time-saved / ROI dashboard based on labeled local estimates; measured/provider-backed ROI remains a future extension
 - Client/tenant boundary enforcement (`client_id` isolation on all queries)
 - White-label branding config (`WAIT_PRODUCT_NAME`, logo, color scheme)
 - Premium MSP workflow templates (15+ beyond the 9 in open core)
