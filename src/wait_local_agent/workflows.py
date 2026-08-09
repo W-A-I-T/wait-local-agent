@@ -392,8 +392,6 @@ def _bounded_workflow_payload(
             f"workflow payload may contain at most {MAX_WORKFLOW_PAYLOAD_FIELDS} fields"
         )
     safe_payload = redact_value(payload)
-    if not isinstance(safe_payload, dict):
-        raise ValueError("workflow payload could not be safely normalized")
     try:
         encoded = json.dumps(safe_payload, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
