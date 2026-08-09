@@ -20,9 +20,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   that configuration is present.
 - Preview-only bounded planning through `POST /agents/plan` and the React
   Agents screen selects existing approved tools from a natural-language
-  instruction, loads tenant-scoped ticket/client/knowledge context, and
-  exposes risk and approval metadata without executing the plan; a reviewed
-  result can be converted into a disabled draft definition.
+  instruction using the configured model provider when available and bounded
+  deterministic rules otherwise, loads tenant-scoped ticket/client/knowledge
+  context, and exposes selection mode, risk, and approval metadata without
+  executing the plan; malformed or unavailable model output falls back to
+  deterministic rules, and a reviewed result can be converted into a disabled
+  draft definition.
 - API-backed dashboard for HaloPSA tickets, approval queue, event history, knowledge, workflows, connectors, and provider health.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent SQLite volume.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.

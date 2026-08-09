@@ -13,7 +13,14 @@ import wait_local_agent.agents as agents_module
 import wait_local_agent.api.app as app_module
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import AgentDefinitionRevision, AgentRun, HaloTicket, HuduArticle
+from wait_local_agent.models import (
+    AgentDefinitionRevision,
+    AgentRun,
+    HaloTicket,
+    HuduArticle,
+    SourceReference,
+    Ticket,
+)
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
@@ -114,6 +121,53 @@ def test_plan_preview_selects_existing_tools_without_executing(settings) -> None
     ]
     assert service.store.list_agent_runs(client_id="acme") == []
     assert all("approval_required" in step for step in result.steps)
+    assert result.selection_mode == "deterministic"
+
+
+def test_plan_preview_uses_configured_model_but_keeps_catalog_scope(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store, client_id="acme")
+
+    class PlanningProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "summary"
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "response"
+
+        def select_tools(
+            self,
+            instruction: str,
+            ticket: Ticket,
+            sources: list[SourceReference],
+            tools: list[dict[str, str]],
+            *,
+            max_tools: int,
+        ) -> list[str]:
+            return ["ticket-summary", "not-a-registered-tool", "knowledge-search"]
+
+    actions = SmartActionService(
+        store,
+        settings,
+        provider=PlanningProvider(),
+        provider_configured=True,
+    )
+    service = AgentService(store, settings, actions)
+
+    result = service.plan(
+        "Use the configured planner for this ticket.",
+        entity_id="TCK-1001",
+        client_id="acme",
+        max_steps=3,
+    )
+
+    assert result.status == "preview"
+    assert result.selection_mode == "model"
+    assert [step["tool_id"] for step in result.steps] == [
+        "ticket-summary",
+        "knowledge-search",
+    ]
+    assert store.list_agent_runs(client_id="acme") == []
 
 
 def test_plan_preview_blocks_unknown_requests_and_enforces_scope(settings) -> None:
@@ -1696,6 +1750,7 @@ def test_agent_plan_api_is_preview_only_and_tenant_scoped(settings) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "preview"
+    assert payload["selection_mode"] == "deterministic"
     assert [step["tool_id"] for step in payload["steps"]] == [
         "knowledge-search",
         "ticket-triage",

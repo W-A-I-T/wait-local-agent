@@ -119,6 +119,112 @@ def test_provider_uses_openai_provider_when_enabled(tmp_path: Path) -> None:
     assert isinstance(provider, OpenAICompatibleLocalProvider)
 
 
+def test_openai_provider_selects_bounded_catalog_tools(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"tool_ids":["knowledge-search","ticket-summary"]}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+    tools = [
+        {"id": "knowledge-search", "name": "Search knowledge", "description": "Find local evidence."},
+        {"id": "ticket-summary", "name": "Ticket summary", "description": "Summarize the ticket."},
+    ]
+
+    selected = provider.select_tools(
+        "Investigate this ticket with local evidence.",
+        _ticket(),
+        _sources(),
+        tools,
+        max_tools=2,
+    )
+
+    assert selected == ["knowledge-search", "ticket-summary"]
+    prompt = json.loads(requests[0].content)["messages"][1]["content"]
+    assert "Investigate this ticket" in prompt
+    assert "knowledge-search" in prompt
+    assert "Shared Mailbox Runbook" in prompt
+
+
+def test_remote_provider_plan_redacts_ticket_and_source_context() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"tool_ids":["ticket-summary"]}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(handler),
+    )
+    ticket = _ticket_with(
+        "Investigate access",
+        "password=super-secret and person@example.com " + "x" * 3000,
+    )
+    sources = [
+        SourceReference(
+            title="Private runbook",
+            path="/tenant/acme/private.md",
+            excerpt="token=source-secret " + "y" * 2000,
+        )
+    ]
+
+    assert provider.select_tools(
+        "Find the safest next step.",
+        ticket,
+        sources,
+        [{"id": "ticket-summary", "name": "Ticket summary", "description": "Summarize."}],
+        max_tools=1,
+    ) == ["ticket-summary"]
+    prompt = json.loads(requests[0].content)["messages"][1]["content"]
+    assert "super-secret" not in prompt
+    assert "source-secret" not in prompt
+    assert "person@example.com" not in prompt
+    assert "/tenant/acme/private.md" not in prompt
+    assert "[CLIENT]" in prompt
+
+
+def test_openai_provider_rejects_malformed_tool_selection(tmp_path: Path) -> None:
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '{"tool_ids":"not-a-list"}'}}]},
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderUnavailableError, match="tool selection"):
+        provider.select_tools("Investigate", _ticket(), [], [], max_tools=2)
+
+
 def test_remote_provider_requires_cloud_opt_in(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     settings = Settings(

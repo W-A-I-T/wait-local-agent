@@ -56,6 +56,10 @@ unverifiable product claim.
   environment.
 - Browser: Agents create/run flow completed against the real local API; all
   sidebar routes rendered through in-app navigation.
+- Current browser rerun: blocked before application launch because the local
+  environment has no installed Chrome/Chromium binary and DNS cannot resolve
+  the package registry needed for the approved browser installer. This is an
+  environment blocker, not a product pass claim.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.

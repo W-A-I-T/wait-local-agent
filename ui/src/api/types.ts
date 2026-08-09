@@ -569,6 +569,7 @@ export type AgentPlan = {
   context: Record<string, unknown>;
   definition: Record<string, unknown>;
   blocked_reason: string;
+  selection_mode?: "deterministic" | "model";
 };
 
 export type ProviderSettings = {
