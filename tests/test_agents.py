@@ -67,6 +67,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "autotask-ticket-add-note",
         "autotask-ticket-lookup",
         "autotask-ticket-update-status",
+        "autotask-ticket-update-resolution",
         "ticket-triage",
         "ticket-summary",
         "suggest-resolution",
@@ -2139,6 +2140,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "autotask-ticket-lookup",
         "autotask-ticket-add-note",
         "autotask-ticket-update-status",
+        "autotask-ticket-update-resolution",
     } <= tool_ids
     assert (
         next(

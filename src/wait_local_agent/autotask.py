@@ -489,6 +489,18 @@ def _write_payload(
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise AutotaskReadError("Autotask ticket status must be a non-negative integer.")
         return {"id": ticket_id, "status": value}
+    if action_type == "update_resolution":
+        if set(fields) != {"resolution"}:
+            raise AutotaskReadError("Autotask update_resolution requires only a resolution field.")
+        value = fields["resolution"]
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value.strip()) > 32_000
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise AutotaskReadError("Autotask ticket resolution is invalid.")
+        return {"id": ticket_id, "resolution": value.strip()}
     if action_type != "add_note":
         raise AutotaskReadError(f"Autotask ticket action is not supported: {action_type}.")
     allowed = {"description", "note_type", "publish", "title"}

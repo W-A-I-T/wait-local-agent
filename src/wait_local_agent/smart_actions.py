@@ -4469,6 +4469,11 @@ def _build_default_registry() -> SmartActionRegistry:
             title="Autotask update ticket status",
             action_type="update_status",
         ),
+        AutotaskTicketWriteAction(
+            action_id="autotask-ticket-update-resolution",
+            title="Autotask update ticket resolution",
+            action_type="update_resolution",
+        ),
         HuduDocumentationSearchAction(),
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),

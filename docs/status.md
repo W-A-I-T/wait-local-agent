@@ -72,10 +72,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   boundary, plus approval-gated work-note and state updates through the shared
   smart-action runtime; broader incident fields remain unavailable.
 - Autotask ticket and company inventory through the common guarded HTTP boundary,
-  plus approval-gated ticket-note and status actions. The note contract requires
+  plus approval-gated ticket-note, status, and resolution actions. The note contract requires
   the operator to provide the provider's instance-specific non-negative
   `noteType` and `publish` values, and status updates require an explicit
-  provider status ID; broader write operations remain unavailable.
+  provider status ID, and resolution text is bounded to the documented field;
+  broader write operations remain unavailable.
 - NinjaOne RMM device and alert inventory, script catalog and preview, plus
   approval-gated script execution through the bounded tenant-mapped adapter;
   responses and execution lookups remain scope-checked and sanitized.
@@ -263,7 +264,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Hudu article-content, IT Glue, Confluence page-content, and SharePoint documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients. ServiceNow work-note
-  and state updates, and Autotask ticket notes/status updates, are exposed as approval-gated tools;
+  and state updates, and Autotask ticket notes/status/resolution updates, are exposed as approval-gated tools;
   connector credentials are never action payloads.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
@@ -326,7 +327,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Air-gap compatible default path | Built |
 | IT Glue connector | Read-only core surface built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
-| Autotask connector | Ticket/company reads plus approval-gated ticket-note and status updates built; broader writes remain future |
+| Autotask connector | Ticket/company reads plus approval-gated ticket-note, status, and resolution updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
