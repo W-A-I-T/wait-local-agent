@@ -559,3 +559,19 @@ def test_next_retry_at_validates_and_exponentially_backoffs() -> None:
         _next_retry_at(0, retry_delay_seconds=True)
     with pytest.raises(ValueError, match="between 1"):
         _next_retry_at(0, retry_delay_seconds=0)
+
+
+def test_retry_due_audits_delivery_claim_races(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    dispatcher = EventDispatcher(store, service)
+    monkeypatch.setattr(
+        store,
+        "list_due_event_delivery_ids",
+        lambda *, now, limit: [404],
+    )
+
+    assert dispatcher.retry_due(now="2026-08-09T00:00:00+00:00") == []
+    audit = store.list_audit_events()
+    assert audit[0].event_type == "event.retry_skipped"
+    assert audit[0].subject_id == "404"
