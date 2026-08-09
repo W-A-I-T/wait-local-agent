@@ -28,6 +28,8 @@ ActionKind = Literal[
     "ticket.security_alert",
     "ticket.l1_resolution",
     "ticket.duplicate_review",
+    "ticket.sla_assessment",
+    "ticket.stale_sweep",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
@@ -367,6 +369,7 @@ class WorkflowTemplate:
     risk_level: RiskLevel = "low"
     preview_fields: tuple[str, ...] = ()
     tool_id: str | None = None
+    payload_schema: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 from typing import Protocol
 
 from wait_local_agent.models import Ticket, WorkflowRun, WorkflowTemplate
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
-from wait_local_agent.reports.renderers import redact_text
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.smart_actions import ActionResult
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, _normalize_client_id
+
+MAX_WORKFLOW_PAYLOAD_FIELDS = 16
+MAX_WORKFLOW_PAYLOAD_BYTES = 8_000
 
 
 class WorkflowToolExecutor(Protocol):
@@ -173,6 +177,44 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         preview_fields=("ticket_id", "recommendation", "approved"),
         tool_id="dispatch-suggestion",
     ),
+    WorkflowTemplate(
+        id="ticket-sla-risk-review",
+        name="Ticket SLA Risk Review",
+        trigger="schedule.daily",
+        description=(
+            "Compare ticket age with explicit operator-supplied thresholds and "
+            "report evidence-backed SLA risk without inferring a vendor contract."
+        ),
+        action_type="ticket.sla_assessment",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "assessment", "evidence_status"),
+        tool_id="ticket-sla-assessment",
+        payload_schema={
+            "type": "object",
+            "required": ["thresholds_minutes"],
+            "properties": {"thresholds_minutes": "object of priority to positive minutes"},
+        },
+    ),
+    WorkflowTemplate(
+        id="stale-ticket-sweep-review",
+        name="Stale Ticket Sweep Review",
+        trigger="schedule.daily",
+        description=(
+            "Find open local tickets older than an explicit threshold; missing "
+            "timestamps are excluded and reported."
+        ),
+        action_type="ticket.stale_sweep",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("tickets", "count", "excluded_missing_timestamp"),
+        tool_id="stale-ticket-sweep",
+        payload_schema={
+            "type": "object",
+            "required": ["stale_after_minutes"],
+            "properties": {"stale_after_minutes": "positive integer"},
+        },
+    ),
 )
 
 
@@ -196,14 +238,20 @@ def run_workflow_template(
     template_override: WorkflowTemplate | None = None,
     operator_instructions: str = "",
     template_version: int | None = None,
+    input_payload: dict[str, object] | None = None,
 ) -> WorkflowRun:
     template = template_override or get_workflow_template(template_id)
     if template is None:
         raise KeyError(template_id)
-    ticket = store.get_ticket(ticket_id)
+    normalized_client_id = _normalize_client_id(client_id)
+    ticket = store.get_ticket(ticket_id, client_id=normalized_client_id)
     if ticket is None:
         raise LookupError(ticket_id)
-    effective_client_id = client_id if client_id is not None else ticket.client_id
+    effective_client_id = normalized_client_id if normalized_client_id is not None else ticket.client_id
+    bounded_payload = _bounded_workflow_payload(
+        template,
+        {} if input_payload is None else input_payload,
+    )
 
     tool_result = _run_template_tool(
         template,
@@ -211,6 +259,7 @@ def run_workflow_template(
         tool_executor,
         actor=actor,
         client_id=effective_client_id,
+        input_payload=bounded_payload,
     )
     message = _workflow_message(template, ticket, tool_result)
     safe_instructions = redact_text(operator_instructions).strip()
@@ -316,17 +365,66 @@ def _run_template_tool(
     *,
     actor: str,
     client_id: str | None,
+    input_payload: dict[str, object],
 ) -> ActionResult | None:
     if template.tool_id is None:
         return None
     if tool_executor is None:
         raise RuntimeError(f"workflow tool {template.tool_id} is not configured")
+    payload = dict(input_payload)
+    payload["ticket_id"] = ticket.id
     return tool_executor.invoke(
         template.tool_id,
-        {"ticket_id": ticket.id},
+        payload,
         actor or "workflow",
         client_id=client_id,
     )
+
+
+def _bounded_workflow_payload(
+    template: WorkflowTemplate,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("workflow payload must be a JSON object")
+    if len(payload) > MAX_WORKFLOW_PAYLOAD_FIELDS:
+        raise ValueError(
+            f"workflow payload may contain at most {MAX_WORKFLOW_PAYLOAD_FIELDS} fields"
+        )
+    safe_payload = redact_value(payload)
+    if not isinstance(safe_payload, dict):
+        raise ValueError("workflow payload could not be safely normalized")
+    try:
+        encoded = json.dumps(safe_payload, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("workflow payload must contain JSON-compatible values") from exc
+    if len(encoded.encode("utf-8")) > MAX_WORKFLOW_PAYLOAD_BYTES:
+        raise ValueError(
+            f"workflow payload must be at most {MAX_WORKFLOW_PAYLOAD_BYTES} bytes"
+        )
+    required = template.payload_schema.get("required", [])
+    if isinstance(required, list):
+        missing = [field for field in required if isinstance(field, str) and field not in safe_payload]
+        if missing:
+            raise ValueError(f"workflow payload is missing required field(s): {', '.join(missing)}")
+    if template.id == "ticket-sla-risk-review":
+        thresholds = safe_payload.get("thresholds_minutes")
+        if not isinstance(thresholds, dict) or not thresholds:
+            raise ValueError("thresholds_minutes must map priorities to positive minutes")
+        if any(
+            not isinstance(priority, str)
+            or not priority.strip()
+            or isinstance(minutes, bool)
+            or not isinstance(minutes, int)
+            or minutes <= 0
+            for priority, minutes in thresholds.items()
+        ):
+            raise ValueError("thresholds_minutes must map priorities to positive minutes")
+    elif template.id == "stale-ticket-sweep-review":
+        threshold = safe_payload.get("stale_after_minutes")
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold <= 0:
+            raise ValueError("stale_after_minutes must be a positive integer")
+    return safe_payload
 
 
 def _workflow_status_for_tool(result: ActionResult) -> str:

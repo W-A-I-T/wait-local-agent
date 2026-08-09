@@ -79,6 +79,8 @@ def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings
 def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     _seed_tickets(db_path)
+    with Store(db_path)._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
 
     async def scenario() -> None:
         store = Store(db_path)
@@ -606,7 +608,121 @@ def test_msp_review_templates_reuse_existing_local_tools(
     action_runs = store.list_smart_action_runs(client_id="acme")
     assert len(action_runs) == 1
     assert action_runs[0].action_id == tool_id
-    assert action_runs[0].status == "pending_approval" if expected_status == "pending_approval" else "success"
+    expected_action_status = "pending_approval" if expected_status == "pending_approval" else "success"
+    assert action_runs[0].status == expected_action_status
+
+
+@pytest.mark.parametrize(
+    ("template_id", "payload", "tool_id"),
+    [
+        (
+            "ticket-sla-risk-review",
+            {"thresholds_minutes": {"high": 1}},
+            "ticket-sla-assessment",
+        ),
+        (
+            "stale-ticket-sweep-review",
+            {"stale_after_minutes": 1},
+            "stale-ticket-sweep",
+        ),
+    ],
+)
+def test_threshold_review_templates_pass_bounded_payloads(settings, template_id, payload, tool_id) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    service = SmartActionService(store, settings)
+
+    run = run_workflow_template(
+        store,
+        template_id,
+        "TCK-1001",
+        actor="technician",
+        client_id="acme",
+        tool_executor=service,
+        input_payload=payload,
+    )
+
+    assert run.status == "completed"
+    action_runs = store.list_smart_action_runs(client_id="acme")
+    assert len(action_runs) == 1
+    assert action_runs[0].action_id == tool_id
+    assert action_runs[0].status == "success"
+
+
+def test_workflow_payload_requires_declared_fields_and_preserves_client_scope(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+
+    with pytest.raises(ValueError, match="thresholds_minutes"):
+        run_workflow_template(
+            store,
+            "ticket-sla-risk-review",
+            "TCK-1001",
+            client_id="acme",
+            input_payload={},
+        )
+    with pytest.raises(LookupError):
+        run_workflow_template(
+            store,
+            "ticket-quality-review",
+            "TCK-1001",
+            client_id="other-client",
+        )
+    with pytest.raises(ValueError, match="positive minutes"):
+        run_workflow_template(
+            store,
+            "ticket-sla-risk-review",
+            "TCK-1001",
+            client_id="acme",
+            input_payload={"thresholds_minutes": {"high": 0}},
+        )
+    with pytest.raises(ValueError, match="positive integer"):
+        run_workflow_template(
+            store,
+            "stale-ticket-sweep-review",
+            "TCK-1001",
+            client_id="acme",
+            input_payload={"stale_after_minutes": True},
+        )
+
+
+def test_scheduled_threshold_workflow_uses_bounded_input_payload(settings, tmp_path: Path) -> None:
+    db_path = tmp_path / "threshold-schedule.db"
+    _seed_tickets(db_path)
+    store = Store(db_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+
+    async def scenario() -> None:
+        manager = SchedulerManager(
+            store,
+            enabled=False,
+            smart_action_service=SmartActionService(store, settings),
+        )
+        scheduled_job = manager.register(
+            "ticket-sla-risk-review",
+            "0 9 * * *",
+            {
+                "ticket_id": "TCK-1001",
+                "client_id": "acme",
+                "input": {"thresholds_minutes": {"high": 1}},
+            },
+        )
+
+        await manager._build_job_callable(scheduled_job)()
+
+        runs = store.list_workflow_runs(client_id="acme")
+        assert len(runs) == 1
+        assert runs[0].status == "completed"
+        action_runs = store.list_smart_action_runs(client_id="acme")
+        assert action_runs[0].action_id == "ticket-sla-assessment"
+        assert action_runs[0].status == "success"
+
+    asyncio.run(scenario())
 
 
 def test_tool_backed_workflow_requires_executor(settings) -> None:

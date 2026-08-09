@@ -166,6 +166,9 @@ class SchedulerManager:
             return
         ticket_id = _required_ticket_id(params)
         try:
+            input_payload = params.get("input", {})
+            if not isinstance(input_payload, dict):
+                raise ValueError("scheduled workflow input must be an object")
             run = run_workflow_template(
                 self._store,
                 scheduled_job.template_id,
@@ -174,6 +177,7 @@ class SchedulerManager:
                 actor="scheduler",
                 trigger_source="scheduler",
                 tool_executor=self._smart_action_service,
+                input_payload=input_payload,
             )
         except Exception as exc:
             self._store.add_audit_event(

@@ -280,6 +280,7 @@ class M365MailMessageDeleteDraftRequest(BaseModel):
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
     client_id: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
 
 
 class TemplateGalleryCreateRequest(BaseModel):
@@ -3524,22 +3525,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source_template = get_workflow_template(entry.source_template_id)
         if source_template is None:
             raise HTTPException(status_code=409, detail="source workflow template is unavailable")
-        run = run_workflow_template(
-            store,
-            entry.source_template_id,
-            request.ticket_id,
-            client_id=scoped_client_id,
-            actor=context.approver_id or "api",
-            trigger_source="template_gallery",
-            tool_executor=smart_action_service,
-            template_override=replace(
-                source_template,
-                name=entry.name,
-                description=entry.description,
-            ),
-            operator_instructions=entry.instructions,
-            template_version=entry.version,
-        )
+        try:
+            run = run_workflow_template(
+                store,
+                entry.source_template_id,
+                request.ticket_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "api",
+                trigger_source="template_gallery",
+                tool_executor=smart_action_service,
+                template_override=replace(
+                    source_template,
+                    name=entry.name,
+                    description=entry.description,
+                ),
+                operator_instructions=entry.instructions,
+                template_version=entry.version,
+                input_payload=request.payload,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
         return asdict(run)
 
@@ -3710,6 +3715,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 actor=context.approver_id or "api",
                 trigger_source="api",
                 tool_executor=smart_action_service,
+                input_payload=request.payload,
             )
             _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
             return asdict(run)
@@ -3717,6 +3723,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="workflow template not found") from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="ticket not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/workflow-runs")
     def workflow_runs(
