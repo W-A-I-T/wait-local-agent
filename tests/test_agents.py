@@ -756,7 +756,9 @@ def test_agent_conditional_approval_matches_explicit_ticket_fields(settings) -> 
         max_steps=1,
         execution_timeout_seconds=30,
         client_id="acme",
-        approval_rules=[{"tool_id": "ticket-triage", "when": {"priority": ["HIGH"]}}],
+        approval_rules=[
+            {"tool_id": "ticket-triage", "when": {"priority": ["HIGH", " high "]}}
+        ],
     )
 
     persisted = service.store.get_agent_definition(definition.id, client_id="acme")
@@ -792,14 +794,31 @@ def test_agent_conditional_approval_rules_are_bounded(settings) -> None:
         "client_id": "acme",
     }
     invalid_rules: list[tuple[Any, str]] = [
+        ([{}], "tool_id must be a non-empty string"),
+        (
+            [{"tool_id": "ticket-triage", "when": {"priority": ["high"]}, "extra": True}],
+            "may only contain tool_id and when",
+        ),
         ([{"tool_id": "not-enabled", "when": {"priority": ["high"]}}], "must be enabled"),
         ([{"tool_id": "ticket-triage", "when": {"unknown": ["high"]}}], "unsupported approval rule fields"),
         ([{"tool_id": "ticket-triage", "when": {}}], "at least one condition"),
         ([{"tool_id": "ticket-triage", "when": {"priority": [""]}}], "non-empty strings"),
+        (
+            [{"tool_id": "ticket-triage", "when": {"priority": ["high"] * 9}}],
+            "must contain 1-8 values",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "when": {"priority": ["x" * 41]}}],
+            "at most 40 characters",
+        ),
         ([
             {"tool_id": "ticket-triage", "when": {"priority": ["high"]}},
             {"tool_id": "ticket-triage", "when": {"status": ["new"]}},
         ], "must not duplicate tool"),
+        (
+            [{"tool_id": "ticket-triage", "when": {"priority": ["high"]}} for _ in range(9)],
+            "contain 0-8 rules",
+        ),
     ]
     for rules, message in invalid_rules:
         with pytest.raises(AgentDefinitionError, match=message):
