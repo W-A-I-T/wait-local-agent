@@ -69,7 +69,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | Hudu read | ✓ | ✓ (`hudu.py`) | — | Done |
 | ConnectWise PSA | ✓ | ✓ bounded reads + approval-gated allowlisted ticket updates | Deeper write/action parity | Incremental |
 | Autotask | ✓ | ✓ ticket/company inventory plus approval-gated ticket-note/time-entry/status/resolution/assignment updates | Broader write operations | Incremental |
-| ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state updates | Broader write operations | Incremental |
+| ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state/assignment updates | Broader write operations | Incremental |
 | NinjaOne RMM | ✓ | ✓ bounded devices, alerts, scripts, previews, and approved execution | Broader remediation parity | Incremental |
 | Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
 | N-able | ✓ | ✓ N-central read-only device/issue/task metadata | Execution and richer remediation | Incremental |

@@ -576,10 +576,14 @@ WAIT_SERVICENOW_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The read-only adapter uses ServiceNow's Table API for incidents and companies,
+The adapter uses ServiceNow's Table API for incidents and companies, plus an
+approval-gated incident write surface for work notes, state, and assignment,
 with explicit field selection, bounded pagination, and basic authentication
 from settings or the local vault ([ServiceNow Table API](https://www.servicenow.com/docs/r/xanadu/api-reference/rest-apis/c_TableAPI.html)).
-No mutation endpoint is exposed.
+Writes remain disabled unless both `WAIT_ALLOW_HTTP_PROBING=true` and
+`WAIT_ALLOW_WRITE_ACTIONS=true` are enabled, and credentials never enter an
+action payload. The shared `/tools` catalog exposes the three write actions;
+there is no unbounded field-update endpoint.
 
 ### Validate and read
 

@@ -129,6 +129,41 @@ def test_servicenow_write_failures_are_bounded(settings) -> None:
     assert "HTTP 500" in failed.message
 
 
+def test_servicenow_assignment_write_uses_one_allowlisted_reference(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PATCH"
+        assert request.url.path.endswith("/incident/abc123")
+        assert request.read() == b'{"assigned_to":"681b365ec0a80164000fb0b05854a0cd"}'
+        return httpx.Response(200, json={"result": {"sys_id": "abc123"}})
+
+    client = ServiceNowClient(
+        replace(_settings(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.execute_write(
+        ServiceNowWriteRequest(
+            "abc123",
+            "assign_incident",
+            {"assigned_to": "681b365ec0a80164000fb0b05854a0cd"},
+        )
+    )
+    assert result.status == "succeeded"
+    assert len(requests) == 1
+    assert client.execute_write(
+        ServiceNowWriteRequest("abc123", "assign_incident", {"assigned_to": "bad/id"})
+    ).status == "failed"
+    assert client.execute_write(
+        ServiceNowWriteRequest(
+            "abc123",
+            "assign_incident",
+            {"assigned_to": "a", "assignment_group": "b"},
+        )
+    ).status == "failed"
+
+
 def test_servicenow_write_guards_and_helpers_cover_failure_boundaries(settings) -> None:
     active = _settings(settings)
     request = ServiceNowWriteRequest("abc123", "update_state", {"incident_state": "2"})
@@ -169,6 +204,8 @@ def test_servicenow_write_guards_and_helpers_cover_failure_boundaries(settings) 
         ("add_work_note", {"work_notes": ""}),
         ("update_state", {"state": "2"}),
         ("update_state", {"incident_state": ""}),
+        ("assign_incident", {"assigned_to": "bad/id"}),
+        ("assign_incident", {"assigned_to": "a", "assignment_group": "b"}),
         ("unknown", {"field": "value"}),
     )
     for action_type, fields in invalid_fields:
