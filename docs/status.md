@@ -17,6 +17,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   OpenAI-compatible DeepSeek, Kimi, or documented coding-model-compatible endpoints. Remote
   calls remain disabled unless cloud fallback and a complete remote provider
   configuration are enabled.
+- Preview-only bounded planning through `POST /agents/plan` and the React
+  Agents screen selects existing approved tools from a natural-language
+  instruction, loads tenant-scoped ticket/client/knowledge context, and
+  exposes risk and approval metadata without executing the plan.
 - API-backed dashboard for HaloPSA tickets, approval queue, event history, knowledge, workflows, connectors, and provider health.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent SQLite volume.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.

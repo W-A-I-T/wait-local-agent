@@ -90,6 +90,17 @@ class AgentExecutionResult:
     revision_version: int | None = None
 
 
+@dataclass(frozen=True)
+class AgentPlanResult:
+    instruction: str
+    entity_id: str
+    client_id: str | None
+    status: str
+    steps: list[dict[str, object]]
+    context: dict[str, object]
+    blocked_reason: str = ""
+
+
 class AgentDefinitionError(ValueError):
     """Raised when an agent definition is unsafe or cannot be executed."""
 
@@ -127,6 +138,85 @@ class AgentService:
 
     def list_definitions(self, client_id: str | None = None) -> list[AgentDefinition]:
         return self.store.list_agent_definitions(client_id=client_id)
+
+    def plan(
+        self,
+        instruction: str,
+        *,
+        entity_id: str,
+        client_id: str | None,
+        max_steps: int = MAX_AGENT_STEPS,
+    ) -> AgentPlanResult:
+        """Preview a bounded plan using only the existing approved tool catalog."""
+        normalized = " ".join(instruction.split()).strip()
+        if not normalized or len(normalized) > 2_000:
+            raise AgentDefinitionError("instruction must contain 1-2000 characters")
+        if max_steps < 1 or max_steps > MAX_AGENT_STEPS:
+            raise AgentDefinitionError(f"max_steps must be between 1 and {MAX_AGENT_STEPS}")
+        normalized_client_id = _normalize_client_id(client_id)
+        ticket = self.store.get_ticket(entity_id, client_id=normalized_client_id)
+        if ticket is None:
+            raise AgentDefinitionError("ticket was not found in the requested scope")
+
+        tools = {tool.id: tool for tool in self.list_tools()}
+        selected_ids = _plan_tool_ids(normalized)
+        selected_ids = [tool_id for tool_id in selected_ids if tool_id in tools][:max_steps]
+        context_sources = ["ticket", "client", "knowledge"]
+        context = self._build_context(
+            AgentDefinition(
+                id="plan-preview",
+                name="Plan preview",
+                description="",
+                enabled=True,
+                trigger="manual",
+                entity_type="ticket",
+                filters={},
+                enabled_tools=selected_ids or ["ticket-triage"],
+                steps=[{"tool_id": selected_ids[0] if selected_ids else "ticket-triage", "payload": {}}],
+                max_steps=1,
+                execution_timeout_seconds=1,
+                client_id=normalized_client_id,
+                version=1,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                context_sources=context_sources,
+            ),
+            entity_id,
+        )
+        if not selected_ids:
+            return AgentPlanResult(
+                instruction=normalized,
+                entity_id=entity_id,
+                client_id=normalized_client_id,
+                status="blocked",
+                steps=[],
+                context=context,
+                blocked_reason=(
+                    "No approved tool matched this request. Choose a supported service-desk "
+                    "operation and review the tool catalog before running it."
+                ),
+            )
+        return AgentPlanResult(
+            instruction=normalized,
+            entity_id=entity_id,
+            client_id=normalized_client_id,
+            status="preview",
+            steps=[
+                {
+                    "index": index,
+                    "tool_id": tool_id,
+                    "name": tools[tool_id].name,
+                    "reason": _plan_reason(tool_id),
+                    "risk_level": tools[tool_id].risk_level,
+                    "required_role": tools[tool_id].required_role,
+                    "approval_required": tools[tool_id].approval_required,
+                    "access_mode": tools[tool_id].access_mode,
+                    "payload": {"ticket_id": entity_id},
+                }
+                for index, tool_id in enumerate(selected_ids)
+            ],
+            context=context,
+        )
 
     def create(
         self,
@@ -913,6 +1003,45 @@ def _state_object(value: object) -> dict[str, object]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+_PLAN_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("similar", "duplicate", "related ticket"), "find-similar-tickets"),
+    (("documentation", "runbook", "knowledge"), "knowledge-search"),
+    (("triage", "classify", "classification"), "ticket-triage"),
+    (("summary", "summarize", "overview"), "ticket-summary"),
+    (("resolution", "resolve", "fix", "solution"), "suggest-resolution"),
+    (("quality", "qa"), "ticket-quality"),
+    (("sentiment", "tone"), "ticket-sentiment"),
+    (("escalat", "sla", "urgent"), "ticket-escalation"),
+    (("dispatch", "assign", "technician"), "dispatch-suggestion"),
+)
+
+
+def _plan_tool_ids(instruction: str) -> list[str]:
+    lowered = instruction.casefold()
+    selected: list[str] = []
+    for terms, tool_id in _PLAN_RULES:
+        if any(term in lowered for term in terms) and tool_id not in selected:
+            selected.append(tool_id)
+    if not selected and any(term in lowered for term in ("help", "investigate", "ticket")):
+        selected = ["ticket-triage", "ticket-summary"]
+    return selected
+
+
+def _plan_reason(tool_id: str) -> str:
+    reasons = {
+        "find-similar-tickets": "Compare the ticket with prior local tickets for duplicate or related work.",
+        "knowledge-search": "Search the permitted tenant-scoped knowledge sources before proposing work.",
+        "ticket-triage": "Classify the request using the deterministic ticket triage rules.",
+        "ticket-summary": "Prepare a bounded operational summary from the ticket and permitted sources.",
+        "suggest-resolution": "Prepare a resolution suggestion without claiming that a change was executed.",
+        "ticket-quality": "Check required ticket fields and identify actionable quality gaps.",
+        "ticket-sentiment": "Assess customer-facing sentiment for escalation handling.",
+        "ticket-escalation": "Assess escalation urgency and SLA-related signals.",
+        "dispatch-suggestion": "Prepare a technician dispatch suggestion; any assignment remains approval-gated.",
+    }
+    return reasons.get(tool_id, "Use the selected approved tool for this ticket.")
 
 
 def _validate_event_filters(filters: dict[str, object]) -> None:

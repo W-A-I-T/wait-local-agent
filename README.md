@@ -56,7 +56,12 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   protection. Active runs can be cancelled through `/agent-runs/{id}/cancel`,
   which also revokes a pending smart-action approval. Failed and cancelled
   runs can be retried with a persisted three-retry cap; conversational and
-  unrestricted execution remain outside this slice. Definitions may also set
+  unrestricted execution remain outside this slice. `POST /agents/plan` and
+  the Agents dashboard provide a preview-only natural-language-to-tool plan.
+  Selection is deterministic, bounded to the existing catalog, tenant-scoped
+  to the ticket, and annotated with risk, access mode, and approval
+  requirements; it never executes or publishes the preview. Definitions may
+  also set
   a validated local execution window using `HH:MM` bounds and an IANA timezone;
   scheduled runs outside that window are skipped and audited. Run responses include a
   redacted operational final result for the last tool, including status,
