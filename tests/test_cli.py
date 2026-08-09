@@ -374,6 +374,43 @@ def test_m365_user_disable_draft_command_is_available(monkeypatch, tmp_path) -> 
     assert "password" not in shown.output.lower()
 
 
+def test_m365_password_reset_draft_command_keeps_vault_reference_only(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    result = CliRunner().invoke(
+        app,
+        [
+            "connectors",
+            "draft-m365-password-reset",
+            "adele.vance@example.test",
+            "WAIT_M365_TEMP_ADELE",
+            "--force-change-with-mfa",
+        ],
+    )
+    shown = CliRunner().invoke(app, ["approvals", "show", "1"])
+    assert result.exit_code == 0
+    assert "action_type=m365.users.password-reset" in result.output
+    assert "WAIT_M365_TEMP_ADELE" in shown.output
+    assert "Temporary-Password-123!" not in shown.output
+
+
+def test_m365_authentication_method_remove_command_is_available(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    result = CliRunner().invoke(
+        app,
+        [
+            "connectors",
+            "draft-m365-authentication-method-remove",
+            "adele.vance@example.test",
+            "--method-type",
+            "fido2",
+            "--method-id",
+            "method-1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "action_type=m365.users.authentication-methods.remove" in result.output
+
+
 def test_m365_group_membership_draft_command_is_available(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

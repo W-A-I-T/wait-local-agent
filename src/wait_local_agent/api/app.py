@@ -61,6 +61,7 @@ from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
+    draft_m365_authentication_method_delete,
     draft_m365_group_membership,
     draft_m365_license_change,
     draft_m365_mail_message_delete,
@@ -71,6 +72,7 @@ from wait_local_agent.connectors import (
     draft_m365_managed_device_remote_lock,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
+    draft_m365_password_reset,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
@@ -210,6 +212,21 @@ class M365UserDraftRequest(BaseModel):
 
 class M365UserDisableDraftRequest(BaseModel):
     user_identity: str = Field(min_length=1, max_length=320)
+    client_id: str | None = None
+
+
+class M365PasswordResetDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    temporary_vault_name: str = Field(min_length=14, max_length=128)
+    force_change_password_next_sign_in: bool = True
+    force_change_password_next_sign_in_with_mfa: bool = False
+    client_id: str | None = None
+
+
+class M365AuthenticationMethodDeleteDraftRequest(BaseModel):
+    user_identity: str = Field(min_length=1, max_length=320)
+    method_type: Literal["fido2", "microsoft_authenticator", "phone", "software_oath"]
+    method_id: str = Field(min_length=1, max_length=320)
     client_id: str | None = None
 
 
@@ -3142,6 +3159,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             approval = draft_m365_user_disable(
                 store,
                 user_identity=payload.user_identity,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/users/password-reset-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_password_reset_draft(
+        payload: M365PasswordResetDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_password_reset(
+                store,
+                user_identity=payload.user_identity,
+                temporary_vault_name=payload.temporary_vault_name,
+                force_change_password_next_sign_in=payload.force_change_password_next_sign_in,
+                force_change_password_next_sign_in_with_mfa=payload.force_change_password_next_sign_in_with_mfa,
+                client_id=payload.client_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/users/authentication-method-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_authentication_method_delete_draft(
+        payload: M365AuthenticationMethodDeleteDraftRequest,
+        request: Request,
+        _: AdminAccess,
+    ) -> dict[str, object]:
+        try:
+            approval = draft_m365_authentication_method_delete(
+                store,
+                user_identity=payload.user_identity,
+                method_type=payload.method_type,
+                method_id=payload.method_id,
                 client_id=payload.client_id,
             )
         except ValueError as exc:

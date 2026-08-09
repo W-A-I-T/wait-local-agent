@@ -59,6 +59,7 @@ from wait_local_agent.smart_actions import (
     HuduDocumentationSearchAction,
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
+    M365AuthenticationMethodDeleteAction,
     M365GroupMembershipAction,
     M365IdentityLookupAction,
     M365LicenseChangeAction,
@@ -68,6 +69,7 @@ from wait_local_agent.smart_actions import (
     M365MailMessageMoveAction,
     M365MailMessageReadStateAction,
     M365ManagedDeviceAction,
+    M365PasswordResetAction,
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -1027,7 +1029,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "hudu-documentation-search",
         "itglue-documentation-search",
         "knowledge-search",
-            "m365-group-membership",
+        "m365-authentication-method-remove",
+        "m365-group-membership",
         "m365-identity-lookup",
         "m365-license-change",
         "m365-live-context",
@@ -1039,6 +1042,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-managed-device-remote-lock",
         "m365-managed-device-retire",
         "m365-managed-device-sync",
+        "m365-password-reset",
         "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
@@ -2364,7 +2368,6 @@ def test_m365_user_onboarding_is_vault_backed_and_approval_gated(settings, tmp_p
     missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
     assert missing_run is not None and missing_run.status == "failed"
 
-
 def test_m365_user_onboarding_rejects_unready_and_failed_provider_paths(settings, tmp_path) -> None:
     class FakeM365Create:
         def __init__(
@@ -3389,3 +3392,336 @@ def test_recurring_service_review_action_is_read_only_and_tenant_scoped(settings
         },
     )
     assert cross_tenant.status == "failed"
+def test_m365_password_reset_and_authentication_method_removal_are_admin_approval_gated(
+    settings, tmp_path
+) -> None:
+    class FakeM365SecurityWrites:
+        def __init__(self) -> None:
+            self.password_calls: list[dict[str, object]] = []
+            self.method_calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="write ready")
+
+        def reset_user_password(self, **kwargs):
+            self.password_calls.append(kwargs)
+            return SimpleNamespace(status="succeeded", message="reset", status_code=204)
+
+        def delete_authentication_method(self, **kwargs):
+            self.method_calls.append(kwargs)
+            return SimpleNamespace(status="succeeded", message="removed", status_code=204)
+
+    active_settings = replace(settings, vault_path=tmp_path / "vault")
+    SecretVault.initialize(active_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    provider = FakeM365SecurityWrites()
+    service = SmartActionService(
+        Store(active_settings.data_path), active_settings, m365_client=provider
+    )
+
+    password = service.invoke(
+        "m365-password-reset",
+        {
+            "user_identity": "adele.vance@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert password.status == "pending_approval"
+    assert password.approval_id is not None
+    service.update_approval(
+        password.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.password_calls[0]["temporary_password"] == "Temporary-Password-123!"
+    password_run = service.store.get_smart_action_run(password.run_id or 0)
+    assert password_run is not None and "Temporary-Password-123!" not in password_run.output_json
+
+    method = service.invoke(
+        "m365-authentication-method-remove",
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert method.status == "pending_approval"
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            method.approval_id or 0,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        method.approval_id or 0,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.method_calls == [
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        }
+    ]
+
+
+def test_m365_security_actions_report_invalid_unready_missing_and_provider_failures(settings, tmp_path) -> None:
+    class FakeM365SecurityWrites:
+        def __init__(self, health_status: str = "ready", result_status: str = "failed") -> None:
+            self.health_status = health_status
+            self.result_status = result_status
+            self.calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="provider unavailable")
+
+        def reset_user_password(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(status=self.result_status, message="provider rejected", status_code=400)
+
+        def delete_authentication_method(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(status=self.result_status, message="provider rejected", status_code=400)
+
+    failing_settings = replace(settings, vault_path=tmp_path / "failing-vault")
+    SecretVault.initialize(failing_settings.vault_path).set(
+        "WAIT_M365_TEMP_USER", "Temporary-Password-123!"
+    )
+    failing_service = SmartActionService(
+        Store(failing_settings.data_path),
+        failing_settings,
+        m365_client=FakeM365SecurityWrites(result_status="failed"),
+    )
+    failed_provider = failing_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+        "requester",
+    )
+    failing_service.update_approval(
+        failed_provider.approval_id or 0,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    failed_run = failing_service.store.get_smart_action_run(failed_provider.run_id or 0)
+    assert failed_run is not None and failed_run.status == "failed"
+
+    invalid_service = SmartActionService(
+        Store(settings.data_path), settings, m365_client=FakeM365SecurityWrites()
+    )
+    invalid = invalid_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_password": "never-accepted"},
+        "requester",
+    )
+    assert invalid.status == "failed"
+    invalid_method = invalid_service.invoke(
+        "m365-authentication-method-remove",
+        {"user_identity": "user@example.test", "method_type": "all", "method_id": "method-1"},
+        "requester",
+    )
+    assert invalid_method.status == "failed"
+
+    unavailable = SmartActionService(
+        Store(settings.data_path), settings, m365_client=FakeM365SecurityWrites("blocked")
+    ).invoke(
+        "m365-authentication-method-remove",
+        {"user_identity": "user@example.test", "method_type": "fido2", "method_id": "method-1"},
+        "requester",
+    )
+    assert unavailable.status == "failed"
+
+    active_settings = replace(settings, vault_path=tmp_path / "missing-vault")
+    missing_service = SmartActionService(
+        Store(active_settings.data_path), active_settings, m365_client=FakeM365SecurityWrites()
+    )
+    missing = missing_service.invoke(
+        "m365-password-reset",
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+        "requester",
+    )
+    assert missing.approval_id is not None
+    missing_service.update_approval(
+        missing.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    missing_run = missing_service.store.get_smart_action_run(missing.run_id or 0)
+    assert missing_run is not None and missing_run.status == "failed"
+
+
+def test_m365_security_actions_cover_exception_and_non_success_paths(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+
+    invalid_context = _action_context(store, settings)
+    assert M365PasswordResetAction().run(
+        invalid_context,
+        {"user_identity": "user@example.test", "temporary_vault_name": "not-a-vault"},
+    ).status == "failed"
+    assert M365AuthenticationMethodDeleteAction().run(
+        invalid_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "all",
+            "method_id": "method-1",
+        },
+    ).status == "failed"
+
+    class HealthFailureProvider:
+        def write_health(self):
+            raise RuntimeError("health unavailable")
+
+        def reset_user_password(self, **kwargs):
+            raise AssertionError("password reset must not run after health failure")
+
+        def delete_authentication_method(self, **kwargs):
+            raise AssertionError("authentication removal must not run after health failure")
+
+    health_context = ActionContext(
+        store=store,
+        settings=settings,
+        actor="technician",
+        m365_client=HealthFailureProvider(),
+    )
+    assert M365PasswordResetAction().run(
+        health_context,
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+    ).status == "failed"
+    assert M365AuthenticationMethodDeleteAction().run(
+        health_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    ).status == "failed"
+
+    class UnreadyProvider:
+        def write_health(self):
+            return SimpleNamespace(status="blocked", message="writes disabled")
+
+        def reset_user_password(self, **kwargs):
+            raise AssertionError("password reset must not run when writes are blocked")
+
+        def delete_authentication_method(self, **kwargs):
+            raise AssertionError("authentication removal must not run when writes are blocked")
+
+    assert M365PasswordResetAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=UnreadyProvider(),
+        ),
+        {"user_identity": "user@example.test", "temporary_vault_name": "WAIT_M365_TEMP_USER"},
+    ).status == "failed"
+
+    active_settings = replace(settings, vault_path=tmp_path / "exception-vault")
+    SecretVault.initialize(active_settings.vault_path).set(
+        "WAIT_M365_TEMP_USER", "Temporary-Password-123!"
+    )
+
+    class PasswordFailureProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def reset_user_password(self, **kwargs):
+            raise RuntimeError("password reset failed")
+
+    password_context = ActionContext(
+        store=Store(active_settings.data_path),
+        settings=active_settings,
+        actor="technician",
+        m365_client=PasswordFailureProvider(),
+    )
+    password_result = M365PasswordResetAction().run(
+        password_context,
+        {
+            "user_identity": "user@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            "_approval_completed": True,
+        },
+    )
+    assert password_result.status == "failed"
+
+    missing_vault_result = M365PasswordResetAction().run(
+        ActionContext(
+            store=Store(replace(active_settings, vault_path=tmp_path / "missing-vault").data_path),
+            settings=replace(active_settings, vault_path=tmp_path / "missing-vault"),
+            actor="technician",
+            m365_client=PasswordFailureProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            "_approval_completed": True,
+        },
+    )
+    assert missing_vault_result.status == "failed"
+
+    assert M365AuthenticationMethodDeleteAction().run(
+        invalid_context,
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "unexpected": True,
+        },
+    ).status == "failed"
+
+    class AuthenticationFailureProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def delete_authentication_method(self, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", status_code=400)
+
+    authentication_result = M365AuthenticationMethodDeleteAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=AuthenticationFailureProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "_approval_completed": True,
+        },
+    )
+    assert authentication_result.status == "failed"
+    assert authentication_result.error_detail == "provider rejected"
+
+    class AuthenticationExceptionProvider:
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="ready")
+
+        def delete_authentication_method(self, **kwargs):
+            raise RuntimeError("authentication removal failed")
+
+    exception_result = M365AuthenticationMethodDeleteAction().run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            m365_client=AuthenticationExceptionProvider(),
+        ),
+        {
+            "user_identity": "user@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+            "_approval_completed": True,
+        },
+    )
+    assert exception_result.status == "failed"

@@ -99,6 +99,35 @@ class M365UserCreateProvider(Protocol):
         """Create one explicitly approved Microsoft 365 user."""
 
 
+class M365PasswordResetProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def reset_user_password(
+        self,
+        *,
+        user_identity: str,
+        temporary_password: str,
+        force_change_password_next_sign_in: bool,
+        force_change_password_next_sign_in_with_mfa: bool,
+    ) -> object:
+        """Reset one explicitly identified user's password."""
+
+
+class M365AuthenticationMethodDeleteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def delete_authentication_method(
+        self,
+        *,
+        user_identity: str,
+        method_type: str,
+        method_id: str,
+    ) -> object:
+        """Remove one explicitly identified authentication method."""
+
+
 class M365GroupMembershipWriteProvider(Protocol):
     def write_health(self) -> object:
         """Return the guarded Microsoft Graph write readiness result."""
@@ -297,6 +326,8 @@ class ActionContext:
         M365GraphReadProvider
         | M365LifecycleWriteProvider
         | M365UserCreateProvider
+        | M365PasswordResetProvider
+        | M365AuthenticationMethodDeleteProvider
         | M365GroupMembershipWriteProvider
         | M365LicenseWriteProvider
         | M365SessionRevocationWriteProvider
@@ -2011,6 +2042,274 @@ class M365GroupMembershipAction:
             output={**result_output, "approved": True},
             evidence=evidence,
         )
+
+
+class M365PasswordResetAction:
+    manifest = SmartActionManifest(
+        action_id="m365-password-reset",
+        title="Microsoft 365 password reset",
+        description=(
+            "Prepare an approval-gated password reset using a temporary credential "
+            "held in WAIT's local encrypted vault."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "temporary_vault_name"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "temporary_vault_name": {"type": "string", "minLength": 14, "maxLength": 128},
+                "force_change_password_next_sign_in": {"type": "boolean"},
+                "force_change_password_next_sign_in_with_mfa": {"type": "boolean"},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "temporary_credential_source": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=5,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {
+            "user_identity",
+            "temporary_vault_name",
+            "force_change_password_next_sign_in",
+            "force_change_password_next_sign_in_with_mfa",
+            "_approval_completed",
+        }:
+            return _failed("M365 password reset payload contains unsupported fields")
+        reset_payload = {
+            "connector": "m365",
+            "action_type": "users.password-reset",
+            "force_change_next_sign_in": payload.get(
+                "force_change_password_next_sign_in", True
+            ),
+            "force_change_next_sign_in_with_mfa": payload.get(
+                "force_change_password_next_sign_in_with_mfa", False
+            ),
+            "temporary_vault_name": payload.get("temporary_vault_name"),
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_password_reset_payload
+
+            validate_m365_password_reset_payload(reset_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(reset_payload["user_identity"]).strip()
+        vault_name = str(reset_payload["temporary_vault_name"]).strip()
+        force_change = bool(reset_payload["force_change_next_sign_in"])
+        force_change_mfa = bool(reset_payload["force_change_next_sign_in_with_mfa"])
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365PasswordResetProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "password_reset",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "force_change_password_next_sign_in": force_change,
+            "force_change_password_next_sign_in_with_mfa": force_change_mfa,
+            "temporary_credential_source": "local_encrypted_vault",
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "password_reset",
+                "client_id": context.client_id,
+                "scope": {"user_identity": user_identity},
+                "credential_source": "local_encrypted_vault",
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(status="failed", output=output, evidence=evidence, error_detail=connector_message)
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            from wait_local_agent.vault import SecretVault, SecretVaultError
+
+            temporary_password = SecretVault(context.settings.vault_path).get(vault_name)
+        except (SecretVaultError, ValueError):
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="M365 temporary credential could not be read from the local vault",
+            )
+        if not temporary_password:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="M365 temporary credential is missing from the local vault",
+            )
+        try:
+            result = provider.reset_user_password(
+                user_identity=user_identity,
+                temporary_password=temporary_password,
+                force_change_password_next_sign_in=force_change,
+                force_change_password_next_sign_in_with_mfa=force_change_mfa,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph password reset failed",
+            )
+        result_output = {**output, "status_code": getattr(result, "status_code", None)}
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph password reset failed"))
+                ),
+            )
+        return ActionResult(status="success", output={**result_output, "approved": True}, evidence=evidence)
+
+
+class M365AuthenticationMethodDeleteAction:
+    manifest = SmartActionManifest(
+        action_id="m365-authentication-method-remove",
+        title="Microsoft 365 authentication method removal",
+        description=(
+            "Prepare an approval-gated removal of one explicitly identified FIDO2, "
+            "Microsoft Authenticator, phone, or software OATH method."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "method_type", "method_id"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "method_type": {
+                    "type": "string",
+                    "enum": ["fido2", "microsoft_authenticator", "phone", "software_oath"],
+                },
+                "method_id": {"type": "string", "minLength": 1, "maxLength": 320},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "method_type": "string",
+            "method_id": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=4,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"user_identity", "method_type", "method_id", "_approval_completed"}:
+            return _failed("M365 authentication method payload contains unsupported fields")
+        remove_payload = {
+            "connector": "m365",
+            "action_type": "users.authentication-methods.remove",
+            "method_id": payload.get("method_id"),
+            "method_type": payload.get("method_type"),
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_authentication_method_delete_payload
+
+            validate_m365_authentication_method_delete_payload(remove_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(remove_payload["user_identity"]).strip()
+        method_type = str(remove_payload["method_type"])
+        method_id = str(remove_payload["method_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365AuthenticationMethodDeleteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "authentication_method_remove",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "method_type": method_type,
+            "method_id": method_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "authentication_method_remove",
+                "client_id": context.client_id,
+                "scope": {"user_identity": user_identity, "method_id": method_id},
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(status="failed", output=output, evidence=evidence, error_detail=connector_message)
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.delete_authentication_method(
+                user_identity=user_identity,
+                method_type=method_type,
+                method_id=method_id,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph authentication method removal failed",
+            )
+        result_output = {**output, "status_code": getattr(result, "status_code", None)}
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph authentication method removal failed"))
+                ),
+            )
+        return ActionResult(status="success", output={**result_output, "approved": True}, evidence=evidence)
 
 
 class M365UserOnboardingAction:
@@ -4768,6 +5067,8 @@ def _build_default_registry() -> SmartActionRegistry:
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
         M365SessionRevocationAction(),
+        M365PasswordResetAction(),
+        M365AuthenticationMethodDeleteAction(),
         M365MailboxSettingsAction(),
         M365MailMessageMoveAction(),
         M365MailMessageReadStateAction(),
@@ -4851,6 +5152,8 @@ class SmartActionService:
             M365GraphReadProvider
             | M365LifecycleWriteProvider
             | M365UserCreateProvider
+            | M365PasswordResetProvider
+            | M365AuthenticationMethodDeleteProvider
             | M365GroupMembershipWriteProvider
             | M365LicenseWriteProvider
             | M365SessionRevocationWriteProvider

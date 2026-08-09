@@ -257,6 +257,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   It also exposes admin-only `m365-session-revocation` for one immutable user
   ID; active sessions are revoked only after approval and provider failures
   remain explicit failures.
+  It also exposes admin-only `m365-password-reset` using a local-vault temporary
+  credential reference and `m365-authentication-method-remove` for one explicitly
+  identified FIDO2, Microsoft Authenticator, phone, or software OATH method.
+  Both are approval-gated; the password is never persisted or returned, and MFA
+  removal has no reset-all mode.
   The catalog also exposes admin-only `m365-mailbox-settings` with only the
   existing allowlisted mailbox fields; updates remain approval-gated and
   provider failures are explicit.

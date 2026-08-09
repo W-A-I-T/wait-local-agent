@@ -57,6 +57,7 @@ from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
+    draft_m365_authentication_method_delete,
     draft_m365_group_membership,
     draft_m365_license_change,
     draft_m365_mail_message_delete,
@@ -67,6 +68,7 @@ from wait_local_agent.connectors import (
     draft_m365_managed_device_remote_lock,
     draft_m365_managed_device_retirement,
     draft_m365_managed_device_sync,
+    draft_m365_password_reset,
     draft_m365_session_revocation,
     draft_m365_user_creation,
     draft_m365_user_disable,
@@ -998,6 +1000,60 @@ def draft_m365_group_membership_command(
             group_id=group_id,
             user_id=user_id,
             operation=operation,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-password-reset")
+def draft_m365_password_reset_command(
+    user_identity: str,
+    temporary_vault_name: str,
+    force_change_password_next_sign_in: Annotated[
+        bool, typer.Option("--force-change/--no-force-change")
+    ] = True,
+    force_change_password_next_sign_in_with_mfa: Annotated[
+        bool, typer.Option("--force-change-with-mfa/--no-force-change-with-mfa")
+    ] = False,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_password_reset(
+            _store(),
+            user_identity=user_identity,
+            temporary_vault_name=temporary_vault_name,
+            force_change_password_next_sign_in=force_change_password_next_sign_in,
+            force_change_password_next_sign_in_with_mfa=force_change_password_next_sign_in_with_mfa,
+            client_id=client_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"approval_request_id={approval.id} subject_id={approval.subject_id} "
+        f"action_type={approval.action_type} status={approval.status}"
+    )
+
+
+@connectors_app.command("draft-m365-authentication-method-remove")
+def draft_m365_authentication_method_delete_command(
+    user_identity: str,
+    method_type: Annotated[
+        str, typer.Option("--method-type", help="fido2, microsoft_authenticator, phone, or software_oath")
+    ],
+    method_id: Annotated[str, typer.Option("--method-id")],
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        approval = draft_m365_authentication_method_delete(
+            _store(),
+            user_identity=user_identity,
+            method_type=method_type,
+            method_id=method_id,
             client_id=client_id,
         )
     except ValueError as exc:
