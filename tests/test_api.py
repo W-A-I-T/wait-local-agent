@@ -88,6 +88,7 @@ def test_health_reports_safe_defaults(settings) -> None:
     assert response.json()["write_actions_enabled"] is False
     assert response.json()["http_probing_enabled"] is False
     assert response.json()["cloud_fallback_enabled"] is False
+    assert response.json()["offline_mode"] is False
     assert response.json()["demo_mode"] is True
     assert response.json()["api_auth_required"] is False
 
@@ -140,6 +141,8 @@ def test_provider_settings_and_tickets_list(settings) -> None:
     assert providers.json()["vector_backend"] == "sqlite"
     assert providers.json()["llm_inference_enabled"] is False
     assert providers.json()["local_model_timeout_seconds"] == 20.0
+    assert providers.json()["offline_mode"] is False
+    assert providers.json()["remote_model_enabled"] is False
     assert tickets.status_code == 200
     assert len(tickets.json()) == 2
 
@@ -162,7 +165,31 @@ def test_provider_settings_expose_remote_status_without_secret(settings) -> None
     payload = response.json()
     assert payload["remote_model_provider"] == "anthropic"
     assert payload["remote_model_configured"] is True
+    assert payload["remote_model_enabled"] is True
     assert "remote_model_api_key" not in payload
+    assert "do-not-return" not in response.text
+
+
+def test_provider_settings_report_remote_fallback_disabled_in_offline_mode(settings) -> None:
+    offline_settings = replace(
+        settings,
+        allow_llm_inference=True,
+        allow_cloud_fallback=True,
+        offline_mode=True,
+        remote_model_provider="anthropic",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(offline_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["offline_mode"] is True
+    assert payload["remote_model_configured"] is True
+    assert payload["remote_model_enabled"] is False
     assert "do-not-return" not in response.text
 
 

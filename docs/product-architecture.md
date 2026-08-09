@@ -303,6 +303,7 @@ signature = hmac.new(vault_key[:32], bundle_hash.encode(), "sha256").hexdigest()
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | No live connector writes |
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Deterministic provider only |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | No cloud model calls |
+| `WAIT_OFFLINE_MODE` | `false` | Denies remote model calls even when cloud fallback is configured |
 | `WAIT_ALLOW_OCR` | `false` | No OCR processing |
 
 All must be explicitly set `true` by the operator. Even then, writes require an approved ApprovalRequest. No action is ever automatic.
@@ -331,7 +332,7 @@ All must be explicitly set `true` by the operator. Even then, writes require an 
 
 1. **Deterministic** (default): keyword classification + template substitution + FTS5 citation — always works, always reproducible
 2. **Local OpenAI-compatible** (opt-in: `WAIT_ALLOW_LLM_INFERENCE=true`): Ollama/vLLM at `WAIT_OPENAI_BASE_URL`
-3. **Remote fallback** (disabled by default: `WAIT_ALLOW_CLOUD_FALLBACK=true` plus a complete `WAIT_REMOTE_MODEL_*` configuration): the local provider is attempted first, then the configured Anthropic Messages or documented OpenAI-compatible adapter receives bounded redacted context after local unavailability
+3. **Remote fallback** (disabled by default: `WAIT_ALLOW_CLOUD_FALLBACK=true`, `WAIT_OFFLINE_MODE=false`, plus a complete `WAIT_REMOTE_MODEL_*` configuration): the local provider is attempted first, then the configured Anthropic Messages or documented OpenAI-compatible adapter receives bounded redacted context after local unavailability
 
 ### Cited-Answers-Only Policy
 

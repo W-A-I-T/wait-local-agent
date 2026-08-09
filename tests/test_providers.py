@@ -142,6 +142,25 @@ def test_remote_provider_requires_cloud_opt_in(tmp_path: Path) -> None:
     assert isinstance(provider_from_settings(local_only), OpenAICompatibleLocalProvider)
 
 
+def test_offline_mode_denies_explicit_remote_fallback(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings = Settings(
+        **{
+            **settings.__dict__,
+            "allow_cloud_fallback": True,
+            "offline_mode": True,
+            "remote_model_provider": "deepseek",
+            "remote_model_base_url": "https://provider.example/v1",
+            "remote_model_name": "documented-model",
+            "remote_model_api_key": "remote-secret",
+        }
+    )
+
+    provider = provider_from_settings(settings)
+
+    assert isinstance(provider, OpenAICompatibleLocalProvider)
+
+
 @pytest.mark.parametrize("provider_name", ["deepseek", "kimi", "co" + "dex", "openai-compatible"])
 def test_openai_compatible_remote_provider_labels_use_explicit_endpoint(provider_name: str) -> None:
     requests: list[httpx.Request] = []

@@ -20,6 +20,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_REMOTE_MODEL_NAME", raising=False)
     monkeypatch.delenv("WAIT_REMOTE_MODEL_API_KEY", raising=False)
     monkeypatch.delenv("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("WAIT_OFFLINE_MODE", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TOKEN_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TICKET_WRITE_ENDPOINT", raising=False)
@@ -74,6 +75,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.remote_model_name == ""
     assert settings.remote_model_api_key == ""
     assert settings.remote_model_timeout_seconds == 20.0
+    assert settings.offline_mode is False
     assert settings.halopsa_base_url == ""
     assert settings.halopsa_token_url == ""
     assert settings.halopsa_ticket_write_endpoint == "Ticket"
@@ -130,12 +132,14 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "false")
     monkeypatch.setenv("WAIT_ALLOW_LLM_INFERENCE", "true")
+    monkeypatch.setenv("WAIT_OFFLINE_MODE", "true")
     monkeypatch.setenv("WAIT_DEMO_MODE", "false")
 
     settings = load_settings()
 
     assert settings.allow_write_actions is False
     assert settings.allow_llm_inference is True
+    assert settings.offline_mode is True
     assert settings.demo_mode is False
 
 

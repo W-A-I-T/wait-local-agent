@@ -162,6 +162,7 @@ class Settings:
     remote_model_name: str = ""
     remote_model_api_key: str = ""
     remote_model_timeout_seconds: float = 20.0
+    offline_mode: bool = False
 
 
 def load_settings() -> Settings:
@@ -189,6 +190,7 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         remote_model_timeout_seconds=_float_env("WAIT_REMOTE_MODEL_TIMEOUT_SECONDS", 20.0),
+        offline_mode=_bool_env("WAIT_OFFLINE_MODE"),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),

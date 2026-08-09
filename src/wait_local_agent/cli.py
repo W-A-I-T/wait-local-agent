@@ -243,6 +243,7 @@ def doctor() -> None:
     typer.echo(f"write_actions_enabled={settings.allow_write_actions}")
     typer.echo(f"http_probing_enabled={settings.allow_http_probing}")
     typer.echo(f"cloud_fallback_enabled={settings.allow_cloud_fallback}")
+    typer.echo(f"offline_mode={settings.offline_mode}")
     typer.echo(f"api_auth_required={auth_required(settings)}")
     typer.echo(f"demo_mode={settings.demo_mode}")
     typer.echo(f"secrets_backend={settings.secrets_backend}")
