@@ -19,46 +19,44 @@ a future interface is not counted as shipped here.
 | --- | --- | --- |
 | Agents vs deterministic workflows | A bounded agent definition can run a short, persisted sequence of existing smart actions for a ticket manually, from a persisted schedule, or from an authenticated deterministic event delivery. It has an explicit tool allowlist, an 8-step maximum, a 120-second execution bound, tenant scope, selectable ticket/client/local-knowledge context, approval pause/resume, active-run cancellation, bounded retries, event filters, idempotency, run-once-per-entity protection, and same-tenant event dependencies. Conversational and unrestricted autonomous agents are not shipped. | Add richer context policies and conversational surfaces. |
 | Smart actions: triage, summary, suggest-resolution, find-similar-tickets, dispatch | Deterministic ticket summary/classification, cited local knowledge retrieval, explicit read-only knowledge search, ticket-quality, sentiment, escalation, similarity, dispatch suggestion, and read-only collector previews are shipped. The `/tools` catalog projects their schemas, risk, role, approval, and read/write metadata; the agent executor reuses the existing smart-action and collector services. | Extend the catalog only when a real existing capability is wrapped; keep deterministic logic ahead of model inference. |
-| Triggered + scheduled runs | Persisted workflow/agent schedules use UTC APScheduler cron, interval, and one-time triggers; authenticated event-triggered agents use deterministic filters, idempotency, run-once-per-entity protection, and delivery audit history. | Add reschedule controls, execution windows, and broader event sources. |
-| Backfills | Persisted sequential agent backfills with preflight ticket checks, progress counts, pause/cancel state, and failed-item reruns are shipped under `/agent-backfills`. | Add dry-run estimates, richer progress UI, and connector-aware batch plans. |
+| Triggered + scheduled runs | Persisted workflow/agent schedules use APScheduler cron, interval, and one-time triggers with validated IANA timezones; authenticated event-triggered agents use deterministic filters, idempotency, run-once-per-entity protection, bounded retry policy, execution windows, and delivery audit history. | Add broader event sources and richer trigger policy composition. |
+| Backfills | Persisted agent backfills provide preflight ticket checks, bounded sequential or parallel execution, dry-run estimates, progress counts, pause/cancel state, and failed-item reruns under `/agent-backfills`. | Add connector-aware batch plans and richer operator progress views. |
 | Deterministic + AI filters | Deterministic workflow gates are shipped; an optional local OpenAI-compatible provider can assist with classification, summarization, and drafting. There is no general visual combined-filter builder. | Add inspectable filter composition and local-model guardrails. |
-| Technician-in-the-loop approvals | Approval requests, previews, edits, approver identity capture, and approval-gated HaloPSA execution are shipped. | Extend the same explicit approval contract to new actions and connectors. |
+| Technician-in-the-loop approvals | Approval requests, previews, edits, approver identity capture, bounded expiry, approval-gated HaloPSA and ConnectWise PSA writes, RMM jobs, communication delivery, and Microsoft 365 actions are shipped through the shared catalog/runtime. | Extend the same explicit approval contract to new actions and connectors. |
 | Per-tool permissions | Role-based access plus connector-specific read/write and connection-check gates are shipped; this is not yet a per-tool None/read/write matrix. | Add capability-level permissions without weakening the local safety defaults. |
-| Execution step logs + audit | Workflow status, connector execution history, immutable audit events, JSON/CSV export, and grouped agent tool-step traces are shipped. | Add richer trigger context and failure/retry detail as new execution modes land. |
-| Version history/rollback | Agent definitions now persist immutable redacted revisions, expose field-level diffs, link runs to the exact definition version, and restore a prior revision as a new version through authenticated API routes. | Add workflow-template revisions. |
-| Analytics: time saved, success rate, execution volume | Reports and audit/event exports are shipped; a product analytics surface for time saved, success rate, and execution volume is not shipped. | Add local analytics using explainable, operator-controlled measurements. |
+| Execution step logs + audit | Workflow status, connector execution history, immutable audit events, JSON/CSV export, grouped agent tool-step traces, redacted retry lineage, cancellation, artifacts, and provider/model usage metadata are shipped. | Add richer trigger context and per-step retry comparison. |
+| Version history/rollback | Agent definitions and gallery templates persist immutable redacted revisions, expose diffs, link runs to the exact definition/template version, and restore prior revisions as new versions through authenticated API, CLI, and React routes. | Add richer step-level run comparison. |
+| Analytics: time saved, success rate, execution volume | React `/analytics` and `/analytics/summary` provide tenant/client/date-filtered execution volume, outcomes, approval rate, ticket resolution evidence, declared time-saved estimates, and operator-priced model usage/cost estimates; credentials and hidden reasoning are excluded. | Add provider-backed lifecycle analytics and measured savings only when explicit evidence exists. |
 | Templates gallery | A fixed public workflow-template catalog and tenant-scoped provenance-bearing gallery are shipped; gallery runs resolve to reviewed core implementations. | Add import/export, review lifecycle, and optional signed pack distribution. |
-| PSA connectors | HaloPSA read paths and approval-gated writes are shipped. ConnectWise, Autotask, Syncro, and ServiceNow are not shipped. | Prioritize additional PSA connectors by operator demand and safe write coverage. |
-| RMM connectors | No RMM connector is shipped in the public core. Local endpoint collectors are a separate, read-only inventory capability. | Add read-only RMM inventory first, followed by explicitly approved actions. |
-| Documentation connectors | Hudu read-only documentation context is shipped. IT Glue and Confluence are not shipped. | Add IT Glue and Confluence through reviewed connector interfaces. |
-| M365/Entra actions | Code-level groundwork for a read-only M365 inventory adapter exists in the repository, but it is not exposed through any CLI command or API route; no customer-facing M365/Entra action surface is shipped. | Add read-only identity/context operations before any approved mutation path. |
-| Teams technician chat + white-label end-user bot | Not shipped. | Optional cloud-connected Teams mode after Azure bot registration, tenant isolation, and explicit data-flow controls are defined. |
+| PSA connectors | HaloPSA reads and approval-gated writes; ConnectWise PSA reads plus bounded status/assignment/field writes; Syncro, ServiceNow, and Autotask read routes are shipped. Broader provider write parity remains intentionally bounded. | Add one provider write surface at a time behind documented contracts and mocks. |
+| RMM connectors | Local collectors plus tenant-scoped NinjaOne, Datto RMM, and read-only N-central device/alert/task metadata are shipped; NinjaOne and Datto have bounded approval-gated actions. | Add ConnectWise RMM, ScreenConnect, Kaseya, and richer N-central remediation only with provider contracts and tests. |
+| Documentation connectors | Local knowledge, Hudu, IT Glue detail, Confluence page/body search, and SharePoint metadata/text-document retrieval are shipped as bounded read paths. | Add list-wide content search and binary/office extraction only with safe provider fixtures. |
+| M365/Entra actions | Tenant-scoped Graph reads and approval-gated bounded user, group, license, session, mailbox, message, and Intune managed-device actions are shipped through API/CLI/tool catalog paths. | Add broader resource reads and mutations with strict IDs, approval, and provider tests. |
+| Technician chat + white-label end-user support | Local technician chat and optional separately tokenized end-user ticket/status/message/escalation support are shipped. Native Teams/Slack conversation adapters, live PSA sync, outbound receipts, and branding are not shipped. | Add external channel adapters and branding only as explicit opt-ins reusing the same runtime. |
 | Phone agent | Not shipped. | Deferred because it requires a telephony SaaS dependency and conflicts with the local-first default unless an operator explicitly enables a cloud-connected mode. |
-| Credit metering | Not applicable to the local runtime. Local usage accounting is a better fit than hosted credit depletion. | Add transparent local usage accounting alongside analytics; do not introduce hosted-credit assumptions into the open core. |
+| Credit metering | Hosted credit depletion is intentionally not part of the local runtime. Provider-reported tokens and optional operator-supplied input/output rates are recorded as redacted metadata and aggregated as clearly labeled estimates. | Add richer provider-native usage/cost APIs only when explicitly enabled; do not introduce hosted-credit assumptions into the open core. |
 | Local collectors + cloud inventory | Read-only local collector modules are exposed through a registry, preview, confirmation, persisted runs, and evidence export. AWS, Azure, GCP, and M365 adapter classes exist as code-level groundwork in the repository, but are not exposed through any CLI command or API route. | Finish full collector-registry exposure, credential preflight, and cloud-inventory adapter UX. |
 | Launch Passport evidence export | Collector bundle, hardening, and restore-evidence report types are in the public core. Founder routes define an optional-pack contract for preflight, bundle export, upload preview, explicit upload, and status; the private implementation is not present by default. | Complete the Launch Passport upload/polling integration while retaining diff preview and explicit confirmation. |
 
 ## This cycle
 
-The following items are in progress or being prepared for the next compatible
-open-core increment. “In progress” does not mean that the complete end-user
-feature is already shipped:
+The following items remain open or are being prepared for the next compatible
+open-core increment. Current facts are also tracked in
+[`docs/status.md`](docs/status.md) and the
+[`docs/neoagent-parity-matrix.md`](docs/neoagent-parity-matrix.md):
 
-- Full collector registry exposure, including module metadata, validation,
-  preview, confirmed runs, and evidence export.
-- Cloud inventory adapters with credential preflight and clear opt-in data
-  flow.
-- Hardening and restore evidence runs that remain inspectable and exportable.
-- A host-collection Docker mode for controlled local collection.
-- Smart-action framework foundations built on deterministic workflows and
-  explicit local-model boundaries.
-- Execution observability and analytics for run volume, outcomes, timing, and
-  explainable local measurements.
-- A template gallery with reviewed, provenance-bearing templates.
-- Guided forms and non-developer workflow setup, followed later by broader
-  natural-language composition.
-- Launch Passport upload and polling integration around preview, confirmation,
-  and status visibility.
+- Broader PSA, RMM, documentation, and Microsoft 365 coverage behind governed
+  shared contracts and mocked provider tests.
+- General conditional approval policy composition without weakening built-in
+  tool requirements or tenant boundaries.
+- Connector-aware backfill plans and richer provider-backed lifecycle/QBR
+  evidence; estimates must remain labeled and evidence-derived.
+- Native notification/channel adapters, delivery receipts, and optional
+  white-label end-user branding.
+- Richer model-provider lifecycle and cost APIs while preserving deterministic
+  local operation and explicit offline denial.
+- Browser validation in an environment with an installed Chromium binary; the
+  current CI and UI test evidence remains separate from that environment gap.
 
 ## Deferred with rationale
 

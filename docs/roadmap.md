@@ -4,6 +4,21 @@ WAIT Local Agent is the local-first MSP automation appliance: private ticket
 intelligence, cited local knowledge, HaloPSA-first workflow drafts, technician
 approval, and auditable local execution.
 
+## Current verified state
+
+The phase list below is retained as historical planning context; it is not a
+current capability inventory. For current behavior, use
+[`docs/status.md`](status.md) and the clean-room
+[`docs/neoagent-parity-matrix.md`](neoagent-parity-matrix.md). The public core
+now includes bounded agent planning/execution, tenant-scoped approvals and
+retries, HaloPSA and ConnectWise governed writes, bounded NinjaOne/Datto/RMM
+and Microsoft 365 actions, local technician and end-user support surfaces,
+client-scoped QBR/automation reports, provider usage/cost estimates, and
+admin-triggered documented model-list health checks. Remaining gaps include
+broader provider write parity, native channel adapters, live end-user PSA
+synchronization, white-label branding, provider-backed lifecycle evidence, and
+general conditional approval composition.
+
 ## Phase 0: Product Packaging
 
 - Docker Compose appliance with API, dashboard, SQLite volume, health checks, and
@@ -114,6 +129,10 @@ approval, and auditable local execution.
 ## Product Layers
 
 See `docs/commercial-model.md` for the full product tier breakdown:
+
+The following tier table is a historical packaging proposal, not an active
+entitlement contract. The public repository's currently exercisable boundaries
+are the API/CLI/UI paths documented in `docs/status.md` and the parity matrix.
 
 | Tier | Price | Contents |
 | --- | --- | --- |
