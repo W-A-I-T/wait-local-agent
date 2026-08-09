@@ -183,6 +183,40 @@ def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(s
             period_end="2026-03-31",
             follow_up_after_days=0,
         )
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        build_recurring_service_review_report(
+            store,
+            client_id="acme",
+            period_start="2026-01-01",
+            period_end="2026-03-31",
+            follow_up_after_days=True,
+        )
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set created_at = ?, updated_at = ? where id = ?",
+            ("", "", "TCK-1001"),
+        )
+    _, empty_timestamp_metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+    )
+    assert empty_timestamp_metadata["follow_up_candidate_count"] == 0
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set created_at = ?, updated_at = ? where id = ?",
+            ("not-a-date", "not-a-date", "TCK-1001"),
+        )
+    _, invalid_timestamp_metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+    )
+    assert invalid_timestamp_metadata["follow_up_candidate_count"] == 0
 
 
 def test_markdown_render_contains_headers_and_recommendations() -> None:
