@@ -132,7 +132,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   are a distinct strict-ID add/remove action using the same approval path. A
   separate approval-gated message-delete action accepts only explicit mailbox,
   source-folder, and message IDs, sends no body, and does not expose permanent
-  deletion.
+  deletion. All three bounded message mutations are also available through the
+  shared smart-action catalog, which reuses these same validation and approval
+  boundaries.
 - The RMM boundary normalizes tenant-scoped `endpoint-agent` collector assets
   and exposes a shared contract for device lookup, alerts, script metadata,
   script preview, execution lookup, and approval-aware execution. The local

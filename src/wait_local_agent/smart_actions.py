@@ -158,6 +158,35 @@ class M365MailMessageMoveWriteProvider(Protocol):
         """Move one explicitly identified message to one destination folder."""
 
 
+class M365MailMessageReadStateWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def update_mail_message_read_state(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+        is_read: bool,
+    ) -> object:
+        """Update the read state for one explicitly identified message."""
+
+
+class M365MailMessageDeleteWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def delete_mail_message(
+        self,
+        *,
+        user_identity: str,
+        source_folder_id: str,
+        message_id: str,
+    ) -> object:
+        """Delete one explicitly identified message."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -231,6 +260,8 @@ class ActionContext:
         | M365SessionRevocationWriteProvider
         | M365MailboxSettingsWriteProvider
         | M365MailMessageMoveWriteProvider
+        | M365MailMessageReadStateWriteProvider
+        | M365MailMessageDeleteWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -992,6 +1023,297 @@ class M365MailMessageMoveAction:
                 evidence=evidence,
                 error_detail=redact_text(
                     str(getattr(result, "message", "Microsoft Graph mail message move failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
+        )
+
+
+class M365MailMessageReadStateAction:
+    manifest = SmartActionManifest(
+        action_id="m365-mail-message-read-state",
+        title="Microsoft 365 message read state",
+        description=(
+            "Prepare an approval-gated Microsoft Graph message read-state update "
+            "using explicit user, source-folder, and message identifiers."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "source_folder_id", "message_id", "is_read"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "source_folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "message_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "is_read": {"type": "boolean"},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "source_folder_id": "string",
+            "message_id": "string",
+            "is_read": "boolean",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=1,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "user_identity",
+            "source_folder_id",
+            "message_id",
+            "is_read",
+            "_approval_completed",
+        }
+        if set(payload) - allowed:
+            return _failed("M365 mail message read-state payload contains unsupported fields")
+        message_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "mail-messages.read-state",
+            "is_read": payload.get("is_read"),
+            "message_id": payload.get("message_id"),
+            "source_folder_id": payload.get("source_folder_id"),
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_mail_message_read_state_payload
+
+            validate_m365_mail_message_read_state_payload(message_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(message_payload["user_identity"]).strip()
+        source_folder_id = str(message_payload["source_folder_id"]).strip()
+        message_id = str(message_payload["message_id"]).strip()
+        is_read = bool(message_payload["is_read"])
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365MailMessageReadStateWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "mail_message_read_state",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "source_folder_id": source_folder_id,
+            "message_id": message_id,
+            "is_read": is_read,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "mail_message_read_state",
+                "client_id": context.client_id,
+                "scope": {
+                    "user_identity": user_identity,
+                    "source_folder_id": source_folder_id,
+                    "message_id": message_id,
+                    "is_read": is_read,
+                },
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.update_mail_message_read_state(
+                user_identity=user_identity,
+                source_folder_id=source_folder_id,
+                message_id=message_id,
+                is_read=is_read,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph mail message read-state update failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+            "is_read": getattr(result, "is_read", is_read),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(
+                        getattr(
+                            result,
+                            "message",
+                            "Microsoft Graph mail message read-state update failed",
+                        )
+                    )
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
+        )
+
+
+class M365MailMessageDeleteAction:
+    manifest = SmartActionManifest(
+        action_id="m365-mail-message-delete",
+        title="Microsoft 365 message delete",
+        description=(
+            "Prepare an approval-gated Microsoft Graph message deletion using "
+            "explicit user, source-folder, and message identifiers."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "source_folder_id", "message_id"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "source_folder_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "message_id": {"type": "string", "minLength": 1, "maxLength": 320},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "user_identity": "string",
+            "source_folder_id": "string",
+            "message_id": "string",
+            "status_code": "number",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=1,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "user_identity",
+            "source_folder_id",
+            "message_id",
+            "_approval_completed",
+        }
+        if set(payload) - allowed:
+            return _failed("M365 mail message delete payload contains unsupported fields")
+        message_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": "mail-messages.delete",
+            "message_id": payload.get("message_id"),
+            "source_folder_id": payload.get("source_folder_id"),
+            "user_identity": payload.get("user_identity"),
+        }
+        try:
+            from wait_local_agent.connectors import validate_m365_mail_message_delete_payload
+
+            validate_m365_mail_message_delete_payload(message_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        user_identity = str(message_payload["user_identity"]).strip()
+        source_folder_id = str(message_payload["source_folder_id"]).strip()
+        message_id = str(message_payload["message_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365MailMessageDeleteWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "mail_message_delete",
+            "connector_status": connector_status,
+            "user_identity": user_identity,
+            "source_folder_id": source_folder_id,
+            "message_id": message_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "mail_message_delete",
+                "client_id": context.client_id,
+                "scope": {
+                    "user_identity": user_identity,
+                    "source_folder_id": source_folder_id,
+                    "message_id": message_id,
+                },
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.delete_mail_message(
+                user_identity=user_identity,
+                source_folder_id=source_folder_id,
+                message_id=message_id,
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="Microsoft Graph mail message deletion failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", "Microsoft Graph mail message deletion failed"))
                 ),
             )
         return ActionResult(
@@ -3330,6 +3652,8 @@ def _build_default_registry() -> SmartActionRegistry:
         M365SessionRevocationAction(),
         M365MailboxSettingsAction(),
         M365MailMessageMoveAction(),
+        M365MailMessageReadStateAction(),
+        M365MailMessageDeleteAction(),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -3380,6 +3704,8 @@ class SmartActionService:
             | M365SessionRevocationWriteProvider
             | M365MailboxSettingsWriteProvider
             | M365MailMessageMoveWriteProvider
+            | M365MailMessageReadStateWriteProvider
+            | M365MailMessageDeleteWriteProvider
             | None
         ) = None,
     ) -> None:
