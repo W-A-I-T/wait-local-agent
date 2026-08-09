@@ -106,6 +106,12 @@ def test_plan_preview_selects_existing_tools_without_executing(settings) -> None
         "suggest-resolution",
     ]
     assert result.context["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert result.definition["enabled"] is False
+    assert result.definition["steps"] == [
+        {"tool_id": "knowledge-search", "payload": {}},
+        {"tool_id": "ticket-triage", "payload": {}},
+        {"tool_id": "suggest-resolution", "payload": {}},
+    ]
     assert service.store.list_agent_runs(client_id="acme") == []
     assert all("approval_required" in step for step in result.steps)
 
@@ -1695,6 +1701,8 @@ def test_agent_plan_api_is_preview_only_and_tenant_scoped(settings) -> None:
         "ticket-triage",
     ]
     assert payload["context"]["ticket"]["id"] == "TCK-1001"
+    assert payload["definition"]["enabled"] is False
+    assert payload["definition"]["client_id"] == "acme"
     assert Store(scoped.data_path).list_agent_runs(client_id="acme") == []
 
     cross_tenant = client.post(

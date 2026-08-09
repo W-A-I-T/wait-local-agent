@@ -567,6 +567,7 @@ export type AgentPlan = {
     payload: Record<string, unknown>;
   }>;
   context: Record<string, unknown>;
+  definition: Record<string, unknown>;
   blocked_reason: string;
 };
 

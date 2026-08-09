@@ -60,8 +60,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   the Agents dashboard provide a preview-only natural-language-to-tool plan.
   Selection is deterministic, bounded to the existing catalog, tenant-scoped
   to the ticket, and annotated with risk, access mode, and approval
-  requirements; it never executes or publishes the preview. Definitions may
-  also set
+  requirements; it never executes the preview. A reviewed preview can be
+  converted into a disabled agent draft for the existing revision and approval
+  workflow. Definitions may also set
   a validated local execution window using `HH:MM` bounds and an IANA timezone;
   scheduled runs outside that window are skipped and audited. Run responses include a
   redacted operational final result for the last tool, including status,
