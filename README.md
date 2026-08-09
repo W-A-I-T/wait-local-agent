@@ -284,6 +284,7 @@ WAIT_VAULT_PATH=.wait-local-agent/vault
 WAIT_ALLOW_WRITE_ACTIONS=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
+WAIT_OFFLINE_MODE=false
 WAIT_REMOTE_MODEL_PROVIDER=
 WAIT_REMOTE_MODEL_BASE_URL=
 WAIT_REMOTE_MODEL_NAME=
@@ -310,7 +311,8 @@ OpenAI-compatible endpoint. Remote fallback requires both
 `openai-compatible`; for the OpenAI-compatible labels, the operator must
 provide a documented compatible endpoint and model name. WAIT does not ship
 provider credentials, guess endpoints, or send remote requests in local-only
-mode. Remote prompts are bounded and redact common credentials, email
+mode. Set `WAIT_OFFLINE_MODE=true` to deny remote model calls even when the
+remote fallback configuration is complete. Remote prompts are bounded and redact common credentials, email
 addresses, phone numbers, and local paths.
 
 ## Secrets Vault and Encrypted Backups

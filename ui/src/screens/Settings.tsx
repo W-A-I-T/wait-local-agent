@@ -194,10 +194,14 @@ export function Settings() {
           <div>
             <dt>Remote fallback</dt>
             <dd>
-              {providers?.cloud_fallback_enabled && providers.remote_model_configured
+              {providers?.remote_model_enabled
                 ? `${providers.remote_model_provider || "configured"} enabled`
                 : "disabled or not configured"}
             </dd>
+          </div>
+          <div>
+            <dt>Offline mode</dt>
+            <dd>{providers?.offline_mode ? "enabled — remote model calls denied" : "disabled"}</dd>
           </div>
           <div>
             <dt>Secret manager</dt>

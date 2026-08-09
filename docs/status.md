@@ -16,7 +16,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   explicit remote fallback adapters for Anthropic Messages and documented
   OpenAI-compatible DeepSeek, Kimi, or documented coding-model-compatible endpoints. Remote
   calls remain disabled unless cloud fallback and a complete remote provider
-  configuration are enabled.
+  configuration are enabled; `WAIT_OFFLINE_MODE=true` denies them even when
+  that configuration is present.
 - Preview-only bounded planning through `POST /agents/plan` and the React
   Agents screen selects existing approved tools from a natural-language
   instruction, loads tenant-scoped ticket/client/knowledge context, and

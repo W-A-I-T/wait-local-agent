@@ -10,6 +10,7 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live connector mutations |
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
+| `WAIT_OFFLINE_MODE` | `false` | Deny all remote model calls, even if fallback is configured |
 | `WAIT_REMOTE_MODEL_*` | empty | No remote provider is configured; a complete provider, base URL, model, and secret plus both model opt-ins are required |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 | `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
@@ -21,6 +22,11 @@ enabled, the provider adapter sends only bounded, redacted ticket and local
 knowledge context; it does not send tenant IDs, local paths, credentials, or
 hidden reasoning. Provider/model labels are retained as safe operational
 metadata, while API keys remain in the configured env/vault secret boundary.
+
+`WAIT_OFFLINE_MODE=true` is an explicit local-only override for remote model
+fallback. It takes precedence over the cloud fallback flag and complete remote
+provider configuration; provider selection returns the local provider and no
+remote request is attempted.
 
 NinjaOne RMM calls use the same outbound HTTP gate. A tenant/client request is
 accepted only when its ID resolves through the operator-controlled

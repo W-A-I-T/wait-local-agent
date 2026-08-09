@@ -564,6 +564,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "write_actions_enabled": active_settings.allow_write_actions,
             "http_probing_enabled": active_settings.allow_http_probing,
             "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
+            "offline_mode": active_settings.offline_mode,
             "llm_inference_enabled": active_settings.allow_llm_inference,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
@@ -638,9 +639,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_model_timeout_seconds": active_settings.local_model_timeout_seconds,
             "llm_inference_enabled": active_settings.allow_llm_inference,
             "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
+            "offline_mode": active_settings.offline_mode,
             "remote_model_provider": active_settings.remote_model_provider,
             "remote_model_configured": bool(
                 active_settings.remote_model_provider
+                and active_settings.remote_model_base_url
+                and active_settings.remote_model_name
+                and active_settings.remote_model_api_key
+            ),
+            "remote_model_enabled": bool(
+                active_settings.allow_llm_inference
+                and active_settings.allow_cloud_fallback
+                and not active_settings.offline_mode
+                and active_settings.remote_model_provider
                 and active_settings.remote_model_base_url
                 and active_settings.remote_model_name
                 and active_settings.remote_model_api_key

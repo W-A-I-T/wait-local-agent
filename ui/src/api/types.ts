@@ -578,6 +578,8 @@ export type ProviderSettings = {
   local_model_timeout_seconds: number;
   llm_inference_enabled: boolean;
   cloud_fallback_enabled?: boolean;
+  offline_mode?: boolean;
+  remote_model_enabled?: boolean;
   remote_model_provider?: string;
   remote_model_configured?: boolean;
   vector_backend: string;

@@ -442,6 +442,7 @@ def _remote_provider_from_settings(settings: Settings) -> RemoteModelProvider | 
     if not (
         settings.allow_llm_inference
         and settings.allow_cloud_fallback
+        and not settings.offline_mode
         and provider in SUPPORTED_REMOTE_MODEL_PROVIDERS
         and settings.remote_model_base_url.strip()
         and settings.remote_model_name.strip()
