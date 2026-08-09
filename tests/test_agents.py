@@ -793,6 +793,27 @@ def test_agent_approval_policy_bounds_are_enforced(settings) -> None:
             approval_required_tools=["dispatch-suggestion"],
         )
 
+    for invalid_policy, message in (
+        (["ticket-triage"] * 9, "contain 0-8"),
+        (cast(list[str], [123]), "non-empty strings"),
+        (["ticket-triage", "ticket-triage"], "duplicates"),
+    ):
+        with pytest.raises(AgentDefinitionError, match=message):
+            service.create(
+                name="Invalid additional approval policy",
+                description="",
+                enabled=True,
+                trigger="manual",
+                entity_type="ticket",
+                filters={},
+                enabled_tools=["ticket-triage"],
+                steps=[{"tool_id": "ticket-triage", "payload": {}}],
+                max_steps=1,
+                execution_timeout_seconds=30,
+                client_id="acme",
+                approval_required_tools=invalid_policy,
+            )
+
 
 def test_agent_run_cancellation_revokes_pending_approval(settings) -> None:
     service = _service(settings)
