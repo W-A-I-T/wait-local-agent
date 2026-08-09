@@ -269,8 +269,11 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The adapter uses the documented IT Glue JSON:API organization relationship
-routes for documents and folders. API keys are sent only in the request header;
-no write operation is exposed ([IT Glue API documentation](https://api.itglue.com/developer/)).
+routes for documents and folders. The `itglue-documentation-search` smart action
+lists the explicitly scoped organization (using the documented all-folder
+filter), then searches bounded document names and text/step sections; missing
+content is read from the documented document-detail response. API keys are sent
+only in the request header; no write operation is exposed ([IT Glue API documentation](https://api.itglue.com/developer/)).
 
 ### Validate and read
 
@@ -282,6 +285,11 @@ wait-local-agent connectors itglue-documents <organization-id>
 wait-local-agent connectors itglue-document <document-id>
 wait-local-agent connectors itglue-folders <organization-id>
 ```
+
+The bounded search is available through the Agents tool catalog as
+`itglue-documentation-search` with `query`, `organization_id`, optional
+`folder_id`, and a result `limit` from 1 to 50. It is read-only and remains
+blocked unless `WAIT_ALLOW_HTTP_PROBING=true`.
 
 The API mirrors these commands under `/connectors/itglue/health`,
 `/connectors/itglue/organizations`, and the organization-scoped document and
