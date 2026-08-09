@@ -905,6 +905,16 @@ def test_agent_conditional_approval_matches_authenticated_role_and_survives_resu
     )
     assert wrong_role.status == "completed"
     assert agents_module._actor_role_from_state({"actor_role": "owner"}) is None  # noqa: SLF001
+    assert (
+        agents_module._approval_policy_for_ticket(  # noqa: SLF001
+            definition,
+            "ticket-triage",
+            "NOPE",
+            service.store,
+            actor_role=Role.ADMIN,
+        )
+        is None
+    )
 
 
 def test_agent_approval_policy_shortens_tool_deadline(settings) -> None:
