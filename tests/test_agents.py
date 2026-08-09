@@ -1978,7 +1978,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
             "execution_window_timezone": "America/Vancouver",
             "context_sources": ["ticket", "client"],
             "client_id": "acme",
-            "approval_rules": [{"tool_id": "ticket-triage", "when": {"priority": ["high"]}}],
+            "approval_rules": [{"tool_id": "ticket-triage", "when": {"priority": ["medium"]}}],
         },
     )
     assert created.status_code == 200
@@ -1988,7 +1988,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert created.json()["execution_window_timezone"] == "America/Vancouver"
     assert created.json()["context_sources"] == ["ticket", "client"]
     assert created.json()["approval_rules"] == [
-        {"tool_id": "ticket-triage", "when": {"priority": ["high"]}}
+        {"tool_id": "ticket-triage", "when": {"priority": ["medium"]}}
     ]
     tools_response = client.get("/tools")
     assert tools_response.status_code == 200
