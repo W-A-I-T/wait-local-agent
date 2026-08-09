@@ -22,6 +22,7 @@ from wait_local_agent.autotask import (
     _safe_segment,
     _write_payload,
 )
+from wait_local_agent.connectors import validate_autotask_action_fields
 from wait_local_agent.models import AutotaskWriteRequest
 
 
@@ -389,3 +390,58 @@ def test_autotask_write_and_read_failure_edges_are_explicit(settings) -> None:
     assert _normalize_company({}) is None
     normalized = _normalize_ticket({"id": 1, "status": {}})
     assert normalized is not None and normalized["status"] == ""
+
+
+def test_autotask_time_entry_payload_and_connector_validation_edges() -> None:
+    with pytest.raises(AutotaskReadError):
+        _write_payload("assign_technician", 123, {})
+    invalid_payloads = [
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1},
+        {"resource_id": 0, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "not-a-date", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 0, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1, "summary_notes": ""},
+        {
+            "resource_id": 1, "role_id": 2, "date_worked": "2026-08-09",
+            "hours_worked": 1, "summary_notes": "x", "billing_code_id": 0,
+        },
+        {
+            "resource_id": 1, "role_id": 2, "date_worked": "2026-08-09",
+            "hours_worked": 1, "summary_notes": "x", "is_non_billable": "no",
+        },
+    ]
+    for fields in invalid_payloads:
+        with pytest.raises(AutotaskReadError):
+            _write_payload("add_time_entry", 123, fields)
+
+    valid_fields = {
+        "resource_id": 1,
+        "role_id": 2,
+        "date_worked": "2026-08-09",
+        "hours_worked": 1.5,
+        "summary_notes": "x",
+        "billing_code_id": 3,
+        "is_non_billable": False,
+        "show_on_invoice": True,
+    }
+    validate_autotask_action_fields("add_time_entry", valid_fields)
+    connector_invalid = [
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1},
+        {"resource_id": 0, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-99-99", "hours_worked": 1, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 0, "summary_notes": "x"},
+        {"resource_id": 1, "role_id": 2, "date_worked": "2026-08-09", "hours_worked": 1, "summary_notes": ""},
+        {
+            "resource_id": 1, "role_id": 2, "date_worked": "2026-08-09",
+            "hours_worked": 1, "summary_notes": "x", "billing_code_id": 0,
+        },
+        {
+            "resource_id": 1, "role_id": 2, "date_worked": "2026-08-09",
+            "hours_worked": 1, "summary_notes": "x", "show_on_invoice": "yes",
+        },
+    ]
+    for fields in connector_invalid:
+        with pytest.raises(ValueError):
+            validate_autotask_action_fields("add_time_entry", fields)
