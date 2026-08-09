@@ -2661,17 +2661,14 @@ class HaloPSATicketWriteAction:
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
         if set(payload) - {"ticket_id", "fields", "_approval_completed"}:
             return _failed(f"HaloPSA {self.action_type} payload contains unsupported fields")
-        ticket_id = payload.get("ticket_id")
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         fields = payload.get("fields")
         if (
-            not isinstance(ticket_id, str)
-            or not ticket_id.strip()
-            or len(ticket_id) > 320
-            or any(ord(character) < 32 or character.isspace() for character in ticket_id)
+            ticket is None
             or not isinstance(fields, dict)
         ):
-            return _failed("HaloPSA ticket write payload is invalid")
-        ticket_id = ticket_id.strip()
+            return _failed("HaloPSA ticket write payload is invalid or outside tenant scope")
+        ticket_id = ticket.id
         fields = dict(fields)
         try:
             from wait_local_agent.connectors import validate_halopsa_action_fields
@@ -2795,17 +2792,14 @@ class ConnectWiseTicketWriteAction:
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
         if set(payload) - {"ticket_id", "fields", "_approval_completed"}:
             return _failed(f"ConnectWise {self.action_type} payload contains unsupported fields")
-        ticket_id = payload.get("ticket_id")
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
         fields = payload.get("fields")
         if (
-            not isinstance(ticket_id, str)
-            or not ticket_id.strip()
-            or len(ticket_id) > 320
-            or any(ord(character) < 32 or character.isspace() for character in ticket_id)
+            ticket is None
             or not isinstance(fields, dict)
         ):
-            return _failed("ConnectWise ticket write payload is invalid")
-        ticket_id = ticket_id.strip()
+            return _failed("ConnectWise ticket write payload is invalid or outside tenant scope")
+        ticket_id = ticket.id
         fields = dict(fields)
         try:
             from wait_local_agent.connectors import validate_connectwise_action_fields

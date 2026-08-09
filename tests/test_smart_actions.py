@@ -1039,6 +1039,9 @@ def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) ->
             )
 
     store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
     provider = FakeConnectWiseWrites()
     context = _action_context(store, settings, client_id="acme")
     specs = [
@@ -1054,18 +1057,26 @@ def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) ->
         )
         preview = action.run(
             replace(context, connectwise_client=provider),
-            {"ticket_id": "CW-1001", "fields": fields},
+            {"ticket_id": "TCK-1001", "fields": fields},
         )
         assert preview.status == "success", preview.error_detail
         assert action.run(
             replace(context, connectwise_client=provider),
-            {"ticket_id": "CW-1001", "fields": fields, "_approval_completed": True},
+            {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
         ).status == "success"
     assert provider.calls[0] == ConnectWiseWriteRequest(
-        ticket_id="CW-1001",
+        ticket_id="TCK-1001",
         action_type="assign_technician",
         fields={"owner_id": "owner-1"},
     )
+    assert ConnectWiseTicketWriteAction(
+        action_id="test-connectwise",
+        title="test",
+        action_type="update_status",
+    ).run(
+        replace(context, client_id="other", connectwise_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}},
+    ).status == "failed"
     action = ConnectWiseTicketWriteAction(
         action_id="test-connectwise",
         title="test",
@@ -1073,19 +1084,19 @@ def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) ->
     )
     assert action.run(
         replace(context, connectwise_client=provider),
-        {"ticket_id": "CW-1001", "fields": {}},
+        {"ticket_id": "TCK-1001", "fields": {}},
     ).status == "failed"
     assert action.run(
         replace(context, connectwise_client=FakeConnectWiseWrites(health_status="blocked")),
-        {"ticket_id": "CW-1001", "fields": {"status_id": "status-1"}},
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}},
     ).status == "failed"
     assert action.run(
         replace(context, connectwise_client=FakeConnectWiseWrites(result_status="failed")),
-        {"ticket_id": "CW-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
     ).status == "failed"
     assert action.run(
         replace(context, connectwise_client=FakeConnectWiseWrites(result_error=True)),
-        {"ticket_id": "CW-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
+        {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
     ).status == "failed"
 
 
@@ -1141,6 +1152,9 @@ def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> Non
         ),
     ]
     store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
     provider = FakeHaloWrites()
     service = SmartActionService(store, settings, halopsa_client=provider)
     context = _action_context(store, settings, client_id="acme")
@@ -1180,6 +1194,10 @@ def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> Non
     assert first_action.run(
         replace(context, halopsa_client=provider),
         {"ticket_id": "TCK-1001", "fields": {}},
+    ).status == "failed"
+    assert first_action.run(
+        replace(context, client_id="other", halopsa_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"note": "hello"}},
     ).status == "failed"
     assert first_action.run(
         replace(context, halopsa_client=provider),
