@@ -293,13 +293,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
 | IT Glue connector | Read-only core surface built |
-| ConnectWise PSA connector | Read-only core surface built |
+| ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
 | Autotask connector | Read-only core surface built |
 | ServiceNow connector | Read-only core surface built |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
-| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; broader resources and mutations future |
+| M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
 | QBR / ROI reporting | Future paid pack |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
