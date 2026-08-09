@@ -196,6 +196,12 @@ def test_itglue_content_search_uses_all_folder_listing_and_bounded_detail_sectio
 def test_itglue_content_search_rejects_unbounded_or_failed_reads(settings) -> None:
     configured = _configured(settings)
     assert ItGlueClient(configured).search_documents("1", "", limit=1).result.status == "failed"
+    assert ItGlueClient(configured).search_documents("bad/id", "vpn", limit=1).result.status == "failed"
+    assert ItGlueClient(configured).search_documents("1", "x" * 201, limit=1).result.status == "failed"
+    assert (
+        ItGlueClient(configured).search_documents("1", "vpn", folder_id="bad/id", limit=1).result.status
+        == "failed"
+    )
     assert ItGlueClient(configured).search_documents("1", "vpn", limit=0).result.status == "failed"
 
     def failed_detail(request: httpx.Request) -> httpx.Response:
@@ -208,6 +214,29 @@ def test_itglue_content_search_rejects_unbounded_or_failed_reads(settings) -> No
     )
     assert response.result.status == "failed"
     assert "could not retrieve document" in response.result.message
+
+    def malformed_detail(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/relationships/documents"):
+            return httpx.Response(200, json={"data": [{"id": "9", "attributes": {"name": "VPN"}}]})
+        return httpx.Response(200, json={"data": {"attributes": {"name": "VPN"}}})
+
+    malformed = ItGlueClient(configured, transport=httpx.MockTransport(malformed_detail)).search_documents(
+        "1", "vpn", limit=1
+    )
+    assert malformed.result.status == "failed"
+    assert "malformed document" in malformed.result.message
+
+    def foreign_document(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "9", "attributes": {"name": "VPN", "organization-id": "2"}}]},
+        )
+
+    scoped = ItGlueClient(configured, transport=httpx.MockTransport(foreign_document)).search_documents(
+        "1", "vpn", limit=1
+    )
+    assert scoped.result.status == "ready"
+    assert scoped.items == []
 
 
 def test_itglue_sanitizes_failures_and_bounds_paths(settings) -> None:
