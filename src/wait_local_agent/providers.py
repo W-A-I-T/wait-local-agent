@@ -1072,6 +1072,7 @@ def provider_metadata(settings: Settings, provider: ModelProvider | None = None)
     call_metadata = _provider_call_metadata(provider)
     if call_metadata is not None:
         metadata.update(call_metadata)
+        _add_configured_cost(metadata, settings)
     return metadata
 
 
@@ -1098,6 +1099,29 @@ def _provider_error_metadata() -> dict[str, object]:
         "cost_status": "not_configured",
         "cost_usd": None,
     }
+
+
+def _add_configured_cost(metadata: dict[str, object], settings: Settings) -> None:
+    """Calculate cost only from operator-supplied rates and reported tokens.
+
+    WAIT never guesses provider pricing. A partial usage response remains
+    explicitly incomplete instead of being turned into a misleading estimate.
+    """
+    input_rate = settings.model_input_cost_usd_per_million_tokens
+    output_rate = settings.model_output_cost_usd_per_million_tokens
+    input_tokens = metadata.get("input_tokens")
+    output_tokens = metadata.get("output_tokens")
+    if input_rate is None or output_rate is None:
+        metadata["cost_status"] = "not_configured"
+        metadata["cost_usd"] = None
+        return
+    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+        metadata["cost_status"] = "incomplete_usage"
+        metadata["cost_usd"] = None
+        return
+    cost = ((input_tokens * input_rate) + (output_tokens * output_rate)) / 1_000_000
+    metadata["cost_status"] = "configured_estimate"
+    metadata["cost_usd"] = round(cost, 8)
 
 
 def _response_usage_metadata(

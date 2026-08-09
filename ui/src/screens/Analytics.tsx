@@ -36,6 +36,15 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
     minutes: 0,
     estimate: true,
     derivation: "No successful smart-action executions in the selected range."
+  },
+  model_usage: {
+    runs_with_usage: 0,
+    runs_with_cost: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    estimated_cost_usd: 0,
+    estimate: true,
+    derivation: "No model usage recorded in the selected range."
   }
 };
 
@@ -105,7 +114,9 @@ export function Analytics() {
           <Metric icon={<TicketCheck size={18} aria-hidden="true" />} label="Recorded resolution" value={String(historicalResolution.resolved_with_history)} detail={`${averageResolution} · ${historicalResolution.with_duration} timed`} />
           <Metric icon={<ShieldCheck size={18} aria-hidden="true" />} label="Approval rate" value={approvalRate} detail={`${summary.approval_rate.requested} requested · ${summary.approval_rate.pending} pending`} />
           <Metric icon={<Clock3 size={18} aria-hidden="true" />} label="Estimated time saved" value={`${summary.estimated_minutes_saved.minutes} min`} detail="Estimate, not measured time" />
+          <Metric icon={<Activity size={18} aria-hidden="true" />} label="Model cost estimate" value={formatUsd(summary.model_usage.estimated_cost_usd)} detail={`${summary.model_usage.runs_with_cost} priced runs · operator rates`} />
         </div>
+        <p className="screen-note">Model cost is an estimate from provider-reported tokens and rates configured by the operator. Missing pricing or usage stays unpriced.</p>
       </section>
 
       <section className="panel analytics-filter-panel">
@@ -198,4 +209,8 @@ function Metric({ icon, label, value, detail }: { icon: ReactNode; label: string
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 8 }).format(value);
 }

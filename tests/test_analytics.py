@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
+    MODEL_COST_DERIVATION,
     build_analytics_summary,
 )
 from wait_local_agent.smart_actions import SmartActionService
@@ -101,6 +102,47 @@ def test_analytics_summary_scopes_to_client(settings) -> None:
     assert acme["success_rate"] == {"total": 2, "succeeded": 1, "rate": 0.5}
     assert beta["success_rate"] == {"total": 1, "succeeded": 0, "rate": 0.0}
     assert beta["failures_by_status"] == [{"status": "pending_approval", "count": 1}]
+
+
+def test_analytics_summary_aggregates_configured_model_cost_by_client(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_execution_run(
+        "smart_action", 1, "tech", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "api", client_id="acme",
+        metadata={
+            "usage_status": "reported",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cost_status": "configured_estimate",
+            "cost_usd": 0.0125,
+        },
+    )
+    store.create_execution_run(
+        "smart_action", 2, "tech", "completed", "2026-08-01T09:00:00+00:00",
+        "2026-08-01T09:01:00+00:00", "api", client_id="beta",
+        metadata={
+            "usage_status": "reported",
+            "input_tokens": 9000,
+            "output_tokens": 1000,
+            "cost_status": "not_configured",
+            "cost_usd": None,
+        },
+    )
+
+    summary = cast(dict[str, Any], build_analytics_summary(store, {}, client_id="acme"))
+
+    assert summary["model_usage"] == {
+        "runs_with_usage": 1,
+        "runs_with_cost": 1,
+        "input_tokens": 1000,
+        "output_tokens": 500,
+        "estimated_cost_usd": 0.0125,
+        "estimate": True,
+        "derivation": MODEL_COST_DERIVATION,
+    }
+    beta = cast(dict[str, Any], build_analytics_summary(store, {}, client_id="beta"))
+    assert beta["model_usage"]["runs_with_cost"] == 0
+    assert beta["model_usage"]["input_tokens"] == 9000
 
 
 def test_analytics_summary_empty_range_is_zeroed(settings) -> None:

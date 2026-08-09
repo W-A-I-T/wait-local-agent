@@ -25,7 +25,13 @@ describe("Analytics", () => {
         touched: 3,
         resolved: 2,
         resolution_rate: 2 / 3,
-        derivation: "test"
+        derivation: "test",
+        historical_resolution: {
+          resolved_with_history: 0,
+          with_duration: 0,
+          average_minutes: null,
+          derivation: "test"
+        }
       },
       activity_by_workflow: [{
         run_kind: "workflow",
@@ -34,7 +40,16 @@ describe("Analytics", () => {
         succeeded: 3,
         status_counts: [{ status: "completed", count: 3 }, { status: "failed", count: 1 }]
       }],
-      estimated_minutes_saved: { minutes: 12, estimate: true, derivation: "test" }
+      estimated_minutes_saved: { minutes: 12, estimate: true, derivation: "test" },
+      model_usage: {
+        runs_with_usage: 2,
+        runs_with_cost: 1,
+        input_tokens: 100,
+        output_tokens: 50,
+        estimated_cost_usd: 0.0125,
+        estimate: true,
+        derivation: "test"
+      }
     }), { status: 200, headers: { "Content-Type": "application/json" } }))));
   });
 

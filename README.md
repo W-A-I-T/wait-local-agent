@@ -314,6 +314,9 @@ WAIT_REMOTE_MODEL_BASE_URL=
 WAIT_REMOTE_MODEL_NAME=
 WAIT_REMOTE_MODEL_API_KEY=
 WAIT_REMOTE_MODEL_TIMEOUT_SECONDS=20
+# Optional operator-supplied rates; no provider pricing is inferred.
+WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=
+WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=
 WAIT_VECTOR_BACKEND=sqlite
 WAIT_CONNECTOR_TIMEOUT_SECONDS=20
 WAIT_SCHEDULER_ENABLED=true
@@ -337,7 +340,10 @@ provide a documented compatible endpoint and model name. WAIT does not ship
 provider credentials, guess endpoints, or send remote requests in local-only
 mode. Set `WAIT_OFFLINE_MODE=true` to deny remote model calls even when the
 remote fallback configuration is complete. Remote prompts are bounded and redact common credentials, email
-addresses, phone numbers, and local paths.
+addresses, phone numbers, and local paths. If both optional cost-rate settings
+are supplied, execution metadata and `/analytics` report a configured cost
+estimate from provider-reported input/output tokens; missing rates or usage
+remain explicitly unpriced.
 
 ## Secrets Vault and Encrypted Backups
 

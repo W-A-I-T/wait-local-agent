@@ -14,7 +14,7 @@ visible here instead of being presented as a completed UI feature.
 | `/connectors` | Connector readiness and Hudu readout | `/connectors/*` | Browser navigation and connector status render |
 | `/tickets` | Ticket lookup, summary, approval draft | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
-| `/analytics` | Filtered operational metrics | `/analytics/summary` | Existing UI tests; browser route render |
+| `/analytics` | Filtered operational metrics and operator-priced model usage estimates | `/analytics/summary` | Existing UI tests; browser route render |
 | `/agents` | Definition builder, tool catalog, additional approval-rule editor, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Browser created an agent through the real API and ran it against `TCK-1001`; run completed; browser rerun still required for the approval-rule control |
 | `/backfills` | Preview, queue, pause, cancel, rerun | `/agent-backfills/*` | Existing UI tests; browser route render |
 | `/executions` | Run history, detail, artifact download | `/executions/*` | Existing UI tests; browser route render |

@@ -17,6 +17,7 @@ import os
 import stat
 import threading
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
@@ -58,6 +59,11 @@ TICKET_LIFECYCLE_DERIVATION = (
     "Historical resolution metrics use explicit local ticket status transitions "
     "recorded during ticket ingestion or local end-user actions. Existing tickets "
     "start with a snapshot and do not receive an inferred historical transition."
+)
+
+MODEL_COST_DERIVATION = (
+    "Configured estimate from redacted provider usage metadata and operator-supplied "
+    "input/output rates; WAIT never infers provider pricing or measured savings."
 )
 
 
@@ -514,6 +520,13 @@ def build_analytics_summary(
             }
         )
     activity_by_workflow.sort(key=lambda item: (str(item["run_kind"]), str(item["workflow_id"])))
+    model_usage = _model_usage_summary(
+        store.list_execution_runs(
+            client_id,
+            started_from=started_from,
+            started_to=started_to,
+        )
+    )
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": client_id,
@@ -550,6 +563,45 @@ def build_analytics_summary(
             "estimate": True,
             "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
         },
+        "model_usage": model_usage,
+    }
+
+
+def _model_usage_summary(runs: Sequence[object]) -> dict[str, object]:
+    input_tokens = 0
+    output_tokens = 0
+    runs_with_usage = 0
+    runs_with_cost = 0
+    estimated_cost_usd = 0.0
+    for run in runs:
+        try:
+            metadata = json.loads(str(getattr(run, "metadata_json", "{}")))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("usage_status") == "reported":
+            runs_with_usage += 1
+            input_value = metadata.get("input_tokens")
+            output_value = metadata.get("output_tokens")
+            if isinstance(input_value, int) and input_value >= 0:
+                input_tokens += input_value
+            if isinstance(output_value, int) and output_value >= 0:
+                output_tokens += output_value
+        if metadata.get("cost_status") != "configured_estimate":
+            continue
+        cost = metadata.get("cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            runs_with_cost += 1
+            estimated_cost_usd += float(cost)
+    return {
+        "runs_with_usage": runs_with_usage,
+        "runs_with_cost": runs_with_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": round(estimated_cost_usd, 8),
+        "estimate": True,
+        "derivation": MODEL_COST_DERIVATION,
     }
 
 
