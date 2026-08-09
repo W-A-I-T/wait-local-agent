@@ -215,6 +215,79 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
             "properties": {"stale_after_minutes": "positive integer"},
         },
     ),
+    WorkflowTemplate(
+        id="m365-user-onboarding-review",
+        name="Microsoft 365 User Onboarding Review",
+        trigger="ticket.created",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 user creation request from a ticket; "
+            "the existing admin approval and local-vault credential path remains required."
+        ),
+        action_type="m365.user_onboarding",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_principal_name", "display_name", "mail_nickname", "approval_required"),
+        tool_id="m365-user-onboarding",
+        payload_schema={
+            "type": "object",
+            "required": [
+                "user_principal_name",
+                "display_name",
+                "mail_nickname",
+                "temporary_vault_name",
+            ],
+            "properties": {
+                "user_principal_name": "string",
+                "display_name": "string",
+                "mail_nickname": "string",
+                "temporary_vault_name": "local vault key name",
+                "account_enabled": "boolean",
+                "force_change_password_next_sign_in": "boolean",  # nosec B105 - schema descriptor
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-user-offboarding-review",
+        name="Microsoft 365 User Offboarding Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 disable-and-revoke request; "
+            "the existing admin approval and partial-failure reporting remain required."
+        ),
+        action_type="m365.user_offboarding",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "user_id", "approval_required"),
+        tool_id="m365-user-offboarding",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "user_id"],
+            "properties": {"user_identity": "string", "user_id": "immutable directory ID"},
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-license-request-review",
+        name="Microsoft 365 License Request Review",
+        trigger="ticket.created",
+        description=(
+            "Prepare an approval-gated Microsoft 365 license add or removal request "
+            "using immutable user and SKU IDs."
+        ),
+        action_type="m365.license_request",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("operation", "user_id", "sku_ids", "approval_required"),
+        tool_id="m365-license-change",
+        payload_schema={
+            "type": "object",
+            "required": ["user_id", "sku_ids", "operation"],
+            "properties": {
+                "user_id": "immutable directory ID",
+                "sku_ids": "array of immutable license SKU IDs",
+                "operation": "add or remove",
+            },
+        },
+    ),
 )
 
 

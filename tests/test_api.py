@@ -809,9 +809,21 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 15
+    assert len(templates.json()) == 18
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert any(item["tool_id"] == "dispatch-suggestion" for item in templates.json())
+    assert {
+        item["id"] for item in templates.json() if item["id"].startswith("m365-")
+    } == {
+        "m365-user-onboarding-review",
+        "m365-user-offboarding-review",
+        "m365-license-request-review",
+    }
+    assert all(
+        item["approval_required"]
+        for item in templates.json()
+        if item["id"].startswith("m365-")
+    )
     sla_template = next(item for item in templates.json() if item["id"] == "ticket-sla-risk-review")
     assert sla_template["payload_schema"]["required"] == ["thresholds_minutes"]
     assert run.status_code == 200

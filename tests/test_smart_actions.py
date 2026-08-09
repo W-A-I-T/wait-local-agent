@@ -1710,7 +1710,12 @@ def test_m365_license_change_is_approval_gated_and_sku_scoped(settings) -> None:
         "operation": "add",
     }
 
-    pending = service.invoke("m365-license-change", payload, "requester", client_id="acme")
+    pending = service.invoke(
+        "m365-license-change",
+        {**payload, "ticket_id": "TCK-1001"},
+        "requester",
+        client_id="acme",
+    )
     assert pending.status == "pending_approval"
     assert pending.approval_id is not None
     assert provider.calls == []
@@ -2396,6 +2401,7 @@ def test_m365_user_onboarding_rejects_unready_and_failed_provider_paths(settings
         "display_name": "Edge User",
         "mail_nickname": "edge.user",
         "temporary_vault_name": "WAIT_M365_TEMP_EDGE",
+        "ticket_id": "TCK-1001",
         "_approval_completed": True,
     }
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -18,7 +19,11 @@ from wait_local_agent.scheduler import (
     validate_schedule,
 )
 from wait_local_agent.security import require_bearer_authorization
-from wait_local_agent.smart_actions import ActionResult, SmartActionService
+from wait_local_agent.smart_actions import (
+    ActionResult,
+    M365LicenseWriteProvider,
+    SmartActionService,
+)
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import run_workflow_template
 
@@ -576,6 +581,70 @@ def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
     assert len(action_runs) == 1
     assert action_runs[0].action_id == "ticket-quality"
     assert action_runs[0].status == "success"
+
+
+@pytest.mark.parametrize(
+    ("template_id", "payload", "action_id"),
+    [
+        (
+            "m365-user-onboarding-review",
+            {
+                "user_principal_name": "new.user@example.com",
+                "display_name": "New User",
+                "mail_nickname": "new.user",
+                "temporary_vault_name": "WAIT_M365_TEMP_new_user",
+            },
+            "m365-user-onboarding",
+        ),
+        (
+            "m365-user-offboarding-review",
+            {"user_identity": "former.user@example.com", "user_id": "directory-user-1"},
+            "m365-user-offboarding",
+        ),
+        (
+            "m365-license-request-review",
+            {
+                "user_id": "directory-user-1",
+                "sku_ids": ["11111111-1111-1111-1111-111111111111"],
+                "operation": "add",
+            },
+            "m365-license-change",
+        ),
+    ],
+)
+def test_m365_workflow_templates_reuse_approval_gated_actions(
+    settings, template_id: str, payload: dict[str, object], action_id: str
+) -> None:
+    class FakeM365Writes:
+        def write_health(self):
+            return type("Health", (), {"status": "ready", "message": "ready"})()
+
+    store = Store(settings.data_path)
+    _seed_tickets(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    service = SmartActionService(
+        store,
+        settings,
+        m365_client=cast(M365LicenseWriteProvider, FakeM365Writes()),
+    )
+
+    run = run_workflow_template(
+        store,
+        template_id,
+        "TCK-1001",
+        actor="admin",
+        client_id="acme",
+        tool_executor=service,
+        input_payload=payload,
+    )
+
+    assert run.status == "pending_approval", run.message
+    assert run.approval_request_id is not None
+    action_runs = store.list_smart_action_runs(client_id="acme")
+    assert len(action_runs) == 1
+    assert action_runs[0].action_id == action_id
+    assert action_runs[0].status == "pending_approval"
 
 
 @pytest.mark.parametrize(

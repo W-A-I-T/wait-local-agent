@@ -895,6 +895,9 @@ schema. Pass a bounded JSON object or JSON file with `--payload`; the API uses
 the same object in `WorkflowRunRequest.payload`. The SLA-risk and stale-ticket
 review templates require explicit positive thresholds and never infer a vendor
 contract or silently treat missing ticket timestamps as evidence.
+The catalog also includes approval-gated Microsoft 365 onboarding, offboarding,
+and license-request reviews; these use the existing admin-only smart actions,
+tenant scope, and local-vault/provider readiness checks.
 
 Scheduled template jobs use the same bounded object under `params.input`, for
 example `{"ticket_id":"TCK-1002","input":{"stale_after_minutes":240}}`.
