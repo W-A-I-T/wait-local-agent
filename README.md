@@ -51,7 +51,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   execution, while reviewed NinjaOne and Datto adapters expose their bounded
   write paths. This is alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
-  search), Confluence, and SharePoint, and
+  search), Confluence, and SharePoint (including bounded Graph drive search), and
   ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
@@ -542,10 +542,13 @@ wait-local-agent connectors sharepoint-documents <site-id>
 wait-local-agent connectors sharepoint-document <site-id> <item-id>
 ```
 
-The API mirrors these commands under `/connectors/sharepoint/*`. The supplied
+The Agents catalog also exposes `sharepoint-documentation-search` for bounded
+site or folder-hierarchy search through Microsoft Graph. The API mirrors these
+commands under `/connectors/sharepoint/*`. The supplied
 delegated or application bearer token stays in settings/vault; only bounded
-Graph GET requests are issued, file content is not downloaded, and live network
-access remains gated by `WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
+Graph GET requests are issued, supported text content is downloaded only through
+the explicit content tool, and live network access remains gated by
+`WAIT_ALLOW_HTTP_PROBING` ([SharePoint in Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)).
 
 ### Microsoft 365 identity, group, license, mailbox, and Intune context
 

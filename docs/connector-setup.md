@@ -336,12 +336,12 @@ WAIT_SHAREPOINT_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The adapter uses Microsoft Graph site and drive-item metadata endpoints. It
+The adapter uses Microsoft Graph site, drive-item metadata, and drive-search endpoints. It
 accepts a delegated or application bearer token obtained by the operator's
 chosen Microsoft identity flow; token acquisition is intentionally outside the
 local agent and the token is never placed in URLs or request payloads. The
-adapter returns bounded metadata only: it does not download file contents or
-expose mutation endpoints. Microsoft documents `Sites.Read.All` as the least
+adapter returns bounded metadata and explicitly requested supported text
+content only; it does not expose mutation endpoints. Microsoft documents `Sites.Read.All` as the least
 privileged application permission for site reads and `Files.Read.All` for drive
 children reads ([Get a SharePoint site](https://learn.microsoft.com/en-us/graph/api/site-get?view=graph-rest-1.0), [list drive children](https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?tabs=http&view=graph-rest-1.0)).
 
@@ -355,6 +355,13 @@ wait-local-agent connectors sharepoint-site <site-id>
 wait-local-agent connectors sharepoint-documents <site-id>
 wait-local-agent connectors sharepoint-document <site-id> <item-id>
 ```
+
+The Agents catalog also exposes `sharepoint-documentation-search` with
+`query`, `site_id`, optional `parent_item_id`, and a result limit from 1 to 50.
+It uses Microsoft Graph drive-item search, which may match file names, metadata,
+or provider-indexed file content. Binary/office extraction remains unavailable;
+the separate content tool is limited to supported text documents. All reads
+remain behind `WAIT_ALLOW_HTTP_PROBING` ([Microsoft Graph drive-item search](https://learn.microsoft.com/en-us/graph/api/driveitem-search?view=graph-rest-1.0)).
 
 The API mirrors these commands under `/connectors/sharepoint/health`,
 `/connectors/sharepoint/sites`, and the site-scoped document routes.
