@@ -233,6 +233,8 @@ wait-local-agent ingest examples/sample_tickets
 wait-local-agent tickets summarize TCK-1002
 wait-local-agent workflows templates
 wait-local-agent workflows run documentation-assisted-response TCK-1002
+wait-local-agent workflows run ticket-sla-risk-review TCK-1002 \
+  --payload '{"thresholds_minutes":{"high":240,"critical":60}}'
 wait-local-agent workflows gallery
 wait-local-agent workflows gallery-add ticket-triage "local operator review"
 wait-local-agent workflows gallery-export <gallery-id> > template.json
@@ -860,6 +862,17 @@ Workflow templates are listed with:
 ```bash
 wait-local-agent workflows templates
 ```
+
+Templates that require operator inputs declare them in the template payload
+schema. Pass a bounded JSON object or JSON file with `--payload`; the API uses
+the same object in `WorkflowRunRequest.payload`. The SLA-risk and stale-ticket
+review templates require explicit positive thresholds and never infer a vendor
+contract or silently treat missing ticket timestamps as evidence.
+
+Scheduled template jobs use the same bounded object under `params.input`, for
+example `{"ticket_id":"TCK-1002","input":{"stale_after_minutes":240}}`.
+Invalid or missing required inputs are recorded as failed scheduled triggers;
+they do not produce a successful run.
 
 Gallery templates can be moved between local appliances as reviewed JSON
 artifacts:

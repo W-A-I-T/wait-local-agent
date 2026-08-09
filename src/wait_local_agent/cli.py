@@ -1927,8 +1927,11 @@ def m365_managed_devices(
 @workflows_app.command("templates")
 def list_workflows() -> None:
     for template in list_workflow_templates():
+        required = template.payload_schema.get("required", [])
+        required_text = ",".join(str(value) for value in required) if isinstance(required, list) else ""
         typer.echo(
             f"{template.id} {template.trigger} approval_required={template.approval_required}"
+            f" payload_required={required_text or '-'}"
         )
 
 
@@ -2180,18 +2183,26 @@ def run_workflow_gallery(entry_id: str, ticket_id: str) -> None:
 
 
 @workflows_app.command("run")
-def run_workflow(template_id: str, ticket_id: str) -> None:
+def run_workflow(
+    template_id: str,
+    ticket_id: str,
+    payload: Annotated[str | None, typer.Option("--payload", help="JSON object or JSON file for the template.")] = None,
+) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
     smart_action_service = SmartActionService(store, settings)
-    run = run_workflow_template(
-        store,
-        template_id,
-        ticket_id,
-        actor="cli",
-        trigger_source="cli",
-        tool_executor=smart_action_service,
-    )
+    try:
+        run = run_workflow_template(
+            store,
+            template_id,
+            ticket_id,
+            actor="cli",
+            trigger_source="cli",
+            tool_executor=smart_action_service,
+            input_payload=_load_smart_action_payload(payload),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 

@@ -809,9 +809,11 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 13
+    assert len(templates.json()) == 15
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert any(item["tool_id"] == "dispatch-suggestion" for item in templates.json())
+    sla_template = next(item for item in templates.json() if item["id"] == "ticket-sla-risk-review")
+    assert sla_template["payload_schema"]["required"] == ["thresholds_minutes"]
     assert run.status_code == 200
     assert run.json()["status"] == "pending_approval"
     assert draft.status_code == 200
@@ -846,6 +848,32 @@ def test_tool_backed_workflow_runs_existing_action_and_preserves_tenant_scope(se
     assert actions.status_code == 200
     assert actions.json()[0]["action_id"] == "ticket-quality"
     assert actions.json()[0]["client_id"] == "acme"
+
+
+def test_threshold_workflow_api_accepts_bounded_payload_and_rejects_missing_fields(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    missing = client.post(
+        "/workflows/templates/ticket-sla-risk-review/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme", "payload": {}},
+    )
+    completed = client.post(
+        "/workflows/templates/ticket-sla-risk-review/runs",
+        json={
+            "ticket_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {"thresholds_minutes": {"high": 1}},
+        },
+    )
+
+    assert missing.status_code == 422
+    assert "thresholds_minutes" in missing.json()["detail"]
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
 
 
 def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) -> None:

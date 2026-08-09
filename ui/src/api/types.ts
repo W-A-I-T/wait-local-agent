@@ -143,6 +143,11 @@ export type WorkflowTemplate = {
   risk_level: string;
   preview_fields: string[];
   tool_id?: string | null;
+  payload_schema?: {
+    type?: string;
+    required?: string[];
+    properties?: Record<string, string>;
+  };
 };
 
 export type TemplateGalleryEntry = {

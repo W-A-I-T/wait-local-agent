@@ -15,7 +15,9 @@ export function Workflows() {
   const [templateId, setTemplateId] = useState("");
   const [ticketId, setTicketId] = useState("");
   const [clientId, setClientId] = useState("");
+  const [payloadText, setPayloadText] = useState("{}");
   const [message, setMessage] = useState("");
+  const selectedTemplate = templates.find((template) => template.id === templateId);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -43,8 +45,24 @@ export function Workflows() {
       setMessage("Choose a template and provide a ticket id.");
       return;
     }
+    let inputPayload: Record<string, unknown>;
     try {
-      const payload = { template_id: templateId, ticket_id: ticketId, client_id: clientId || undefined };
+      const parsed: unknown = JSON.parse(payloadText);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("not an object");
+      }
+      inputPayload = parsed as Record<string, unknown>;
+    } catch {
+      setMessage("Payload must be valid JSON object.");
+      return;
+    }
+    try {
+      const payload = {
+        template_id: templateId,
+        ticket_id: ticketId,
+        client_id: clientId || undefined,
+        payload: inputPayload
+      };
       await apiFetch<WorkflowRun>(`/workflows/templates/${encodeURIComponent(templateId)}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -107,7 +125,22 @@ export function Workflows() {
               Client id (optional)
               <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
             </label>
+            <label>
+              Template payload JSON
+              <textarea
+                rows={4}
+                value={payloadText}
+                onChange={(event) => setPayloadText(event.target.value)}
+                aria-describedby="workflow-payload-help"
+              />
+            </label>
           </div>
+          <p id="workflow-payload-help" className="screen-note">
+            {selectedTemplate?.payload_schema?.required?.length
+              ? `Required: ${selectedTemplate.payload_schema.required.join(", ")}. `
+              : "No additional fields are required. "}
+            Use a bounded JSON object; the server validates the selected template schema.
+          </p>
           <button type="submit" disabled={!canWrite || !templateId || !ticketId}>
             Start Workflow
           </button>

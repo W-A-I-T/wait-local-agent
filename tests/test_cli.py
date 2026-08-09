@@ -741,6 +741,17 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     run = runner.invoke(app, ["workflows", "run", "assign-technician", "TCK-1001"])
     completed = runner.invoke(app, ["workflows", "run", "ticket-triage", "TCK-1001"])
     quality = runner.invoke(app, ["workflows", "run", "ticket-quality-review", "TCK-1001"])
+    sla = runner.invoke(
+        app,
+        [
+            "workflows",
+            "run",
+            "ticket-sla-risk-review",
+            "TCK-1001",
+            "--payload",
+            '{"thresholds_minutes":{"high":1}}',
+        ],
+    )
     gallery_run = runner.invoke(app, ["workflows", "gallery-run", gallery_id, "TCK-1001"])
     stored_runs = Store(data_path).list_workflow_runs()
     run_comparison = runner.invoke(
@@ -791,6 +802,8 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert "status=completed" in completed.output
     assert quality.exit_code == 0
     assert "status=completed" in quality.output
+    assert sla.exit_code == 0
+    assert "status=completed" in sla.output
     assert gallery_run.exit_code == 0
     assert "template_version=5" in gallery_run.output
     assert run_comparison.exit_code == 0
