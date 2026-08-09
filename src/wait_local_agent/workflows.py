@@ -74,6 +74,20 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         preview_fields=("ticket_id", "response", "sources"),
     ),
     WorkflowTemplate(
+        id="l1-resolution-review",
+        name="L1 Resolution Review",
+        trigger="ticket.created",
+        description=(
+            "Draft a cited, technician-facing L1 resolution suggestion from "
+            "local knowledge; no ticket mutation is performed."
+        ),
+        action_type="ticket.l1_resolution",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "suggestion", "citations"),
+        tool_id="suggest-resolution",
+    ),
+    WorkflowTemplate(
         id="ticket-quality-review",
         name="Ticket Quality Review",
         trigger="ticket.created",
@@ -126,6 +140,20 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         trigger="ticket.created",
         description="Rank local tickets by deterministic subject and body overlap for technician review.",
         action_type="ticket.similar",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "matches"),
+        tool_id="find-similar-tickets",
+    ),
+    WorkflowTemplate(
+        id="duplicate-ticket-review",
+        name="Duplicate Ticket Review",
+        trigger="ticket.created",
+        description=(
+            "Find deterministic local candidate duplicates for technician review; "
+            "this workflow never merges or closes tickets."
+        ),
+        action_type="ticket.duplicate_review",
         approval_required=False,
         risk_level="low",
         preview_fields=("ticket_id", "matches"),
