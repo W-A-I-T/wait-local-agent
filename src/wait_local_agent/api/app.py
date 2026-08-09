@@ -1441,6 +1441,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
+            manifest = smart_action_service.describe(action_id)
+            if manifest.required_role.strip().lower() == "admin" and context.role < Role.ADMIN:
+                raise HTTPException(status_code=403, detail="smart action requires admin authority")
             scoped_client_id = _smart_action_client_scope(context, payload.client_id)
             if context.role < Role.ADMIN and scoped_client_id is None:
                 raise HTTPException(status_code=403, detail="authenticated principal has no tenant")

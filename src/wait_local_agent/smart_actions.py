@@ -65,6 +65,18 @@ class CollectorPreviewProvider(Protocol):
     ) -> CollectorPreview:
         """Validate and preview an existing read-only collector."""
 
+
+class M365LifecycleWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def disable_user(self, *, user_identity: str) -> object:
+        """Disable one explicitly identified Microsoft 365 user."""
+
+    def revoke_user_sessions(self, *, user_id: str) -> object:
+        """Revoke sessions for one explicitly identified Microsoft 365 user."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -129,7 +141,7 @@ class ActionContext:
     itglue_client: ItGlueClientProtocol | None = None
     confluence_client: ConfluenceClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
-    m365_client: M365GraphReadProvider | None = None
+    m365_client: M365GraphReadProvider | M365LifecycleWriteProvider | None = None
     halopsa_client: HaloPSAReadProvider | None = None
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
@@ -685,7 +697,7 @@ class M365LiveContextAction:
             return _failed("limit must be an integer between 1 and 50")
         from wait_local_agent.m365_graph import M365GraphClient
 
-        provider = context.m365_client or M365GraphClient(context.settings)
+        provider = cast(M365GraphReadProvider, context.m365_client or M365GraphClient(context.settings))
         try:
             response: object
             if resource == "user":
@@ -744,6 +756,142 @@ class M365LiveContextAction:
                     "client_id": context.client_id,
                 }
             ],
+        )
+
+
+class M365UserOffboardingAction:
+    manifest = SmartActionManifest(
+        action_id="m365-user-offboarding",
+        title="Microsoft 365 user offboarding",
+        description=(
+            "Prepare an approval-gated Microsoft Graph offboarding operation that disables "
+            "one user and then revokes that user's active sessions."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["user_identity", "user_id"],
+            "properties": {
+                "user_identity": {"type": "string", "minLength": 1, "maxLength": 320},
+                "user_id": {"type": "string", "minLength": 1, "maxLength": 320},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "completed_steps": "array",
+            "remaining_steps": "array",
+            "partial_failure": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=10,
+        risk_level="high",
+        required_role="admin",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        user_identity = payload.get("user_identity")
+        user_id = payload.get("user_id")
+        if (
+            not isinstance(user_identity, str)
+            or not user_identity.strip()
+            or len(user_identity.strip()) > 320
+        ):
+            return _failed("user_identity must be a non-empty string of at most 320 characters")
+        if not isinstance(user_id, str) or not user_id.strip() or len(user_id.strip()) > 320:
+            return _failed("user_id must be a non-empty string of at most 320 characters")
+        safe_identity = user_identity.strip()
+        safe_user_id = user_id.strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365LifecycleWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        base_output = {
+            "operation": "user_offboarding",
+            "user_identity": safe_identity,
+            "user_id": safe_user_id,
+            "connector_status": connector_status,
+            "completed_steps": [],
+            "remaining_steps": ["disable_account", "revoke_sessions"],
+            "partial_failure": False,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": "user_offboarding",
+                "client_id": context.client_id,
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(status="failed", output=base_output, evidence=evidence, error_detail=connector_message)
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**base_output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            disabled = provider.disable_user(user_identity=safe_identity)
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=base_output,
+                evidence=evidence,
+                error_detail="Microsoft Graph account disable failed",
+            )
+        disable_status = str(getattr(disabled, "status", "failed"))
+        if disable_status != "succeeded":
+            return ActionResult(
+                status="failed",
+                output={**base_output, "disable_status": disable_status},
+                evidence=evidence,
+                error_detail=redact_text(str(getattr(disabled, "message", "Microsoft Graph account disable failed"))),
+            )
+        after_disable = {
+            **base_output,
+            "completed_steps": ["disable_account"],
+            "remaining_steps": ["revoke_sessions"],
+        }
+        try:
+            revoked = provider.revoke_user_sessions(user_id=safe_user_id)
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output={**after_disable, "partial_failure": True},
+                evidence=evidence,
+                error_detail="Microsoft Graph session revocation failed after account disable",
+            )
+        revoke_status = str(getattr(revoked, "status", "failed"))
+        if revoke_status != "succeeded":
+            return ActionResult(
+                status="failed",
+                output={**after_disable, "partial_failure": True, "revoke_status": revoke_status},
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(revoked, "message", "Microsoft Graph session revocation failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={
+                **base_output,
+                "completed_steps": ["disable_account", "revoke_sessions"],
+                "remaining_steps": [],
+                "approved": True,
+            },
+            evidence=evidence,
         )
 
 
@@ -2252,6 +2400,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),
+        M365UserOffboardingAction(),
         CommunicationPreviewAction(),
         CommunicationSendAction(),
         TicketQualityAction(),
@@ -2291,7 +2440,7 @@ class SmartActionService:
         itglue_client: ItGlueClientProtocol | None = None,
         confluence_client: ConfluenceClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
-        m365_client: M365GraphReadProvider | None = None,
+        m365_client: M365GraphReadProvider | M365LifecycleWriteProvider | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -2548,14 +2697,18 @@ class SmartActionService:
                 run_id=run.id,
                 approval_id=approval_id,
             )
+        try:
+            action = self.registry.get(action_id)
+        except KeyError:
+            action = None
+        if action is not None:
+            _require_action_role(action.manifest, approver_role)
         payload = _json_object(approval.payload_json).get("payload")
         if not isinstance(payload, dict):
             result = _failed("smart action approval payload is malformed")
         else:
             payload = {**payload, "_approval_completed": True}
-            try:
-                action = self.registry.get(action_id)
-            except KeyError:
+            if action is None:
                 result = _failed(f"smart action {action_id} is not registered")
             else:
                 result = _safe_run(action, self._context(run.actor, approval.client_id), payload)
@@ -2619,6 +2772,14 @@ class SmartActionService:
                 raise PermissionError("approver is required")
             if approver_role is None or approver_role < Role.TECHNICIAN:
                 raise PermissionError("approver must have technician or admin authority")
+            if status == "approved":
+                try:
+                    _require_action_role(
+                        self.registry.get(approval.action_type.removeprefix("smart_action:")).manifest,
+                        approver_role,
+                    )
+                except KeyError:
+                    pass
             updated = self.store.update_approval_request(
                 approval_id,
                 status,
@@ -2922,6 +3083,12 @@ def _provider_not_configured(detail: str = "") -> ActionResult:
 
 def _failed(detail: str) -> ActionResult:
     return ActionResult(status="failed", error_detail=detail)
+
+
+def _require_action_role(manifest: SmartActionManifest, approver_role: Role | None) -> None:
+    required_role = Role.ADMIN if manifest.required_role.strip().lower() == "admin" else Role.TECHNICIAN
+    if approver_role is None or approver_role < required_role:
+        raise PermissionError(f"{manifest.action_id} approval requires {required_role.label()} authority")
 
 
 def _stored_action_status(status: str) -> ActionStatus:

@@ -573,7 +573,11 @@ API. Approved disable/offboarding is exposed through
 `POST /connectors/m365/users/disable-drafts`, the same approval queue, and
 `draft-m365-user-disable` / `execute-m365` CLI commands. It issues only
 `PATCH /users/{id | userPrincipalName}` with `accountEnabled=false`; it does
-not remove group memberships or licenses or delete mailbox data. Approved
+not remove group memberships or licenses or delete mailbox data. The shared
+smart-action catalog also exposes the admin-only `m365-user-offboarding`
+operation for an explicit user identity plus directory ID. After approval it
+disables the account and then revokes active sessions; if the second step
+fails, the run records a partial failure and does not report success. Approved
 Intune managed-device retirement is exposed through
 `POST /connectors/m365/managed-devices/retire-drafts` and the
 `draft-m365-managed-device-retirement` CLI command; it is approval-gated and

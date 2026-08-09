@@ -2388,6 +2388,12 @@ def invoke_smart_action(
     context = _cli_access(settings, token, Role.TECHNICIAN)
     if context.role < Role.ADMIN and not context.client_id:
         raise typer.BadParameter("authenticated principal has no tenant")
+    try:
+        manifest = service.describe(action_id)
+    except KeyError as exc:
+        raise typer.BadParameter("smart action not found") from exc
+    if manifest.required_role.strip().lower() == "admin" and context.role < Role.ADMIN:
+        raise typer.BadParameter("smart action requires admin authority")
     scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
     try:
         result = service.invoke(

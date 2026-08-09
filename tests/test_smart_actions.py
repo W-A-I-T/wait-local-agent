@@ -47,6 +47,7 @@ from wait_local_agent.smart_actions import (
     KnowledgeSearchAction,
     M365IdentityLookupAction,
     M365LiveContextAction,
+    M365UserOffboardingAction,
     RmmDeviceLookupAction,
     ServiceNowIncidentLookupAction,
     SharePointDocumentationContentAction,
@@ -952,6 +953,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "knowledge-search",
         "m365-identity-lookup",
         "m365-live-context",
+        "m365-user-offboarding",
         "rmm-alert-lookup",
         "rmm-device-lookup",
         "rmm-script-catalog",
@@ -972,6 +974,159 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_m365_user_offboarding_is_approval_gated_and_reports_partial_failure(settings) -> None:
+    class FakeM365Writes:
+        def __init__(
+            self,
+            revoke_status: str = "succeeded",
+            disable_status: str = "succeeded",
+            *,
+            health_status: str = "ready",
+            health_error: bool = False,
+            disable_error: bool = False,
+            revoke_error: bool = False,
+        ) -> None:
+            self.revoke_status = revoke_status
+            self.disable_status = disable_status
+            self.health_status = health_status
+            self.health_error = health_error
+            self.disable_error = disable_error
+            self.revoke_error = revoke_error
+            self.calls: list[tuple[str, str]] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def disable_user(self, *, user_identity: str):
+            self.calls.append(("disable", user_identity))
+            if self.disable_error:
+                raise RuntimeError("disable unavailable")
+            return SimpleNamespace(status=self.disable_status, message="disabled")
+
+        def revoke_user_sessions(self, *, user_id: str):
+            self.calls.append(("revoke", user_id))
+            if self.revoke_error:
+                raise RuntimeError("revoke unavailable")
+            return SimpleNamespace(status=self.revoke_status, message="revoke result")
+
+    store = Store(settings.data_path)
+    provider = FakeM365Writes()
+    service = SmartActionService(store, settings, m365_client=provider)
+    payload: dict[str, object] = {
+        "user_identity": "adele@example.test",
+        "user_id": "graph-user-1",
+    }
+
+    pending = service.invoke("m365-user-offboarding", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    assert provider.calls == []
+
+    approved = service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert approved.status == "approved"
+    assert provider.calls == [
+        ("disable", "adele@example.test"),
+        ("revoke", "graph-user-1"),
+    ]
+
+    action_context = replace(_action_context(store, settings), m365_client=provider)
+    assert M365UserOffboardingAction().run(
+        action_context, {"user_identity": "", "user_id": "graph-user-1"}
+    ).status == "failed"
+    assert M365UserOffboardingAction().run(
+        action_context, {"user_identity": "user@example.test", "user_id": "x" * 321}
+    ).status == "failed"
+
+    for unavailable in (
+        FakeM365Writes(health_status="blocked"),
+        FakeM365Writes(health_error=True),
+    ):
+        unavailable_result = SmartActionService(
+            store, settings, m365_client=unavailable
+        ).invoke("m365-user-offboarding", payload, "requester", client_id="acme")
+        assert unavailable_result.status == "failed"
+
+    disable_failed = FakeM365Writes(disable_status="failed")
+    disable_service = SmartActionService(store, settings, m365_client=disable_failed)
+    disable_pending = disable_service.invoke(
+        "m365-user-offboarding", payload, "requester", client_id="acme"
+    )
+    assert disable_pending.approval_id is not None
+    disable_service.update_approval(
+        disable_pending.approval_id,
+        "approved",
+        approver="admin-3",
+        approver_role=Role.ADMIN,
+    )
+    assert disable_failed.calls == [("disable", "adele@example.test")]
+
+    disable_exception = FakeM365Writes(disable_error=True)
+    disable_exception_service = SmartActionService(store, settings, m365_client=disable_exception)
+    exception_pending = disable_exception_service.invoke(
+        "m365-user-offboarding", payload, "requester", client_id="acme"
+    )
+    assert exception_pending.approval_id is not None
+    disable_exception_service.update_approval(
+        exception_pending.approval_id,
+        "approved",
+        approver="admin-4",
+        approver_role=Role.ADMIN,
+    )
+    assert disable_exception.calls == [("disable", "adele@example.test")]
+
+    revoke_exception = FakeM365Writes(revoke_error=True)
+    revoke_exception_service = SmartActionService(store, settings, m365_client=revoke_exception)
+    revoke_pending = revoke_exception_service.invoke(
+        "m365-user-offboarding", payload, "requester", client_id="acme"
+    )
+    assert revoke_pending.approval_id is not None
+    revoke_exception_service.update_approval(
+        revoke_pending.approval_id,
+        "approved",
+        approver="admin-5",
+        approver_role=Role.ADMIN,
+    )
+    assert revoke_exception.calls == [
+        ("disable", "adele@example.test"),
+        ("revoke", "graph-user-1"),
+    ]
+    run = store.get_smart_action_run(pending.run_id or 0)
+    assert run is not None and run.status == "success"
+
+    partial_provider = FakeM365Writes(revoke_status="failed")
+    partial_service = SmartActionService(store, settings, m365_client=partial_provider)
+    partial = partial_service.invoke("m365-user-offboarding", payload, "requester", client_id="acme")
+    assert partial.approval_id is not None
+    partial_service.update_approval(
+        partial.approval_id,
+        "approved",
+        approver="admin-2",
+        approver_role=Role.ADMIN,
+    )
+    partial_run = store.get_smart_action_run(partial.run_id or 0)
+    assert partial_run is not None and partial_run.status == "failed"
+    assert '"partial_failure":true' in partial_run.output_json
+    assert partial_provider.calls == [
+        ("disable", "adele@example.test"),
+        ("revoke", "graph-user-1"),
+    ]
 
 
 def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monkeypatch) -> None:
