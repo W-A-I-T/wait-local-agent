@@ -47,6 +47,7 @@ from wait_local_agent.smart_actions import (
     KnowledgeSearchAction,
     M365GroupMembershipAction,
     M365IdentityLookupAction,
+    M365LicenseChangeAction,
     M365LiveContextAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -956,6 +957,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "knowledge-search",
         "m365-group-membership",
         "m365-identity-lookup",
+        "m365-license-change",
         "m365-live-context",
         "m365-user-offboarding",
         "m365-user-onboarding",
@@ -1054,6 +1056,102 @@ def test_m365_group_membership_is_approval_gated_and_immutable_id_scoped(setting
     ).status == "failed"
     assert M365GroupMembershipAction().run(
         replace(context, m365_client=FakeM365GroupWrites(change_status="failed")),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_m365_license_change_is_approval_gated_and_sku_scoped(settings) -> None:
+    class FakeM365LicenseWrites:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            change_status="succeeded",
+            change_error=False,
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.change_status = change_status
+            self.change_error = change_error
+            self.calls: list[dict[str, object]] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def change_user_licenses(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.change_error:
+                raise RuntimeError("change unavailable")
+            return SimpleNamespace(
+                status=self.change_status,
+                message="licenses changed" if self.change_status == "succeeded" else "provider rejected license change",
+                status_code=204 if self.change_status == "succeeded" else 400,
+            )
+
+    store = Store(settings.data_path)
+    provider = FakeM365LicenseWrites()
+    service = SmartActionService(store, settings, m365_client=provider)
+    payload: dict[str, object] = {
+        "user_id": "user-immutable-id",
+        "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+        "operation": "add",
+    }
+
+    pending = service.invoke("m365-license-change", payload, "requester", client_id="acme")
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert provider.calls == []
+    with pytest.raises(PermissionError, match="admin authority"):
+        service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="technician",
+            approver_role=Role.TECHNICIAN,
+        )
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="admin",
+        approver_role=Role.ADMIN,
+    )
+    assert provider.calls == [
+        {
+            "user_id": "user-immutable-id",
+            "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+            "operation": "add",
+        }
+    ]
+
+    context = _action_context(store, settings, client_id="acme")
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "operation": "remove", "_approval_completed": True},
+    ).status == "success"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "sku_ids": ["not-a-uuid"]},
+    ).status == "failed"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=provider),
+        {**payload, "unexpected": "field"},
+    ).status == "failed"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=FakeM365LicenseWrites(health_status="blocked")),
+        payload,
+    ).status == "failed"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=FakeM365LicenseWrites(health_error=True)),
+        payload,
+    ).status == "failed"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=FakeM365LicenseWrites(change_error=True)),
+        {**payload, "_approval_completed": True},
+    ).status == "failed"
+    assert M365LicenseChangeAction().run(
+        replace(context, m365_client=FakeM365LicenseWrites(change_status="failed")),
         {**payload, "_approval_completed": True},
     ).status == "failed"
 

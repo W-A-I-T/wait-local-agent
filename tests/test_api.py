@@ -2485,6 +2485,14 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
                 "operation": "add",
             },
         ),
+        (
+            "m365-license-change",
+            {
+                "user_id": "user-immutable-id",
+                "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+                "operation": "add",
+            },
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
