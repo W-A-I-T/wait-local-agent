@@ -53,6 +53,7 @@ from wait_local_agent.smart_actions import (
     M365MailMessageDeleteAction,
     M365MailMessageMoveAction,
     M365MailMessageReadStateAction,
+    M365ManagedDeviceAction,
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
@@ -968,6 +969,10 @@ def test_registry_lists_all_seed_actions(settings) -> None:
             "m365-mail-message-move",
         "m365-mail-message-read-state",
         "m365-mailbox-settings",
+        "m365-managed-device-reboot",
+        "m365-managed-device-remote-lock",
+        "m365-managed-device-retire",
+        "m365-managed-device-sync",
         "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
@@ -1525,6 +1530,137 @@ def test_m365_mail_message_move_is_approval_gated_and_explicitly_scoped(settings
     assert M365MailMessageDeleteAction().run(
         replace(context, m365_client=FakeM365MessageWrites(delete_error=True)),
         {**delete_payload, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_m365_managed_device_actions_are_approval_gated(settings) -> None:
+    class FakeM365DeviceWrites:
+        def __init__(
+            self,
+            *,
+            health_status="ready",
+            health_error=False,
+            result_status="succeeded",
+            result_error=False,
+        ) -> None:
+            self.health_status = health_status
+            self.health_error = health_error
+            self.result_status = result_status
+            self.result_error = result_error
+            self.calls: list[dict[str, str]] = []
+
+        def write_health(self):
+            if self.health_error:
+                raise RuntimeError("health unavailable")
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def _run(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.result_error:
+                raise RuntimeError("device action unavailable")
+            return SimpleNamespace(
+                status=self.result_status,
+                message=(
+                    "device action completed"
+                    if self.result_status == "succeeded"
+                    else "provider rejected device action"
+                ),
+                status_code=202 if self.result_status == "succeeded" else 400,
+            )
+
+        def retire_managed_device(self, **kwargs):
+            return self._run(**kwargs)
+
+        def sync_managed_device(self, **kwargs):
+            return self._run(**kwargs)
+
+        def reboot_managed_device(self, **kwargs):
+            return self._run(**kwargs)
+
+        def remote_lock_managed_device(self, **kwargs):
+            return self._run(**kwargs)
+
+    store = Store(settings.data_path)
+    provider = FakeM365DeviceWrites()
+    service = SmartActionService(store, settings, m365_client=provider)
+    context = _action_context(store, settings, client_id="acme")
+    specs = [
+        (
+            "m365-managed-device-retire",
+            "retirement",
+            "managed-devices.retire",
+            "retire_managed_device",
+            "validate_m365_managed_device_retirement_payload",
+        ),
+        (
+            "m365-managed-device-sync",
+            "sync",
+            "managed-devices.sync",
+            "sync_managed_device",
+            "validate_m365_managed_device_sync_payload",
+        ),
+        (
+            "m365-managed-device-reboot",
+            "reboot",
+            "managed-devices.reboot",
+            "reboot_managed_device",
+            "validate_m365_managed_device_reboot_payload",
+        ),
+        (
+            "m365-managed-device-remote-lock",
+            "remote_lock",
+            "managed-devices.remote-lock",
+            "remote_lock_managed_device",
+            "validate_m365_managed_device_remote_lock_payload",
+        ),
+    ]
+    for action_id, operation, action_type, provider_method, validator_name in specs:
+        pending = service.invoke(action_id, {"device_id": "device-1"}, "requester", client_id="acme")
+        assert pending.status == "pending_approval"
+        action = M365ManagedDeviceAction(
+            action_id=action_id,
+            title="test",
+            operation=operation,
+            action_type=action_type,
+            provider_method=provider_method,
+            validator_name=validator_name,
+        )
+        assert action.run(
+            replace(context, m365_client=provider),
+            {"device_id": "device-1", "_approval_completed": True},
+        ).status == "success"
+
+    action = M365ManagedDeviceAction(
+        action_id="m365-managed-device-sync",
+        title="test",
+        operation="sync",
+        action_type="managed-devices.sync",
+        provider_method="sync_managed_device",
+        validator_name="validate_m365_managed_device_sync_payload",
+    )
+    assert action.run(
+        replace(context, m365_client=provider),
+        {"device_id": "", "_approval_completed": True},
+    ).status == "failed"
+    assert action.run(
+        replace(context, m365_client=provider),
+        {"device_id": "device-1", "unexpected": "field"},
+    ).status == "failed"
+    assert action.run(
+        replace(context, m365_client=FakeM365DeviceWrites(health_status="blocked")),
+        {"device_id": "device-1"},
+    ).status == "failed"
+    assert action.run(
+        replace(context, m365_client=FakeM365DeviceWrites(health_error=True)),
+        {"device_id": "device-1"},
+    ).status == "failed"
+    assert action.run(
+        replace(context, m365_client=FakeM365DeviceWrites(result_status="failed")),
+        {"device_id": "device-1", "_approval_completed": True},
+    ).status == "failed"
+    assert action.run(
+        replace(context, m365_client=FakeM365DeviceWrites(result_error=True)),
+        {"device_id": "device-1", "_approval_completed": True},
     ).status == "failed"
 
 

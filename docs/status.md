@@ -211,6 +211,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   The catalog also exposes admin-only `m365-mail-message-read-state` with a
   boolean read state and `m365-mail-message-delete` for one explicit message;
   both remain previewed and approval-gated with explicit provider failures.
+  It also exposes admin-only managed-device sync, reboot, retirement, and
+  remote-lock actions with one explicit device ID, preview, approval, and
+  provider-health gating.
   Onboarding accepts only a validated local-vault reference for the temporary
   credential and reads the secret after approval; offboarding accepts only an
   explicit user identity and directory ID, disables the account, then revokes

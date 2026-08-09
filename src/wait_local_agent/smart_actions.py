@@ -187,6 +187,23 @@ class M365MailMessageDeleteWriteProvider(Protocol):
         """Delete one explicitly identified message."""
 
 
+class M365ManagedDeviceWriteProvider(Protocol):
+    def write_health(self) -> object:
+        """Return the guarded Microsoft Graph write readiness result."""
+
+    def retire_managed_device(self, *, device_id: str) -> object:
+        """Retire one explicitly identified Intune managed device."""
+
+    def sync_managed_device(self, *, device_id: str) -> object:
+        """Request synchronization for one explicitly identified device."""
+
+    def reboot_managed_device(self, *, device_id: str) -> object:
+        """Request reboot for one explicitly identified device."""
+
+    def remote_lock_managed_device(self, *, device_id: str) -> object:
+        """Request remote lock for one explicitly identified device."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -262,6 +279,7 @@ class ActionContext:
         | M365MailMessageMoveWriteProvider
         | M365MailMessageReadStateWriteProvider
         | M365MailMessageDeleteWriteProvider
+        | M365ManagedDeviceWriteProvider
         | None
     ) = None
     halopsa_client: HaloPSAReadProvider | None = None
@@ -1314,6 +1332,141 @@ class M365MailMessageDeleteAction:
                 evidence=evidence,
                 error_detail=redact_text(
                     str(getattr(result, "message", "Microsoft Graph mail message deletion failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
+        )
+
+
+class M365ManagedDeviceAction:
+    def __init__(
+        self,
+        *,
+        action_id: str,
+        title: str,
+        operation: str,
+        action_type: str,
+        provider_method: str,
+        validator_name: str,
+    ) -> None:
+        self.provider_method = provider_method
+        self.validator_name = validator_name
+        self.action_type = action_type
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=(
+                f"Prepare an approval-gated Microsoft Graph Intune {operation} "
+                "using one explicit managed-device identifier."
+            ),
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["device_id"],
+                "properties": {
+                    "device_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                },
+            },
+            output_schema={
+                "operation": "string",
+                "connector_status": "string",
+                "device_id": "string",
+                "status_code": "number",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=2,
+            risk_level="high",
+            required_role="admin",
+            access_mode="write",
+        )
+        self.operation = operation
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"device_id", "_approval_completed"}:
+            return _failed(f"M365 managed-device {self.operation} payload contains unsupported fields")
+        device_payload: dict[str, object] = {
+            "connector": "m365",
+            "action_type": self.action_type,
+            "device_id": payload.get("device_id"),
+        }
+        try:
+            import wait_local_agent.connectors as connector_module
+
+            validator = getattr(connector_module, self.validator_name)
+            validator(device_payload)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        device_id = str(device_payload["device_id"]).strip()
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(
+            M365ManagedDeviceWriteProvider,
+            context.m365_client or M365GraphClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("Microsoft Graph write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "Microsoft Graph writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": self.operation,
+            "connector_status": connector_status,
+            "device_id": device_id,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "m365",
+                "operation": self.operation,
+                "client_id": context.client_id,
+                "scope": {"device_id": device_id},
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = getattr(provider, self.provider_method)(device_id=device_id)
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=f"Microsoft Graph managed-device {self.operation} failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(
+                        getattr(
+                            result,
+                            "message",
+                            f"Microsoft Graph managed-device {self.operation} failed",
+                        )
+                    )
                 ),
             )
         return ActionResult(
@@ -3654,6 +3807,38 @@ def _build_default_registry() -> SmartActionRegistry:
         M365MailMessageMoveAction(),
         M365MailMessageReadStateAction(),
         M365MailMessageDeleteAction(),
+        M365ManagedDeviceAction(
+            action_id="m365-managed-device-retire",
+            title="Microsoft 365 managed-device retirement",
+            operation="retirement",
+            action_type="managed-devices.retire",
+            provider_method="retire_managed_device",
+            validator_name="validate_m365_managed_device_retirement_payload",
+        ),
+        M365ManagedDeviceAction(
+            action_id="m365-managed-device-sync",
+            title="Microsoft 365 managed-device sync",
+            operation="sync",
+            action_type="managed-devices.sync",
+            provider_method="sync_managed_device",
+            validator_name="validate_m365_managed_device_sync_payload",
+        ),
+        M365ManagedDeviceAction(
+            action_id="m365-managed-device-reboot",
+            title="Microsoft 365 managed-device reboot",
+            operation="reboot",
+            action_type="managed-devices.reboot",
+            provider_method="reboot_managed_device",
+            validator_name="validate_m365_managed_device_reboot_payload",
+        ),
+        M365ManagedDeviceAction(
+            action_id="m365-managed-device-remote-lock",
+            title="Microsoft 365 managed-device remote lock",
+            operation="remote_lock",
+            action_type="managed-devices.remote-lock",
+            provider_method="remote_lock_managed_device",
+            validator_name="validate_m365_managed_device_remote_lock_payload",
+        ),
         M365UserOnboardingAction(),
         M365UserOffboardingAction(),
         CommunicationPreviewAction(),
@@ -3706,6 +3891,7 @@ class SmartActionService:
             | M365MailMessageMoveWriteProvider
             | M365MailMessageReadStateWriteProvider
             | M365MailMessageDeleteWriteProvider
+            | M365ManagedDeviceWriteProvider
             | None
         ) = None,
     ) -> None:

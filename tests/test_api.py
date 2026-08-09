@@ -2530,6 +2530,22 @@ def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
                 "message_id": "message-id",
             },
         ),
+        (
+            "m365-managed-device-reboot",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-remote-lock",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-retire",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-sync",
+            {"device_id": "device-1"},
+        ),
     ):
         denied = client.post(
             f"/smart-actions/{action_id}/invoke",
