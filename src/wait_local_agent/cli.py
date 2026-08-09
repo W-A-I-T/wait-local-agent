@@ -108,6 +108,7 @@ from wait_local_agent.reports.msp import build_automation_opportunity_report, bu
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
@@ -2749,6 +2750,41 @@ def generate_automation_opportunity_report(
         requested_client_id=client_id,
         token=token,
     )
+
+
+@reports_app.command("schedule")
+def schedule_client_report(
+    report_type: Annotated[str, typer.Argument(help="qbr or automation_opportunity.")],
+    cron: Annotated[str, typer.Option(help="Five-field cron expression.")],
+    period_days: Annotated[int, typer.Option(min=1, max=366)] = 90,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    timezone: Annotated[str, typer.Option(help="IANA schedule timezone.")] = "UTC",
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    try:
+        selected_type = ReportType(report_type)
+    except ValueError as exc:
+        raise typer.BadParameter("report_type must be qbr or automation_opportunity") from exc
+    if selected_type not in {ReportType.QBR, ReportType.AUTOMATION_OPPORTUNITY}:
+        raise typer.BadParameter("report_type must be qbr or automation_opportunity")
+    scoped_client_id = _cli_report_client_scope(context, client_id)
+    if not scoped_client_id:
+        raise typer.BadParameter("a client id is required for a scheduled report")
+    params = {"client_id": scoped_client_id, "period_days": period_days}
+    try:
+        validate_scheduled_report_params(params, timezone=timezone)
+        job = SchedulerManager(Store(settings.data_path), enabled=False).register(
+            selected_type.value,
+            cron,
+            params,
+            job_kind="report",
+            timezone=timezone,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(job), sort_keys=True, default=str))
 
 
 @backup_app.command("create")

@@ -5913,6 +5913,8 @@ def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
 def _scheduled_target(job_kind: str, template_id: str, agent_id: str | None) -> str:
     if job_kind == "agent":
         return f"agent {agent_id or 'unknown'}"
+    if job_kind == "report":
+        return f"report {template_id}"
     return template_id
 
 

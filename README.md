@@ -934,6 +934,20 @@ the run is created. Schedule requests accept an IANA `timezone` (default
 `UTC`); cron and interval triggers use it for local-time interpretation, while
 one-time `run_at` timestamps remain absolute instants.
 
+Client reports can use the same scheduler with a deterministic, tenant-scoped
+report target. Set `report_type` to `qbr` or `automation_opportunity` and pass
+`params.client_id` plus either a dynamic `period_days` value from 1 through 366
+or explicit ISO `period_start` and `period_end` dates:
+
+```bash
+wait-local-agent reports schedule qbr --cron "0 9 * * *" --client-id acme --period-days 90
+```
+
+The equivalent API request is `POST /scheduled-jobs` with
+`{"report_type":"qbr","cron":"0 9 * * *","params":{"client_id":"acme","period_days":90}}`.
+Scheduled reports reuse the local report builders and audit the created report
+or the bounded failure; they do not call a remote model or provider.
+
 Stored API views accept `client_id` filters where applicable so operators can scope tickets, approvals, audit events, workflow runs, knowledge documents, and scheduled jobs per tenant.
 
 Communication previews are available through the `communication-draft` smart

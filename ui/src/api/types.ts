@@ -565,7 +565,7 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  job_kind: "workflow" | "agent";
+  job_kind: "workflow" | "agent" | "report";
   template_id: string | null;
   agent_id: string | null;
   entity_id: string | null;
@@ -584,6 +584,7 @@ export type ScheduledJob = {
 
 export type ScheduledJobRequestBody = {
   template_id?: string;
+  report_type?: "qbr" | "automation_opportunity";
   agent_id?: string;
   entity_id?: string;
   cron: string;

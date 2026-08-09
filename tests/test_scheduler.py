@@ -17,6 +17,7 @@ from wait_local_agent.scheduler import (
     _schedule_trigger,
     validate_cron_expression,
     validate_schedule,
+    validate_scheduled_report_params,
 )
 from wait_local_agent.security import require_bearer_authorization
 from wait_local_agent.smart_actions import (
@@ -557,6 +558,111 @@ def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tm
         run_workflow_template(store, "missing-template", "TCK-1001")
     with pytest.raises(LookupError):
         run_workflow_template(store, "ticket-triage", "NOPE")
+
+
+def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:
+    db_path = tmp_path / "scheduled-report.db"
+    store = Store(db_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    manager = SchedulerManager(
+        store,
+        enabled=False,
+        smart_action_service=SmartActionService(store, settings),
+    )
+    scheduled_job = manager.register(
+        "qbr",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30},
+        job_kind="report",
+    )
+    automation_job = manager.register(
+        "automation_opportunity",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30},
+        job_kind="report",
+    )
+
+    async def scenario() -> None:
+        await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+        await manager._build_job_callable(automation_job)()  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+    reports = store.list_reports(report_type="qbr", client_id="acme")
+    assert len(reports) == 1
+    assert reports[0].created_by == "scheduler"
+    assert reports[0].metadata["client_id"] == "acme"
+    assert reports[0].metadata["period_start"]
+    assert reports[0].metadata["period_end"]
+    automation_reports = store.list_reports(report_type="automation_opportunity", client_id="acme")
+    assert len(automation_reports) == 1
+    assert automation_reports[0].created_by == "scheduler"
+    assert any(event.event_type == "report.created" for event in store.list_audit_events(client_id="acme"))
+    assert any(event.event_type == "scheduled_job.triggered" for event in store.list_audit_events(client_id="acme"))
+
+
+def test_scheduler_report_failure_is_audited_and_does_not_create_report(tmp_path: Path) -> None:
+    store = Store(tmp_path / "scheduled-report-failure.db")
+    manager = SchedulerManager(store, enabled=False)
+    scheduled_job = manager.register(
+        "automation_opportunity",
+        "0 9 * * *",
+        {"client_id": "acme", "period_days": 30},
+        job_kind="report",
+    )
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError, match="not configured"):
+            await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+    assert store.list_reports(report_type="automation_opportunity", client_id="acme") == []
+    failed = [
+        event
+        for event in store.list_audit_events(client_id="acme")
+        if event.event_type == "scheduled_job.trigger_failed"
+    ]
+    assert len(failed) == 1
+    assert "not configured" in failed[0].detail
+
+    invalid_scope = SchedulerManager(store, enabled=False)
+    with pytest.raises(ValueError, match="supported report type"):
+        invalid_scope.register(
+            "qbr",
+            "0 9 * * *",
+            {"client_id": "acme", "period_days": 30},
+            job_kind="report",
+            agent_id="agent-1",
+        )
+
+    missing_client_job = manager.register("qbr", "0 9 * * *", {}, job_kind="report")
+
+    async def missing_client_scenario() -> None:
+        with pytest.raises(ValueError, match="include client_id"):
+            await manager._build_job_callable(missing_client_job)()  # noqa: SLF001
+
+    asyncio.run(missing_client_scenario())
+
+
+def test_scheduled_report_period_validation_covers_explicit_dates() -> None:
+    validate_scheduled_report_params(
+        {"client_id": "acme", "period_start": "2026-08-01", "period_end": "2026-08-31"}
+    )
+    with pytest.raises(ValueError, match="ISO dates"):
+        validate_scheduled_report_params(
+            {"client_id": "acme", "period_start": "not-a-date", "period_end": "2026-08-31"}
+        )
+    with pytest.raises(ValueError, match="on or after"):
+        validate_scheduled_report_params(
+            {"client_id": "acme", "period_start": "2026-08-31", "period_end": "2026-08-01"}
+        )
+    with pytest.raises(ValueError, match="cannot exceed"):
+        validate_scheduled_report_params(
+            {"client_id": "acme", "period_start": "2026-01-01", "period_end": "2027-01-02"}
+        )
 
 
 def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
