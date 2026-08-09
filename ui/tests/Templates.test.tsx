@@ -89,6 +89,7 @@ describe("Templates", () => {
     render(<MemoryRouter><Templates /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Template Gallery" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import template" })).toBeDisabled();
     const name = screen.getByLabelText("Name");
     fireEvent.change(name, { target: { value: "Acme triage updated" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));

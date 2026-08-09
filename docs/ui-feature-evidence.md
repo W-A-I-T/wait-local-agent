@@ -20,7 +20,7 @@ visible here instead of being presented as a completed UI feature.
 | `/executions` | Run history, detail, artifact download | `/executions/*` | Existing UI tests; browser route render |
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
-| `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render |
+| `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render; import control is enabled only after a JSON artifact is selected and imports a disabled local copy for review |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
@@ -52,7 +52,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 20 files, 77 tests passed.
+- UI tests: 20 files, 78 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
@@ -75,8 +75,10 @@ unverifiable product claim.
   visibly included `Autotask add ticket note · approval`, `Autotask update ticket
   status · approval`, `Autotask update ticket resolution · approval`, `Autotask
   assign ticket · approval`, `Autotask add time entry · approval`, and the
-  ServiceNow approval tools. A full post-change route/control sweep remains a
-  separate validation item.
+  ServiceNow approval tools. A subsequent Chromium sweep visited all 17 operator
+  routes plus the standalone `/end-user` surface; every page rendered and the
+  browser reported no errors. The end-user surface remains direct-link only so
+  its separate token boundary is not confused with the operator shell.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.
