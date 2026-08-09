@@ -61,6 +61,11 @@ CONNECTWISE_ACTION_TYPES = {
     "update_ticket_fields",
 }
 
+SERVICENOW_ACTION_TYPES = {
+    "add_work_note",
+    "update_state",
+}
+
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
 M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
@@ -346,15 +351,18 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="ServiceNow",
             status=servicenow_status,
             message=(
-                "ServiceNow credentials are configured for read-only incident and company lookup."
+                "ServiceNow credentials are configured for incident/company lookup and "
+                "approval-gated work-note/state updates."
                 if servicenow_status == "configured"
-                else "ServiceNow credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                else "ServiceNow credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING "
+                "and writes also require WAIT_ALLOW_WRITE_ACTIONS."
                 if servicenow_status == "blocked"
                 else (
                     "Set WAIT_SERVICENOW_BASE_URL, WAIT_SERVICENOW_USERNAME, and "
-                    "WAIT_SERVICENOW_PASSWORD to enable ServiceNow reads."
+                    "WAIT_SERVICENOW_PASSWORD to enable ServiceNow reads and approved writes."
                 )
             ),
+            write_actions_enabled=settings.allow_write_actions and servicenow_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -1811,6 +1819,22 @@ def validate_connectwise_action_fields(action_type: str, fields: dict[str, objec
             or any(ord(character) < 32 for character in value)
         ):
             raise ValueError(f"ConnectWise PSA field {field} is invalid")
+
+
+def validate_servicenow_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in SERVICENOW_ACTION_TYPES:
+        raise ValueError(f"unsupported ServiceNow action type: {action_type}")
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError(f"ServiceNow {action_type} requires incident fields")
+    allowed = {"work_notes"} if action_type == "add_work_note" else {"incident_state"}
+    if set(fields) != allowed:
+        raise ValueError(f"ServiceNow {action_type} only accepts {sorted(allowed)}")
+    value = next(iter(fields.values()))
+    max_length = 4_000 if action_type == "add_work_note" else 20
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length:
+        raise ValueError(f"ServiceNow {action_type} field is invalid")
+    if any(ord(character) < 32 for character in value):
+        raise ValueError(f"ServiceNow {action_type} field contains control characters")
 
 
 def _first_present(fields: dict[str, object], *keys: str) -> object:

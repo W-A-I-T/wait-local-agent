@@ -5,6 +5,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
+from wait_local_agent.models import ServiceNowWriteRequest
 from wait_local_agent.servicenow import (
     ServiceNowClient,
     ServiceNowReadError,
@@ -15,11 +16,14 @@ from wait_local_agent.servicenow import (
     _normalize_company,
     _normalize_incident,
     _payload_rows,
+    _reference_value,
+    _remote_id,
     _safe_base_url,
     _safe_endpoint,
     _safe_query,
     _safe_sys_id,
     _safe_version,
+    _write_fields,
 )
 
 
@@ -68,6 +72,113 @@ def test_servicenow_reads_report_missing_credentials(settings) -> None:
     assert response.result.status == "not_configured"
 
 
+def test_servicenow_writes_require_both_flags_and_use_allowlisted_patch(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PATCH"
+        assert request.url.path.endswith("/incident/abc123")
+        assert request.headers["content-type"] == "application/json"
+        assert request.headers["authorization"].startswith("Basic ")
+        assert request.read() == b'{"work_notes":"Investigated locally"}'
+        return httpx.Response(200, json={"result": {"sys_id": "abc123", "password": "redact"}})
+
+    blocked = ServiceNowClient(
+        _settings(settings, allow_http_probing=False),
+        transport=httpx.MockTransport(handler),
+    )
+    blocked_result = blocked.execute_write(
+        ServiceNowWriteRequest("abc123", "add_work_note", {"work_notes": "note"})
+    )
+    assert blocked.write_health().status == "blocked"
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in blocked_result.message
+    assert "WAIT_ALLOW_WRITE_ACTIONS=true" in blocked_result.message
+    assert requests == []
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    client = ServiceNowClient(active, transport=httpx.MockTransport(handler))
+    assert client.write_health().status == "ready"
+    result = client.execute_write(
+        ServiceNowWriteRequest(
+            "abc123", "add_work_note", {"work_notes": "Investigated locally"}
+        )
+    )
+    assert result.status == "succeeded"
+    assert result.remote_id == "abc123"
+    assert client.execute_write(
+        ServiceNowWriteRequest("abc123", "add_work_note", {"comments": "unsafe"})
+    ).status == "failed"
+
+
+def test_servicenow_write_failures_are_bounded(settings) -> None:
+    active = replace(_settings(settings), allow_write_actions=True)
+    request = ServiceNowWriteRequest("abc123", "update_state", {"incident_state": "2"})
+    malformed = ServiceNowClient(
+        active,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"bad")),
+    ).execute_write(request)
+    failed = ServiceNowClient(
+        active,
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+    ).execute_write(request)
+
+    assert malformed.status == "failed"
+    assert malformed.message.endswith("returned malformed JSON.")
+    assert failed.status == "failed"
+    assert "HTTP 500" in failed.message
+
+
+def test_servicenow_write_guards_and_helpers_cover_failure_boundaries(settings) -> None:
+    active = _settings(settings)
+    request = ServiceNowWriteRequest("abc123", "update_state", {"incident_state": "2"})
+    missing = ServiceNowClient(
+        replace(active, servicenow_password="", allow_write_actions=True),
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+    )
+    assert missing.write_health().status == "not_configured"
+    assert missing.execute_write(request).status == "not_configured"
+
+    write_disabled = ServiceNowClient(
+        replace(active, allow_write_actions=False),
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+    )
+    with pytest.raises(ServiceNowReadError, match="WAIT_ALLOW_WRITE_ACTIONS=true"):
+        write_disabled._patch("incident/abc123", {"incident_state": "2"})
+
+    def connect_failure(_: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("secret should not leak")
+
+    def generic_failure(_: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("read failed")
+
+    assert ServiceNowClient(
+        replace(active, allow_write_actions=True), transport=httpx.MockTransport(connect_failure)
+    ).execute_write(request).message.endswith("before receiving a response.")
+    assert ServiceNowClient(
+        replace(active, allow_write_actions=True), transport=httpx.MockTransport(generic_failure)
+    ).execute_write(request).message == "ServiceNow request failed."
+    empty = ServiceNowClient(
+        replace(active, allow_write_actions=True),
+        transport=httpx.MockTransport(lambda _: httpx.Response(204)),
+    ).execute_write(request)
+    assert empty.status == "succeeded" and empty.remote_id == ""
+
+    invalid_fields = (
+        ("add_work_note", {"comments": "wrong"}),
+        ("add_work_note", {"work_notes": ""}),
+        ("update_state", {"state": "2"}),
+        ("update_state", {"incident_state": ""}),
+        ("unknown", {"field": "value"}),
+    )
+    for action_type, fields in invalid_fields:
+        with pytest.raises(ServiceNowReadError):
+            _write_fields(action_type, fields)
+    assert _remote_id({"result": {"sys_id": "abc123"}}) == "abc123"
+    assert _remote_id({"result": []}) == ""
+    assert _remote_id([]) == ""
+
+
 def test_servicenow_reads_normalize_payloads_and_bound_requests(settings) -> None:
     requests: list[httpx.Request] = []
 
@@ -111,11 +222,13 @@ def test_servicenow_reads_normalize_payloads_and_bound_requests(settings) -> Non
 
     client = ServiceNowClient(_settings(settings), transport=httpx.MockTransport(handler))
 
+    health = client.health()
     incidents = client.list_incidents(page=2, page_size=250, query=" active=true ")
     incident = client.get_incident(" abc123 ")
     companies = client.list_companies()
     company = client.get_company("co-1")
 
+    assert health.status == "ready"
     assert incidents.result.status == "ready"
     assert incidents.items[0]["state"] == "In Progress"
     assert incidents.items[0]["caller"] == "A. User"
@@ -128,7 +241,7 @@ def test_servicenow_reads_normalize_payloads_and_bound_requests(settings) -> Non
         "updated_at": "",
     }
     assert company.items[0]["name"] == "Contoso"
-    assert len(requests) == 4
+    assert len(requests) == 5
 
 
 def test_servicenow_failures_are_sanitized_and_distinguish_auth(settings) -> None:
@@ -191,6 +304,7 @@ def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
     assert invalid_base.result.status == "failed"
     assert _api_base_url("https://service-now.test/", "v1") == "https://service-now.test/api/now/v1"
     assert _api_base_url("https://service-now.test/api/now", "v1") == "https://service-now.test/api/now/v1"
+    assert _api_base_url("https://service-now.test/api/now/v1", "") == "https://service-now.test/api/now"
     assert _payload_rows([{"sys_id": "1"}, "bad"]) == [{"sys_id": "1"}]
     assert _payload_rows({"result": [{"sys_id": "1"}, "bad"]}) == [{"sys_id": "1"}]
     assert _payload_rows({"result": {"sys_id": "1"}}) == [{"sys_id": "1"}]
@@ -203,7 +317,9 @@ def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
     normalized_company = _normalize_company({"sys_id": "1", "active": "yes"})
     assert normalized_company is not None and normalized_company["active"] is True
     assert _bool_value("off") is False
+    assert _bool_value(True) is True
     assert _bool_value(1) is True
+    assert _reference_value({}) == ""
     assert _list_params("incident", 2, 250, "x")["sysparm_limit"] == 100
     assert _safe_base_url("https://service-now.test") == "https://service-now.test"
     assert _safe_endpoint("/incident/abc123") == "incident/abc123"
@@ -217,6 +333,7 @@ def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
         (_safe_base_url, "https://bad\x00.test"),
         (_safe_base_url, "not-a-url"),
         (_safe_endpoint, "../incident"),
+        (_safe_endpoint, "incident/abc?x=1"),
         (_safe_sys_id, ""),
         (_safe_query, "x" * 501),
         (_safe_version, "bad/version"),
@@ -224,6 +341,9 @@ def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
     for helper, value in invalid_helpers:
         with pytest.raises(ServiceNowReadError):
             helper(value)
+
+    with pytest.raises(ServiceNowReadError, match="table is not enabled"):
+        _list_params("problem", 1, 1, None)
 
     for client in (
         ServiceNowClient(replace(active, allow_http_probing=False)),

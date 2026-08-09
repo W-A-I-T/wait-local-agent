@@ -232,12 +232,16 @@ def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
         halopsa_client_secret="halo-secret",
         halopsa_tenant="halo-tenant",
         connectwise_base_url="",
+        servicenow_base_url="https://service-now.example.test",
+        servicenow_username="api-user",
+        servicenow_password="api-password",
     )
 
     statuses = {status.id: status for status in list_connector_statuses(active)}
 
     assert statuses["halopsa"].write_actions_enabled is True
     assert statuses["connectwise"].write_actions_enabled is False
+    assert statuses["servicenow"].write_actions_enabled is True
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:

@@ -68,8 +68,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   boundary.
 - Syncro read-only ticket and customer inventory through the common guarded
   HTTP boundary; write operations remain unavailable.
-- ServiceNow read-only incident and company inventory through the common
-  guarded HTTP boundary; write operations remain unavailable.
+- ServiceNow incident and company inventory through the common guarded HTTP
+  boundary, plus approval-gated work-note and state updates through the shared
+  smart-action runtime; broader incident fields remain unavailable.
 - Autotask read-only ticket and company inventory through the common guarded
   HTTP boundary; write operations remain unavailable.
 - NinjaOne RMM device and alert inventory, script catalog and preview, plus
@@ -258,8 +259,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   vendor adapter is installed. Existing HaloPSA ticket reads and
   Hudu article-content, IT Glue, Confluence page-content, and SharePoint documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
-  tenant-scoped read tools using the guarded connector clients; connector
-  credentials are never action payloads.
+  tenant-scoped read tools using the guarded connector clients. ServiceNow work-note
+  and state updates are exposed as approval-gated tools; connector credentials are
+  never action payloads.
 - Signed update-channel client checks with pinned public keys.
 - Open-core pack loader plus `wait-local-agent packs` install, list, and status commands.
 - Founder API and CLI public contract with stable "pack not installed" behavior when proprietary founder code is absent.
@@ -322,7 +324,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | IT Glue connector | Read-only core surface built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
 | Autotask connector | Read-only core surface built |
-| ServiceNow connector | Read-only core surface built |
+| ServiceNow connector | Incident/company reads plus approval-gated work-note and state updates built; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |

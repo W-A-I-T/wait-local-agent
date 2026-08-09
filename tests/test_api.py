@@ -3011,6 +3011,9 @@ def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> No
         def health(self):
             return ConnectorReadResult("ready", "ServiceNow ready", 0)
 
+        def write_health(self):
+            return ConnectorReadResult("ready", "ServiceNow writes ready", 0)
+
         def list_incidents(self, **kwargs):
             return ServiceNowReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
@@ -3039,6 +3042,7 @@ def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> No
     client = TestClient(create_app(settings))
 
     health = client.get("/connectors/servicenow/health")
+    write_health = client.get("/connectors/servicenow/write-health")
     incidents = client.get(
         "/connectors/servicenow/incidents",
         params={"page": 2, "page_size": 10, "query": "active=true"},
@@ -3051,6 +3055,8 @@ def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> No
 
     assert health.status_code == 200
     assert health.json()["status"] == "ready"
+    assert write_health.status_code == 200
+    assert write_health.json()["status"] == "ready"
     assert incidents.json()["items"][0]["number"] == "INC001"
     assert incident.json()["items"][0]["sys_id"] == "abc123"
     assert companies.json()["items"][0]["name"] == "Contoso"

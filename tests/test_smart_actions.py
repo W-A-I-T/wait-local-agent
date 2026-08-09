@@ -32,6 +32,7 @@ from wait_local_agent.models import (
     HaloTicket,
     HaloWriteRequest,
     HuduArticle,
+    ServiceNowWriteRequest,
     SourceReference,
     Ticket,
 )
@@ -70,6 +71,7 @@ from wait_local_agent.smart_actions import (
     RmmDeviceLookupAction,
     SecurityAlertAssessmentAction,
     ServiceNowIncidentLookupAction,
+    ServiceNowIncidentWriteAction,
     SharePointDocumentationContentAction,
     SharePointDocumentationSearchAction,
     SmartActionManifest,
@@ -1037,7 +1039,9 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execution-lookup",
         "rmm-script-preview",
         "security-alert-assessment",
+        "servicenow-incident-add-work-note",
         "servicenow-incident-lookup",
+        "servicenow-incident-update-state",
         "sharepoint-document-content",
         "sharepoint-documentation-search",
         "stale-ticket-sweep",
@@ -1134,6 +1138,69 @@ def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) ->
     assert action.run(
         replace(context, connectwise_client=FakeConnectWiseWrites(result_error=True)),
         {"ticket_id": "TCK-1001", "fields": {"status_id": "status-1"}, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_servicenow_incident_writes_are_approval_gated_and_validated(settings) -> None:
+    class FakeServiceNowWrites:
+        def __init__(self, *, health_status="ready", result_status="succeeded"):
+            self.health_status = health_status
+            self.result_status = result_status
+            self.calls: list[ServiceNowWriteRequest] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            return SimpleNamespace(
+                status=self.result_status,
+                message="write completed" if self.result_status == "succeeded" else "provider rejected write",
+                status_code=200 if self.result_status == "succeeded" else 400,
+                remote_id="abc123",
+            )
+
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = FakeServiceNowWrites()
+    context = _action_context(store, settings, client_id="acme")
+    action = ServiceNowIncidentWriteAction(
+        action_id="test-servicenow",
+        title="test",
+        action_type="add_work_note",
+    )
+    fields: dict[str, object] = {"work_notes": "Investigated locally"}
+    preview = action.run(
+        replace(context, servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": fields},
+    )
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    completed = action.run(
+        replace(context, servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
+    )
+    assert completed.status == "success"
+    assert provider.calls == [
+        ServiceNowWriteRequest("TCK-1001", "add_work_note", fields)
+    ]
+    assert action.run(
+        replace(context, client_id="other", servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": {"comments": "unsafe"}},
+    ).status == "failed"
+    assert action.run(
+        replace(context, servicenow_client=FakeServiceNowWrites(health_status="blocked")),
+        {"ticket_id": "TCK-1001", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, servicenow_client=FakeServiceNowWrites(result_status="failed")),
+        {"ticket_id": "TCK-1001", "fields": fields, "_approval_completed": True},
     ).status == "failed"
 
 
