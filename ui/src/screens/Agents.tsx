@@ -220,6 +220,7 @@ export function Agents() {
         </form>
         {plan ? <div className="agent-run-detail" aria-live="polite">
           <strong>{plan.status === "preview" ? `${plan.steps.length} approved tool step(s) proposed` : "Plan blocked"}</strong>
+          <span>Selection: {plan.selection_mode === "model" ? "configured local model" : "deterministic rules"}</span>
           {plan.steps.map((step) => <div key={`${step.index}-${step.tool_id}`}><span>{step.index + 1}. {step.name}</span><small>{step.reason} {step.approval_required ? "Approval required." : "Read-only or draft."}</small></div>)}
           {plan.status === "preview" ? <button type="button" disabled={!canWrite} onClick={() => void createPlanDraft()}>Create disabled draft</button> : null}
           {plan.blocked_reason ? <p className="notice danger">{plan.blocked_reason}</p> : null}

@@ -22,6 +22,7 @@ from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     AgentDefinition,
     AgentRun,
+    Ticket,
     utc_now,
 )
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
@@ -100,6 +101,7 @@ class AgentPlanResult:
     context: dict[str, object]
     definition: dict[str, object] = field(default_factory=dict)
     blocked_reason: str = ""
+    selection_mode: str = "deterministic"
 
 
 class AgentDefinitionError(ValueError):
@@ -160,7 +162,18 @@ class AgentService:
             raise AgentDefinitionError("ticket was not found in the requested scope")
 
         tools = {tool.id: tool for tool in self.list_tools()}
-        selected_ids = _plan_tool_ids(normalized)
+        deterministic_ids = _plan_tool_ids(normalized)
+        selected_ids = deterministic_ids
+        selection_mode = "deterministic"
+        model_ids = self._model_plan_tool_ids(
+            normalized,
+            ticket,
+            list(tools.values()),
+            max_steps=max_steps,
+        )
+        if model_ids:
+            selected_ids = model_ids
+            selection_mode = "model"
         selected_ids = [tool_id for tool_id in selected_ids if tool_id in tools][:max_steps]
         context_sources = ["ticket", "client", "knowledge"]
         context = self._build_context(
@@ -196,6 +209,7 @@ class AgentService:
                     "No approved tool matched this request. Choose a supported service-desk "
                     "operation and review the tool catalog before running it."
                 ),
+                selection_mode=selection_mode,
             )
         return AgentPlanResult(
             instruction=normalized,
@@ -217,6 +231,7 @@ class AgentService:
                 for index, tool_id in enumerate(selected_ids)
             ],
             context=context,
+            selection_mode=selection_mode,
             definition={
                 "name": f"Plan for {entity_id}",
                 "description": normalized,
@@ -232,6 +247,48 @@ class AgentService:
                 "context_sources": context_sources,
             },
         )
+
+    def _model_plan_tool_ids(
+        self,
+        instruction: str,
+        ticket: Ticket,
+        tools: list[ToolDefinition],
+        *,
+        max_steps: int,
+    ) -> list[str]:
+        if not self.smart_actions.provider_configured:
+            return []
+        selector = getattr(self.smart_actions.provider, "select_tools", None)
+        if not callable(selector):
+            return []
+        try:
+            sources = retrieve_sources(
+                ticket,
+                self.settings.allowed_doc_root,
+                self.store,
+                self.settings,
+                client_id=ticket.client_id,
+            )
+            selected = selector(
+                instruction,
+                ticket,
+                sources,
+                [
+                    {
+                        "id": tool.id,
+                        "name": tool.name,
+                        "description": tool.description,
+                    }
+                    for tool in tools
+                ],
+                max_tools=max_steps,
+            )
+        except Exception:
+            # Planner selection is advisory; any provider or retrieval failure
+            # returns control to the deterministic, catalog-scoped rules.
+            return []
+        allowed = {tool.id for tool in tools}
+        return [tool_id for tool_id in selected if tool_id in allowed][:max_steps]
 
     def create(
         self,

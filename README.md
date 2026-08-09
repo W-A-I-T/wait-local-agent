@@ -58,9 +58,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   runs can be retried with a persisted three-retry cap; conversational and
   unrestricted execution remain outside this slice. `POST /agents/plan` and
   the Agents dashboard provide a preview-only natural-language-to-tool plan.
-  Selection is deterministic, bounded to the existing catalog, tenant-scoped
-  to the ticket, and annotated with risk, access mode, and approval
-  requirements; it never executes the preview. A reviewed preview can be
+  Selection uses the configured model provider when available, otherwise
+  deterministic rules, and is bounded to the existing catalog, tenant-scoped
+  to the ticket, and annotated with its selection mode, risk, access mode, and
+  approval requirements; malformed or unavailable model output falls back to
+  deterministic rules and the preview never executes. A reviewed preview can be
   converted into a disabled agent draft for the existing revision and approval
   workflow. Definitions may also set
   a validated local execution window using `HH:MM` bounds and an IANA timezone;
