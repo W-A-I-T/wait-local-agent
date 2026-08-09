@@ -75,7 +75,7 @@ unverifiable product claim.
   visibly included `Autotask add ticket note · approval`, `Autotask update ticket
   status · approval`, `Autotask update ticket resolution · approval`, `Autotask
   assign ticket · approval`, `Autotask add time entry · approval`, and the
-  ServiceNow approval tools. A subsequent Chromium sweep visited all 17 operator
+  ServiceNow approval tools. A subsequent Chromium sweep visited all 18 operator
   routes plus the standalone `/end-user` surface; every page rendered and the
   browser reported no errors. The end-user surface remains direct-link only so
   its separate token boundary is not confused with the operator shell.
