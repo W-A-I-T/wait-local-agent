@@ -2766,26 +2766,34 @@ def test_m365_context_action_rejects_invalid_and_malformed_provider_results(sett
         {"query": "vpn", "organization_id": "acme", "folder_id": ""},
     ).status == "failed"
     search_calls: list[tuple[str, str, str | None, int]] = []
+
+    def search_itglue_documents(
+        organization_id: str,
+        query: str,
+        *,
+        folder_id: str | None,
+        limit: int,
+    ) -> SimpleNamespace:
+        search_calls.append((organization_id, query, folder_id, limit))
+        return SimpleNamespace(
+            result=SimpleNamespace(status="ready", message="ok", count=1),
+            items=[
+                ItGlueDocument(
+                    "doc-1",
+                    "VPN runbook",
+                    organization_id,
+                    "folder-1",
+                    "today",
+                    "https://itglue",
+                    "MFA token=secret",
+                )
+            ],
+        )
+
     itglue_content = replace(
         context,
         itglue_client=SimpleNamespace(
-            search_documents=lambda organization_id, query, *, folder_id, limit: (
-                search_calls.append((organization_id, query, folder_id, limit))
-                or SimpleNamespace(
-                    result=SimpleNamespace(status="ready", message="ok", count=1),
-                    items=[
-                        ItGlueDocument(
-                            "doc-1",
-                            "VPN runbook",
-                            organization_id,
-                            "folder-1",
-                            "today",
-                            "https://itglue",
-                            "MFA token=secret",
-                        )
-                    ],
-                )
-            ),
+            search_documents=search_itglue_documents,
         ),
     )
     itglue_content_result = itglue.run(
