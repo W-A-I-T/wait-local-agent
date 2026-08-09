@@ -140,7 +140,7 @@ class AutotaskClient:
         missing = self._not_configured_result()
         if missing is not None:
             return missing
-        return ConnectorReadResult("ready", "Autotask ticket-note write prerequisites are ready.")
+        return ConnectorReadResult("ready", "Autotask ticket-note/status write prerequisites are ready.")
 
     def execute_write(self, request: AutotaskWriteRequest) -> AutotaskWriteResult:
         blocked = self._write_blocked_write_result(request)
@@ -152,8 +152,12 @@ class AutotaskClient:
         try:
             ticket_id = _safe_numeric_id(request.ticket_id)
             payload = _write_payload(request.action_type, ticket_id, request.fields)
-            endpoint = "TicketNotes"
-            response_payload, status_code = self._post(endpoint, payload)
+            if request.action_type == "add_note":
+                endpoint = "TicketNotes"
+                response_payload, status_code = self._post(endpoint, payload)
+            else:
+                endpoint = "Tickets"
+                response_payload, status_code = self._patch(endpoint, payload)
         except AutotaskReadError as exc:
             return AutotaskWriteResult(
                 "failed", exc.message, request.action_type, request.ticket_id
@@ -283,6 +287,21 @@ class AutotaskClient:
         endpoint: str,
         payload: dict[str, object],
     ) -> tuple[object, int]:
+        return self._mutate("POST", endpoint, payload)
+
+    def _patch(
+        self,
+        endpoint: str,
+        payload: dict[str, object],
+    ) -> tuple[object, int]:
+        return self._mutate("PATCH", endpoint, payload)
+
+    def _mutate(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict[str, object],
+    ) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
             raise AutotaskReadError(
                 "Autotask live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
@@ -300,7 +319,8 @@ class AutotaskClient:
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
-                response = client.post(
+                response = client.request(
+                    method,
                     f"{_api_base_url(self.settings.autotask_base_url)}/{safe_endpoint}",
                     headers={
                         "Username": self.settings.autotask_username,
@@ -319,11 +339,11 @@ class AutotaskClient:
             raise AutotaskReadError("Autotask request failed.") from exc
         if response.status_code >= 400:
             raise AutotaskReadError(
-                f"Autotask POST {endpoint} failed with HTTP {response.status_code}."
+                f"Autotask {method} {endpoint} failed with HTTP {response.status_code}."
             )
         if response.status_code != 200:
             raise AutotaskReadError(
-                f"Autotask POST {endpoint} returned unexpected HTTP {response.status_code}."
+                f"Autotask {method} {endpoint} returned unexpected HTTP {response.status_code}."
             )
         if not response.content:
             return {}, response.status_code
@@ -331,7 +351,7 @@ class AutotaskClient:
             return response.json(), response.status_code
         except ValueError as exc:
             raise AutotaskReadError(
-                f"Autotask POST {endpoint} returned malformed JSON."
+                f"Autotask {method} {endpoint} returned malformed JSON."
             ) from exc
 
     def _blocked_result(self) -> ConnectorReadResult | None:
@@ -462,6 +482,13 @@ def _write_payload(
     ticket_id: int,
     fields: Mapping[str, object],
 ) -> dict[str, object]:
+    if action_type == "update_status":
+        if set(fields) != {"status"}:
+            raise AutotaskReadError("Autotask update_status requires only a status field.")
+        value = fields["status"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise AutotaskReadError("Autotask ticket status must be a non-negative integer.")
+        return {"id": ticket_id, "status": value}
     if action_type != "add_note":
         raise AutotaskReadError(f"Autotask ticket action is not supported: {action_type}.")
     allowed = {"description", "note_type", "publish", "title"}

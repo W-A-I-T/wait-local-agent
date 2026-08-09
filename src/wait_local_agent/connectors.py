@@ -68,6 +68,7 @@ SERVICENOW_ACTION_TYPES = {
 
 AUTOTASK_ACTION_TYPES = {
     "add_note",
+    "update_status",
 }
 
 M365_USER_CREATE_ACTION = "users.create"
@@ -376,12 +377,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             status=autotask_status,
             message=(
                 "Autotask credentials are configured for ticket/company lookup and "
-                "approval-gated ticket-note creation."
+                "approval-gated ticket-note creation and status updates."
                 if autotask_status == "configured"
                 else "Autotask credentials are configured; live reads require WAIT_ALLOW_HTTP_PROBING "
                 "and writes also require WAIT_ALLOW_WRITE_ACTIONS."
                 if autotask_status == "blocked"
-                else "Set WAIT_AUTOTASK_* values to enable Autotask PSA reads and approved ticket notes."
+                else "Set WAIT_AUTOTASK_* values to enable Autotask PSA reads and approved ticket actions."
             ),
             write_actions_enabled=settings.allow_write_actions and autotask_configured,
             http_probing_enabled=settings.allow_http_probing,
@@ -1847,6 +1848,13 @@ def validate_servicenow_action_fields(action_type: str, fields: dict[str, object
 def validate_autotask_action_fields(action_type: str, fields: dict[str, object]) -> None:
     if action_type not in AUTOTASK_ACTION_TYPES:
         raise ValueError(f"unsupported Autotask action type: {action_type}")
+    if action_type == "update_status":
+        if set(fields) != {"status"}:
+            raise ValueError("Autotask update_status requires only a status field")
+        value = fields["status"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("Autotask ticket status must be a non-negative integer")
+        return
     if not isinstance(fields, dict) or not {"description", "note_type", "publish"} <= set(fields):
         raise ValueError(
             "Autotask add_note requires description, note_type, and publish fields"
