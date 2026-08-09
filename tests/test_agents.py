@@ -22,6 +22,7 @@ from wait_local_agent.models import (
     SourceReference,
     Ticket,
 )
+from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store
@@ -371,7 +372,24 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
     pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
     assert pending.status == "pending_approval"
 
-    failure_definition = service.create(
+    class UnavailableProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+    failure_service = AgentService(
+        service.store,
+        settings,
+        SmartActionService(
+            service.store,
+            settings,
+            provider=UnavailableProvider(),
+            provider_configured=True,
+        ),
+    )
+    failure_definition = failure_service.create(
         name="Result-aware failure",
         description="Fail without a model.",
         enabled=True,
@@ -385,7 +403,9 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
         client_id="acme",
         result_aware=True,
     )
-    failed = service.run(failure_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    failed = failure_service.run(
+        failure_definition, entity_id="TCK-1001", actor="requester", input_payload={}
+    )
     assert failed.status == "failed"
 
 
@@ -1034,7 +1054,25 @@ def test_agent_api_can_cancel_pending_run_and_preserves_tenant_scope(settings) -
 
 
 def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
-    service = _service(settings)
+    class UnavailableProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            raise ProviderUnavailableError("offline")
+
+    store = Store(settings.data_path)
+    _seed(store, client_id="acme")
+    service = AgentService(
+        store,
+        settings,
+        SmartActionService(
+            store,
+            settings,
+            provider=UnavailableProvider(),
+            provider_configured=True,
+        ),
+    )
     definition = service.create(
         name="Retrying summary agent",
         description="Exercise bounded retry behavior.",
@@ -1057,7 +1095,7 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
     )
     assert first.status == "failed"
     assert first.final_result["status"] == "failed"
-    assert first.final_result["error_detail"] == "no local model provider is configured for this action"
+    assert first.final_result["error_detail"] == "offline"
     previous = service.store.get_agent_run(first.run_id, client_id="acme")
     assert previous is not None
 
@@ -1098,7 +1136,16 @@ def test_agent_run_retry_is_bounded_and_preserves_input_trace(settings) -> None:
 
 
 def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -> None:
-    scoped = settings.__class__(**{**settings.__dict__, "client_id": "acme"})
+    scoped = settings.__class__(
+        **{
+            **settings.__dict__,
+            "client_id": "acme",
+            "allow_llm_inference": True,
+            "local_model_provider": "openai-compatible",
+            "local_model_base_url": "http://127.0.0.1:1/v1",
+            "local_model_timeout_seconds": 0.01,
+        }
+    )
     store = Store(scoped.data_path)
     _seed(store, client_id="acme")
     client = TestClient(create_app(scoped))

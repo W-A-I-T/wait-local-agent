@@ -639,7 +639,7 @@ class TicketSummaryAction:
                 "summary": summary,
                 "suggested_response": suggested_response,
                 "citations": citations,
-                "ai_assisted": True,
+                "ai_assisted": _provider_is_ai_assisted(context),
                 "provider_id": _provider_id(context),
                 "estimate": self.manifest.estimated_minutes_saved,
             },
@@ -681,7 +681,7 @@ class SuggestResolutionAction:
                 "ticket_id": ticket.id,
                 "suggestion": suggestion,
                 "citations": citations,
-                "ai_assisted": True,
+                "ai_assisted": _provider_is_ai_assisted(context),
                 "provider_id": _provider_id(context),
                 "estimate": self.manifest.estimated_minutes_saved,
             },
@@ -4649,7 +4649,10 @@ class SmartActionService:
             provider=self.provider,
             actor=actor or "",
             client_id=client_id,
-            provider_available=self.provider_configured,
+            provider_available=(
+                self.provider_configured
+                or isinstance(self.provider, DeterministicLocalProvider)
+            ),
             collector_service=self.collector_service,
             halopsa_client=self.halopsa_client,
             hudu_client=self.hudu_client,
@@ -4876,6 +4879,13 @@ def _source_citation(source: SourceReference) -> dict[str, object]:
 def _provider_id(context: ActionContext) -> str:
     configured = context.settings.local_model_provider.strip()
     return configured or "configured-provider"
+
+
+def _provider_is_ai_assisted(context: ActionContext) -> bool:
+    """Expose whether the current result used a model rather than deterministic fallback."""
+    return context.provider is not None and not isinstance(
+        context.provider, DeterministicLocalProvider
+    )
 
 
 def _positive_thresholds(value: object) -> dict[str, int] | None:
