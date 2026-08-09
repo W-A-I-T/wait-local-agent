@@ -207,7 +207,7 @@ def test_syncro_write_boundaries_cover_transport_and_payload_edges(settings) -> 
         else:
             raise AssertionError("invalid Syncro comment edge was accepted")
     assert _remote_id([{"nested": {"comment_id": 7}}]) == "7"
-    assert SyncroClient(active).list_customers(business_name="x\n").result.status == "failed"
+    assert SyncroClient(active).list_customers(business_name="x\ny").result.status == "failed"
     assert _remote_id({"nested": [{"nothing": 1}]}) == ""
 
 
