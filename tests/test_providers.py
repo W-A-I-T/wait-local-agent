@@ -534,7 +534,7 @@ def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_pat
         return httpx.Response(
             200,
             json={
-                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
                 "choices": [
                     {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
                 ],
@@ -553,6 +553,30 @@ def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_pat
     assert metadata["total_tokens"] == 18
     assert metadata["cost_status"] == "not_configured"
     assert metadata["cost_usd"] is None
+
+
+def test_fallback_metadata_uses_primary_local_usage(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+                "choices": [
+                    {"message": {"content": '{"summary":"s","suggested_response":"r"}'}},
+                ],
+            },
+        )
+
+    local = OpenAICompatibleLocalProvider(
+        _profile(tmp_path), transport=httpx.MockTransport(handler)
+    )
+    fallback = FallbackModelProvider(local, RemoteModelProvider(_remote_profile()))
+    local.summarize_ticket(_ticket(), [])
+
+    metadata = provider_metadata(_settings(tmp_path), fallback)
+    assert metadata["input_tokens"] == 3
+    assert metadata["output_tokens"] == 2
+    assert metadata["total_tokens"] == 5
 
 
 def test_openai_provider_sends_expected_request_payload(tmp_path: Path) -> None:
