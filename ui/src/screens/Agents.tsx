@@ -20,7 +20,7 @@ export function Agents() {
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
   const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
   const [approvalRequiredTools, setApprovalRequiredTools] = useState<string[]>([]);
-  const [approvalRuleDrafts, setApprovalRuleDrafts] = useState<Record<string, { priority: string; status: string }>>({});
+  const [approvalRuleDrafts, setApprovalRuleDrafts] = useState<Record<string, { priority: string; status: string; actor_role: string }>>({});
   const [resultAware, setResultAware] = useState(false);
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [runDetails, setRunDetails] = useState<Record<string, AgentRunDetail>>({});
@@ -77,7 +77,8 @@ export function Agents() {
     setApprovalRequiredTools(agent.approval_required_tools ?? []);
     setApprovalRuleDrafts(Object.fromEntries((agent.approval_rules ?? []).map((rule) => [rule.tool_id, {
       priority: rule.when.priority?.join(", ") ?? "",
-      status: rule.when.status?.join(", ") ?? ""
+      status: rule.when.status?.join(", ") ?? "",
+      actor_role: rule.when.actor_role?.join(", ") ?? ""
     }])));
     setResultAware(agent.result_aware);
     setMessage(`Editing ${agent.name} version ${agent.version}. Save to create a new version.`);
@@ -94,8 +95,10 @@ export function Agents() {
       const when: AgentApprovalRule["when"] = {};
       const priorities = draft.priority.split(",").map((value) => value.trim()).filter(Boolean);
       const statuses = draft.status.split(",").map((value) => value.trim()).filter(Boolean);
+      const actorRoles = draft.actor_role.split(",").map((value) => value.trim()).filter(Boolean);
       if (priorities.length) when.priority = priorities;
       if (statuses.length) when.status = statuses;
+      if (actorRoles.length) when.actor_role = actorRoles;
       return Object.keys(when).length ? [{ tool_id, when }] : [];
     });
     return {
@@ -293,9 +296,9 @@ export function Agents() {
             }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
           })}</fieldset>
           <fieldset className="agent-option-group"><legend>Additional approval rules</legend><p className="screen-note">Require approval for selected tools even when their catalog policy is read-only. Built-in approval requirements cannot be disabled.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`approval-${tool.id}`}><input type="checkbox" checked={approvalRequiredTools.includes(tool.id)} onChange={() => setApprovalRequiredTools((current) => toggleValue(current, tool.id))} />{tool.name}{tool.approval_required ? " · already required" : " · require approval"}</label>)}</fieldset>
-          <fieldset className="agent-option-group"><legend>Conditional approval rules</legend><p className="screen-note">Require approval only when the ticket matches an explicit priority or status. Enter comma-separated values; values are matched case-insensitively and both fields are required when both are set.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
-            const draft = approvalRuleDrafts[tool.id] ?? { priority: "", status: "" };
-            return <div className="agent-rule-row" key={`conditional-${tool.id}`}><strong>{tool.name}</strong><label>Priority values<input aria-label={`${tool.name} priority conditions`} value={draft.priority} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, priority: event.target.value } }))} placeholder="urgent, high" /></label><label>Status values<input aria-label={`${tool.name} status conditions`} value={draft.status} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, status: event.target.value } }))} placeholder="new, open" /></label></div>;
+          <fieldset className="agent-option-group"><legend>Conditional approval rules</legend><p className="screen-note">Require approval only when the ticket matches explicit priority, status, or requester-role values. Enter comma-separated values; matches are case-insensitive and all entered fields must match. Scheduled and event runs have no authenticated requester role, so a role condition does not match them.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
+            const draft = approvalRuleDrafts[tool.id] ?? { priority: "", status: "", actor_role: "" };
+            return <div className="agent-rule-row" key={`conditional-${tool.id}`}><strong>{tool.name}</strong><label>Priority values<input aria-label={`${tool.name} priority conditions`} value={draft.priority} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, priority: event.target.value } }))} placeholder="urgent, high" /></label><label>Status values<input aria-label={`${tool.name} status conditions`} value={draft.status} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, status: event.target.value } }))} placeholder="new, open" /></label><label>Requester roles<input aria-label={`${tool.name} requester role conditions`} value={draft.actor_role} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, actor_role: event.target.value } }))} placeholder="technician, viewer" /></label></div>;
           })}</fieldset>
           <div className="row-actions">
             <button type="submit" disabled={!canWrite}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
@@ -310,7 +313,7 @@ export function Agents() {
         {agents.map((agent) => {
           const detail = runDetails[agent.id];
           const additionalApprovalTools = agent.approval_required_tools ?? [];
-          const conditionalApprovalTools = (agent.approval_rules ?? []).map((rule) => rule.tool_id);
+          const conditionalApprovalRules = (agent.approval_rules ?? []).map((rule) => `${rule.tool_id} (${Object.entries(rule.when).map(([field, values]) => `${field}=${values.join("|")}`).join(", ")})`);
           return <article className="panel agent-card" key={agent.id}>
             <div className="panel-heading"><h3>{agent.name}</h3><span>v{agent.version} · {agent.enabled ? "enabled" : "disabled"}</span></div>
             <p className="screen-note">{agent.description || "No description"}</p>
@@ -318,7 +321,7 @@ export function Agents() {
             <p className="screen-note">Tools: {agent.enabled_tools.join(", ")}</p>
             <p className="screen-note">Approval deadline: {agent.approval_expiry_seconds ? `${agent.approval_expiry_seconds / 3600} hours maximum` : "tool default"}</p>
             <p className="screen-note">Additional approval: {additionalApprovalTools.length ? additionalApprovalTools.join(", ") : "none"}</p>
-            <p className="screen-note">Conditional approval: {conditionalApprovalTools.length ? conditionalApprovalTools.join(", ") : "none"}</p>
+            <p className="screen-note">Conditional approval: {conditionalApprovalRules.length ? conditionalApprovalRules.join("; ") : "none"}</p>
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
             <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} onClick={() => editAgent(agent)}>Edit</button><button type="button" className="secondary-button" onClick={() => void showRevisions(agent)}>History</button></div>
             {revisions[agent.id] ? <div className="agent-history" aria-live="polite"><strong>Revision history</strong>{revisions[agent.id].map((revision) => <div className="agent-history-row" key={`${agent.id}-${revision.version}`}><span>Version {revision.version} · {revision.created_at}</span><div className="row-actions">{revision.version !== agent.version ? <><button type="button" className="secondary-button" onClick={() => void compareRevision(agent, revision.version)}>Compare to current</button><button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void restoreRevision(agent, revision.version)}>Restore</button></> : <span>current</span>}</div></div>)}{diffs[agent.id] ? <div className="agent-diff"><strong>{diffs[agent.id].changed ? "Changes" : "No changes"}</strong>{diffs[agent.id].changes.length ? diffs[agent.id].changes.map((change) => <div key={change.field}><span>{change.field}</span><small>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</small></div>) : <span>No persisted fields differ.</span>}</div> : null}</div> : null}

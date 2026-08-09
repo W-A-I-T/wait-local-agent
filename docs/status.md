@@ -100,10 +100,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, approver identity capture, and a bounded 24-hour expiry that terminates linked pending work and blocks late execution.
 - Agent definitions can shorten approval deadlines with a bounded policy and can
   require additional approval for selected enabled tools. They can also add a
-  bounded conditional rule for an explicit ticket priority and/or status; the
-  match is case-insensitive, both fields are ANDed, and the rule can only add
-  approval. They cannot extend a tool's configured deadline, remove a catalog
-  approval requirement, or grant write access.
+  bounded conditional rule for an explicit ticket priority, status, and/or
+  authenticated requester role. Matches are exact and case-insensitive, all
+  entered fields are ANDed, and the rule can only add approval. Scheduled and
+  event runs have no authenticated requester role and therefore do not match a
+  role condition. They cannot extend a tool's configured deadline, remove a
+  catalog approval requirement, or grant write access.
 - Scheduled workflow and ticket-agent registration, pause, resume, delete, and
   audit trail. Cron, interval, and one-time triggers use the existing
   APScheduler path and persist their agent/entity target plus a validated IANA

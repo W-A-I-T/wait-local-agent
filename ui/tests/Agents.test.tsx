@@ -117,6 +117,7 @@ describe("Agents", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage · require approval" }));
     fireEvent.change(screen.getByLabelText("Ticket Triage priority conditions"), { target: { value: "high, urgent" } });
+    fireEvent.change(screen.getByLabelText("Ticket Triage requester role conditions"), { target: { value: "technician, viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 
     await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
@@ -136,6 +137,9 @@ describe("Agents", () => {
     )).toBe(true);
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("approval_rules") && String(init.body).includes("high")
+    )).toBe(true);
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes("actor_role") && String(init.body).includes("technician")
     )).toBe(true);
   });
 

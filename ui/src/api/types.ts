@@ -620,6 +620,7 @@ export type AgentApprovalRule = {
   when: {
     priority?: string[];
     status?: string[];
+    actor_role?: string[];
   };
 };
 
