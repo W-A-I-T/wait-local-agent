@@ -245,7 +245,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if halopsa_status == "blocked"
                 else "Set WAIT_HALOPSA_* values to enable the first PSA read path."
             ),
-            write_actions_enabled=settings.allow_write_actions and connectwise_configured,
+            write_actions_enabled=settings.allow_write_actions and halopsa_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -323,7 +323,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if connectwise_status == "blocked"
                 else "Set WAIT_CONNECTWISE_* values to enable ConnectWise PSA reads and approved ticket updates."
             ),
-            write_actions_enabled=settings.allow_write_actions,
+            write_actions_enabled=settings.allow_write_actions and connectwise_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
