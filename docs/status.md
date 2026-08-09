@@ -207,6 +207,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   explicitly selected configured channel, and cannot write or deliver until a
   technician approval completes. A missing or unavailable delivery adapter is
   reported as a failure rather than treated as success.
+- The P1 alert workflow uses the same approval-gated communication boundary,
+  defaulting to a local ticket note and requiring an explicitly configured
+  adapter for external notification channels.
 - Client-scoped QBR, automation-opportunity, and recurring-service-review
   reports are available through their matching `/reports/*` API routes, CLI
   commands, and the `/reports` dashboard. They use local ticket,
