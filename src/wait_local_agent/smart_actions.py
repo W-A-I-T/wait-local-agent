@@ -3492,7 +3492,10 @@ class ItGlueDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="itglue-documentation-search",
         title="IT Glue documentation search",
-        description="Search tenant-scoped IT Glue document metadata through the existing read-only connector.",
+        description=(
+            "Search tenant-scoped IT Glue document names and bounded text/step content "
+            "through the existing read-only connector."
+        ),
         kind="deterministic",
         input_schema={
             "type": "object",
@@ -3538,12 +3541,21 @@ class ItGlueDocumentationSearchAction:
 
         provider = context.itglue_client or ItGlueClient(context.settings)
         try:
-            response = provider.list_documents(
-                scoped_organization_id,
-                folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
-                page=1,
-                page_size=limit,
-            )
+            search_documents = getattr(provider, "search_documents", None)
+            if callable(search_documents):
+                response = search_documents(
+                    scoped_organization_id,
+                    query.strip(),
+                    folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                    limit=limit,
+                )
+            else:
+                response = provider.list_documents(
+                    scoped_organization_id,
+                    folder_id=folder_id.strip() if isinstance(folder_id, str) else None,
+                    page=1,
+                    page_size=limit,
+                )
         except Exception:
             return _failed("IT Glue documentation lookup failed")
         result = getattr(response, "result", None)
