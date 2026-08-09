@@ -816,3 +816,63 @@ def test_remote_anthropic_provider_selects_continuation_tool(tmp_path: Path) -> 
         {"status": "success"},
         [],
     ) == "ticket-summary"
+
+
+def test_continuation_provider_failure_shapes_and_deterministic_mode(tmp_path: Path) -> None:
+    deterministic = DeterministicLocalProvider(_profile(tmp_path))
+    with pytest.raises(ProviderUnavailableError):
+        deterministic.select_next_tool("Continue", _ticket(), [], [], None, [])
+
+    for response in [
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, json={"choices": []}),
+        httpx.Response(503, json={"error": "unavailable"}),
+    ]:
+        provider = OpenAICompatibleLocalProvider(
+            _profile(tmp_path),
+            transport=httpx.MockTransport(lambda request, response=response: response),
+        )
+        with pytest.raises(ProviderUnavailableError):
+            provider.select_next_tool("Continue", _ticket(), [], [], None, [])
+
+
+def test_remote_openai_compatible_continuation_and_fallback(tmp_path: Path) -> None:
+    remote = RemoteModelProvider(
+        RemoteModelProfile(
+            provider="deepseek",
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-chat",
+            api_key="remote-secret",
+            timeout_seconds=5,
+            cloud_fallback_enabled=True,
+        ),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '{"tool_id":"ticket-summary"}'}}]},
+            )
+        ),
+    )
+    primary = DeterministicLocalProvider(_profile(tmp_path))
+    fallback = FallbackModelProvider(primary, remote)
+    assert fallback.select_next_tool("Continue", _ticket(), [], [], None, []) == "ticket-summary"
+
+
+def test_remote_continuation_rejects_malformed_and_http_errors(tmp_path: Path) -> None:
+    for response in [
+        httpx.Response(200, json={"content": [{"type": "text", "text": "{}"}]}),
+        httpx.Response(503, json={"error": "unavailable"}),
+    ]:
+        provider = RemoteModelProvider(
+            RemoteModelProfile(
+                provider="anthropic",
+                base_url="https://api.anthropic.com",
+                model="claude-test",
+                api_key="remote-secret",
+                timeout_seconds=5,
+                cloud_fallback_enabled=True,
+            ),
+            transport=httpx.MockTransport(lambda request, response=response: response),
+        )
+        with pytest.raises(ProviderUnavailableError):
+            provider.select_next_tool("Continue", _ticket(), [], [], None, [])

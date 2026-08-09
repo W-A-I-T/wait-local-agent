@@ -278,6 +278,93 @@ def test_result_aware_agent_uses_model_selection_and_never_repeats_tools(setting
     assert persisted is not None and persisted.result_aware is True
 
 
+@pytest.mark.parametrize("provider_mode", ["unavailable", "invalid"])
+def test_result_aware_agent_uses_deterministic_fallback_and_stops_at_remaining_catalog(
+    settings, provider_mode: str
+) -> None:
+    store = Store(settings.data_path)
+    _seed(store, client_id="acme")
+
+    class Provider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "summary"
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "response"
+
+        def select_next_tool(self, *args, **kwargs) -> str:
+            if provider_mode == "unavailable":
+                raise RuntimeError("provider unavailable")
+            return "not-approved"
+
+    service = AgentService(
+        store,
+        settings,
+        SmartActionService(store, settings, provider=Provider(), provider_configured=True),
+    )
+    definition = service.create(
+        name=f"Fallback {provider_mode}",
+        description="Use a bounded fallback.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        result_aware=True,
+        context_sources=["ticket"],
+    )
+
+    result = service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "completed"
+    assert len(result.steps) == 1
+    assert cast(dict[str, object], result.steps[0]["continuation"]).get("selection_mode") in {
+        "deterministic-fallback",
+        "deterministic-rejected-model",
+    }
+
+
+def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> None:
+    service = _service(settings)
+    approval_definition = service.create(
+        name="Result-aware approval",
+        description="Pause before dispatch.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        result_aware=True,
+    )
+    pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert pending.status == "pending_approval"
+
+    failure_definition = service.create(
+        name="Result-aware failure",
+        description="Fail without a model.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["suggest-resolution"],
+        steps=[{"tool_id": "suggest-resolution", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        result_aware=True,
+    )
+    failed = service.run(failure_definition, entity_id="TCK-1001", actor="requester", input_payload={})
+    assert failed.status == "failed"
+
+
 def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> None:
     service = _service(settings)
     service.store.upsert_knowledge_document(
