@@ -192,10 +192,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read
   tool, including tenant and per-user license context, plus the admin-only
-  approval-gated `m365-user-offboarding` tool. The offboarding tool accepts
-  only an explicit user identity and directory ID, disables the account, then
-  revokes sessions after approval, and reports partial completion without
-  continuing after a failed step. Credentials are never accepted by the tool.
+  approval-gated `m365-user-onboarding` and `m365-user-offboarding` tools.
+  Onboarding accepts only a validated local-vault reference for the temporary
+  credential and reads the secret after approval; offboarding accepts only an
+  explicit user identity and directory ID, disables the account, then revokes
+  sessions after approval, and reports partial completion without continuing
+  after a failed step. Credentials are never accepted in tool payloads.
   A
   matching RMM contract exposes tenant-scoped device and alert
   lookup, script metadata, script preview, and approval-aware execution. The

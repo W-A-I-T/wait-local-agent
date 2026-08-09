@@ -72,6 +72,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "m365-identity-lookup",
         "m365-live-context",
         "m365-user-offboarding",
+        "m365-user-onboarding",
         "halopsa-ticket-lookup",
         "hudu-documentation-search",
         "itglue-documentation-search",
