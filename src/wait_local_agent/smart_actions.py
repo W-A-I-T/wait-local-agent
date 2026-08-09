@@ -28,6 +28,7 @@ from wait_local_agent.models import (
     ApprovalRequest,
     ConnectWiseWriteRequest,
     HaloWriteRequest,
+    ServiceNowWriteRequest,
     SourceReference,
     Ticket,
 )
@@ -47,7 +48,7 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     rmm_provider_from_settings,
 )
-from wait_local_agent.servicenow import ServiceNowReadProvider
+from wait_local_agent.servicenow import ServiceNowReadProvider, ServiceNowWriteProvider
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
@@ -285,7 +286,7 @@ class ActionContext:
     rmm_provider: RmmInventoryProvider | None = None
     connectwise_client: ConnectWiseReadProvider | ConnectWiseWriteProvider | None = None
     syncro_client: SyncroReadProvider | None = None
-    servicenow_client: ServiceNowReadProvider | None = None
+    servicenow_client: ServiceNowReadProvider | ServiceNowWriteProvider | None = None
     autotask_client: AutotaskReadProvider | None = None
     itglue_client: ItGlueClientProtocol | None = None
     confluence_client: ConfluenceClientProtocol | None = None
@@ -3021,7 +3022,10 @@ class ServiceNowIncidentLookupAction:
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
         from wait_local_agent.servicenow import ServiceNowClient
 
-        provider = context.servicenow_client or ServiceNowClient(context.settings)
+        provider = cast(
+            ServiceNowReadProvider,
+            context.servicenow_client or ServiceNowClient(context.settings),
+        )
         return _run_psa_ticket_lookup(
             context,
             payload,
@@ -3031,6 +3035,133 @@ class ServiceNowIncidentLookupAction:
             failure_message="ServiceNow incident lookup failed",
             malformed_message="ServiceNow returned malformed incident data",
             empty_message="ServiceNow returned no matching incident",
+        )
+
+
+class ServiceNowIncidentWriteAction:
+    def __init__(self, *, action_id: str, title: str, action_type: str) -> None:
+        self.action_type = action_type
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=(
+                f"Prepare an approval-gated ServiceNow {action_type} for one "
+                "explicit tenant-scoped incident."
+            ),
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["ticket_id", "fields"],
+                "properties": {
+                    "ticket_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "fields": {"type": "object", "minProperties": 1},
+                },
+            },
+            output_schema={
+                "operation": "string",
+                "connector_status": "string",
+                "ticket_id": "string",
+                "action_type": "string",
+                "status_code": "number",
+                "remote_id": "string",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=3,
+            risk_level="high",
+            required_role="technician",
+            access_mode="write",
+        )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "fields", "_approval_completed"}:
+            return _failed(f"ServiceNow {self.action_type} payload contains unsupported fields")
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        fields = payload.get("fields")
+        if ticket is None or not isinstance(fields, dict):
+            return _failed("ServiceNow incident write payload is invalid or outside tenant scope")
+        fields = dict(fields)
+        try:
+            from wait_local_agent.connectors import validate_servicenow_action_fields
+
+            validate_servicenow_action_fields(self.action_type, fields)
+        except (TypeError, ValueError) as exc:
+            return _failed(redact_text(str(exc)))
+        from wait_local_agent.servicenow import ServiceNowClient
+
+        provider = cast(
+            ServiceNowWriteProvider,
+            context.servicenow_client or ServiceNowClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("ServiceNow write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "ServiceNow writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "incident_write",
+            "connector_status": connector_status,
+            "ticket_id": ticket.id,
+            "action_type": self.action_type,
+        }
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "servicenow",
+                "operation": self.action_type,
+                "client_id": context.client_id,
+                "ticket_id": ticket.id,
+                "field_names": sorted(str(name) for name in fields),
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=connector_message,
+            )
+        if not payload.get("_approval_completed"):
+            return ActionResult(
+                status="success",
+                output={**output, "approval_required": True},
+                evidence=evidence,
+            )
+        try:
+            result = provider.execute_write(
+                ServiceNowWriteRequest(
+                    ticket_id=ticket.id,
+                    action_type=self.action_type,
+                    fields=fields,
+                )
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=f"ServiceNow {self.action_type} failed",
+            )
+        result_output = {
+            **output,
+            "status_code": getattr(result, "status_code", None),
+            "remote_id": getattr(result, "remote_id", ""),
+        }
+        if str(getattr(result, "status", "failed")) != "succeeded":
+            return ActionResult(
+                status="failed",
+                output=result_output,
+                evidence=evidence,
+                error_detail=redact_text(
+                    str(getattr(result, "message", f"ServiceNow {self.action_type} failed"))
+                ),
+            )
+        return ActionResult(
+            status="success",
+            output={**result_output, "approved": True},
+            evidence=evidence,
         )
 
 
@@ -4181,6 +4312,16 @@ def _build_default_registry() -> SmartActionRegistry:
         ConnectWiseTicketLookupAction(),
         SyncroTicketLookupAction(),
         ServiceNowIncidentLookupAction(),
+        ServiceNowIncidentWriteAction(
+            action_id="servicenow-incident-add-work-note",
+            title="ServiceNow add incident work note",
+            action_type="add_work_note",
+        ),
+        ServiceNowIncidentWriteAction(
+            action_id="servicenow-incident-update-state",
+            title="ServiceNow update incident state",
+            action_type="update_state",
+        ),
         AutotaskTicketLookupAction(),
         HuduDocumentationSearchAction(),
         ItGlueDocumentationSearchAction(),
@@ -4264,7 +4405,7 @@ class SmartActionService:
         rmm_provider: RmmInventoryProvider | None = None,
         connectwise_client: ConnectWiseReadProvider | ConnectWiseWriteProvider | None = None,
         syncro_client: SyncroReadProvider | None = None,
-        servicenow_client: ServiceNowReadProvider | None = None,
+        servicenow_client: ServiceNowReadProvider | ServiceNowWriteProvider | None = None,
         autotask_client: AutotaskReadProvider | None = None,
         itglue_client: ItGlueClientProtocol | None = None,
         confluence_client: ConfluenceClientProtocol | None = None,

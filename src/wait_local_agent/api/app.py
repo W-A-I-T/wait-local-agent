@@ -2623,6 +2623,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audit_servicenow_read("health", result.status, result.count)
         return asdict(result)
 
+    @app.get("/connectors/servicenow/write-health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def servicenow_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = servicenow_client.write_health()
+        store.add_audit_event("servicenow.write_health", "servicenow", result.status)
+        return asdict(result)
+
     @app.get("/connectors/servicenow/incidents")
     @limiter.limit(active_settings.rate_limit_connector)
     def servicenow_incidents(

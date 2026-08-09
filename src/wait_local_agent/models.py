@@ -9,6 +9,9 @@ HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded
 ConnectWiseWriteStatus = Literal[
     "not_started", "blocked", "not_configured", "succeeded", "failed"
 ]
+ServiceNowWriteStatus = Literal[
+    "not_started", "blocked", "not_configured", "succeeded", "failed"
+]
 ActionKind = Literal[
     "ticket.triage",
     "ticket.assign",
@@ -223,6 +226,14 @@ class ConnectWiseWriteRequest:
 
 
 @dataclass(frozen=True)
+class ServiceNowWriteRequest:
+    ticket_id: str
+    action_type: str
+    fields: dict[str, object]
+    approval_request_id: int | None = None
+
+
+@dataclass(frozen=True)
 class HaloWriteResult:
     status: HaloWriteStatus
     message: str
@@ -236,6 +247,17 @@ class HaloWriteResult:
 @dataclass(frozen=True)
 class ConnectWiseWriteResult:
     status: ConnectWiseWriteStatus
+    message: str
+    action_type: str
+    ticket_id: str
+    endpoint: str = ""
+    status_code: int | None = None
+    remote_id: str = ""
+
+
+@dataclass(frozen=True)
+class ServiceNowWriteResult:
+    status: ServiceNowWriteStatus
     message: str
     action_type: str
     ticket_id: str

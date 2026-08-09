@@ -5,6 +5,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
+from wait_local_agent.models import ServiceNowWriteRequest
 from wait_local_agent.servicenow import (
     ServiceNowClient,
     ServiceNowReadError,
@@ -66,6 +67,63 @@ def test_servicenow_reads_report_missing_credentials(settings) -> None:
     assert health.status == "not_configured"
     assert "WAIT_SERVICENOW_PASSWORD" in health.message
     assert response.result.status == "not_configured"
+
+
+def test_servicenow_writes_require_both_flags_and_use_allowlisted_patch(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PATCH"
+        assert request.url.path.endswith("/incident/abc123")
+        assert request.headers["content-type"] == "application/json"
+        assert request.headers["authorization"].startswith("Basic ")
+        assert request.read() == b'{"work_notes":"Investigated locally"}'
+        return httpx.Response(200, json={"result": {"sys_id": "abc123", "password": "redact"}})
+
+    blocked = ServiceNowClient(
+        _settings(settings, allow_http_probing=False),
+        transport=httpx.MockTransport(handler),
+    )
+    blocked_result = blocked.execute_write(
+        ServiceNowWriteRequest("abc123", "add_work_note", {"work_notes": "note"})
+    )
+    assert blocked.write_health().status == "blocked"
+    assert "WAIT_ALLOW_HTTP_PROBING=true" in blocked_result.message
+    assert "WAIT_ALLOW_WRITE_ACTIONS=true" in blocked_result.message
+    assert requests == []
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    client = ServiceNowClient(active, transport=httpx.MockTransport(handler))
+    assert client.write_health().status == "ready"
+    result = client.execute_write(
+        ServiceNowWriteRequest(
+            "abc123", "add_work_note", {"work_notes": "Investigated locally"}
+        )
+    )
+    assert result.status == "succeeded"
+    assert result.remote_id == "abc123"
+    assert client.execute_write(
+        ServiceNowWriteRequest("abc123", "add_work_note", {"comments": "unsafe"})
+    ).status == "failed"
+
+
+def test_servicenow_write_failures_are_bounded(settings) -> None:
+    active = replace(_settings(settings), allow_write_actions=True)
+    request = ServiceNowWriteRequest("abc123", "update_state", {"incident_state": "2"})
+    malformed = ServiceNowClient(
+        active,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"bad")),
+    ).execute_write(request)
+    failed = ServiceNowClient(
+        active,
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+    ).execute_write(request)
+
+    assert malformed.status == "failed"
+    assert malformed.message.endswith("returned malformed JSON.")
+    assert failed.status == "failed"
+    assert "HTTP 500" in failed.message
 
 
 def test_servicenow_reads_normalize_payloads_and_bound_requests(settings) -> None:
