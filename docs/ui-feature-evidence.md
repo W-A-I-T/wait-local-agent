@@ -22,7 +22,7 @@ visible here instead of being presented as a completed UI feature.
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
 | `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
-| `/reports` | Hardening, restore exercise, report export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests; browser route render |
+| `/reports` | Hardening, restore exercise, deterministic client QBR and automation-opportunity generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
 | `/scheduled-jobs` | Schedule lifecycle | `/scheduled-jobs/*` | Browser route render |
 | `/settings` | Packs, secrets, backups, update check | `/settings/*`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
@@ -51,7 +51,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 19 files, 70 tests passed.
+- UI tests: 19 files, 71 tests passed.
 - UI production build: passed.
 - Ruff, mypy, Bandit, and public-surface audit: passed in the isolated project
   environment.

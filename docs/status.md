@@ -167,6 +167,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   through both `/end-user/tickets*` and the separate `/end-user` React surface;
   it does not load the operator shell. Live PSA sync, outbound delivery, and
   tenant-configurable branding remain unavailable.
+- Client-scoped QBR and automation-opportunity reports are available through
+  `POST /reports/qbr`, `POST /reports/automation-opportunity`, the matching
+  `reports qbr` and `reports automation-opportunity` CLI commands, and the
+  `/reports` dashboard. They use local ticket, status-history, smart-action, and
+  execution evidence; repeated actions are ranked for review, and time-saved
+  values are explicitly labeled estimates. Report reads, generation, audit, and
+  export enforce the authenticated client scope.
 - Analytics now includes a redacted, tenant-scoped activity breakdown by run
   kind, trigger source, and outcome alongside the existing time-series and
   estimated-time-saved metrics. It also reports approval decisions, distinct
@@ -309,7 +316,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | RMM connectors | Local, NinjaOne, Datto, and read-only N-central adapters built; broader vendor coverage future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog; broader resources and mutations future |
 | Scheduled / proactive workflows | Built |
-| QBR / ROI reporting | Future paid pack |
+| QBR / ROI reporting | Deterministic client-scoped QBR and automation-opportunity reports built; provider-backed lifecycle enrichment and PDF export remain future work |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
 | LP evidence bundle export | Public contract built; proprietary founder implementation remains private |
 

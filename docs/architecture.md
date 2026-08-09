@@ -186,6 +186,21 @@ calculated only from an explicit non-terminal-to-terminal status transition and
 a valid creation timestamp; it does not infer provider history or measured time
 saved.
 
+## Client reports and automation opportunities
+
+The report service provides deterministic client-scoped QBR and
+automation-opportunity builders. They use locally stored ticket records,
+explicit ticket status history, smart-action runs, and execution records. A
+report can rank repeated successful actions as workflow candidates, but report
+generation never enables or executes a workflow. Declared per-action time
+savings are surfaced as estimates, not measurements; the builders do not claim
+SLA compliance, sentiment, or provider lifecycle evidence that is not present.
+
+The API routes, CLI commands, and `/reports` React controls all reuse this
+service. Non-admin report requests are bound to the authenticated client, and
+cross-client detail/export requests return not found. Report creation and
+export carry the client scope into the audit event.
+
 ## Template gallery
 
 The local gallery stores provenance-bearing, tenant-scoped instances of the

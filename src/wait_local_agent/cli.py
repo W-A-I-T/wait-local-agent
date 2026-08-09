@@ -104,6 +104,7 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
@@ -2642,16 +2643,18 @@ def list_reports(
     report_type: Annotated[str, typer.Option(help="Filter by report type value.")] = "",
     client_id: Annotated[str, typer.Option(help="Filter by client id.")] = "",
     project_id: Annotated[str, typer.Option(help="Filter by project id.")] = "",
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_report_client_scope(context, client_id or None)
     service = ReportService(_store())
     try:
         type_filter = ReportType(report_type) if report_type else None
     except ValueError as exc:
         typer.echo(f"unknown report type: {report_type}")
         raise typer.Exit(code=1) from exc
-    stored = service.list_reports(
-        report_type=type_filter, client_id=client_id, project_id=project_id
-    )
+    stored = service.list_reports(report_type=type_filter, client_id=scoped_client_id or "", project_id=project_id)
     for report in stored:
         typer.echo(
             f"{report.id} type={report.report_type.value} title={report.title} "
@@ -2661,9 +2664,14 @@ def list_reports(
 
 
 @reports_app.command("show")
-def show_report(report_id: str) -> None:
+def show_report(
+    report_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
     service = ReportService(_store())
-    report = service.get_report(report_id)
+    report = service.get_report(report_id, client_id=_cli_report_client_scope(context, None))
     if report is None:
         typer.echo(f"report {report_id} not found")
         raise typer.Exit(code=1)
@@ -2675,10 +2683,17 @@ def export_report(
     report_id: str,
     export_format: Annotated[str, typer.Option(help="json or markdown.")] = "json",
     output: Annotated[Path | None, typer.Option(help="Write to this file path.")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
     service = ReportService(_store())
     try:
-        rendered = service.export_report(report_id, ReportFormat(export_format))
+        rendered = service.export_report(
+            report_id,
+            ReportFormat(export_format),
+            client_id=_cli_report_client_scope(context, None),
+        )
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
@@ -2691,6 +2706,38 @@ def export_report(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(rendered, encoding="utf-8")
     typer.echo(f"exported={output}")
+
+
+@reports_app.command("qbr")
+def generate_qbr_report(
+    period_start: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-01-01.")],
+    period_end: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-03-31.")],
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    _generate_client_report(
+        ReportType.QBR,
+        period_start=period_start,
+        period_end=period_end,
+        requested_client_id=client_id,
+        token=token,
+    )
+
+
+@reports_app.command("automation-opportunity")
+def generate_automation_opportunity_report(
+    period_start: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-01-01.")],
+    period_end: Annotated[str, typer.Option(help="Inclusive ISO date, for example 2026-03-31.")],
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    _generate_client_report(
+        ReportType.AUTOMATION_OPPORTUNITY,
+        period_start=period_start,
+        period_end=period_end,
+        requested_client_id=client_id,
+        token=token,
+    )
 
 
 @backup_app.command("create")
@@ -3184,6 +3231,59 @@ def _cli_access(settings, token: str | None, minimum: Role):
     if context.role < minimum:
         raise typer.BadParameter("insufficient role")
     return context
+
+
+def _generate_client_report(
+    report_type: ReportType,
+    *,
+    period_start: str,
+    period_end: str,
+    requested_client_id: str | None,
+    token: str | None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    client_id = _cli_report_client_scope(context, requested_client_id)
+    if not client_id:
+        raise typer.BadParameter("a client id is required for a client report")
+    store = Store(settings.data_path)
+    estimates = {
+        manifest.action_id: manifest.estimated_minutes_saved
+        for manifest in SmartActionService(store, settings, collector_service=CollectorService(store)).list()
+    }
+    if report_type is ReportType.QBR:
+        sections, metadata = build_qbr_report(
+            store,
+            estimates,
+            client_id=client_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    else:
+        sections, metadata = build_automation_opportunity_report(
+            store,
+            estimates,
+            client_id=client_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    report = ReportService(store).create_report(
+        report_type,
+        f"{report_type.value} — {client_id}",
+        sections,
+        created_by=context.approver_id or "system",
+        client_id=client_id,
+        metadata=metadata,
+    )
+    typer.echo(render_report_json(report))
+
+
+def _cli_report_client_scope(context, requested_client_id: str | None) -> str | None:
+    if context.role >= Role.ADMIN:
+        return requested_client_id.strip() if requested_client_id else None
+    if not context.client_id:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    return context.client_id
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:

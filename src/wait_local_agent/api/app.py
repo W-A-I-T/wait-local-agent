@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -131,6 +131,7 @@ from wait_local_agent.reports.builders import (
 )
 from wait_local_agent.reports.hardening_checks import HardeningContext, run_hardening_checks
 from wait_local_agent.reports.models import ReportFormat, ReportType
+from wait_local_agent.reports.msp import build_automation_opportunity_report, build_qbr_report
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scheduler import SchedulerManager
@@ -340,6 +341,12 @@ class EndUserTicketCreateRequest(BaseModel):
 
 class EndUserMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
+
+
+class ClientReportRequest(BaseModel):
+    period_start: date
+    period_end: date
+    client_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class AgentStepRequest(BaseModel):
@@ -1974,23 +1981,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return report_as_dict(report)
 
+    @app.post("/reports/qbr")
+    def create_qbr_report(
+        request: ClientReportRequest,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _report_client_scope(context, request.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
+        if request.period_end < request.period_start:
+            raise HTTPException(status_code=400, detail="period_end must be on or after period_start")
+        estimates = {
+            manifest.action_id: manifest.estimated_minutes_saved
+            for manifest in smart_action_service.list()
+        }
+        sections, metadata = build_qbr_report(
+            store,
+            estimates,
+            client_id=scoped_client_id,
+            period_start=request.period_start.isoformat(),
+            period_end=request.period_end.isoformat(),
+        )
+        report = report_service.create_report(
+            ReportType.QBR,
+            f"Quarterly business review — {scoped_client_id}",
+            sections,
+            created_by=context.approver_id or "system",
+            client_id=scoped_client_id,
+            metadata=metadata,
+        )
+        return report_as_dict(report)
+
+    @app.post("/reports/automation-opportunity")
+    def create_automation_opportunity_report(
+        request: ClientReportRequest,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _report_client_scope(context, request.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
+        if request.period_end < request.period_start:
+            raise HTTPException(status_code=400, detail="period_end must be on or after period_start")
+        estimates = {
+            manifest.action_id: manifest.estimated_minutes_saved
+            for manifest in smart_action_service.list()
+        }
+        sections, metadata = build_automation_opportunity_report(
+            store,
+            estimates,
+            client_id=scoped_client_id,
+            period_start=request.period_start.isoformat(),
+            period_end=request.period_end.isoformat(),
+        )
+        report = report_service.create_report(
+            ReportType.AUTOMATION_OPPORTUNITY,
+            f"Automation opportunities — {scoped_client_id}",
+            sections,
+            created_by=context.approver_id or "system",
+            client_id=scoped_client_id,
+            metadata=metadata,
+        )
+        return report_as_dict(report)
+
     @app.get("/reports")
     def reports(
-        _: ViewerAccess,
+        context: ViewerAccess,
         report_type: ReportType | None = None,
         client_id: str = "",
         project_id: str = "",
     ) -> list[dict[str, object]]:
+        scoped_client_id = _report_client_scope(context, client_id or None)
         stored = report_service.list_reports(
             report_type=report_type,
-            client_id=client_id,
+            client_id=scoped_client_id or "",
             project_id=project_id,
         )
         return [report_as_dict(report) for report in stored]
 
     @app.get("/reports/{report_id}")
-    def report_detail(report_id: str, _: ViewerAccess) -> dict[str, object]:
-        report = report_service.get_report(report_id)
+    def report_detail(report_id: str, context: ViewerAccess) -> dict[str, object]:
+        report = report_service.get_report(report_id, client_id=_report_client_scope(context, None))
         if report is None:
             raise HTTPException(status_code=404, detail="report not found")
         return report_as_dict(report)
@@ -1998,11 +2068,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/reports/{report_id}/export")
     def report_export(
         report_id: str,
-        _: ViewerAccess,
+        context: ViewerAccess,
         export_format: Literal["json", "markdown"] = "json",
     ) -> Response:
         try:
-            rendered = report_service.export_report(report_id, ReportFormat(export_format))
+            rendered = report_service.export_report(
+                report_id,
+                ReportFormat(export_format),
+                client_id=_report_client_scope(context, None),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="report not found") from exc
         media_type = "application/json" if export_format == "json" else "text/markdown"
@@ -4597,6 +4671,15 @@ def _smart_action_client_scope(context: AuthContext, requested_client_id: str | 
     if context.role >= Role.ADMIN:
         return _normalize_client_id(requested_client_id)
     return _normalize_client_id(context.client_id)
+
+
+def _report_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+    """Require a tenant for non-admin report reads and generation."""
+
+    scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+    if context.role < Role.ADMIN and scoped_client_id is None:
+        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+    return scoped_client_id
 
 
 def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):

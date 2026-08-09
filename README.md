@@ -144,6 +144,12 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   `--new-session`, `--session-id`, and `--client-id` for the same bounded
   history path. Only redacted operational messages, action IDs, statuses, and
   ticket references are stored.
+- Operators can generate deterministic client reports from the existing local
+  evidence at `/reports`: QBR and automation-opportunity reports are also
+  available through `POST /reports/qbr`, `POST /reports/automation-opportunity`,
+  `wait-local-agent reports qbr`, and
+  `wait-local-agent reports automation-opportunity`. Repeated actions are
+  review candidates only, and declared time-saved values are labeled estimates.
 - Signed update checks with `wait-local-agent update check`.
 - Pack discovery plus `wait-local-agent packs list`, `status`, and `install`.
 - Founder CLI and `/founder/*` routes in the public contract, returning stable `501` responses when the founder pack is not installed.

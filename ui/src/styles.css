@@ -665,6 +665,17 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.panel-subsection {
+  border: 1px solid #e8efec;
+  border-radius: 12px;
+  margin: 18px 0;
+  padding: 16px;
+}
+
+.panel-subsection h3 {
+  margin: 0;
+}
+
 .analytics-filter-panel {
   grid-column: 1 / -1;
 }
