@@ -35,6 +35,7 @@ from wait_local_agent.models import (
     HuduArticle,
     ServiceNowWriteRequest,
     SourceReference,
+    SyncroWriteRequest,
     Ticket,
 )
 from wait_local_agent.providers import ProviderUnavailableError
@@ -82,6 +83,7 @@ from wait_local_agent.smart_actions import (
     StaleTicketSweepAction,
     SuggestResolutionAction,
     SyncroTicketLookupAction,
+    SyncroTicketWriteAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
@@ -1055,6 +1057,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "sharepoint-documentation-search",
         "stale-ticket-sweep",
         "suggest-resolution",
+        "syncro-ticket-add-note",
         "syncro-ticket-lookup",
         "ticket-escalation",
         "ticket-quality",
@@ -1200,6 +1203,69 @@ def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> No
     assert action.run(
         replace(context, autotask_client=FakeAutotaskWrites(result_status="failed")),
         {"ticket_id": "123", "fields": fields, "_approval_completed": True},
+    ).status == "failed"
+
+
+def test_syncro_ticket_writes_are_approval_gated_and_tenant_scoped(settings) -> None:
+    class FakeSyncroWrites:
+        def __init__(self, *, health_status="ready", result_status="succeeded"):
+            self.health_status = health_status
+            self.result_status = result_status
+            self.calls: list[SyncroWriteRequest] = []
+
+        def write_health(self):
+            return SimpleNamespace(status=self.health_status, message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            return SimpleNamespace(
+                status=self.result_status,
+                message="write completed" if self.result_status == "succeeded" else "provider rejected write",
+                status_code=201 if self.result_status == "succeeded" else 403,
+                remote_id="99",
+            )
+
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set id = '42', client_id = 'acme' where id = 'TCK-1001'")
+    provider = FakeSyncroWrites()
+    context = _action_context(store, settings, client_id="acme")
+    action = SyncroTicketWriteAction(
+        action_id="test-syncro-note",
+        title="test",
+        action_type="add_note",
+    )
+    fields: dict[str, object] = {"subject": "Internal review", "body": "Reviewed locally"}
+    preview = action.run(
+        replace(context, syncro_client=provider),
+        {"ticket_id": "42", "fields": fields},
+    )
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    assert provider.calls == []
+    completed = action.run(
+        replace(context, syncro_client=provider),
+        {"ticket_id": "42", "fields": fields, "_approval_completed": True},
+    )
+    assert completed.status == "success"
+    assert completed.output["approved"] is True
+    assert provider.calls == [SyncroWriteRequest("42", "add_note", fields)]
+    assert action.run(
+        replace(context, client_id="other", syncro_client=provider),
+        {"ticket_id": "42", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, syncro_client=provider),
+        {"ticket_id": "42", "fields": {"subject": "x", "body": "y", "token": "secret"}},
+    ).status == "failed"
+    assert action.run(
+        replace(context, syncro_client=FakeSyncroWrites(health_status="blocked")),
+        {"ticket_id": "42", "fields": fields},
+    ).status == "failed"
+    assert action.run(
+        replace(context, syncro_client=FakeSyncroWrites(result_status="failed")),
+        {"ticket_id": "42", "fields": fields, "_approval_completed": True},
     ).status == "failed"
 
 

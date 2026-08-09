@@ -13,10 +13,12 @@ from wait_local_agent.syncro import (
     _normalize_customer,
     _normalize_ticket,
     _payload_rows,
+    _remote_id,
     _safe_base_url,
     _safe_endpoint,
     _safe_filter,
     _safe_id,
+    _write_payload,
 )
 
 
@@ -46,6 +48,97 @@ def test_syncro_reads_are_blocked_without_http_flag(settings) -> None:
     assert client.get_ticket("42").result.status == "blocked"
     assert client.get_customer("7").result.status == "blocked"
     assert requests == []
+
+
+def test_syncro_writes_require_both_flags_and_credentials(settings) -> None:
+    from wait_local_agent.models import SyncroWriteRequest
+
+    request = SyncroWriteRequest(
+        ticket_id="42",
+        action_type="add_note",
+        fields={"subject": "Internal", "body": "Reviewed"},
+    )
+    client = SyncroClient(
+        replace(_settings(settings), allow_write_actions=False),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    assert client.write_health().status == "blocked"
+    assert client.execute_write(request).status == "blocked"
+    missing = SyncroClient(
+        replace(_settings(settings), allow_write_actions=True, syncro_api_token=""),
+    )
+    assert missing.write_health().status == "not_configured"
+    assert missing.execute_write(request).status == "not_configured"
+
+
+def test_syncro_add_note_uses_documented_comment_endpoint(settings) -> None:
+    from wait_local_agent.models import SyncroWriteRequest
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/tickets/42/comment"
+        assert request.headers["authorization"] == "Bearer syncro-token"
+        assert request.read().decode() == (
+            '{"subject":"Internal","body":"Reviewed\\nby WAIT",'
+            '"hidden":true,"do_not_email":true}'
+        )
+        return httpx.Response(201, json={"comment": {"id": 99}})
+
+    client = SyncroClient(
+        replace(_settings(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.execute_write(
+        SyncroWriteRequest(
+            ticket_id="42",
+            action_type="add_note",
+            fields={"subject": " Internal ", "body": " Reviewed\nby WAIT "},
+        )
+    )
+    assert result.status == "succeeded"
+    assert result.endpoint == "tickets/42/comment"
+    assert result.status_code == 201
+    assert result.remote_id == "99"
+    assert len(requests) == 1
+
+
+def test_syncro_write_validation_and_failures_are_sanitized(settings) -> None:
+    from wait_local_agent.models import SyncroWriteRequest
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    for status, expected in ((401, "unauthorized"), (403, "forbidden"), (429, "rate limited")):
+        result = SyncroClient(
+            active,
+            transport=httpx.MockTransport(lambda request, status=status: httpx.Response(status)),
+        ).execute_write(
+            SyncroWriteRequest("42", "add_note", {"subject": "Internal", "body": "Reviewed"})
+        )
+        assert result.status == "failed"
+        assert expected in result.message
+        assert "syncro-token" not in result.message
+    malformed = SyncroClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"bad")),
+    ).execute_write(SyncroWriteRequest("42", "add_note", {"subject": "Internal", "body": "Reviewed"}))
+    assert malformed.status == "failed"
+    assert malformed.message.endswith("returned malformed JSON.")
+    assert _remote_id({"comment": {"comment_id": 8}}) == "8"
+    invalid = (
+        ("bad", {"subject": "Internal", "body": "Reviewed"}),
+        ("add_note", {"subject": "Internal", "body": "Reviewed", "secret": "no"}),
+        ("add_note", {"subject": "", "body": "Reviewed"}),
+        ("add_note", {"subject": "Internal", "body": "Reviewed", "hidden": "yes"}),
+    )
+    for action_type, fields in invalid:
+        try:
+            _write_payload(action_type, fields)
+        except SyncroReadError:
+            pass
+        else:
+            raise AssertionError("invalid Syncro write was accepted")
 
 
 def test_syncro_reads_report_missing_credentials(settings) -> None:

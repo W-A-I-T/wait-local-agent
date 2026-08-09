@@ -1,8 +1,7 @@
-"""Read-only Syncro PSA REST adapter.
+"""Bounded Syncro PSA REST adapter.
 
 The public Syncro API exposes many mutation endpoints. This adapter deliberately
-uses only ticket and customer GET endpoints and normalizes the small field set
-needed by WAIT's operator surfaces.
+uses ticket/customer reads and the explicitly approved ticket-comment endpoint.
 """
 
 from __future__ import annotations
@@ -15,7 +14,11 @@ from urllib.parse import urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
-from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.models import (
+    ConnectorReadResult,
+    SyncroWriteRequest,
+    SyncroWriteResult,
+)
 
 DEFAULT_PAGE = 1
 MAX_PAGE = 1_000_000
@@ -59,6 +62,14 @@ class SyncroReadProvider(Protocol):
         ...
 
 
+class SyncroWriteProvider(Protocol):
+    def write_health(self) -> ConnectorReadResult:
+        ...
+
+    def execute_write(self, request: SyncroWriteRequest) -> SyncroWriteResult:
+        ...
+
+
 class SyncroReadError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -66,7 +77,7 @@ class SyncroReadError(Exception):
 
 
 class SyncroClient:
-    """Bounded Syncro REST client for read operations only."""
+    """Bounded Syncro REST client for reads and approved ticket comments."""
 
     def __init__(
         self,
@@ -154,6 +165,39 @@ class SyncroClient:
             return SyncroReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_items(f"customers/{safe_id}", "customer", _normalize_customer)
 
+    def write_health(self) -> ConnectorReadResult:
+        blocked = self._write_blocked_result()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_result()
+        if missing is not None:
+            return missing
+        return ConnectorReadResult("ready", "Syncro ticket write prerequisites are ready.")
+
+    def execute_write(self, request: SyncroWriteRequest) -> SyncroWriteResult:
+        blocked = self._write_blocked_write_result(request)
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_write_result(request)
+        if missing is not None:
+            return missing
+        try:
+            safe_id = _safe_id(request.ticket_id)
+            payload = _write_payload(request.action_type, request.fields)
+            endpoint = f"tickets/{safe_id}/comment"
+            response_payload, status_code = self._post(endpoint, payload)
+        except SyncroReadError as exc:
+            return SyncroWriteResult("failed", exc.message, request.action_type, request.ticket_id)
+        return SyncroWriteResult(
+            "succeeded",
+            f"Syncro {request.action_type} write succeeded.",
+            request.action_type,
+            request.ticket_id,
+            endpoint=endpoint,
+            status_code=status_code,
+            remote_id=_remote_id(response_payload),
+        )
+
     def _request_items(
         self,
         endpoint: str,
@@ -224,12 +268,88 @@ class SyncroClient:
                 f"Syncro GET {endpoint} returned malformed JSON."
             ) from exc
 
+    def _post(self, endpoint: str, payload: dict[str, object]) -> tuple[object, int]:
+        if not self.settings.allow_http_probing:
+            raise SyncroReadError(
+                "Syncro live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
+        if not self.settings.allow_write_actions:
+            raise SyncroReadError(
+                "Syncro live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            raise SyncroReadError(missing.message)
+        try:
+            with httpx.Client(
+                timeout=self.settings.connector_timeout_seconds,
+                transport=self.transport,
+            ) as client:
+                response = client.post(
+                    f"{_api_base_url(_safe_base_url(self.settings.syncro_base_url))}/"
+                    f"{_safe_endpoint(endpoint)}",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.syncro_api_token}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise SyncroReadError(
+                "Syncro POST request failed before receiving a response."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise SyncroReadError("Syncro POST request failed.") from exc
+        if response.status_code >= 400:
+            raise SyncroReadError(
+                _http_error_message(response.status_code, endpoint, method="POST")
+            )
+        if response.status_code not in {200, 201}:
+            raise SyncroReadError(
+                f"Syncro POST {endpoint} returned unexpected HTTP {response.status_code}."
+            )
+        if not response.content:
+            return {}, response.status_code
+        try:
+            return response.json(), response.status_code
+        except ValueError as exc:
+            raise SyncroReadError(
+                f"Syncro POST {endpoint} returned malformed JSON."
+            ) from exc
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
         return ConnectorReadResult(
             "blocked",
             "Syncro live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+        )
+
+    def _write_blocked_result(self) -> ConnectorReadResult | None:
+        if self.settings.allow_http_probing and self.settings.allow_write_actions:
+            return None
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult(
+                "blocked",
+                "Syncro live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+            )
+        return ConnectorReadResult(
+            "blocked",
+            "Syncro live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.",
+        )
+
+    def _write_blocked_write_result(
+        self, request: SyncroWriteRequest
+    ) -> SyncroWriteResult | None:
+        blocked = self._write_blocked_result()
+        if blocked is None:
+            return None
+        return SyncroWriteResult(
+            "blocked",
+            blocked.message,
+            request.action_type,
+            request.ticket_id,
         )
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
@@ -247,6 +367,19 @@ class SyncroClient:
                 f"Syncro credentials are incomplete: {', '.join(missing)}.",
             )
         return None
+
+    def _not_configured_write_result(
+        self, request: SyncroWriteRequest
+    ) -> SyncroWriteResult | None:
+        missing = self._not_configured_result()
+        if missing is None:
+            return None
+        return SyncroWriteResult(
+            "not_configured",
+            missing.message,
+            request.action_type,
+            request.ticket_id,
+        )
 
     def _blocked_response(self) -> SyncroReadResponse | None:
         blocked = self._blocked_result()
@@ -395,14 +528,73 @@ def _bool_value(value: object) -> bool:
     return bool(value) if value is not None else False
 
 
-def _http_error_message(status_code: int, endpoint: str) -> str:
+def _write_payload(action_type: str, fields: Mapping[str, object]) -> dict[str, object]:
+    if action_type != "add_note":
+        raise SyncroReadError(f"Syncro write action is unsupported: {action_type}.")
+    allowed = {"subject", "body", "hidden", "do_not_email"}
+    unknown = sorted(set(fields) - allowed)
+    if unknown:
+        raise SyncroReadError(f"Syncro write fields are unsupported: {', '.join(unknown)}.")
+    subject = fields.get("subject")
+    body = fields.get("body")
+    if not isinstance(subject, str) or not subject.strip() or len(subject.strip()) > 250:
+        raise SyncroReadError(
+            "Syncro comment subject must be a non-empty string of 250 characters or fewer."
+        )
+    if not isinstance(body, str) or not body.strip() or len(body.strip()) > 32_000:
+        raise SyncroReadError(
+            "Syncro comment body must be a non-empty string of 32000 characters or fewer."
+        )
+    if any(
+        ord(character) < 32 for character in subject + body if character not in "\r\n\t"
+    ):
+        raise SyncroReadError("Syncro comment fields contain control characters.")
+    hidden = fields.get("hidden", True)
+    do_not_email = fields.get("do_not_email", True)
+    if not isinstance(hidden, bool) or not isinstance(do_not_email, bool):
+        raise SyncroReadError(
+            "Syncro comment visibility and notification flags must be booleans."
+        )
+    return {
+        "subject": subject.strip(),
+        "body": body.strip(),
+        "hidden": hidden,
+        "do_not_email": do_not_email,
+    }
+
+
+def _remote_id(payload: object) -> str:
+    if isinstance(payload, dict):
+        for key in ("id", "comment_id"):
+            value = payload.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                return str(value)
+        for value in payload.values():
+            found = _remote_id(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _remote_id(value)
+            if found:
+                return found
+    return ""
+
+
+def _http_error_message(status_code: int, endpoint: str, *, method: str = "GET") -> str:
     if status_code == 401:
-        return f"Syncro GET {endpoint} was unauthorized (HTTP 401)."
+        return f"Syncro {method} {endpoint} was unauthorized (HTTP 401)."
     if status_code == 403:
-        return f"Syncro GET {endpoint} was forbidden (HTTP 403)."
+        return f"Syncro {method} {endpoint} was forbidden (HTTP 403)."
     if status_code == 429:
-        return f"Syncro GET {endpoint} was rate limited (HTTP 429)."
-    return f"Syncro GET {endpoint} failed with HTTP {status_code}."
+        return f"Syncro {method} {endpoint} was rate limited (HTTP 429)."
+    return f"Syncro {method} {endpoint} failed with HTTP {status_code}."
 
 
-__all__ = ["SyncroClient", "SyncroReadError", "SyncroReadProvider", "SyncroReadResponse"]
+__all__ = [
+    "SyncroClient",
+    "SyncroReadError",
+    "SyncroReadProvider",
+    "SyncroReadResponse",
+    "SyncroWriteProvider",
+]

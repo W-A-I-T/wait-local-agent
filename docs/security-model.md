@@ -175,11 +175,15 @@ credentials, prompts, and hidden reasoning are not added to execution metadata.
 
 Hudu is read-only in the public repo.
 
-The Syncro, ServiceNow, and Autotask agent lookup tools are read-only and
-require an existing local ticket in the caller's tenant scope. Each lookup
-uses that ticket identifier as the provider request identifier and rejects a
-returned record whose identifier does not match; connector credentials are
-never accepted in tool payloads.
+The Syncro lookup tool is read-only, while `syncro-ticket-add-note` is the
+single explicitly allowlisted Syncro write. Both require an existing local
+ticket in the caller's tenant scope. The write requires
+`WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, and a
+completed approval request before calling the documented comment endpoint.
+Only bounded `subject`, `body`, `hidden`, and `do_not_email` fields are
+accepted; connector credentials are never accepted in tool payloads. The
+ServiceNow and Autotask agent lookup tools remain read-only and use the same
+local-ticket scope and returned-identifier checks.
 
 The IT Glue documentation tool is also read-only. It requires an explicit
 organization identifier matching the caller's tenant scope, bounds the

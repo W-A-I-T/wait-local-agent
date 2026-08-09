@@ -76,6 +76,8 @@ AUTOTASK_ACTION_TYPES = {
     "assign_technician",
 }
 
+SYNCRO_ACTION_TYPES = {"add_note"}
+
 M365_USER_CREATE_ACTION = "users.create"
 M365_USER_DISABLE_ACTION = "users.disable"
 M365_GROUP_MEMBERSHIP_ADD_ACTION = "groups.members.add"
@@ -1832,6 +1834,35 @@ def validate_connectwise_action_fields(action_type: str, fields: dict[str, objec
             or any(ord(character) < 32 for character in value)
         ):
             raise ValueError(f"ConnectWise PSA field {field} is invalid")
+
+
+def validate_syncro_action_fields(action_type: str, fields: dict[str, object]) -> None:
+    if action_type not in SYNCRO_ACTION_TYPES:
+        raise ValueError(f"unsupported Syncro action type: {action_type}")
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError("Syncro add_note requires ticket comment fields")
+    allowed = {"subject", "body", "hidden", "do_not_email"}
+    if set(fields) - allowed or not {"subject", "body"} <= set(fields):
+        raise ValueError("Syncro add_note requires only subject, body, and optional flags")
+    subject = fields["subject"]
+    body = fields["body"]
+    if (
+        not isinstance(subject, str)
+        or not subject.strip()
+        or len(subject.strip()) > 250
+        or any(ord(character) < 32 for character in subject if character not in "\r\n\t")
+    ):
+        raise ValueError("Syncro comment subject is invalid")
+    if (
+        not isinstance(body, str)
+        or not body.strip()
+        or len(body.strip()) > 32_000
+        or any(ord(character) < 32 for character in body if character not in "\r\n\t")
+    ):
+        raise ValueError("Syncro comment body is invalid")
+    for field in ("hidden", "do_not_email"):
+        if field in fields and not isinstance(fields[field], bool):
+            raise ValueError(f"Syncro comment {field} must be a boolean")
 
 
 def validate_servicenow_action_fields(action_type: str, fields: dict[str, object]) -> None:
