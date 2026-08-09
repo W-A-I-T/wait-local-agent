@@ -179,9 +179,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   operational metadata when the provider supplies it; pricing remains explicitly
   unavailable unless configured. Credentials and hidden reasoning are not
   persisted.
-- The public workflow catalog now includes four executable, low-risk review
-  templates for ticket quality, sentiment, escalation, and similar-ticket
-  analysis. They reuse the existing smart-action registry and persist both the
+- The public workflow catalog now includes five executable, low-risk review
+  templates for ticket quality, sentiment, escalation, similar-ticket, and
+  security-alert analysis. They reuse the existing smart-action registry and persist both the
   workflow run and the tenant-scoped smart-action execution; no write action is
   implied by these review templates.
 - The smart-action catalog also includes local-only, read-only
@@ -192,7 +192,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   stale.
 - A `/tools` API catalog that exposes existing smart-action schemas, including
   read-only local knowledge search, ticket-quality, explicit-threshold SLA-risk
-  and stale-ticket checks, sentiment and escalation checks, and collector previews with risk, required role, approval requirement,
+  and stale-ticket checks, sentiment, escalation, and security-alert checks, and collector previews with risk, required role, approval requirement,
   and read/write classification. The catalog also exposes a technician-gated,
   read-only Microsoft 365 identity lookup over tenant-scoped collected
   `m365-user` inventory plus the fixed-resource `m365-live-context` Graph read

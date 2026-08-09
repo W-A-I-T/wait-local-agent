@@ -68,6 +68,7 @@ from wait_local_agent.smart_actions import (
     M365UserOffboardingAction,
     M365UserOnboardingAction,
     RmmDeviceLookupAction,
+    SecurityAlertAssessmentAction,
     ServiceNowIncidentLookupAction,
     SharePointDocumentationContentAction,
     SharePointDocumentationSearchAction,
@@ -476,6 +477,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     quality = TicketQualityAction().run(context, {"ticket_id": "TCK-1001"})
     sentiment = TicketSentimentAction().run(context, {"ticket_id": "TCK-1001"})
     escalation = TicketEscalationAction().run(context, {"ticket_id": "TCK-1001"})
+    security = SecurityAlertAssessmentAction().run(context, {"ticket_id": "TCK-1001"})
     similar = FindSimilarTicketsAction().run(context, {"ticket_id": "TCK-1001"})
     dispatch = DispatchSuggestionAction().run(
         context,
@@ -509,6 +511,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == quality.status
         == sentiment.status
         == escalation.status
+        == security.status
         == similar.status
         == dispatch.status
         == "success"
@@ -554,6 +557,8 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert quality.output["passed"] is True
     assert sentiment.output["sentiment"] == "negative"
     assert escalation.output["urgency"] == "same_day"
+    assert security.output["security_signal"] is False
+    assert security.output["severity"] == "none"
     assert similar.output["matches"]
     assert dispatch.output["recommendation"]["technician_id"] == "tech"  # type: ignore[index]
 
@@ -696,6 +701,37 @@ def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
         "unknown_status",
     ]
     assert result.output["quality_score"] == 0
+
+
+def test_security_alert_assessment_is_deterministic_and_non_mutating(settings) -> None:
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "SEC-1",
+                "Acme",
+                "Suspected phishing and suspicious login",
+                "Possible credential theft after an impossible travel alert.",
+                "critical",
+                "open",
+                "acme",
+            ),
+        )
+    result = SecurityAlertAssessmentAction().run(
+        _action_context(store, settings, client_id="acme"), {"ticket_id": "SEC-1"}
+    )
+    assert result.status == "success"
+    assert result.output["security_signal"] is True
+    assert result.output["severity"] == "critical"
+    assert result.output["indicators"] == [
+        "credential theft",
+        "impossible travel",
+        "phishing",
+        "suspicious login",
+    ]
+    assert str(result.output["recommendation"]).startswith("Pause automated side effects")
+    assert store.get_ticket("SEC-1", client_id="other") is None
 
 
 def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evidence(settings) -> None:
@@ -1000,6 +1036,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "security-alert-assessment",
         "servicenow-incident-lookup",
         "sharepoint-document-content",
         "sharepoint-documentation-search",

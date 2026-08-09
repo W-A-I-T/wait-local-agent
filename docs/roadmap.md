@@ -117,7 +117,7 @@ See `docs/commercial-model.md` for the full product tier breakdown:
 
 | Tier | Price | Contents |
 | --- | --- | --- |
-| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 9 templates, approval queue |
+| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 10 templates, approval queue |
 | WAIT MSP Pack | $99/month | + IT Glue, ConnectWise, Autotask, M365, RMM, QBR reports, ROI dashboard |
 | WAIT Founder Pack | $49/month | + Project scanner, evidence vault, LP preflight, LP bundle export |
 | WAIT Sync | $29/month | + Template marketplace, encrypted cloud backup, team sync |

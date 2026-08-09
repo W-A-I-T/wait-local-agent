@@ -107,6 +107,20 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         tool_id="ticket-escalation",
     ),
     WorkflowTemplate(
+        id="security-alert-review",
+        name="Security Alert Review",
+        trigger="ticket.created",
+        description=(
+            "Detect bounded security-alert indicators and route the ticket to "
+            "human security handling without taking side effects."
+        ),
+        action_type="ticket.security_alert",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "security_signal", "severity", "indicators", "recommendation"),
+        tool_id="security-alert-assessment",
+    ),
+    WorkflowTemplate(
         id="similar-ticket-review",
         name="Similar Ticket Review",
         trigger="ticket.created",

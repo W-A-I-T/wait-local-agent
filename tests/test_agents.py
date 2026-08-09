@@ -98,6 +98,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "rmm-script-preview",
         "rmm-script-execute",
         "rmm-script-execution-lookup",
+        "security-alert-assessment",
         "ticket-quality",
         "ticket-escalation",
         "ticket-sentiment",
