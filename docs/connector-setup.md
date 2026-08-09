@@ -577,13 +577,16 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The adapter uses ServiceNow's Table API for incidents and companies, plus an
-approval-gated incident write surface for work notes, state, and assignment,
+approval-gated incident write surface for work notes, state, assignment, and
+resolution metadata (`close_code` and `close_notes`),
 with explicit field selection, bounded pagination, and basic authentication
 from settings or the local vault ([ServiceNow Table API](https://www.servicenow.com/docs/r/xanadu/api-reference/rest-apis/c_TableAPI.html)).
 Writes remain disabled unless both `WAIT_ALLOW_HTTP_PROBING=true` and
 `WAIT_ALLOW_WRITE_ACTIONS=true` are enabled, and credentials never enter an
-action payload. The shared `/tools` catalog exposes the three write actions;
-there is no unbounded field-update endpoint.
+action payload. The shared `/tools` catalog exposes the four write actions;
+there is no unbounded field-update endpoint. Resolution metadata does not
+change the incident state; use the separate state action after the operator
+confirms the provider-specific lifecycle transition.
 
 ### Validate and read
 

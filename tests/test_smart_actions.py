@@ -1049,6 +1049,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "servicenow-incident-add-work-note",
         "servicenow-incident-assign",
         "servicenow-incident-lookup",
+        "servicenow-incident-update-resolution",
         "servicenow-incident-update-state",
         "sharepoint-document-content",
         "sharepoint-documentation-search",
@@ -1369,6 +1370,32 @@ def test_servicenow_incident_writes_are_approval_gated_and_validated(settings) -
     assert completed_assignment.status == "success"
     assert provider.calls[-1] == ServiceNowWriteRequest(
         "TCK-1001", "assign_incident", assignment_fields
+    )
+
+    resolution = ServiceNowIncidentWriteAction(
+        action_id="test-servicenow-resolution",
+        title="test",
+        action_type="update_resolution",
+    )
+    resolution_fields: dict[str, object] = {
+        "close_code": "Solved (Permanently)",
+        "close_notes": "Resolved using the approved local runbook.",
+    }
+    assert resolution.run(
+        replace(context, servicenow_client=provider),
+        {"ticket_id": "TCK-1001", "fields": resolution_fields},
+    ).output["approval_required"] is True
+    completed_resolution = resolution.run(
+        replace(context, servicenow_client=provider),
+        {
+            "ticket_id": "TCK-1001",
+            "fields": resolution_fields,
+            "_approval_completed": True,
+        },
+    )
+    assert completed_resolution.status == "success"
+    assert provider.calls[-1] == ServiceNowWriteRequest(
+        "TCK-1001", "update_resolution", resolution_fields
     )
 
 

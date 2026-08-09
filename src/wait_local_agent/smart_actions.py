@@ -4490,6 +4490,11 @@ def _build_default_registry() -> SmartActionRegistry:
             title="ServiceNow assign incident",
             action_type="assign_incident",
         ),
+        ServiceNowIncidentWriteAction(
+            action_id="servicenow-incident-update-resolution",
+            title="ServiceNow update incident resolution",
+            action_type="update_resolution",
+        ),
         AutotaskTicketLookupAction(),
         AutotaskTicketWriteAction(
             action_id="autotask-ticket-add-note",

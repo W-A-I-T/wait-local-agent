@@ -24,7 +24,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   approval-gated ticket update path with explicit HTTP probing opt-in.
 - Syncro read-only ticket and customer lookup with explicit HTTP probing
   opt-in; no Syncro mutation path is enabled.
-- ServiceNow incident reads plus approval-gated work-note, state, and assignment updates, and
+- ServiceNow incident reads plus approval-gated work-note, state, assignment, and resolution-metadata updates, and
   Autotask ticket reads plus approval-gated ticket-note, status, and resolution actions, are
   available through the same bounded connector and agent-tool surfaces;
   broader mutations remain unavailable.
