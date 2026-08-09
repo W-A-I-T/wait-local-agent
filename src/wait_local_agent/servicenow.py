@@ -471,6 +471,32 @@ def _write_fields(action_type: str, fields: Mapping[str, object]) -> dict[str, o
                 "ServiceNow incident_state must be non-empty text of at most 20 characters."
             )
         return {"incident_state": value.strip()}
+    if action_type == "update_resolution":
+        if set(fields) != {"close_code", "close_notes"}:
+            raise ServiceNowReadError(
+                "ServiceNow update_resolution requires close_code and close_notes."
+            )
+        close_code = fields["close_code"]
+        close_notes = fields["close_notes"]
+        if (
+            not isinstance(close_code, str)
+            or not close_code.strip()
+            or len(close_code) > 128
+            or any(ord(character) < 32 for character in close_code)
+        ):
+            raise ServiceNowReadError(
+                "ServiceNow close_code must be non-empty text of at most 128 characters."
+            )
+        if (
+            not isinstance(close_notes, str)
+            or not close_notes.strip()
+            or len(close_notes) > 4_000
+            or any(ord(character) < 32 for character in close_notes)
+        ):
+            raise ServiceNowReadError(
+                "ServiceNow close_notes must be non-empty text of at most 4000 characters."
+            )
+        return {"close_code": close_code.strip(), "close_notes": close_notes.strip()}
     if action_type == "assign_incident":
         if set(fields) not in ({"assigned_to"}, {"assignment_group"}):
             raise ServiceNowReadError(

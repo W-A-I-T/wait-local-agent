@@ -164,6 +164,37 @@ def test_servicenow_assignment_write_uses_one_allowlisted_reference(settings) ->
     ).status == "failed"
 
 
+def test_servicenow_resolution_write_uses_documented_fields(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PATCH"
+        assert request.url.path.endswith("/incident/abc123")
+        assert request.read() == (
+            b'{"close_code":"Solved (Permanently)",'
+            b'"close_notes":"Resolved using the approved local runbook."}'
+        )
+        return httpx.Response(200, json={"result": {"sys_id": "abc123"}})
+
+    client = ServiceNowClient(
+        replace(_settings(settings), allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.execute_write(
+        ServiceNowWriteRequest(
+            "abc123",
+            "update_resolution",
+            {
+                "close_code": "Solved (Permanently)",
+                "close_notes": "Resolved using the approved local runbook.",
+            },
+        )
+    )
+    assert result.status == "succeeded"
+    assert len(requests) == 1
+
+
 def test_servicenow_write_guards_and_helpers_cover_failure_boundaries(settings) -> None:
     active = _settings(settings)
     request = ServiceNowWriteRequest("abc123", "update_state", {"incident_state": "2"})
@@ -206,6 +237,8 @@ def test_servicenow_write_guards_and_helpers_cover_failure_boundaries(settings) 
         ("update_state", {"incident_state": ""}),
         ("assign_incident", {"assigned_to": "bad/id"}),
         ("assign_incident", {"assigned_to": "a", "assignment_group": "b"}),
+        ("update_resolution", {"close_code": "Solved"}),
+        ("update_resolution", {"close_code": "Solved", "close_notes": "\x00"}),
         ("unknown", {"field": "value"}),
     )
     for action_type, fields in invalid_fields:

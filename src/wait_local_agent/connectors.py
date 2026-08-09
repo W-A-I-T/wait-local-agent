@@ -65,6 +65,7 @@ SERVICENOW_ACTION_TYPES = {
     "add_work_note",
     "update_state",
     "assign_incident",
+    "update_resolution",
 }
 
 AUTOTASK_ACTION_TYPES = {
@@ -1844,6 +1845,22 @@ def validate_servicenow_action_fields(action_type: str, fields: dict[str, object
     elif action_type == "update_state":
         allowed = {"incident_state"}
         max_length = 20
+    elif action_type == "update_resolution":
+        allowed = {"close_code", "close_notes"}
+        if set(fields) != allowed:
+            raise ValueError(
+                "ServiceNow update_resolution requires close_code and close_notes"
+            )
+        for field, value in fields.items():
+            field_limit = 128 if field == "close_code" else 4_000
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > field_limit
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError(f"ServiceNow {field} is invalid")
+        return
     else:
         allowed = {"assigned_to", "assignment_group"}
         if set(fields) not in ({"assigned_to"}, {"assignment_group"}):
