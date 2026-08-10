@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 _TICKET_ID_PATTERN = re.compile(r"\bTCK-[A-Za-z0-9][A-Za-z0-9_.:-]{0,62}\b", re.IGNORECASE)
 _SAFE_TICKET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
@@ -17,7 +18,8 @@ _SCRIPT_REQUEST_PATTERN = re.compile(
 _HELP_TEXT = (
     "Supported technician requests: summarize, triage, find similar tickets, "
     "show documentation, suggest a fix, check ticket quality, assess sentiment, "
-    "assess escalation, suggest dispatch, preview a script, or run an approved script. "
+    "assess escalation, suggest dispatch, preview a script, run an approved script, "
+    "or preview a bounded plan. "
     "Ticket actions require a TCK-* ticket ID; script requests require explicit script and device IDs."
 )
 
@@ -27,6 +29,8 @@ class TechnicianChatCommand:
     action_id: str | None
     payload: dict[str, object]
     reply: str
+    mode: Literal["action", "help", "plan"] = "action"
+    instruction: str | None = None
 
 
 class TechnicianChatParseError(ValueError):
@@ -40,7 +44,20 @@ def parse_technician_message(message: str, *, ticket_id: str | None = None) -> T
         raise TechnicianChatParseError("message contains unsupported control characters")
     normalized = " ".join(message.split()).strip()
     if normalized.casefold() in {"help", "?", "what can you do"}:
-        return TechnicianChatCommand(None, {}, _HELP_TEXT)
+        return TechnicianChatCommand(None, {}, _HELP_TEXT, mode="help")
+
+    plan_instruction = _plan_instruction(normalized)
+    if plan_instruction is not None:
+        resolved_ticket_id = _resolve_ticket_id(normalized, ticket_id)
+        if resolved_ticket_id is None:
+            raise TechnicianChatParseError("include a ticket ID such as TCK-1001")
+        return TechnicianChatCommand(
+            None,
+            {"ticket_id": resolved_ticket_id},
+            "I prepared a bounded plan preview. Review it before creating or running an agent.",
+            mode="plan",
+            instruction=plan_instruction,
+        )
 
     script_command = _match_script_command(normalized)
     if script_command is not None:
@@ -65,6 +82,18 @@ def _resolve_ticket_id(message: str, ticket_id: str | None) -> str | None:
     if not _SAFE_TICKET_ID_PATTERN.fullmatch(candidate):
         raise TechnicianChatParseError("ticket_id contains unsupported characters")
     return candidate
+
+
+def _plan_instruction(message: str) -> str | None:
+    match = re.match(
+        r"^(?:please\s+)?(?:create|make|show|preview)?\s*plan\s*:?[ \t]+(.+)$",
+        message,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    instruction = match.group(1).strip()
+    return instruction if instruction else None
 
 
 def _match_action(message: str) -> tuple[str, str]:

@@ -2822,6 +2822,11 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         headers=_auth("tech-token"),
         json={"message": "triage TCK-ACME"},
     )
+    plan = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "plan triage and suggest a fix for TCK-ACME"},
+    )
     cross_tenant = client.post(
         "/technician/chat",
         headers=_auth("tech-token"),
@@ -2844,6 +2849,13 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
     assert triage.json()["action_id"] == "ticket-triage"
     assert triage.json()["result"]["status"] == "success"
     assert triage.json()["result"]["output"]["ticket_id"] == "TCK-ACME"
+    assert plan.status_code == 200
+    assert plan.json()["status"] == "preview"
+    assert [step["tool_id"] for step in plan.json()["plan"]["steps"]] == [
+        "ticket-triage",
+        "suggest-resolution",
+    ]
+    assert plan.json()["plan"]["definition"]["enabled"] is False
     assert cross_tenant.status_code == 200
     assert cross_tenant.json()["result"]["status"] == "failed"
     assert "TCK-BETA" not in cross_tenant.text

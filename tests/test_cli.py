@@ -65,6 +65,23 @@ def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) 
     assert '"status": "success"' in result.output
 
 
+def test_technician_chat_command_previews_bounded_plan(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    result = CliRunner().invoke(
+        app,
+        ["technician-chat", "plan triage and suggest a fix for TCK-1001"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "preview"' in result.output
+    assert '"tool_id": "ticket-triage"' in result.output
+    assert '"tool_id": "suggest-resolution"' in result.output
+    assert '"enabled": false' in result.output
+
+
 def test_technician_chat_command_persists_bounded_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
 
