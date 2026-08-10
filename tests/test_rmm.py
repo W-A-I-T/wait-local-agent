@@ -169,6 +169,21 @@ class _FailingNSightProvider(_NSightProvider):
         raise RuntimeError("provider failure")
 
 
+class _FailingTaskNSightProvider(_NSightProvider):
+    def run_task_now(self, device_id, check_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedTaskNSightProvider(_NSightProvider):
+    def run_task_now(self, device_id, check_id, *, client_id=None):
+        return []
+
+
+class _RejectedTaskNSightProvider(_NSightProvider):
+    def run_task_now(self, device_id, check_id, *, client_id=None):
+        return {"status": "rejected", "device_id": device_id, "check_id": check_id}
+
+
 class _MalformedNSightProvider(_NSightProvider):
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         return []
@@ -588,6 +603,7 @@ def test_nsight_automated_task_is_approval_gated_and_scoped(settings) -> None:
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
+        ({"device_id": "", "check_id": "1304847"}, "device_id"),
         ({"device_id": "server:49324", "check_id": ""}, "check_id"),
         ({"device_id": "server:49324", "check_id": "-1"}, "positive integer"),
         ({"device_id": "server:49324", "check_id": 1304847}, "positive integer string"),
@@ -601,6 +617,33 @@ def test_nsight_automated_task_rejects_invalid_payloads(settings, payload, messa
     result = NSightRunTaskNowAction().run(_context(settings, _NSightProvider()), payload)
     assert result.status == "failed"
     assert message in result.error_detail
+
+
+@pytest.mark.parametrize(
+    ("provider", "message"),
+    [
+        (_Provider(), "N-sight RMM adapter"),
+        (_FailingTaskNSightProvider(), "execution failed"),
+        (_MalformedTaskNSightProvider(), "malformed"),
+    ],
+)
+def test_nsight_automated_task_rejects_provider_failures(settings, provider, message) -> None:
+    result = NSightRunTaskNowAction().run(
+        _context(replace(settings, allow_write_actions=True), provider),
+        {"device_id": "server:49324", "check_id": "1304847", "_approval_completed": True},
+    )
+    assert result.status == "failed"
+    assert message in result.error_detail
+
+
+def test_nsight_automated_task_reports_provider_rejection(settings) -> None:
+    result = NSightRunTaskNowAction().run(
+        _context(replace(settings, allow_write_actions=True), _RejectedTaskNSightProvider()),
+        {"device_id": "server:49324", "check_id": "1304847", "_approval_completed": True},
+    )
+    assert result.status == "failed"
+    assert result.output["approved"] is True
+    assert result.error_detail == "N-sight automated task execution failed"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
