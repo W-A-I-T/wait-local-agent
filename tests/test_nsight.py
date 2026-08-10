@@ -29,7 +29,12 @@ from wait_local_agent.nsight import (
     _xml_config_value,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
-from wait_local_agent.smart_actions import ActionContext, NSightCheckConfigAction, SmartActionService
+from wait_local_agent.smart_actions import (
+    ActionContext,
+    NSightAntivirusScansAction,
+    NSightCheckConfigAction,
+    SmartActionService,
+)
 from wait_local_agent.store import Store
 
 CLIENT_XML = """
@@ -91,6 +96,20 @@ MAV_THREATS_XML = """
   <last_scan_type>Quick</last_scan_type><last_trace_count>2</last_trace_count>
   <engine>Bitdefender</engine>
 </threat><threat><name></name><category>ignored</category></threat></result>
+"""
+MAV_SCANS_XML = """
+<result status="OK">
+  <scan>
+    <type>Quick</type><status>Finished Normally</status>
+    <start>2026-08-10 09:00:00</start><end>2026-08-10 09:05:00</end>
+    <files_scanned>42</files_scanned><folders_scanned>4</folders_scanned>
+    <processes_scanned>7</processes_scanned><engine>Bitdefender</engine>
+    <threats><threat><name>Example.Malware</name><category>Trojan</category>
+      <status>Quarantined</status></threat></threats>
+  </scan>
+  <scan><type>Deep</type><status>RUNNING</status><start>2026-08-10 10:00:00</start></scan>
+  <scan><type></type><status>ignored</status><start>2026-08-10</start></scan>
+</result>
 """
 OUTAGES_XML = """
 <result status="OK"><outage>
@@ -663,6 +682,105 @@ def test_nsight_antivirus_threats_recheck_device_scope(settings) -> None:
     ]
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_antivirus_threats("server:999", client_id="acme")
+
+
+def test_nsight_antivirus_scans_recheck_device_and_expose_documented_details(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_mav_scans":
+            assert request.url.params.get("deviceid") == "49324"
+            assert request.url.params.get("v") == "2"
+            if request.url.params.get("details") == "NO":
+                return httpx.Response(
+                    200,
+                    text=(
+                        '<result status="OK"><scan><type>Quick</type>'
+                        '<status>FINISHED</status><start>2026-08-10</start>'
+                        "</scan></result>"
+                    ),
+                )
+            assert request.url.params.get("details") == "YES"
+            return httpx.Response(200, text=MAV_SCANS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    scans = adapter.list_antivirus_scans(
+        "server:49324", include_details=True, client_id="acme"
+    )
+    assert scans == [
+        {
+            "type": "Quick",
+            "status": "Finished Normally",
+            "start": "2026-08-10 09:00:00",
+            "end": "2026-08-10 09:05:00",
+            "engine": "Bitdefender",
+            "files_scanned": 42,
+            "folders_scanned": 4,
+            "processes_scanned": 7,
+            "threats": [
+                {"name": "Example.Malware", "category": "Trojan", "status": "Quarantined"}
+            ],
+        },
+        {
+            "type": "Deep",
+            "status": "RUNNING",
+            "start": "2026-08-10 10:00:00",
+        },
+    ]
+    summary_scans = adapter.list_antivirus_scans("server:49324", client_id="acme")
+    assert summary_scans == [
+        {"type": "Quick", "status": "FINISHED", "start": "2026-08-10"}
+    ]
+
+    service = SmartActionService(
+        Store(adapter.settings.data_path),
+        adapter.settings,
+        rmm_provider=adapter,
+    )
+    action = service.invoke(
+        "nsight-antivirus-scans",
+        {"device_id": "server:49324", "include_details": True},
+        "tech",
+        client_id="acme",
+    )
+    assert action.status == "success"
+    assert action.output["count"] == 2
+    assert action.evidence[0]["operation"] == "list_mav_scans"
+
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_antivirus_scans("server:999", client_id="acme")
+
+
+def test_nsight_antivirus_scan_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
+    action = NSightAntivirusScansAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_scans=lambda device_id, **kwargs: [],
+    )
+    assert run(provider, {"device_id": "server:1", "unexpected": True}).status == "failed"
+    assert run(provider, {"device_id": "server:1", "include_details": "yes"}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {"device_id": "server:1"}).status == "failed"
+    assert run(provider, {"device_id": "server:1"}).status == "success"
+
+    malformed = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_scans=lambda device_id, **kwargs: {},
+    )
+    assert run(malformed, {"device_id": "server:1"}).status == "failed"
 
 
 def test_nsight_outage_lookup_rechecks_device_scope(settings) -> None:

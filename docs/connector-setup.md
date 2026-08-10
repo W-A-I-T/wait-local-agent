@@ -272,6 +272,10 @@ The check-configuration action is reachable through the generic
 `POST /smart-actions/nsight-check-config/invoke` API paths, the
 `smart-actions invoke nsight-check-config` CLI command, and the Agents
 definition editor.
+The read-only `nsight-antivirus-scans` action exposes documented Managed
+Antivirus scan history through the same generic API, CLI, and Agents definition
+editor paths. It accepts only a mapped device and an optional boolean to
+include bounded threat summaries.
 
 Required settings:
 
@@ -299,6 +303,7 @@ and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
 and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
+and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

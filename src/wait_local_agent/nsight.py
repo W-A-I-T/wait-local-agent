@@ -3,7 +3,8 @@
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
-    monitoring-details, backup-session, bounded patch, check-configuration, and automated-task
+    monitoring-details, backup-session, bounded patch, check-configuration,
+    antivirus-scan, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -54,6 +55,8 @@ MAX_BACKUP_HISTORY_DAYS = 60
 MAX_CHECK_CONFIG_DEPTH = 6
 MAX_CHECK_CONFIG_FIELDS = 50
 MAX_CHECK_CONFIG_LIST_ITEMS = 25
+MAX_ANTIVIRUS_SCANS = 50
+MAX_ANTIVIRUS_SCAN_THREATS = 25
 MAX_TEXT_LENGTH = 500
 MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
@@ -295,6 +298,30 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _antivirus_threat_records(root)[:MAX_ANTIVIRUS_THREATS]
+
+    def list_antivirus_scans(
+        self,
+        device_id: str,
+        *,
+        include_details: bool = False,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented managed-antivirus scan history for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_mav_scans",
+            {
+                "deviceid": str(numeric_device_id),
+                "details": "YES" if include_details else "NO",
+                "v": "2",
+            },
+            client_id=client_id,
+        )
+        return _antivirus_scan_records(root, include_details=include_details)[:MAX_ANTIVIRUS_SCANS]
 
     def list_outages(
         self,
@@ -1193,6 +1220,53 @@ def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return threats
+
+
+def _antivirus_scan_records(root: Any, *, include_details: bool) -> list[dict[str, object]]:
+    scans: list[dict[str, object]] = []
+    text_fields = ("type", "status", "start", "end", "engine")
+    integer_fields = (
+        "cookies_scanned",
+        "registry_scanned",
+        "files_scanned",
+        "folders_scanned",
+        "processes_scanned",
+    )
+    for scan in root.iter("scan"):
+        scan_type = _bounded_text(_text(scan, "type"))
+        status = _bounded_text(_text(scan, "status"))
+        start = _bounded_text(_text(scan, "start"))
+        if not scan_type or not status or not start:
+            continue
+        record: dict[str, object] = {
+            "type": scan_type,
+            "status": status,
+            "start": start,
+        }
+        for field in text_fields[3:]:
+            value = _bounded_text(_text(scan, field))
+            if value:
+                record[field] = value
+        for field in integer_fields:
+            integer_value = _optional_integer(_text(scan, field))
+            if integer_value is not None:
+                record[field] = integer_value
+        if include_details:
+            threats: list[dict[str, object]] = []
+            for threat in scan.iter("threat"):
+                threat_record: dict[str, object] = {}
+                for field in ("name", "category", "status", "last_status"):
+                    value = _bounded_text(_text(threat, field))
+                    if value:
+                        threat_record[field] = value
+                if threat_record and len(threats) < MAX_ANTIVIRUS_SCAN_THREATS:
+                    threats.append(threat_record)
+            if threats:
+                record["threats"] = threats
+        scans.append(record)
+        if len(scans) >= MAX_ANTIVIRUS_SCANS:
+            break
+    return scans
 
 
 def _outage_records(root: Any) -> list[dict[str, object]]:
