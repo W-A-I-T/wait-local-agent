@@ -75,6 +75,15 @@ describe("Agents", () => {
             required_role: "technician",
             approval_required: true,
             access_mode: "write"
+          },
+          {
+            id: "nsight-run-task-now",
+            name: "Run N-sight automated task now",
+            description: "Run one mapped automated task after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
           }
         ]), { status: 200 }));
       }
@@ -193,6 +202,25 @@ describe("Agents", () => {
     expect(String(request?.[1]?.body)).toContain("apty_1");
     expect(String(request?.[1]?.body)).toContain("generate_url");
     expect(String(request?.[1]?.body)).toContain("rodney@example.test");
+  });
+
+  it("exposes the bounded N-sight automated-task input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const task = await screen.findByRole("checkbox", { name: /Run N-sight automated task now/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "N-sight maintenance" } });
+    fireEvent.click(task);
+    fireEvent.change(screen.getByLabelText("Run N-sight automated task now input JSON"), {
+      target: { value: JSON.stringify({ device_id: "server:49324", check_id: "1304847" }) }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("nsight-run-task-now");
+    expect(String(request?.[1]?.body)).toContain("1304847");
   });
 
   it("loads, compares, and restores agent revisions", async () => {

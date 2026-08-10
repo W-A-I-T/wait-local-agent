@@ -3,7 +3,8 @@
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
-    monitoring-details, backup-session, and bounded patch services here. A local
+    monitoring-details, backup-session, bounded patch, and automated-task
+    services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
@@ -421,6 +422,57 @@ class NSightRmmAdapter(RmmInventoryProvider):
             ),
             "device_id": device_id,
             "patch_ids": normalized_ids,
+        }
+
+    def run_task_now(
+        self,
+        device_id: str,
+        check_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Run one mapped automated task through the documented task service.
+
+        N-sight exposes only the automated-task check ID to this mutation. WAIT
+        requires the caller to provide the mapped device as well so the check
+        can be re-read and proven to belong to the tenant-scoped device before
+        the write is sent.
+        """
+
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                "N-sight task execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        _device_numeric_id(device_id)
+        numeric_check_id = _positive_id(str(check_id))
+        if numeric_check_id is None:
+            raise NSightRmmError("N-sight automated task ID must be a positive integer")
+        checks = self.list_checks(device_id, client_id=client_id)
+        matching = next(
+            (check for check in checks if check.get("check_id") == numeric_check_id),
+            None,
+        )
+        if matching is None:
+            raise NSightRmmError("N-sight automated task is outside the mapped device scope")
+        if matching.get("check_type") != 1023:
+            raise NSightRmmError("N-sight check is not a documented automated task")
+        root = self._request(
+            "task_run_now",
+            {"checkid": str(numeric_check_id)},
+            client_id=client_id,
+        )
+        message = root.find(".//message")
+        minutes = _optional_integer(message.attrib.get("time", "")) if message is not None else None
+        if minutes is None:
+            raise NSightRmmError("N-sight returned malformed automated-task response")
+        return {
+            "status": "accepted",
+            "device_id": device_id,
+            "check_id": numeric_check_id,
+            "minutes_until_run": minutes,
+            "message": _bounded_text(
+                (message.text or "") if message is not None else ""
+            ),
         }
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:

@@ -2680,6 +2680,40 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
+def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        client_id="acme",
+        n_sight_base_url="https://nsight.example.test",
+        n_sight_api_key="test-key",
+        n_sight_client_map_json='{"acme":123}',
+    )
+    client = TestClient(create_app(secure_settings))
+
+    tools = client.get("/tools", headers=_auth("tech-token"))
+    detail = client.get("/smart-actions/nsight-run-task-now", headers=_auth("tech-token"))
+    preview = client.post(
+        "/smart-actions/nsight-run-task-now/invoke",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "payload": {"device_id": "server:49324", "check_id": "1304847"},
+        },
+    )
+
+    assert tools.status_code == 200
+    assert "nsight-run-task-now" in {tool["id"] for tool in tools.json()}
+    assert detail.status_code == 200
+    assert detail.json()["requires_approval"] is True
+    assert detail.json()["access_mode"] == "write"
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "pending_approval"
+    assert preview.json()["output"]["check_id"] == 1304847
+
+
 def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
     secure_settings = settings.__class__(
         **{

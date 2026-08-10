@@ -65,8 +65,11 @@ records. Patch approval, patch reprocessing, and allowlisted patch policy
 operations are separate technician-approved operations that require
 `WAIT_ALLOW_WRITE_ACTIONS=true`, recheck the mapped device and its patch
 inventory, and send only bounded numeric patch IDs. Script
-discovery, execution, and other writes remain unavailable unless a documented
-contract is implemented behind the same approval boundary.
+discovery, arbitrary script execution, polling, and other writes remain
+unavailable unless a documented contract is implemented behind the same
+approval boundary. The documented `task_run_now` operation is exposed only for
+an explicitly identified automated-task check that is re-read from the mapped
+device, and it remains technician-approved and write-flag gated.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
