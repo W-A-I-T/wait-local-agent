@@ -242,6 +242,34 @@ customer IDs, and provider IDs never come from smart-action payloads. See the [N
 [active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
 and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
 
+## N-able N-sight
+
+The N-sight adapter implements bounded, tenant-scoped device and health
+inventory through the documented XML Data Extraction API. It reads mapped
+sites, servers, and workstations through the shared RMM contract and derives
+bounded alerts from the returned online/status fields. It is read-only in this
+slice; script catalog, preview, execution, and polling return explicit
+unavailable results.
+
+Required settings:
+
+```text
+WAIT_NSIGHT_BASE_URL=https://your-n-sight-server
+WAIT_NSIGHT_API_KEY=
+WAIT_NSIGHT_CLIENT_MAP_JSON={"acme":123}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_NSIGHT_CLIENT_MAP_JSON` maps each WAIT client ID to exactly one positive
+N-sight client ID. The adapter then scopes requests to that mapped client and
+its returned sites, caps the response at 25 sites and 100 devices, and keeps
+the API key inside settings/vault. Credentials and provider IDs never come
+from smart-action payloads, errors, or audit records. See N-able's [N-sight API
+getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
+[site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
+[server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
+[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
+
 ## Kaseya VSA X
 
 The Kaseya adapter implements the shared RMM contract for organization-scoped

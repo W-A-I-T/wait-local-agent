@@ -168,6 +168,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   documented direct-task POST and status GET for an existing numeric task item
   and in-scope device. Execution requires the existing write flag and approval
   path; execution scope is persisted locally before status lookup.
+  The N-able N-sight adapter maps WAIT clients to explicit N-sight client IDs,
+  reads documented site/server/workstation XML inventory, derives bounded health
+  alerts, and exposes no inferred script or write path.
   The Kaseya VSA X adapter uses the documented Basic-auth v3 API, an explicit
   client-to-organization map, and read-only device plus device-notification
   paths; script execution and remediation remain unavailable in this adapter.
