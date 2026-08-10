@@ -3367,16 +3367,18 @@ def test_screenconnect_session_actions_are_preview_first_and_approval_gated(sett
         client_id="acme",
     )
     assert note_pending.status == "pending_approval"
+    assert note_pending.approval_id is not None
+    note_approval_id = note_pending.approval_id
     assert requests == []
     service.update_approval(
-        note_pending.approval_id,
+        note_approval_id,
         "approved",
         "reviewed",
         approver="approver",
         approver_role=Role.TECHNICIAN,
     )
     note_completed = service.complete_approval(
-        note_pending.approval_id,
+        note_approval_id,
         approver="approver",
         approver_role=Role.TECHNICIAN,
     )
@@ -3400,15 +3402,17 @@ def test_screenconnect_session_actions_are_preview_first_and_approval_gated(sett
         client_id="acme",
     )
     assert message_pending.status == "pending_approval"
+    assert message_pending.approval_id is not None
+    message_approval_id = message_pending.approval_id
     service.update_approval(
-        message_pending.approval_id,
+        message_approval_id,
         "approved",
         "reviewed",
         approver="approver-2",
         approver_role=Role.TECHNICIAN,
     )
     message_completed = service.complete_approval(
-        message_pending.approval_id,
+        message_approval_id,
         approver="approver-2",
         approver_role=Role.TECHNICIAN,
     )
