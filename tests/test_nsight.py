@@ -15,6 +15,7 @@ from wait_local_agent.nsight import (
     _device_numeric_id,
     _optional_flag,
     _optional_integer,
+    _patch_id_list,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.store import Store
@@ -207,6 +208,13 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
         "patch_ids": ["681806"],
     }
 
+    with pytest.raises(NSightRmmError, match="outside the device scope"):
+        _adapter(
+            settings,
+            handler,
+            allow_write_actions=True,
+        ).approve_patches("server:49324", ["999999"], client_id="acme")
+
     with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
         adapter.approve_patches("server:49324", ["681806"], client_id="acme")
 
@@ -217,6 +225,19 @@ def test_nsight_patch_approval_validates_patch_ids(settings, patch_ids) -> None:
 
     with pytest.raises(NSightRmmError, match="patch"):
         adapter.approve_patches("server:49324", patch_ids, client_id="acme")
+
+
+def test_nsight_patch_approval_normalizes_duplicate_ids(settings) -> None:
+    adapter = _adapter(
+        settings,
+        lambda request: httpx.Response(200, text=PATCHES_XML),
+        allow_write_actions=True,
+    )
+
+    with pytest.raises(NSightRmmError, match="patch"):
+        adapter.approve_patches("server:49324", cast(list[str], [681806]), client_id="acme")
+
+    assert _patch_id_list(["681806", "681806"]) == ["681806"]
 
 
 def test_nsight_failing_check_parser_skips_invalid_provider_rows(settings) -> None:
