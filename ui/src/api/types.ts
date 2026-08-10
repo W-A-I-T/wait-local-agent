@@ -32,6 +32,7 @@ export type HaloTicket = {
 export type EndUserTicket = {
   ticket_id: string;
   subject: string;
+  body: string;
   status: string;
   priority: string;
 };

@@ -84,9 +84,13 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     assert "client_id" not in branding.json()
     assert created.json()["status"] == "new"
     assert created.json()["priority"] == "normal"
+    assert created.json()["body"] == "MFA is blocked; ***"
+    assert "client_id" not in created.json()
     assert "password=do-not-store" not in created.text
     assert status.status_code == 200
     assert status.json()["ticket_id"] == ticket_id
+    assert status.json()["body"] == "MFA is blocked; ***"
+    assert "client_id" not in status.json()
     assert message.status_code == 200
     assert message.json()["body"] == "Please call me after 3pm"
     assert messages.status_code == 200

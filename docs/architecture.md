@@ -279,6 +279,8 @@ remote image URLs are not loaded.
 It returns only validated display values after the same client/requester scope
 check; live PSA synchronization and outbound delivery remain separate
 capabilities.
+End-user ticket responses contain the requester's redacted subject and body,
+status, and priority only; client identity is not returned.
 
 ## Event-triggered agents
 

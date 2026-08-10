@@ -4623,9 +4623,9 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
     return {
         "ticket_id": ticket.id,
         "subject": redact_text(ticket.subject),
+        "body": redact_text(ticket.body),
         "status": ticket.status,
         "priority": ticket.priority,
-        "client_id": ticket.client_id,
     }
 
 
