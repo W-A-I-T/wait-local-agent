@@ -15,6 +15,7 @@ from wait_local_agent.rmm import (
 )
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightAntivirusThreatsAction,
     NSightPatchApproveAction,
     NSightPatchLookupAction,
     NSightPatchPolicyAction,
@@ -56,6 +57,10 @@ class _NSightProvider(_Provider):
     def list_patches(self, device_id, *, client_id=None):
         assert client_id == "acme"
         return [{"patch_id": 681806, "status_label": "Installed", "device_id": device_id}]
+
+    def list_antivirus_threats(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return [{"name": "Example.Malware", "category": "Trojan", "device_id": device_id}]
 
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         assert client_id == "acme"
@@ -136,6 +141,20 @@ def test_nsight_patch_lookup_uses_mapped_provider_surface(settings) -> None:
     assert NSightPatchLookupAction().run(
         _context(settings, _Provider()), {"device_id": "server:49324"}
     ).error_detail == "N-sight patch lookup requires the N-sight RMM adapter"
+
+
+def test_nsight_antivirus_threat_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightAntivirusThreatsAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    threats = cast(list[dict[str, object]], result.output["threats"])
+    assert threats[0]["name"] == "Example.Malware"
+    wrong = NSightAntivirusThreatsAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight antivirus lookup requires the N-sight RMM adapter"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

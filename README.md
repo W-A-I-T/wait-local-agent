@@ -1003,7 +1003,10 @@ recheck, tenant scope, and bounded patch-ID controls for N-sight's documented
 patch reprocessing service. See
 patch reprocessing service. The `nsight-patch-policy` action exposes only the
 documented `do_nothing`, `ignore`, `inherit`, and `retry` operations through an
-explicit allowlist with the same controls. See
+explicit allowlist with the same controls. The read-only
+`nsight-antivirus-threats` action exposes documented managed-antivirus threat
+records after the same mapped-device recheck; it never starts or changes an
+antivirus scan. See
 N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),

@@ -245,7 +245,8 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ## N-able N-sight
 
 The N-sight adapter implements bounded, tenant-scoped device inventory,
-provider-reported failing-check alerts, and mapped-device patch inventory
+provider-reported failing-check alerts, mapped-device patch inventory, and
+documented managed-antivirus threat records
 through the documented XML Data Extraction API. It reads mapped sites, servers,
 and workstations and rechecks the returned client and device before returning
 records through the shared RMM contract. Patch approval is a separate

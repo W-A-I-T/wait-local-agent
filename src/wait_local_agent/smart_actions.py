@@ -3579,6 +3579,63 @@ class NSightPatchLookupAction:
         )
 
 
+class NSightAntivirusThreatsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-threats",
+        title="N-sight antivirus threat lookup",
+        description=(
+            "Read bounded managed-antivirus threat records for one mapped N-sight "
+            "server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"threats": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_threats = getattr(provider, "list_antivirus_threats", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_threats):
+            return _failed("N-sight antivirus lookup requires the N-sight RMM adapter")
+        try:
+            threats = list_threats(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight antivirus threats are unavailable")
+        if not isinstance(threats, list) or any(not isinstance(threat, dict) for threat in threats):
+            return _failed("N-sight returned malformed antivirus threat data")
+        output_threats = [cast(dict[str, object], redact_value(threat)) for threat in threats[:100]]
+        return ActionResult(
+            status="success",
+            output={
+                "threats": output_threats,
+                "count": len(output_threats),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_antivirus_threat",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                }
+                for _ in output_threats
+            ],
+        )
+
+
 class NSightPatchApproveAction:
     manifest = SmartActionManifest(
         action_id="nsight-patch-approve",
@@ -6588,6 +6645,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
         RmmAlertLookupAction(),
+        NSightAntivirusThreatsAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),

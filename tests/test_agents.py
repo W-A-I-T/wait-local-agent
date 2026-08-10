@@ -102,6 +102,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "itglue-documentation-search",
         "rmm-device-lookup",
         "rmm-alert-lookup",
+        "nsight-antivirus-threats",
         "nsight-patch-lookup",
         "nsight-patch-approve",
         "nsight-patch-reprocess",
