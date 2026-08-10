@@ -1018,6 +1018,12 @@ customer identifier from the caller.
 It is reachable through `/smart-actions/nsight-antivirus-scan-start`, the
 generic `smart-actions invoke nsight-antivirus-scan-start` CLI command, and the
 Agents definition editor.
+The approval-gated `nsight-antivirus-scan-cancel` action cancels a mapped
+Managed Antivirus scan through the documented `mav_scan_cancel` service using
+the same approval, write-flag, and scope controls. It is reachable through the
+generic `/smart-actions/nsight-antivirus-scan-cancel` API, CLI, and Agents
+definition editor paths; the provider's documented failure is preserved when
+no scan is running.
 The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
 `nsight-monitoring-details` action exposes bounded documented device metadata,
@@ -1051,6 +1057,8 @@ rechecks the mapped device, and bounds summary fields and optional threat
 details; it never starts or changes an antivirus scan. The approval-gated
 `nsight-antivirus-scan-start` action uses the documented `mav_scan_start`
 service only after the same mapped-device recheck and write controls. The
+`nsight-antivirus-scan-cancel` action uses the documented `mav_scan_cancel`
+service under the same controls. The
 `nsight-outage-lookup` action exposes open and
 recent outage records from the documented `list_outages` service after the same
 mapped-device recheck. The `nsight-backup-sessions` action uses the documented
@@ -1078,6 +1086,7 @@ and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
+and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
 and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),

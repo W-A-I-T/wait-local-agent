@@ -113,6 +113,15 @@ describe("Agents", () => {
             access_mode: "write"
           },
           {
+            id: "nsight-antivirus-scan-cancel",
+            name: "Cancel N-sight antivirus scan",
+            description: "Cancel a mapped antivirus scan after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
+          },
+          {
             id: "scalepad-compliance-health",
             name: "ScalePad compliance health",
             description: "Read one mapped compliance-health snapshot.",
