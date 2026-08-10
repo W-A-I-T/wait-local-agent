@@ -939,6 +939,25 @@ and approval-tested adapter exists. Credentials remain in settings or the
 encrypted vault and never enter action payloads. See the
 [VSA X REST API reference](https://api.vsax.net/).
 
+### ConnectWise ScreenConnect
+
+The bounded ScreenConnect adapter uses the documented RESTful API Manager
+extension for tenant-scoped, read-only session/device lookup. Configure an
+explicit local client-to-session UUID map:
+
+```text
+WAIT_SCREENCONNECT_BASE_URL=https://your-screenconnect-host
+WAIT_SCREENCONNECT_EXTENSION_ID=
+WAIT_SCREENCONNECT_AUTH_SECRET=
+WAIT_SCREENCONNECT_ORIGIN=https://your-screenconnect-host
+WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Alert lookup, script catalogs, command execution, and command polling remain
+explicitly unavailable. See the [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
+and [RESTful API Manager](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/RESTful_API_Manager).
+
 ## Scheduled Workflows and Tenancy Filters
 
 Workflow templates are listed with:

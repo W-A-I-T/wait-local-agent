@@ -222,6 +222,16 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     kaseya_rmm_status: ConnectorStatusValue = "not_configured"
     if kaseya_rmm_configured:
         kaseya_rmm_status = "configured" if settings.allow_http_probing else "blocked"
+    screenconnect_configured = bool(
+        settings.screenconnect_base_url
+        and settings.screenconnect_extension_id
+        and settings.screenconnect_auth_secret
+        and settings.screenconnect_origin
+        and settings.screenconnect_client_sessions_map_json
+    )
+    screenconnect_status: ConnectorStatusValue = "not_configured"
+    if screenconnect_configured:
+        screenconnect_status = "configured" if settings.allow_http_probing else "blocked"
     rmm_configured_name = (
         "NinjaOne RMM"
         if ninjaone_configured
@@ -231,6 +241,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         if ncentral_configured
         else "Kaseya VSA X"
         if kaseya_rmm_configured
+        else "ScreenConnect"
+        if screenconnect_configured
         else "RMM"
     )
     rmm_status = (
@@ -241,6 +253,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         else ncentral_status
         if ncentral_configured
         else kaseya_rmm_status
+        if kaseya_rmm_configured
+        else screenconnect_status
     )
     rmm_configuration_message = (
         (
@@ -254,7 +268,11 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "N-able N-central is configured for tenant-scoped device, issue, and task "
                     "metadata plus approval-gated direct tasks and status lookup."
                     if ncentral_configured
-                    else "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
+                    else (
+                        "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
+                        if kaseya_rmm_configured
+                        else "ScreenConnect is configured for tenant-scoped read-only session/device lookup."
+                    )
                 )
             )
         )
@@ -268,13 +286,18 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else (
                     "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
                     if ncentral_configured
-                    else "Kaseya VSA X is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                    else (
+                        "Kaseya VSA X is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                        if kaseya_rmm_configured
+                        else "ScreenConnect is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                    )
                 )
             )
         )
         if rmm_status == "blocked"
         else (
-            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, WAIT_NCENTRAL_*, or WAIT_KASEYA_RMM_* values, including the "
+            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, WAIT_NCENTRAL_*, WAIT_KASEYA_RMM_*, "
+            "or WAIT_SCREENCONNECT_* values, including the "
             "explicit tenant map, "
             "to enable a vendor RMM adapter."
         )
@@ -575,6 +598,23 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "kaseya",
         ),
         SecretRecord("WAIT_KASEYA_RMM_PAGE_SIZE", bool(settings.kaseya_rmm_page_size), "kaseya"),
+        SecretRecord("WAIT_SCREENCONNECT_BASE_URL", bool(settings.screenconnect_base_url), "screenconnect"),
+        SecretRecord(
+            "WAIT_SCREENCONNECT_EXTENSION_ID",
+            bool(settings.screenconnect_extension_id),
+            "screenconnect",
+        ),
+        SecretRecord(
+            "WAIT_SCREENCONNECT_AUTH_SECRET",
+            bool(settings.screenconnect_auth_secret),
+            "screenconnect",
+        ),
+        SecretRecord("WAIT_SCREENCONNECT_ORIGIN", bool(settings.screenconnect_origin), "screenconnect"),
+        SecretRecord(
+            "WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON",
+            bool(settings.screenconnect_client_sessions_map_json),
+            "screenconnect",
+        ),
     ]
 
 

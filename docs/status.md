@@ -102,6 +102,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   contract with explicit client-to-organization mapping. Script catalog,
   execution, and remediation remain unavailable until a documented,
   approval-tested path exists.
+- ScreenConnect session/device reads through the documented RESTful API Manager
+  extension with an explicit local client-to-session UUID map. Alert lookup,
+  script catalogs, command execution, and command polling remain unavailable
+  until separately reviewed contracts and approval paths exist.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph, plus
@@ -389,7 +393,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, and Kaseya VSA X read-only inventory/notification adapters built; broader vendor coverage and remediation future |
+| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect read-only session/device adapters built; broader vendor coverage and remediation future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built with JSON, Markdown, and PDF export; provider-backed lifecycle enrichment remains future work |

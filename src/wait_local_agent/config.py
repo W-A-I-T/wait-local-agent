@@ -115,6 +115,11 @@ class Settings:
     kaseya_rmm_token_secret: str = ""
     kaseya_rmm_organization_map_json: str = ""
     kaseya_rmm_page_size: int = 50
+    screenconnect_base_url: str = ""
+    screenconnect_extension_id: str = ""
+    screenconnect_auth_secret: str = ""
+    screenconnect_origin: str = ""
+    screenconnect_client_sessions_map_json: str = ""
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -353,6 +358,23 @@ def load_settings() -> Settings:
             "WAIT_KASEYA_RMM_ORGANIZATION_MAP_JSON", ""
         ),
         kaseya_rmm_page_size=_int_env("WAIT_KASEYA_RMM_PAGE_SIZE", 50),
+        screenconnect_base_url=_secret_value(
+            "WAIT_SCREENCONNECT_BASE_URL",
+            os.getenv("WAIT_SCREENCONNECT_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        screenconnect_extension_id=os.getenv("WAIT_SCREENCONNECT_EXTENSION_ID", ""),
+        screenconnect_auth_secret=_secret_value(
+            "WAIT_SCREENCONNECT_AUTH_SECRET",
+            os.getenv("WAIT_SCREENCONNECT_AUTH_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        screenconnect_origin=os.getenv("WAIT_SCREENCONNECT_ORIGIN", ""),
+        screenconnect_client_sessions_map_json=os.getenv(
+            "WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON", ""
+        ),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
