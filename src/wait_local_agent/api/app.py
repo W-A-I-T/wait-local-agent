@@ -147,6 +147,7 @@ from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
     ScalePadClientResponse,
+    ScalePadComplianceHealthResponse,
     ScalePadGoalResponse,
     ScalePadRiskSummaryResponse,
 )
@@ -3309,6 +3310,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = scalepad_client.get_risk_summary(client_id=scoped_client_id)
         return _scalepad_risk_summary_response("clients.risks-summary", response)
 
+    @app.get("/connectors/scalepad/compliance-health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def scalepad_compliance_health(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="ScalePad compliance-health reads require a tenant scope",
+            )
+        response = scalepad_client.get_compliance_health(client_id=scoped_client_id)
+        return _scalepad_compliance_health_response("clients.health", response)
+
     @app.get("/connectors/scalepad/goals")
     @limiter.limit(active_settings.rate_limit_connector)
     def scalepad_goals(
@@ -4546,6 +4563,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
             "next_cursor": response.next_cursor,
             "total_count": response.total_count,
+        }
+
+    def _scalepad_compliance_health_response(
+        read_type: str,
+        response: ScalePadComplianceHealthResponse,
+    ) -> dict[str, object]:
+        _audit_scalepad_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "item": redact_value(response.item) if response.item is not None else None,
         }
 
     def _scalepad_goal_response(

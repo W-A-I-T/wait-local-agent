@@ -1088,6 +1088,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-preview",
         "scalepad-assessment-lookup",
         "scalepad-client-lookup",
+        "scalepad-compliance-health",
         "scalepad-goal-lookup",
         "scalepad-risk-summary",
         "screenconnect-session-message",

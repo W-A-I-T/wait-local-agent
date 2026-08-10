@@ -138,7 +138,8 @@ Includes:
 - TimeZest connector with tenant-mapped scheduling-request inventory and an
   approval-gated documented create action
 - ScalePad connector with tenant-mapped, read-only Core client inventory and
-  separately mapped ControlMap risk-summary reads
+  separately mapped ControlMap risk-summary and single-client
+  compliance-health reads
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
 - Bounded per-client QBR report generator (JSON/Markdown/PDF ticket counts, explicit resolution evidence, automation estimates); provider-backed lifecycle enrichment remains a future extension
@@ -248,7 +249,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
 | N-able N-sight | Phase 4 | ✓ site/server/workstation, documented per-device check, performance-history, asset-details, and monitoring-details inventory, failing-check, managed-antivirus threat, mapped-device outage, Backup & Recovery session, and 60-day backup-check history reads, mapped-device patch inventory, approval-gated patch approval/reprocessing plus allowlisted policy operations, and approval-gated documented automated-task execution | Generic script parity, antivirus writes/scans, backup mutations, and broader writes remain unavailable | Public core |
 | TimeZest | Phase 5 | ✓ tenant-mapped reads plus approval-gated documented create | Reschedule/cancel and broader marketplace parity | Public core |
-| ScalePad | Phase 5 | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Public core |
+| ScalePad | Phase 5 | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary and single-client compliance-health reads | Writes, unscoped reads, and broader product APIs | Public core |
 | Kaseya VSA | Phase 5 | ✓ device/notification inventory plus approval-gated script catalog, execution, and polling | Broader remediation and webhook parity | Public core |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |

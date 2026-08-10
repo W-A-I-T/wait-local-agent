@@ -828,6 +828,81 @@ class ScalePadRiskSummaryAction:
         )
 
 
+class ScalePadComplianceHealthAction:
+    manifest = SmartActionManifest(
+        action_id="scalepad-compliance-health",
+        title="ScalePad compliance health",
+        description=(
+            "Read one explicitly mapped ScalePad ControlMap compliance-health "
+            "snapshot through the documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "health": "object|null",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        provider = context.scalepad_client or ScalePadClient(context.settings)
+        try:
+            response = provider.get_compliance_health(client_id=scoped_client_id)
+        except Exception:
+            return _failed("ScalePad compliance health lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(
+            str(getattr(result, "message", "ScalePad compliance health read failed"))
+        )
+        health = getattr(response, "item", None)
+        if health is not None and not isinstance(health, dict):
+            return _failed("ScalePad returned malformed compliance health data")
+        output: dict[str, object]
+        if status != "ready" or health is None:
+            output = {
+                "client_id": scoped_client_id,
+                "connector_status": status,
+                "health": None,
+            }
+            return ActionResult(status="failed", output=output, error_detail=message)
+        output = {
+            "client_id": scoped_client_id,
+            "connector_status": status,
+            "health": cast(dict[str, object], redact_value(health)),
+        }
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "scalepad",
+                    "operation": "clients.health",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
 class ScalePadGoalLookupAction:
     manifest = SmartActionManifest(
         action_id="scalepad-goal-lookup",
@@ -7384,6 +7459,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TimeZestSchedulingRequestCreateAction(),
         ScalePadClientLookupAction(),
         ScalePadRiskSummaryAction(),
+        ScalePadComplianceHealthAction(),
         ScalePadGoalLookupAction(),
         ScalePadAssessmentLookupAction(),
         M365LiveContextAction(),

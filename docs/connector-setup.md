@@ -341,7 +341,8 @@ See TimeZest's [authentication guide](https://developer.timezest.com/authenticat
 ## ScalePad
 
 The ScalePad adapter exposes bounded, read-only Core client, ControlMap
-risk-summary, and Lifecycle Manager goal and assessment reads through the documented APIs. It
+risk-summary and single-client compliance-health, and Lifecycle Manager goal
+and assessment reads through the documented APIs. It
 is reachable through the shared smart-action, planner/tool-catalog, API, CLI,
 and Agents UI surfaces, with dedicated health and read routes under
 `/connectors/scalepad`.
@@ -353,6 +354,7 @@ WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
 WAIT_SCALEPAD_API_KEY=
 WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
 WAIT_SCALEPAD_RISK_TENANT_MAP_JSON={"acme":"scalepad-tenant-id"}
+WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON={"acme":"365bcf1e-a26b-4abc-ad9a-8607e2f43910"}
 WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON={"acme":"scalepad-lifecycle-client-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
@@ -360,6 +362,8 @@ WAIT_ALLOW_HTTP_PROBING=true
 `WAIT_SCALEPAD_CLIENT_MAP_JSON` maps each WAIT client to exactly one ScalePad
 Core client ID. `WAIT_SCALEPAD_RISK_TENANT_MAP_JSON` separately maps the
 ControlMap `client.tenant_id` value, and
+`WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON` separately maps the documented
+ControlMap client UUID used by the single-client compliance-health endpoint.
 `WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON` separately maps the Lifecycle Manager
 `client.id` value; do not copy an ID between maps unless the operator has
 independently verified that mapping. WAIT sends the documented `x-api-key`
@@ -368,6 +372,9 @@ provider scope, and exposes bounded redacted records. Goal reads support the
 documented status/title filters and opaque cursor returned by the provider.
 Assessment reads support the documented status and assessment-template filters
 and the same opaque cursor contract.
+Compliance-health reads use the mapped UUID and documented `x-api-key` header;
+the returned client identity is rechecked before the bounded response is
+exposed. They are read-only and do not require `WAIT_ALLOW_WRITE_ACTIONS`.
 API keys stay in settings/vault and never enter payloads, errors, or audit
 records. ScalePad writes and other product APIs remain unavailable. Lifecycle
 Manager access may require a higher ScalePad subscription than Core or
@@ -378,6 +385,7 @@ Regional ScalePad hosts may be configured explicitly when the tenant's data
 residency requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
 [List Clients Risk Summaries reference](https://developer.scalepad.com/reference/03_listclientsrisksummary-1),
+[Get Client Compliance Health reference](https://developer.scalepad.com/reference/02_clienthealth-1),
 and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
 
 ## Kaseya VSA X

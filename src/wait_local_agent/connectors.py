@@ -212,6 +212,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         and (
             settings.scalepad_client_map_json
             or settings.scalepad_risk_tenant_map_json
+            or settings.scalepad_compliance_client_map_json
             or settings.scalepad_lifecycle_client_map_json
         )
     )
@@ -730,6 +731,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "scalepad",
         ),
         SecretRecord(
+            "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON",
+            bool(settings.scalepad_compliance_client_map_json),
+            "scalepad",
+        ),
+        SecretRecord(
             "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON",
             bool(settings.scalepad_lifecycle_client_map_json),
             "scalepad",
@@ -1011,9 +1017,11 @@ def validate_connector_credentials(
                 "WAIT_SCALEPAD_BASE_URL": settings.scalepad_base_url,
                 "WAIT_SCALEPAD_API_KEY": settings.scalepad_api_key,
                 "WAIT_SCALEPAD_CLIENT_MAP_JSON or WAIT_SCALEPAD_RISK_TENANT_MAP_JSON or "
+                "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON or "
                 "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON": (
                     settings.scalepad_client_map_json
                     or settings.scalepad_risk_tenant_map_json
+                    or settings.scalepad_compliance_client_map_json
                     or settings.scalepad_lifecycle_client_map_json
                 ),
             }.items()
