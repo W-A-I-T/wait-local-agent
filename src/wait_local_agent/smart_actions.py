@@ -3522,6 +3522,62 @@ class RmmAlertLookupAction:
         )
 
 
+class NSightPatchLookupAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-patch-lookup",
+        title="N-sight patch lookup",
+        description=(
+            "Read bounded software-patch inventory for one mapped N-sight device "
+            "through the documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"patches": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_patches = getattr(provider, "list_patches", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_patches):
+            return _failed("N-sight patch lookup requires the N-sight RMM adapter")
+        try:
+            patches = list_patches(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight patch lookup failed")
+        if not isinstance(patches, list) or any(not isinstance(patch, dict) for patch in patches):
+            return _failed("N-sight returned malformed patch data")
+        output_patches = [cast(dict[str, object], redact_value(patch)) for patch in patches[:100]]
+        return ActionResult(
+            status="success",
+            output={
+                "patches": output_patches,
+                "count": len(output_patches),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_patch",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                }
+            ],
+        )
+
+
 class RmmScriptCatalogAction:
     manifest = SmartActionManifest(
         action_id="rmm-script-catalog",
@@ -6319,6 +6375,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
         RmmAlertLookupAction(),
+        NSightPatchLookupAction(),
         RmmScriptCatalogAction(),
         RmmScriptPreviewAction(),
         RmmScriptExecuteAction(),

@@ -102,6 +102,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "itglue-documentation-search",
         "rmm-device-lookup",
         "rmm-alert-lookup",
+        "nsight-patch-lookup",
         "rmm-script-catalog",
         "rmm-script-preview",
         "rmm-script-execute",
@@ -2168,6 +2169,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "autotask-ticket-update-resolution",
         "scalepad-goal-lookup",
         "scalepad-assessment-lookup",
+        "nsight-patch-lookup",
     } <= tool_ids
     assert (
         next(

@@ -976,9 +976,9 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ### N-able N-sight
 
 The N-sight adapter is a bounded, read-only XML Data Extraction API surface for
-tenant-scoped site, server, and workstation inventory. It uses an explicit local
-WAIT-client-to-N-sight-client map and derives bounded health alerts from the
-documented device health fields:
+tenant-scoped site, server, and workstation inventory plus documented failing
+checks. It uses an explicit local WAIT-client-to-N-sight-client map and
+rechecks the returned client before exposing bounded device and alert records:
 
 ```text
 WAIT_NSIGHT_BASE_URL=https://your-n-sight-server
@@ -988,15 +988,20 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The shared `rmm-device-lookup` and `rmm-alert-lookup` actions expose the mapped
-inventory. Each request is limited to mapped sites and the adapter caps results
-at 25 sites and 100 devices. The API key remains in settings or the encrypted
-vault and is never accepted in action payloads or included in errors/audit
-records. Script discovery, preview, execution, and polling return an explicit
-unavailable result because this slice does not infer a write contract from the
-documented read API. See N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
+inventory and provider-reported failing checks. The `nsight-patch-lookup`
+action exposes bounded patch inventory for one mapped server or workstation
+after a local device-scope recheck. Each request is limited to
+mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
+alerts. The API key remains in settings or the encrypted vault and is never
+accepted in action payloads or included in errors/audit records. Script
+discovery, preview, execution, and polling return an explicit unavailable
+result because this slice does not infer a write contract from the documented
+read API. See N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
-[server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
-[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
+[server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
+[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
+and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
+and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device).
 
 ### TimeZest
 

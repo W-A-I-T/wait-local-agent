@@ -1,9 +1,10 @@
 """Bounded N-able N-sight RMM Data Extraction API adapter.
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
-documented client, site, server, and workstation listing services here. A
-local WAIT-client-to-N-sight-client map is mandatory; returned site and device
-records are filtered to that mapping before entering the shared RMM contract.
+documented client, site, server, workstation, and failing-check listing
+services here. A local WAIT-client-to-N-sight-client map is mandatory; returned
+site, device, and alert records are filtered to that mapping before entering
+the shared RMM contract.
 The provider's API key is required by the documented query contract but is
 never accepted in action payloads, returned in errors, or persisted in audit
 records.
@@ -32,6 +33,8 @@ from wait_local_agent.rmm import (
 
 MAX_SITES = 25
 MAX_DEVICES = 100
+MAX_ALERTS = 100
+MAX_PATCHES = 100
 MAX_TEXT_LENGTH = 500
 
 
@@ -101,34 +104,32 @@ class NSightRmmAdapter(RmmInventoryProvider):
         return devices
 
     def list_alerts(self, client_id: str | None = None) -> list[RmmAlert]:
-        alerts: list[RmmAlert] = []
-        for device in self.list_devices(client_id):
-            attributes = device.attributes
-            failed_247 = str(attributes.get("status_247", "")) == "1"
-            failed_dsc = str(attributes.get("dsc_status", "")) == "1"
-            overdue = str(attributes.get("missed_247", "")) == "1"
-            offline = str(attributes.get("online", "")) == "0"
-            if not (failed_247 or failed_dsc or overdue or offline):
-                continue
-            reasons = []
-            if offline:
-                reasons.append("offline")
-            if overdue:
-                reasons.append("overdue")
-            if failed_247:
-                reasons.append("24x7 checks failed")
-            if failed_dsc:
-                reasons.append("daily safety checks failed")
-            alerts.append(
-                RmmAlert(
-                    alert_id=f"{device.device_id}:health",
-                    device_id=device.device_id,
-                    severity="high" if offline or overdue else "medium",
-                    title="N-sight " + ", ".join(reasons),
-                    status="open",
-                )
-            )
-        return alerts[:MAX_DEVICES]
+        provider_client_id = self._client_provider_id(client_id)
+        root = self._request(
+            "list_failing_checks",
+            {"clientid": str(provider_client_id), "check_type": "checks"},
+            client_id=client_id,
+        )
+        return _failing_check_alerts(root, provider_client_id)[:MAX_ALERTS]
+
+    def list_patches(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented patch inventory only after a mapped-device recheck."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "patch_list_all",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _patch_records(root)[:MAX_PATCHES]
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
         del client_id
@@ -276,6 +277,120 @@ def _api_url(value: str) -> str:
 def _text(element: Any, child: str) -> str:
     value = element.findtext(child)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _failing_check_alerts(root: Any, provider_client_id: int) -> list[RmmAlert]:
+    alerts: list[RmmAlert] = []
+    for client in root.iter("client"):
+        if _positive_id(_text(client, "clientid")) != provider_client_id:
+            continue
+        for site in client.findall("site"):
+            for element_name, container_name, category in (
+                ("workstation", "workstations", "workstation"),
+                ("server", "servers", "server"),
+            ):
+                container = site.find(container_name)
+                if container is None:
+                    continue
+                for device in container.findall(element_name):
+                    device_id = _positive_id(_text(device, "id"))
+                    if device_id is None:
+                        continue
+                    scoped_device_id = f"{category}:{device_id}"
+                    device_name = _bounded_text(_text(device, "name") or scoped_device_id)
+                    for state in ("offline", "overdue", "unreachable"):
+                        state_node = device.find(state)
+                        if state_node is None:
+                            continue
+                        description = _bounded_text(_text(state_node, "description") or state)
+                        alerts.append(
+                            RmmAlert(
+                                alert_id=f"{scoped_device_id}:{state}",
+                                device_id=scoped_device_id,
+                                severity="high",
+                                title=_bounded_text(
+                                    f"N-sight {device_name} {state}: {description}"
+                                ),
+                                status="open",
+                            )
+                        )
+                    failed_checks = device.find("failed_checks")
+                    if failed_checks is None:
+                        continue
+                    for check in failed_checks.findall("check"):
+                        check_id = _positive_id(_text(check, "checkid"))
+                        if check_id is None:
+                            continue
+                        description = _bounded_text(_text(check, "description") or "failed check")
+                        output = _bounded_text(_text(check, "formatted_output"))
+                        detail = f": {output}" if output else ""
+                        alerts.append(
+                            RmmAlert(
+                                alert_id=f"{scoped_device_id}:check:{check_id}",
+                                device_id=scoped_device_id,
+                                severity="high",
+                                title=_bounded_text(
+                                    f"N-sight {device_name} failed check: {description}{detail}"
+                                ),
+                                status="open",
+                            )
+                        )
+    return alerts
+
+
+def _patch_records(root: Any) -> list[dict[str, object]]:
+    patches: list[dict[str, object]] = []
+    for patch in root.iter("patch"):
+        patch_id = _positive_id(_text(patch, "patchid"))
+        if patch_id is None:
+            continue
+        patches.append(
+            {
+                "patch_id": patch_id,
+                "policy": _optional_integer(_text(patch, "policy")),
+                "status": _optional_integer(_text(patch, "status")),
+                "status_label": _bounded_text(_text(patch, "statusLabel")),
+                "title": _bounded_text(_text(patch, "patchTitle")),
+                "product": _bounded_text(_text(patch, "product")),
+                "severity": _optional_integer(_text(patch, "severity")),
+                "severity_label": _bounded_text(_text(patch, "severityLabel")),
+                "release_date": _bounded_text(_text(patch, "releaseDateText")),
+                "install_date": _bounded_text(_text(patch, "installDateText")),
+                "deployable": _optional_flag(_text(patch, "deployable")),
+                "uninstallable": _optional_flag(_text(patch, "uninstallable")),
+            }
+        )
+    return patches
+
+
+def _device_numeric_id(value: str) -> int:
+    if not isinstance(value, str):
+        raise NSightRmmError("N-sight patch reads require a mapped server or workstation ID")
+    category, separator, raw_id = value.strip().partition(":")
+    if category not in {"server", "workstation"} or not separator:
+        raise NSightRmmError("N-sight patch reads require a mapped server or workstation ID")
+    device_id = _positive_id(raw_id)
+    if device_id is None:
+        raise NSightRmmError("N-sight device ID must be a positive integer")
+    return device_id
+
+
+def _optional_integer(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if 0 <= parsed <= 2_147_483_647 else None
+
+
+def _optional_flag(value: str) -> bool | None:
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    return None
 
 
 def _positive_id(value: str) -> int | None:

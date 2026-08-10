@@ -15,6 +15,7 @@ from wait_local_agent.rmm import (
 )
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightPatchLookupAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
     RmmScriptExecuteAction,
@@ -46,6 +47,14 @@ class _Provider:
         return RmmScriptExecution("script-1", "device-1", "succeeded", "done", execution_id)
 
 
+class _NSightProvider(_Provider):
+    adapter_id = "n-sight"
+
+    def list_patches(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return [{"patch_id": 681806, "status_label": "Installed", "device_id": device_id}]
+
+
 def _context(settings, provider=None):
     return ActionContext(
         store=Store(settings.data_path),
@@ -73,6 +82,19 @@ def test_rmm_alerts_and_script_catalog_are_bounded(settings) -> None:
     assert cast(list[dict[str, object]], alerts.output["alerts"])[0]["alert_id"] == "alert-1"
     assert scripts.status == "success"
     assert cast(list[dict[str, object]], scripts.output["scripts"])[0]["script_id"] == "script-1"
+
+
+def test_nsight_patch_lookup_uses_mapped_provider_surface(settings) -> None:
+    result = NSightPatchLookupAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert cast(list[dict[str, object]], result.output["patches"])[0]["patch_id"] == 681806
+    assert NSightPatchLookupAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    ).error_detail == "N-sight patch lookup requires the N-sight RMM adapter"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
