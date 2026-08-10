@@ -71,6 +71,18 @@ WAIT_HALOPSA_TOKEN_URL=
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
+For approval-gated synchronization of a local end-user message to an existing
+HaloPSA ticket, configure an explicit local-client to HaloPSA-client mapping:
+
+```text
+WAIT_HALOPSA_CLIENT_MAP_JSON={"acme":"12345"}
+```
+
+The operator must provide the external ticket id in the Tickets screen. WAIT
+verifies that ticket belongs to the mapped HaloPSA client, then creates an
+`add_note` approval draft. It never lets an end user write directly to HaloPSA,
+and approval is still required before execution.
+
 Optional endpoint overrides:
 
 ```text

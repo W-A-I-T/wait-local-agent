@@ -5,7 +5,10 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from wait_local_agent.api.app import create_app
+import wait_local_agent.api.app as app_module
+from wait_local_agent.api.app import _halopsa_client_mapping, _safe_external_ticket_id, create_app
+from wait_local_agent.halopsa import HaloReadResponse
+from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteResult
 from wait_local_agent.store import Store
 
 
@@ -132,6 +135,179 @@ def test_end_user_branding_rejects_remote_assets_and_invalid_colors(settings) ->
     assert branding.json()["brand_logo_data_uri"] == ""
     assert branding.json()["brand_accent_color"] == "#1f6f55"
     assert branding.json()["brand_surface_color"] == "#f3f5f2"
+
+
+def test_end_user_message_can_create_approved_halopsa_sync(settings, monkeypatch) -> None:
+    executed = []
+
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def get_ticket(self, ticket_id: str) -> HaloReadResponse:
+            return HaloReadResponse(
+                HaloReadResult("ready", "verified", 1),
+                [HaloTicket(ticket_id, "Cannot sign in", "Open", "High", "halo-acme", "Acme")],
+            )
+
+        def execute_write(self, request):
+            executed.append(request)
+            return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
+
+    enabled = replace(
+        settings,
+        allow_write_actions=True,
+        demo_mode=False,
+        end_user_support_enabled=True,
+        end_user_token="end-user-token",
+        end_user_client_id="acme",
+        end_user_user_id="user-1",
+        client_id="acme",
+        admin_token="admin-token",
+        tech_token="tech-token",
+        halopsa_client_map_json='{"acme":"halo-acme"}',
+    )
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    client = TestClient(create_app(enabled))
+
+    created = client.post(
+        "/end-user/tickets",
+        headers=_auth("end-user-token"),
+        json={"subject": "Cannot sign in", "body": "Please investigate this login issue."},
+    )
+    ticket_id = created.json()["ticket_id"]
+    message = client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Please investigate this login issue."},
+    )
+    message_id = message.json()["id"]
+
+    draft = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("admin-token"),
+        json={"external_ticket_id": "HALO-42"},
+    )
+    duplicate = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("admin-token"),
+        json={"external_ticket_id": "HALO-42"},
+    )
+    approval_id = draft.json()["approval_request_id"]
+    approved = client.post(
+        f"/approval-requests/{approval_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved", "comment": "Verified against the Acme HaloPSA ticket."},
+    )
+
+    assert created.status_code == 200
+    assert message.status_code == 200
+    assert draft.status_code == 200
+    assert duplicate.status_code == 200
+    assert duplicate.json()["approval_request_id"] == approval_id
+    assert draft.json()["payload"]["fields"] == {
+        "hiddenfromuser": False,
+        "note": "Please investigate this login issue.",
+    }
+    assert approved.status_code == 200
+    assert approved.json()["execution_status"] == "succeeded"
+    assert len(executed) == 1
+    assert executed[0].ticket_id == "HALO-42"
+    assert executed[0].fields["hiddenfromuser"] is False
+
+
+def test_end_user_halopsa_sync_rejects_invalid_or_out_of_scope_targets(settings, monkeypatch) -> None:
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def get_ticket(self, ticket_id: str) -> HaloReadResponse:
+            if ticket_id == "HALO-NOT-READY":
+                return HaloReadResponse(HaloReadResult("failed", "provider unavailable", 0), [])
+            return HaloReadResponse(
+                HaloReadResult("ready", "verified", 1),
+                [HaloTicket(ticket_id, "Other ticket", "Open", "Low", "halo-other", "Other")],
+            )
+
+    enabled = replace(
+        settings,
+        demo_mode=False,
+        end_user_support_enabled=True,
+        end_user_token="end-user-token",
+        end_user_client_id="acme",
+        end_user_user_id="user-1",
+        client_id="acme",
+        tech_token="tech-token",
+        halopsa_client_map_json='{"acme":"halo-acme"}',
+    )
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    client = TestClient(create_app(enabled))
+    created = client.post(
+        "/end-user/tickets",
+        headers=_auth("end-user-token"),
+        json={"subject": "Sync target checks", "body": "Requester message"},
+    )
+    ticket_id = created.json()["ticket_id"]
+    message_id = client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Requester message"},
+    ).json()["id"]
+
+    invalid_id = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("tech-token"),
+        json={"external_ticket_id": "HALO/42"},
+    )
+    mismatch = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("tech-token"),
+        json={"external_ticket_id": "HALO-OTHER"},
+    )
+    unavailable = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("tech-token"),
+        json={"external_ticket_id": "HALO-NOT-READY"},
+    )
+    missing_message = client.post(
+        f"/tickets/{ticket_id}/end-user-messages/999/halopsa-drafts",
+        headers=_auth("tech-token"),
+        json={"external_ticket_id": "HALO-42"},
+    )
+    unmapped = TestClient(create_app(replace(enabled, halopsa_client_map_json=""))).post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("tech-token"),
+        json={"external_ticket_id": "HALO-42"},
+    )
+    foreign = TestClient(create_app(replace(enabled, client_id="other", tech_token="other-tech"))).post(
+        f"/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts",
+        headers=_auth("other-tech"),
+        json={"external_ticket_id": "HALO-42"},
+    )
+
+    assert created.status_code == 200
+    assert invalid_id.status_code == 422
+    assert mismatch.status_code == 403
+    assert unavailable.status_code == 409
+    assert missing_message.status_code == 404
+    assert unmapped.status_code == 409
+    assert foreign.status_code == 404
+
+
+def test_halopsa_sync_mapping_and_ticket_id_validation(settings) -> None:
+    assert _safe_external_ticket_id("HALO-42") is True
+    assert _safe_external_ticket_id("") is False
+    assert _safe_external_ticket_id("  ") is False
+    assert _safe_external_ticket_id("HALO/42") is False
+    assert _safe_external_ticket_id("HALO\n42") is False
+    assert _safe_external_ticket_id("x" * 101) is False
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json='{"acme":"12345"}'), "acme") == "12345"
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json="not-json"), "acme") is None
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json="[]"), "acme") is None
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json='{"acme":true}'), "acme") is None
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json='{"acme":[]}'), "acme") is None
+    assert _halopsa_client_mapping(replace(settings, halopsa_client_map_json='{"acme":"  "}'), "acme") is None
+    assert _halopsa_client_mapping(settings, "") is None
 
 def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_default(settings) -> None:
     enabled = replace(

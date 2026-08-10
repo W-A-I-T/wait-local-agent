@@ -138,6 +138,7 @@ class Settings:
     halopsa_client_secret: str = ""
     halopsa_tenant: str = ""
     halopsa_token_url: str = ""
+    halopsa_client_map_json: str = ""
     halopsa_ticket_write_endpoint: str = "Ticket"
     halopsa_action_write_endpoint: str = "Actions"
     hudu_base_url: str = ""
@@ -404,6 +405,7 @@ def load_settings() -> Settings:
             backend=backend,
             vault_path=vault_path,
         ),
+        halopsa_client_map_json=os.getenv("WAIT_HALOPSA_CLIENT_MAP_JSON", ""),
         halopsa_ticket_write_endpoint=os.getenv("WAIT_HALOPSA_TICKET_WRITE_ENDPOINT", "Ticket"),
         halopsa_action_write_endpoint=os.getenv("WAIT_HALOPSA_ACTION_WRITE_ENDPOINT", "Actions"),
         hudu_base_url=_secret_value(

@@ -27,6 +27,9 @@ describe("Tickets customer conversation", () => {
       if (path === "/tickets/EUS-1/end-user-messages" && init?.method === "POST") {
         return Promise.resolve(json({ id: 2, ticket_id: "EUS-1", role: "support", body: "We are reviewing this.", created_at: "2026-08-10T00:01:00Z" }));
       }
+      if (path === "/tickets/EUS-1/end-user-messages/1/halopsa-drafts" && init?.method === "POST") {
+        return Promise.resolve(json({ approval_request_id: 7 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -46,6 +49,24 @@ describe("Tickets customer conversation", () => {
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       "/tickets/EUS-1/end-user-messages",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "We are reviewing this." }) })
+    ));
+  });
+
+  it("creates an approval draft for a verified HaloPSA ticket", async () => {
+    render(<Tickets />);
+
+    fireEvent.change(screen.getByPlaceholderText("EUS-..."), { target: { value: "EUS-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load conversation" }));
+    await screen.findByText("I cannot sign in");
+
+    fireEvent.change(screen.getByLabelText("HaloPSA ticket ID"), { target: { value: "HALO-42" } });
+    fireEvent.change(screen.getByLabelText("Message to sync"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare HaloPSA approval" }));
+
+    expect(await screen.findByText("HaloPSA approval draft 7 created. Review it before execution.")).toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/tickets/EUS-1/end-user-messages/1/halopsa-drafts",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ external_ticket_id: "HALO-42" }) })
     ));
   });
 });
