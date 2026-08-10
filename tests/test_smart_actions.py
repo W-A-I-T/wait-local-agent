@@ -1073,6 +1073,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "scalepad-client-lookup",
         "screenconnect-session-message",
         "screenconnect-session-note",
         "security-alert-assessment",

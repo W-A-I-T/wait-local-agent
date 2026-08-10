@@ -116,6 +116,9 @@ class Settings:
     timezest_base_url: str = "https://api.timezest.com"
     timezest_api_key: str = ""
     timezest_client_map_json: str = ""
+    scalepad_base_url: str = "https://api.scalepad.com"
+    scalepad_api_key: str = ""
+    scalepad_client_map_json: str = ""
     kaseya_rmm_base_url: str = ""
     kaseya_rmm_token_id: str = ""
     kaseya_rmm_token_secret: str = ""
@@ -375,6 +378,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         timezest_client_map_json=os.getenv("WAIT_TIMEZEST_CLIENT_MAP_JSON", ""),
+        scalepad_base_url=_secret_value(
+            "WAIT_SCALEPAD_BASE_URL",
+            os.getenv("WAIT_SCALEPAD_BASE_URL", "https://api.scalepad.com"),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        scalepad_api_key=_secret_value(
+            "WAIT_SCALEPAD_API_KEY",
+            os.getenv("WAIT_SCALEPAD_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        scalepad_client_map_json=os.getenv("WAIT_SCALEPAD_CLIENT_MAP_JSON", ""),
         kaseya_rmm_base_url=_secret_value(
             "WAIT_KASEYA_RMM_BASE_URL",
             os.getenv("WAIT_KASEYA_RMM_BASE_URL", ""),

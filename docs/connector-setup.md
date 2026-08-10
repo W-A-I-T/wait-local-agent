@@ -298,6 +298,34 @@ See TimeZest's [authentication guide](https://developer.timezest.com/authenticat
 [pagination guide](https://developer.timezest.com/pagination/), and
 [TQL guide](https://developer.timezest.com/tql/).
 
+## ScalePad
+
+The ScalePad adapter exposes a bounded, read-only Core client lookup through
+the documented API. It is reachable through the shared smart-action,
+planner/tool-catalog, API, CLI, and Agents UI surfaces, with dedicated health
+and client-read routes under `/connectors/scalepad`.
+
+Required settings:
+
+```text
+WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
+WAIT_SCALEPAD_API_KEY=
+WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_SCALEPAD_CLIENT_MAP_JSON` maps each WAIT client to exactly one ScalePad
+client ID. WAIT sends the documented `x-api-key` header, builds the exact
+`filter[id]=eq:<mapped-id>` query locally, caps the request to one record, and
+rechecks the returned ID before exposing bounded name, lifecycle, contact, and
+hardware-count metadata. API keys stay in settings/vault and never enter
+payloads, errors, or audit records. ScalePad writes, unscoped partner-wide
+reads, risk summaries, and other product APIs remain unavailable. Regional
+ScalePad hosts may be configured explicitly when the tenant's data residency
+requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
+[List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
+and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
+
 ## Kaseya VSA X
 
 The Kaseya adapter implements the shared RMM contract for organization-scoped

@@ -44,6 +44,7 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.notion import NotionClient
 from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.scalepad import ScalePadClient
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
 from wait_local_agent.store import Store
@@ -205,6 +206,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     timezest_status: ConnectorStatusValue = "not_configured"
     if timezest_configured:
         timezest_status = "configured" if settings.allow_http_probing else "blocked"
+    scalepad_configured = bool(
+        settings.scalepad_base_url
+        and settings.scalepad_api_key
+        and settings.scalepad_client_map_json
+    )
+    scalepad_status: ConnectorStatusValue = "not_configured"
+    if scalepad_configured:
+        scalepad_status = "configured" if settings.allow_http_probing else "blocked"
     ninjaone_configured = bool(
         settings.ninjaone_base_url
         and settings.ninjaone_access_token
@@ -542,6 +551,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
+            id="scalepad",
+            kind="marketplace",
+            name="ScalePad",
+            status=scalepad_status,
+            message=(
+                "ScalePad is configured for tenant-mapped, read-only client inventory."
+                if scalepad_status == "configured"
+                else "ScalePad is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if scalepad_status == "blocked"
+                else (
+                    "Set WAIT_SCALEPAD_BASE_URL, WAIT_SCALEPAD_API_KEY, and "
+                    "WAIT_SCALEPAD_CLIENT_MAP_JSON to enable client inventory reads."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
             id="rmm",
             kind="rmm",
             name=rmm_configured_name,
@@ -686,6 +712,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             bool(settings.timezest_client_map_json),
             "timezest",
         ),
+        SecretRecord("WAIT_SCALEPAD_BASE_URL", bool(settings.scalepad_base_url), "scalepad"),
+        SecretRecord("WAIT_SCALEPAD_API_KEY", bool(settings.scalepad_api_key), "scalepad"),
+        SecretRecord(
+            "WAIT_SCALEPAD_CLIENT_MAP_JSON",
+            bool(settings.scalepad_client_map_json),
+            "scalepad",
+        ),
         SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
         SecretRecord("WAIT_KASEYA_RMM_TOKEN_ID", bool(settings.kaseya_rmm_token_id), "kaseya"),
         SecretRecord(
@@ -740,6 +773,7 @@ def validate_connector_credentials(
     sharepoint_client: SharePointClient | None = None,
     m365_client: M365GraphClient | None = None,
     timezest_client: TimeZestClient | None = None,
+    scalepad_client: ScalePadClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -955,6 +989,24 @@ def validate_connector_credentials(
                 f"TimeZest credentials are incomplete: {', '.join(missing)}.",
             )
         result = (timezest_client or TimeZestClient(settings)).health()
+    elif connector == "scalepad":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SCALEPAD_BASE_URL": settings.scalepad_base_url,
+                "WAIT_SCALEPAD_API_KEY": settings.scalepad_api_key,
+                "WAIT_SCALEPAD_CLIENT_MAP_JSON": settings.scalepad_client_map_json,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"ScalePad credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (scalepad_client or ScalePadClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)
