@@ -1,8 +1,9 @@
 """Bounded N-able N-sight RMM Data Extraction API adapter.
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
-documented client, site, server, workstation, check-inventory, failing-check,
-outage, antivirus-threat, backup-session, and bounded patch services here. A local
+documented client, site, server, workstation, check-inventory,
+performance-history, failing-check, outage, antivirus-threat, backup-session,
+and bounded patch services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
@@ -14,6 +15,7 @@ records.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +38,8 @@ MAX_SITES = 25
 MAX_DEVICES = 100
 MAX_ALERTS = 100
 MAX_CHECKS = 100
+MAX_PERFORMANCE_RECORDS = 100
+MAX_PERFORMANCE_POINTS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
@@ -145,6 +149,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _check_records(root)[:MAX_CHECKS]
+
+    def list_performance_history(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read bounded documented performance history for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_performance_history",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _performance_history_records(root)[:MAX_PERFORMANCE_RECORDS]
 
     def list_patches(
         self,
@@ -622,6 +645,140 @@ def _check_records(root: Any) -> list[dict[str, object]]:
     return checks
 
 
+_PERFORMANCE_TARGET_FIELDS = {
+    "bandwidth": ("name", "host"),
+    "disk_load": ("disk",),
+    "network_usage": ("adapter",),
+}
+_PERFORMANCE_THRESHOLD_FIELDS = {
+    "bandwidth": ("receive", "transmit"),
+    "disk_load": ("read_queue_length", "write_queue_length", "average_disk_time"),
+    "cpu_queue": ("average_length",),
+    "cpu_load": ("average_load",),
+    "network_usage": ("average_usage",),
+    "memory_usage": (
+        "available_min",
+        "average_pages",
+        "average_page_file",
+        "non_paged_pool",
+        "average_commit",
+    ),
+}
+_PERFORMANCE_HISTORY_FIELDS = {
+    "start",
+    "end",
+    "receive",
+    "transmit",
+    "disk_time_average",
+    "disk_time_max",
+    "read_queue_average",
+    "read_queue_max",
+    "write_queue_average",
+    "write_queue_max",
+    "queue_average",
+    "queue_max",
+    "load_average",
+    "load_max",
+    "bandwidth",
+    "total_average",
+    "total_max",
+    "transmit_average",
+    "transmit_max",
+    "receive_average",
+    "receive_max",
+    "available_average",
+    "available_min",
+    "commit_charge_average",
+    "commit_charge_max",
+    "page_faults_average",
+    "page_faults_max",
+    "file_usage_average",
+    "file_usage_max",
+    "non_paged",
+    "total",
+}
+
+
+def _performance_history_records(root: Any) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for category, element_name in (
+        ("bandwidth", "host"),
+        ("disk_load", "disk"),
+        ("cpu_queue", None),
+        ("cpu_load", None),
+        ("network_usage", "interface"),
+        ("memory_usage", None),
+    ):
+        container = root.find(category)
+        if container is None:
+            continue
+        elements = container.findall(element_name) if element_name else [container]
+        for element in elements:
+            check_id = _positive_id(_text(element, "check_id"))
+            if check_id is None:
+                continue
+            target = {
+                field: _bounded_text(_text(element, field))
+                for field in _PERFORMANCE_TARGET_FIELDS.get(category, ())
+                if _text(element, field)
+            }
+            thresholds = {
+                field: _optional_number(_text(element, field))
+                for field in _PERFORMANCE_THRESHOLD_FIELDS.get(category, ())
+                if _text(element, field) and _optional_number(_text(element, field)) is not None
+            }
+            history = _performance_data_records(element.find("history"))
+            records.append(
+                {
+                    "category": category,
+                    "check_id": check_id,
+                    "target": target,
+                    "thresholds": thresholds,
+                    "history": history,
+                }
+            )
+            if len(records) >= MAX_PERFORMANCE_RECORDS:
+                return records
+    return records
+
+
+def _performance_data_records(history: Any) -> list[dict[str, object]]:
+    if history is None:
+        return []
+    records: list[dict[str, object]] = []
+    for data in history.findall("data")[:MAX_PERFORMANCE_POINTS]:
+        values: dict[str, object] = {}
+        for child in list(data):
+            if child.tag == "cpu":
+                cpus = values.setdefault("cpus", [])
+                if not isinstance(cpus, list) or len(cpus) >= 4:
+                    continue
+                cpu_id = _optional_integer(_text(child, "cpu_id"))
+                if cpu_id is None:
+                    continue
+                cpus.append(
+                    {
+                        "cpu_id": cpu_id,
+                        "load_average": _optional_number(_text(child, "load_average")),
+                        "load_max": _optional_number(_text(child, "load_max")),
+                    }
+                )
+                continue
+            if child.tag not in _PERFORMANCE_HISTORY_FIELDS:
+                continue
+            raw = _text(data, child.tag)
+            if not raw:
+                continue
+            values[child.tag] = (
+                _bounded_text(raw)
+                if child.tag in {"start", "end"}
+                else _optional_number(raw)
+            )
+        if values:
+            records.append(values)
+    return records
+
+
 def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
     threats: list[dict[str, object]] = []
     for threat in root.iter("threat"):
@@ -778,6 +935,18 @@ def _optional_metric_integer(value: str) -> int | None:
     except ValueError:
         return None
     return parsed if 0 <= parsed <= MAX_METRIC_INTEGER else None
+
+
+def _optional_number(value: str) -> int | float | None:
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    if not math.isfinite(parsed) or abs(parsed) > MAX_METRIC_INTEGER:
+        return None
+    return int(parsed) if parsed.is_integer() else parsed
 
 
 def _optional_flag(value: str) -> bool | None:

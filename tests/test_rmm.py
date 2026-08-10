@@ -24,6 +24,7 @@ from wait_local_agent.smart_actions import (
     NSightPatchLookupAction,
     NSightPatchPolicyAction,
     NSightPatchReprocessAction,
+    NSightPerformanceHistoryAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
     RmmScriptExecuteAction,
@@ -84,6 +85,17 @@ class _NSightProvider(_Provider):
     def list_checks(self, device_id, *, client_id=None):
         assert client_id == "acme"
         return [{"check_id": 1304847, "description": "Web Page Check", "device_id": device_id}]
+
+    def list_performance_history(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return [
+            {
+                "category": "cpu_load",
+                "check_id": 102,
+                "history": [{"start": "2026-08-10 10:00:00"}],
+                "device_id": device_id,
+            }
+        ]
 
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         assert client_id == "acme"
@@ -152,6 +164,16 @@ class _FailingCheckInventoryNSightProvider(_NSightProvider):
 class _MalformedCheckInventoryNSightProvider(_NSightProvider):
     def list_checks(self, device_id, *, client_id=None):
         return {"check_id": 1304847}
+
+
+class _FailingPerformanceHistoryNSightProvider(_NSightProvider):
+    def list_performance_history(self, device_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedPerformanceHistoryNSightProvider(_NSightProvider):
+    def list_performance_history(self, device_id, *, client_id=None):
+        return {"category": "cpu_load"}
 
 
 class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
@@ -299,6 +321,30 @@ def test_nsight_check_inventory_lookup_is_read_only_and_bounded(settings) -> Non
         {"device_id": "server:49324"},
     )
     assert malformed.error_detail == "N-sight returned malformed check inventory data"
+
+
+def test_nsight_performance_history_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightPerformanceHistoryAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    records = cast(list[dict[str, object]], result.output["records"])
+    assert records[0]["check_id"] == 102
+    wrong = NSightPerformanceHistoryAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight performance history requires the N-sight RMM adapter"
+    failed = NSightPerformanceHistoryAction().run(
+        _context(settings, _FailingPerformanceHistoryNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert failed.error_detail == "N-sight performance history is unavailable"
+    malformed = NSightPerformanceHistoryAction().run(
+        _context(settings, _MalformedPerformanceHistoryNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert malformed.error_detail == "N-sight returned malformed performance history data"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

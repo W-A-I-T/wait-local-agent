@@ -3637,6 +3637,65 @@ class NSightCheckInventoryAction:
         )
 
 
+class NSightPerformanceHistoryAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-performance-history",
+        title="N-sight performance history",
+        description=(
+            "Read bounded documented performance and bandwidth history for one "
+            "mapped N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"records": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_history = getattr(provider, "list_performance_history", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_history):
+            return _failed("N-sight performance history requires the N-sight RMM adapter")
+        try:
+            records = list_history(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight performance history is unavailable")
+        if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+            return _failed("N-sight returned malformed performance history data")
+        output_records = [cast(dict[str, object], redact_value(record)) for record in records[:100]]
+        return ActionResult(
+            status="success",
+            output={
+                "records": output_records,
+                "count": len(output_records),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_performance_history",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                    "category": record.get("category"),
+                    "check_id": record.get("check_id"),
+                }
+                for record in output_records
+            ],
+        )
+
+
 class NSightAntivirusThreatsAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-threats",
@@ -6901,6 +6960,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightBackupSessionsAction(),
         NSightBackupHistoryAction(),
         NSightCheckInventoryAction(),
+        NSightPerformanceHistoryAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),
