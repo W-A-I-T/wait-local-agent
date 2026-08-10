@@ -3089,8 +3089,9 @@ def test_documentation_assisted_response_drafts_and_delivers_local_note_after_ap
     assert pending.approval_id is not None
     assert pending.output["response"]
     assert pending.output["citations"]
-    assert pending.output["citations"][0]["type"] == "ticket"
-    assert any(item["type"] == "knowledge" for item in pending.output["citations"])
+    citations = cast(list[dict[str, object]], pending.output["citations"])
+    assert citations[0]["type"] == "ticket"
+    assert any(item["type"] == "knowledge" for item in citations)
     assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
 
     completed = service.update_approval(
@@ -3215,7 +3216,7 @@ def test_documentation_assisted_response_uses_edited_response_and_preserves_writ
     smart_run = store.get_smart_action_run(pending.run_id or 0)
     assert smart_run is not None
     assert smart_run.status == "failed"
-    assert store.list_ticket_notes("TCK-1001", client_id=None) == []
+    assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
 
 
 def test_deterministic_provider_never_reports_ai_when_inference_is_enabled(settings) -> None:
