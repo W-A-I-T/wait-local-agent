@@ -538,7 +538,7 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 7. Kaseya VSA script/remediation parity beyond the public read-only connector
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 
-**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-able + Kaseya read-only adapters pass mock tests.
+**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-central, N-sight, and Kaseya read-only adapters pass mock tests.
 
 ---
 

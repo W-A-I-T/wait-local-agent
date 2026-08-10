@@ -52,7 +52,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
-  write paths, Kaseya VSA X exposes organization-scoped device and
+  write paths, N-able N-sight exposes tenant-scoped device and health
+  inventory, Kaseya VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
   reads through its documented RESTful API Manager extension plus an optional
   local command catalog with approval-gated command submission. This is
@@ -966,6 +967,31 @@ source, provider credential, or caller-supplied customer ID. See the
 [N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
 [active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
 and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
+
+### N-able N-sight
+
+The N-sight adapter is a bounded, read-only XML Data Extraction API surface for
+tenant-scoped site, server, and workstation inventory. It uses an explicit local
+WAIT-client-to-N-sight-client map and derives bounded health alerts from the
+documented device health fields:
+
+```text
+WAIT_NSIGHT_BASE_URL=https://your-n-sight-server
+WAIT_NSIGHT_API_KEY=
+WAIT_NSIGHT_CLIENT_MAP_JSON={"acme":123}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The shared `rmm-device-lookup` and `rmm-alert-lookup` actions expose the mapped
+inventory. Each request is limited to mapped sites and the adapter caps results
+at 25 sites and 100 devices. The API key remains in settings or the encrypted
+vault and is never accepted in action payloads or included in errors/audit
+records. Script discovery, preview, execution, and polling return an explicit
+unavailable result because this slice does not infer a write contract from the
+documented read API. See N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
+[site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
+[server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
+[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
 
 ### Kaseya VSA X
 

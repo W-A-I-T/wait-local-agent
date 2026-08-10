@@ -110,6 +110,9 @@ class Settings:
     ncentral_access_token: str = ""
     ncentral_org_unit_map_json: str = ""
     ncentral_page_size: int = 50
+    n_sight_base_url: str = ""
+    n_sight_api_key: str = ""
+    n_sight_client_map_json: str = ""
     kaseya_rmm_base_url: str = ""
     kaseya_rmm_token_id: str = ""
     kaseya_rmm_token_secret: str = ""
@@ -343,6 +346,19 @@ def load_settings() -> Settings:
         ),
         ncentral_org_unit_map_json=os.getenv("WAIT_NCENTRAL_ORG_UNIT_MAP_JSON", ""),
         ncentral_page_size=_int_env("WAIT_NCENTRAL_PAGE_SIZE", 50),
+        n_sight_base_url=_secret_value(
+            "WAIT_NSIGHT_BASE_URL",
+            os.getenv("WAIT_NSIGHT_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        n_sight_api_key=_secret_value(
+            "WAIT_NSIGHT_API_KEY",
+            os.getenv("WAIT_NSIGHT_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        n_sight_client_map_json=os.getenv("WAIT_NSIGHT_CLIENT_MAP_JSON", ""),
         kaseya_rmm_base_url=_secret_value(
             "WAIT_KASEYA_RMM_BASE_URL",
             os.getenv("WAIT_KASEYA_RMM_BASE_URL", ""),

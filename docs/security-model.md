@@ -56,6 +56,13 @@ persists the returned execution ID with its tenant/script/device scope before
 status polling. Credentials, script source, and provider IDs are never
 request-supplied.
 
+N-able N-sight calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_NSIGHT_CLIENT_MAP_JSON`. The adapter uses the
+documented API-key request contract only after resolving that local map, then
+limits reads to the mapped sites and bounded device count. The API key remains
+in settings/vault and is not copied into action payloads, errors, or audit
+records. No script or write operation is inferred from the read-only XML API.
+
 ScreenConnect calls use the same outbound HTTP gate and require a client ID
 that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
 mapped session ID must be an explicit UUID, and requests use only the

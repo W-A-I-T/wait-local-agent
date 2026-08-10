@@ -189,6 +189,10 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.ncentral import NCentralRmmAdapter
 
         return NCentralRmmAdapter(settings, store=store)
+    if settings.n_sight_base_url or settings.n_sight_api_key:
+        from wait_local_agent.nsight import NSightRmmAdapter
+
+        return NSightRmmAdapter(settings)
     if (
         settings.kaseya_rmm_base_url
         or settings.kaseya_rmm_token_id

@@ -102,6 +102,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   approval-gated direct-task submission and locally scoped execution-status
   lookup. Script upload, arbitrary task identifiers, and provider credentials in
   action payloads remain unavailable.
+- N-able N-sight tenant-scoped site, server, and workstation inventory plus
+  derived health alerts through the documented XML Data Extraction API and an
+  explicit client map. Script catalog, preview, execution, and polling remain
+  explicitly unavailable because no write contract is assumed.
 - Kaseya VSA X device and device-notification inventory through the same bounded
   contract with explicit client-to-organization mapping. Script catalog,
   execution, and remediation remain unavailable until a documented,
@@ -409,7 +413,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, provider-native ScreenConnect discovery/polling, and remediation remain future |
+| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, N-sight read-only device/health inventory, Kaseya VSA X read-only inventory/notification, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, N-sight writes, provider-native ScreenConnect discovery/polling, and remediation remain future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built with JSON, Markdown, and PDF export; provider-backed lifecycle enrichment remains future work |

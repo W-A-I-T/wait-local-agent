@@ -88,7 +88,7 @@ Scope: `W-A-I-T/wait-local-agent` (public, Apache-2.0 open core) and `W-A-I-T/wa
 | IT Glue connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | ConnectWise connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | Autotask connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
-| RMM connectors (NinjaOne/Datto/N-central/Kaseya) | Partial | Yes | Bounded NinjaOne, Datto, N-central, and Kaseya VSA X read surfaces are public; broader provider coverage and remediation remain incomplete | `src/wait_local_agent/{ninjaone,dattormm,ncentral,kaseya}.py` |
+| RMM connectors (NinjaOne/Datto/N-central/N-sight/Kaseya) | Partial | Yes | Bounded NinjaOne, Datto, N-central, N-sight, and Kaseya VSA X read surfaces are public; broader provider coverage and remediation remain incomplete | `src/wait_local_agent/{ninjaone,dattormm,ncentral,nsight,kaseya}.py` |
 | M365/Entra read-only connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | QBR reports | Bounded JSON/Markdown in public core | Yes | Provider-backed enrichment and PDF remain optional paid/report-provider work | `src/wait_local_agent/reports/msp.py` |
 | Automation opportunity / ROI report | Bounded local estimate and candidate ranking in public core | Yes | Measured/provider-backed ROI remains optional paid/report-provider work | `src/wait_local_agent/reports/msp.py` |

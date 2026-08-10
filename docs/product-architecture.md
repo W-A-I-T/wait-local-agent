@@ -134,6 +134,7 @@ Includes:
 - Autotask PSA connector (read + approval-gated write)
 - NinjaOne RMM connector (read-only device inventory, alerts)
 - Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
+- N-able N-sight connector with tenant-scoped device and health inventory
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
 - Bounded per-client QBR report generator (JSON/Markdown/PDF ticket counts, explicit resolution evidence, automation estimates); provider-backed lifecycle enrichment remains a future extension
@@ -241,6 +242,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Notion | Current | ✓ mapped-page title search, markdown, and data-source rows | — | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
+| N-able N-sight | Phase 4 | ✓ site/server/workstation and derived health inventory | Script/write parity remains unavailable | Public core |
 | Kaseya VSA | Phase 5 | ✓ read-only device/notification inventory | Script/remediation parity | Public core |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |

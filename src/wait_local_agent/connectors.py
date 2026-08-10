@@ -220,6 +220,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ncentral_status: ConnectorStatusValue = "not_configured"
     if ncentral_configured:
         ncentral_status = "configured" if settings.allow_http_probing else "blocked"
+    n_sight_configured = bool(
+        settings.n_sight_base_url
+        and settings.n_sight_api_key
+        and settings.n_sight_client_map_json
+    )
+    n_sight_status: ConnectorStatusValue = "not_configured"
+    if n_sight_configured:
+        n_sight_status = "configured" if settings.allow_http_probing else "blocked"
     kaseya_rmm_configured = bool(
         settings.kaseya_rmm_base_url
         and settings.kaseya_rmm_token_id
@@ -244,6 +252,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         if ninjaone_configured
         else "Datto RMM"
         if datto_rmm_configured
+        else "N-able N-sight"
+        if n_sight_configured
         else "N-able N-central"
         if ncentral_configured
         else "Kaseya VSA X"
@@ -257,6 +267,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         if ninjaone_configured
         else datto_rmm_status
         if datto_rmm_configured
+        else n_sight_status
+        if n_sight_configured
         else ncentral_status
         if ncentral_configured
         else kaseya_rmm_status
@@ -272,15 +284,19 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 "metadata, and approval-gated quick jobs."
                 if datto_rmm_configured
                 else (
-                    "N-able N-central is configured for tenant-scoped device, issue, and task "
-                    "metadata plus approval-gated direct tasks and status lookup."
-                    if ncentral_configured
+                    "N-able N-sight is configured for tenant-scoped device and health inventory."
+                    if n_sight_configured
                     else (
-                        "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
-                        if kaseya_rmm_configured
+                        "N-able N-central is configured for tenant-scoped device, issue, and task "
+                        "metadata plus approval-gated direct tasks and status lookup."
+                        if ncentral_configured
                         else (
-                            "ScreenConnect is configured for tenant-scoped session/device "
-                            "lookup and an optional local command catalog."
+                            "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
+                            if kaseya_rmm_configured
+                            else (
+                                "ScreenConnect is configured for tenant-scoped session/device "
+                                "lookup and an optional local command catalog."
+                            )
                         )
                     )
                 )
@@ -294,19 +310,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
                 if datto_rmm_configured
                 else (
-                    "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
-                    if ncentral_configured
+                    "N-able N-sight is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                    if n_sight_configured
                     else (
-                        "Kaseya VSA X is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
-                        if kaseya_rmm_configured
-                        else "ScreenConnect is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                        "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                        if ncentral_configured
+                        else (
+                            "Kaseya VSA X is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                            if kaseya_rmm_configured
+                            else "ScreenConnect is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                        )
                     )
                 )
             )
         )
         if rmm_status == "blocked"
         else (
-            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, WAIT_NCENTRAL_*, WAIT_KASEYA_RMM_*, "
+            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, WAIT_NSIGHT_*, WAIT_NCENTRAL_*, WAIT_KASEYA_RMM_*, "
             "or WAIT_SCREENCONNECT_* values, including the "
             "explicit tenant map, "
             "to enable a vendor RMM adapter."
@@ -626,6 +646,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "ncentral",
         ),
         SecretRecord("WAIT_NCENTRAL_PAGE_SIZE", bool(settings.ncentral_page_size), "ncentral"),
+        SecretRecord("WAIT_NSIGHT_BASE_URL", bool(settings.n_sight_base_url), "nsight"),
+        SecretRecord("WAIT_NSIGHT_API_KEY", bool(settings.n_sight_api_key), "nsight"),
+        SecretRecord(
+            "WAIT_NSIGHT_CLIENT_MAP_JSON",
+            bool(settings.n_sight_client_map_json),
+            "nsight",
+        ),
         SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
         SecretRecord("WAIT_KASEYA_RMM_TOKEN_ID", bool(settings.kaseya_rmm_token_id), "kaseya"),
         SecretRecord(
