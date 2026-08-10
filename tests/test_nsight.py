@@ -704,6 +704,20 @@ def test_nsight_monitoring_details_rechecks_device_scope(settings) -> None:
         adapter.list_monitoring_details("server:999", client_id="acme")
 
 
+def test_nsight_monitoring_details_parser_handles_missing_device() -> None:
+    assert _monitoring_detail_records(ElementTree.fromstring("<result />")) == {
+        "device": {},
+        "checks": [],
+        "outages": [],
+        "notes": [],
+        "features": {},
+    }
+    workstation = _monitoring_detail_records(
+        ElementTree.fromstring("<result><workstation><id>38549</id></workstation></result>")
+    )
+    assert cast(dict[str, object], workstation["device"])["type"] == "workstation"
+
+
 def test_nsight_inventory_and_performance_parsers_enforce_bounds() -> None:
     checks = ElementTree.fromstring(
         "<result><items>"

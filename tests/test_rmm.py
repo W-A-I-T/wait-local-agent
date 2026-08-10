@@ -216,6 +216,11 @@ class _MalformedMonitoringDetailsNSightProvider(_NSightProvider):
         return {"device": {}, "checks": ["invalid"], "outages": [], "notes": [], "features": {}}
 
 
+class _NonDictMonitoringDetailsNSightProvider(_NSightProvider):
+    def list_monitoring_details(self, device_id, *, client_id=None):
+        return []
+
+
 class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
     def list_backup_history(self, device_id, *, client_id=None):
         return {"checks": ["Backup Check - Example", 123], "days": []}
@@ -411,6 +416,10 @@ def test_nsight_asset_details_lookup_is_read_only_and_bounded(settings) -> None:
 
 
 def test_nsight_monitoring_details_lookup_is_read_only_and_bounded(settings) -> None:
+    invalid = NSightMonitoringDetailsAction().run(
+        _context(settings, _NSightProvider()), {"device_id": ""}
+    )
+    assert invalid.error_detail == "device_id must be a non-empty string of at most 80 characters"
     result = NSightMonitoringDetailsAction().run(
         _context(settings, _NSightProvider()), {"device_id": "server:49324"}
     )
@@ -432,6 +441,11 @@ def test_nsight_monitoring_details_lookup_is_read_only_and_bounded(settings) -> 
         {"device_id": "server:49324"},
     )
     assert malformed.error_detail == "N-sight returned malformed monitoring details"
+    non_dict = NSightMonitoringDetailsAction().run(
+        _context(settings, _NonDictMonitoringDetailsNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert non_dict.error_detail == "N-sight returned malformed monitoring details"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:
