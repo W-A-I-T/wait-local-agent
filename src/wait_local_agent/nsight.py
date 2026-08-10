@@ -1,10 +1,10 @@
 """Bounded N-able N-sight RMM Data Extraction API adapter.
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
-documented client, site, server, workstation, and failing-check listing
+documented client, site, server, workstation, failing-check, and bounded patch
 services here. A local WAIT-client-to-N-sight-client map is mandatory; returned
-site, device, and alert records are filtered to that mapping before entering
-the shared RMM contract.
+site, device, alert, and patch records are filtered to that mapping before
+entering the shared RMM contract.
 The provider's API key is required by the documented query contract but is
 never accepted in action payloads, returned in errors, or persisted in audit
 records.
@@ -165,6 +165,44 @@ class NSightRmmAdapter(RmmInventoryProvider):
             "status": "accepted",
             "message": _bounded_text(
                 _text(root, "msg") or "N-sight accepted the patch approval request."
+            ),
+            "device_id": device_id,
+            "patch_ids": normalized_ids,
+        }
+
+    def reprocess_patches(
+        self,
+        device_id: str,
+        patch_ids: list[str],
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Request documented patch reprocessing after scope rechecks."""
+
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                "N-sight patch reprocessing is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        normalized_ids = _patch_id_list(patch_ids)
+        available_ids = {
+            str(item["patch_id"])
+            for item in self.list_patches(device_id, client_id=client_id)
+            if isinstance(item.get("patch_id"), int)
+        }
+        if any(patch_id not in available_ids for patch_id in normalized_ids):
+            raise NSightRmmError("N-sight patch reprocessing includes a patch outside the device scope")
+        root = self._request(
+            "patch_reprocess",
+            {
+                "deviceid": str(_device_numeric_id(device_id)),
+                "patchids": ",".join(normalized_ids),
+            },
+            client_id=client_id,
+        )
+        return {
+            "status": "accepted",
+            "message": _bounded_text(
+                _text(root, "msg") or "N-sight accepted the patch reprocessing request."
             ),
             "device_id": device_id,
             "patch_ids": normalized_ids,

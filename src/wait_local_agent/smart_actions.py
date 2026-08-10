@@ -3610,67 +3610,126 @@ class NSightPatchApproveAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        if set(payload) - {"device_id", "patch_ids", "_approval_completed"}:
-            return _failed("N-sight patch approval payload contains unsupported fields")
-        device_id = payload.get("device_id")
-        patch_ids = payload.get("patch_ids")
-        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
-            return _failed("device_id must be a non-empty string of at most 80 characters")
-        if not isinstance(patch_ids, list) or not patch_ids or len(patch_ids) > 20:
-            return _failed("patch_ids must contain between 1 and 20 patch IDs")
-        if any(not isinstance(patch_id, str) for patch_id in patch_ids):
-            return _failed("patch_ids must contain only strings")
-        normalized_ids = [patch_id.strip() for patch_id in patch_ids]
-        if any(not patch_id.isdigit() or int(patch_id) <= 0 for patch_id in normalized_ids):
-            return _failed("patch_ids must contain positive integers")
-        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
-        approve_patches = getattr(provider, "approve_patches", None)
-        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(approve_patches):
-            return _failed("N-sight patch approval requires the N-sight RMM adapter")
-        approved = bool(payload.get("_approval_completed"))
-        if not approved:
-            return ActionResult(
-                status="success",
-                output={
-                    "status": "preview",
-                    "device_id": device_id.strip(),
-                    "patch_ids": normalized_ids,
-                    "approval_required": True,
-                    "approved": False,
-                },
-                evidence=[
-                    {
-                        "type": "rmm_patch_approval",
-                        "operation": "patch_approve",
-                        "device_id": device_id.strip(),
-                    }
-                ],
-            )
-        if not context.settings.allow_write_actions:
-            return _failed("N-sight patch approval is blocked until WAIT_ALLOW_WRITE_ACTIONS=true")
-        try:
-            operation = approve_patches(
-                device_id.strip(), normalized_ids, client_id=context.client_id
-            )
-        except Exception:
-            return _failed("N-sight patch approval failed")
-        if not isinstance(operation, dict):
-            return _failed("N-sight returned malformed patch approval data")
-        output = cast(dict[str, object], redact_value(operation))
-        output["approval_required"] = False
-        output["approved"] = True
+        return _run_nsight_patch_write(
+            context,
+            payload,
+            operation_label="approval",
+            provider_method="approve_patches",
+            provider_operation="patch_approve",
+        )
+
+
+class NSightPatchReprocessAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-patch-reprocess",
+        title="Reprocess N-sight patches",
+        description=(
+            "Preview and, after technician approval, request reprocessing for existing "
+            "patches on one mapped N-sight device."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id", "patch_ids"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "patch_ids": {"type": "array", "minItems": 1, "maxItems": 20},
+            },
+        },
+        output_schema={
+            "status": "string",
+            "device_id": "string",
+            "patch_ids": "array",
+            "approval_required": "boolean",
+            "approved": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=5,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        return _run_nsight_patch_write(
+            context,
+            payload,
+            operation_label="reprocessing",
+            provider_method="reprocess_patches",
+            provider_operation="patch_reprocess",
+        )
+
+
+def _run_nsight_patch_write(
+    context: ActionContext,
+    payload: dict[str, object],
+    *,
+    operation_label: str,
+    provider_method: str,
+    provider_operation: str,
+) -> ActionResult:
+    if set(payload) - {"device_id", "patch_ids", "_approval_completed"}:
+        return _failed(f"N-sight patch {operation_label} payload contains unsupported fields")
+    device_id = payload.get("device_id")
+    patch_ids = payload.get("patch_ids")
+    if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+        return _failed("device_id must be a non-empty string of at most 80 characters")
+    if not isinstance(patch_ids, list) or not patch_ids or len(patch_ids) > 20:
+        return _failed("patch_ids must contain between 1 and 20 patch IDs")
+    if any(not isinstance(patch_id, str) for patch_id in patch_ids):
+        return _failed("patch_ids must contain only strings")
+    normalized_ids = [patch_id.strip() for patch_id in patch_ids]
+    if any(not patch_id.isdigit() or int(patch_id) <= 0 for patch_id in normalized_ids):
+        return _failed("patch_ids must contain positive integers")
+    provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+    operation_fn = getattr(provider, provider_method, None)
+    if getattr(provider, "adapter_id", "") != "n-sight" or not callable(operation_fn):
+        return _failed(f"N-sight patch {operation_label} requires the N-sight RMM adapter")
+    approved = bool(payload.get("_approval_completed"))
+    if not approved:
         return ActionResult(
-            status="success" if output.get("status") == "accepted" else "failed",
-            output=output,
+            status="success",
+            output={
+                "status": "preview",
+                "device_id": device_id.strip(),
+                "patch_ids": normalized_ids,
+                "approval_required": True,
+                "approved": False,
+            },
             evidence=[
                 {
                     "type": "rmm_patch_approval",
-                    "operation": "patch_approve",
+                    "operation": provider_operation,
                     "device_id": device_id.strip(),
                 }
             ],
-            error_detail="" if output.get("status") == "accepted" else "N-sight patch approval failed",
         )
+    if not context.settings.allow_write_actions:
+        return _failed(
+            f"N-sight patch {operation_label} is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+        )
+    try:
+        operation = operation_fn(device_id.strip(), normalized_ids, client_id=context.client_id)
+    except Exception:
+        return _failed(f"N-sight patch {operation_label} failed")
+    if not isinstance(operation, dict):
+        return _failed(f"N-sight returned malformed patch {operation_label} data")
+    output = cast(dict[str, object], redact_value(operation))
+    output["approval_required"] = False
+    output["approved"] = True
+    accepted = output.get("status") == "accepted"
+    return ActionResult(
+        status="success" if accepted else "failed",
+        output=output,
+        evidence=[
+            {
+                "type": "rmm_patch_approval",
+                "operation": provider_operation,
+                "device_id": device_id.strip(),
+            }
+        ],
+        error_detail="" if accepted else f"N-sight patch {operation_label} failed",
+    )
 
 
 class RmmScriptCatalogAction:
@@ -6472,6 +6531,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmAlertLookupAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
+        NSightPatchReprocessAction(),
         RmmScriptCatalogAction(),
         RmmScriptPreviewAction(),
         RmmScriptExecuteAction(),

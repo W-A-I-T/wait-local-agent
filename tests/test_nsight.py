@@ -71,6 +71,7 @@ PATCHES_XML = """
 </patch><patch><patchid>bad</patchid></patch></patches>
 """
 PATCH_APPROVAL_XML = '<result status="OK"><msg>approved</msg></result>'
+PATCH_REPROCESS_XML = '<result status="OK"><msg>Reprocessing patches: 681806</msg></result>'
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
   <site><siteid>10</siteid><name>HQ</name>
@@ -171,6 +172,10 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
             assert request.url.params.get("deviceid") == "49324"
             assert request.url.params.get("patchids") == "681806"
             return httpx.Response(200, text=PATCH_APPROVAL_XML)
+        if service == "patch_reprocess":
+            assert request.url.params.get("deviceid") == "49324"
+            assert request.url.params.get("patchids") == "681806"
+            return httpx.Response(200, text=PATCH_REPROCESS_XML)
         raise AssertionError(f"unexpected service {service}")
 
     adapter = _adapter(settings, handler)
@@ -208,6 +213,14 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
         "patch_ids": ["681806"],
     }
 
+    reprocessed = _adapter(
+        settings,
+        handler,
+        allow_write_actions=True,
+    ).reprocess_patches("server:49324", ["681806"], client_id="acme")
+    assert reprocessed["status"] == "accepted"
+    assert reprocessed["message"] == "Reprocessing patches: 681806"
+
     with pytest.raises(NSightRmmError, match="outside the device scope"):
         _adapter(
             settings,
@@ -217,6 +230,9 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
 
     with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
         adapter.approve_patches("server:49324", ["681806"], client_id="acme")
+
+    with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        adapter.reprocess_patches("server:49324", ["681806"], client_id="acme")
 
 
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])

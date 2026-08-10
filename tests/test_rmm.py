@@ -17,6 +17,7 @@ from wait_local_agent.smart_actions import (
     ActionContext,
     NSightPatchApproveAction,
     NSightPatchLookupAction,
+    NSightPatchReprocessAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
     RmmScriptExecuteAction,
@@ -60,6 +61,15 @@ class _NSightProvider(_Provider):
         return {
             "status": "accepted",
             "message": "approved",
+            "device_id": device_id,
+            "patch_ids": patch_ids,
+        }
+
+    def reprocess_patches(self, device_id, patch_ids, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "status": "accepted",
+            "message": "reprocessed",
             "device_id": device_id,
             "patch_ids": patch_ids,
         }
@@ -164,6 +174,24 @@ def test_nsight_patch_approval_handles_provider_boundaries(settings) -> None:
     assert failed.error_detail == "N-sight patch approval failed"
     malformed = NSightPatchApproveAction().run(_context(enabled, _MalformedNSightProvider()), payload)
     assert malformed.error_detail == "N-sight returned malformed patch approval data"
+
+
+def test_nsight_patch_reprocess_is_approval_gated(settings) -> None:
+    payload: dict[str, object] = {"device_id": "server:49324", "patch_ids": ["681806"]}
+    context = _context(settings, _NSightProvider())
+    preview = NSightPatchReprocessAction().run(context, payload)
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    blocked = NSightPatchReprocessAction().run(
+        context, {**payload, "_approval_completed": True}
+    )
+    assert blocked.error_detail == "N-sight patch reprocessing is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+    approved = NSightPatchReprocessAction().run(
+        _context(replace(settings, allow_write_actions=True), _NSightProvider()),
+        {**payload, "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["status"] == "accepted"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:

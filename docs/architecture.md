@@ -171,7 +171,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   The N-able N-sight adapter maps WAIT clients to explicit N-sight client IDs,
   reads documented site/server/workstation XML inventory, failing-check alerts,
   and mapped-device patch records, rechecks returned client/device scope, and
-  exposes patch approval only through the shared approval/write boundary; no
+  exposes patch approval and patch reprocessing only through the shared
+  approval/write boundary; no
   inferred script path is exposed.
   The TimeZest adapter maps WAIT clients to one explicit Autotask or ConnectWise
   PSA company ID, uses the documented scheduling-request list filter, rechecks

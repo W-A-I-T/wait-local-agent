@@ -104,6 +104,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "rmm-alert-lookup",
         "nsight-patch-lookup",
         "nsight-patch-approve",
+        "nsight-patch-reprocess",
         "rmm-script-catalog",
         "rmm-script-preview",
         "rmm-script-execute",
