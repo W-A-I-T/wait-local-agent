@@ -284,6 +284,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
         end_user_client_id="acme",
         end_user_user_id="user-1",
         client_id="acme",
+        admin_token="admin-token",
         tech_token="tech-token",
         viewer_token="viewer-token",
     )
@@ -319,6 +320,15 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
         f"/tickets/{ticket_id}/end-user-messages",
         headers=_auth("viewer-token"),
     )
+    admin_messages = client.get(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("admin-token"),
+    )
+    admin_reply = client.post(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("admin-token"),
+        json={"body": "Administrator reply"},
+    )
 
     assert viewer_reply.status_code == 403
     assert requester_message.status_code == 200
@@ -327,6 +337,10 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
     assert wrong_ticket.json() == []
     assert operator_messages.status_code == 200
     assert [item["role"] for item in operator_messages.json()] == ["requester"]
+    assert admin_messages.status_code == 200
+    assert [item["role"] for item in admin_messages.json()] == ["requester"]
+    assert admin_reply.status_code == 200
+    assert admin_reply.json()["role"] == "support"
 
 
 def test_end_user_store_rejects_unscoped_creation_and_missing_owned_ticket(settings) -> None:
