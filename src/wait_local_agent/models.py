@@ -93,6 +93,8 @@ class EndUserMessage:
     ticket_id: str
     client_id: str
     requester_id: str
+    author_role: str
+    author_id: str
     body: str
     created_at: str
 

@@ -262,10 +262,15 @@ not implied by enabling it.
 
 The React client surface is available at `/end-user` when the mode is enabled.
 It uses the separate token, supports local request creation, requester-scoped
-status lookup, and technician escalation, and does not load the operator shell.
-Follow-up messages use a separate `end_user_messages` table and are scoped to
-the same requester and client; internal `ticket_notes` are never returned by
-the end-user message routes.
+status lookup, requester/support conversation messages, and technician
+escalation, and does not load the operator shell. Technicians and administrators
+can review and add local support replies through
+`GET/POST /tickets/{ticket_id}/end-user-messages` and the Tickets screen; the
+write route requires a technician role and the authenticated tenant scope.
+Follow-up messages use a separate `end_user_messages` table, retain the owning
+requester ID for isolation, and record whether the author is the requester or
+support. Internal `ticket_notes` are never returned by the end-user message
+routes.
 The authenticated `/end-user/config` route returns optional local branding
 configured with `WAIT_END_USER_BRAND_NAME` and `WAIT_END_USER_BRAND_TAGLINE`.
 Optional local white-label styling uses validated `WAIT_END_USER_BRAND_LOGO_DATA_URI`,
