@@ -2837,16 +2837,6 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         headers=_auth("tech-token"),
         json={"message": "plan triage TCK-NOT-FOUND"},
     )
-    session = client.post(
-        "/technician/chat/sessions",
-        headers=_auth("tech-token"),
-        json={"client_id": "acme", "ticket_id": "TCK-ACME"},
-    )
-    session_plan = client.post(
-        f"/technician/chat/sessions/{session.json()['id']}/messages",
-        headers=_auth("tech-token"),
-        json={"message": "plan triage for TCK-ACME"},
-    )
     cross_tenant = client.post(
         "/technician/chat",
         headers=_auth("tech-token"),
@@ -2880,14 +2870,51 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
     assert blocked_plan.json()["status"] == "blocked"
     assert missing_ticket_plan.status_code == 200
     assert missing_ticket_plan.json()["status"] == "blocked"
-    assert session.status_code == 200
-    assert session_plan.status_code == 200
-    assert session_plan.json()["session_id"] == session.json()["id"]
     assert cross_tenant.status_code == 200
     assert cross_tenant.json()["result"]["status"] == "failed"
     assert "TCK-BETA" not in cross_tenant.text
     assert viewer.status_code == 403
     assert unsupported.status_code == 422
+
+
+def test_technician_chat_plan_preview_persists_session_history(settings) -> None:
+    from wait_local_agent.agents import AgentService
+    from wait_local_agent.smart_actions import SmartActionService
+
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-PLAN', 'Acme', 'MFA reset', 'Sign-in blocked', 'high', 'open', 'acme')
+            """
+        )
+    session = store.create_technician_chat_session(
+        client_id="acme",
+        principal_id="tech",
+        ticket_id="TCK-PLAN",
+    )
+    smart_actions = SmartActionService(store, settings)
+    plan = app_module._invoke_technician_chat_message(
+        store,
+        smart_actions,
+        AgentService(store, settings, smart_actions),
+        "plan triage for TCK-PLAN",
+        ticket_id="TCK-PLAN",
+        actor="tech",
+        client_id="acme",
+        session_id=session.id,
+        principal_id="tech",
+    )
+
+    assert plan["status"] == "preview"
+    assert plan["session_id"] == session.id
+    messages = store.list_technician_chat_messages(
+        session.id,
+        client_id="acme",
+        principal_id="tech",
+    )
+    assert messages[-1].status == "preview"
 
 
 def test_legacy_approval_rows_are_redacted_in_api_views(settings) -> None:
