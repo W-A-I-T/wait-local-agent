@@ -12,9 +12,12 @@ from wait_local_agent.screenconnect import (
     ScreenConnectRmmAdapter,
     ScreenConnectRmmError,
     _extension_id,
+    _first_text,
     _safe_base_url,
     _safe_origin,
     _safe_scalar,
+    _safe_script_id,
+    _safe_text,
     _session_rows,
 )
 from wait_local_agent.store import Store
@@ -32,6 +35,9 @@ def _adapter(settings, handler, **overrides) -> ScreenConnectRmmAdapter:
         "screenconnect_auth_secret": AUTH_SECRET,
         "screenconnect_origin": "https://screenconnect.example.test",
         "screenconnect_client_sessions_map_json": json.dumps({"acme": [SESSION_ID]}),
+        "screenconnect_script_catalog_json": json.dumps(
+            {"collect-info": {"name": "Collect information", "command": "systeminfo"}}
+        ),
         **overrides,
     }
     return ScreenConnectRmmAdapter(
@@ -146,18 +152,122 @@ def test_screenconnect_reads_multiple_mapped_sessions_and_normalizes_wrappers(se
 
 
 def test_screenconnect_unsupported_operations_are_explicit(settings) -> None:
-    adapter = _adapter(settings, lambda request: httpx.Response(200, json={}))
+    adapter = _adapter(
+        settings,
+        lambda request: httpx.Response(200, json={}),
+        screenconnect_script_catalog_json="",
+    )
 
     with pytest.raises(ScreenConnectRmmError, match="alert lookup is unavailable"):
         adapter.list_alerts("acme")
     with pytest.raises(ScreenConnectRmmError, match="script catalog is unavailable"):
         adapter.list_scripts("acme")
-    with pytest.raises(ScreenConnectRmmError, match="command execution is unavailable"):
+    with pytest.raises(ScreenConnectRmmError, match="script catalog is unavailable"):
         adapter.preview_script("script", "device", {}, client_id="acme")
-    with pytest.raises(ScreenConnectRmmError, match="command execution is unavailable"):
+    with pytest.raises(ScreenConnectRmmError, match="script catalog is unavailable"):
         adapter.execute_script("script", "device", {}, client_id="acme")
     with pytest.raises(ScreenConnectRmmError, match="command polling is unavailable"):
         adapter.get_execution("execution", client_id="acme")
+
+
+def test_screenconnect_command_catalog_preview_and_send_use_documented_endpoint(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path.endswith("/SendCommandToSession")
+        assert json.loads(request.content) == [SESSION_ID, "systeminfo"]
+        return httpx.Response(204)
+
+    adapter = _adapter(settings, handler)
+    scripts = adapter.list_scripts("acme")
+    preview = adapter.preview_script("collect-info", SESSION_ID, {}, client_id="acme")
+    execution = adapter.execute_script("collect-info", SESSION_ID, {}, client_id="acme")
+
+    assert scripts[0].script_id == "collect-info"
+    assert preview.status == "preview"
+    assert execution.status == "queued"
+    assert execution.execution_id == ""
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("catalog", "message"),
+    [
+        ("not-json", "is malformed"),
+        ("[]", "must be an object"),
+        (json.dumps({"bad/id": {"name": "Name", "command": "whoami"}}), "script ID is invalid"),
+        (json.dumps({"script": {"name": "Name", "command": "line\nline"}}), "command is invalid"),
+    ],
+)
+def test_screenconnect_command_catalog_fails_closed(settings, catalog, message) -> None:
+    with pytest.raises(ScreenConnectRmmError, match=message):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(200, json={}),
+            screenconnect_script_catalog_json=catalog,
+        ).list_scripts("acme")
+
+
+def test_screenconnect_command_requests_enforce_scope_and_no_runtime_arguments(settings) -> None:
+    adapter = _adapter(settings, lambda request: httpx.Response(204))
+    with pytest.raises(ScreenConnectRmmError, match="outside the tenant scope"):
+        adapter.preview_script(
+            "collect-info",
+            "22222222-3333-4444-5555-666666666666",
+            {},
+            client_id="acme",
+        )
+    with pytest.raises(ScreenConnectRmmError, match="runtime arguments"):
+        adapter.preview_script(
+            "collect-info", SESSION_ID, {"arg": "value"}, client_id="acme"
+        )
+
+
+def test_screenconnect_command_validation_and_http_errors_fail_closed(settings) -> None:
+    with pytest.raises(ScreenConnectRmmError, match="non-empty strings"):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(200, json={}),
+            screenconnect_client_sessions_map_json=json.dumps({"acme": [1]}),
+        ).list_devices("acme")
+    too_many = {
+        f"script-{index}": {"name": "Name", "command": "whoami"}
+        for index in range(101)
+    }
+    with pytest.raises(ScreenConnectRmmError, match="exceeds 100"):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(200, json={}),
+            screenconnect_script_catalog_json=json.dumps(too_many),
+        ).list_scripts("acme")
+    with pytest.raises(ScreenConnectRmmError, match="entries must be objects"):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(200, json={}),
+            screenconnect_script_catalog_json=json.dumps({"script": []}),
+        ).list_scripts("acme")
+    with pytest.raises(ScreenConnectRmmError, match="not in the local command catalog"):
+        _adapter(settings, lambda request: httpx.Response(204)).preview_script(
+            "missing", SESSION_ID, {}, client_id="acme"
+        )
+    with pytest.raises(ScreenConnectRmmError, match="mapped session UUID"):
+        _adapter(settings, lambda request: httpx.Response(204)).preview_script(
+            "collect-info", "not-a-uuid", {}, client_id="acme"
+        )
+    with pytest.raises(ScreenConnectRmmError, match="request failed$"):
+        _adapter(
+            settings,
+            lambda request: (_ for _ in ()).throw(httpx.WriteError("broken")),
+        ).list_devices("acme")
+
+
+def test_screenconnect_helpers_reject_invalid_types() -> None:
+    assert _first_text({}, "Name") == ""
+    with pytest.raises(ScreenConnectRmmError, match="script IDs must be strings"):
+        _safe_script_id(1)
+    with pytest.raises(ScreenConnectRmmError, match="script name must be text"):
+        _safe_text(1, 10, "script name")
 
 
 @pytest.mark.parametrize(

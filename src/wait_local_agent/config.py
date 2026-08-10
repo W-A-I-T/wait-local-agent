@@ -120,6 +120,7 @@ class Settings:
     screenconnect_auth_secret: str = ""
     screenconnect_origin: str = ""
     screenconnect_client_sessions_map_json: str = ""
+    screenconnect_script_catalog_json: str = ""
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -380,6 +381,9 @@ def load_settings() -> Settings:
         screenconnect_origin=os.getenv("WAIT_SCREENCONNECT_ORIGIN", ""),
         screenconnect_client_sessions_map_json=os.getenv(
             "WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON", ""
+        ),
+        screenconnect_script_catalog_json=os.getenv(
+            "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON", ""
         ),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
