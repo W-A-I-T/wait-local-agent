@@ -3131,6 +3131,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = notion_client.get_page(page_id, client_id=scoped_client_id)
         return _notion_response("pages.get", response)
 
+    @app.get("/connectors/notion/data-sources/{data_source_id}/pages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def notion_data_source_pages(
+        data_source_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+        start_cursor: str = "",
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(
+                status_code=403, detail="Notion data-source reads require a tenant scope"
+            )
+        response = notion_client.query_data_source(
+            data_source_id,
+            client_id=scoped_client_id,
+            page_size=page_size if page_size is not None else active_settings.notion_page_size,
+            start_cursor=start_cursor,
+        )
+        return _notion_response("data-sources.query", response)
+
     @app.get("/connectors/sharepoint/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def sharepoint_health(request: Request, _: ViewerAccess) -> dict[str, object]:

@@ -24,6 +24,8 @@ DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 MAX_PAGE_MARKDOWN_LENGTH = 40_000
 MAX_MAPPED_PAGES = 100
+MAX_MAPPED_DATA_SOURCES = 50
+MAX_CURSOR_LENGTH = 4096
 DEFAULT_NOTION_VERSION = "2026-03-11"
 
 
@@ -66,6 +68,16 @@ class NotionClientProtocol(Protocol):
         ...
 
     def get_page(self, page_id: str, *, client_id: str) -> NotionReadResponse:
+        ...
+
+    def query_data_source(
+        self,
+        data_source_id: str,
+        *,
+        client_id: str,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        start_cursor: str = "",
+    ) -> NotionReadResponse:
         ...
 
 
@@ -174,17 +186,64 @@ class NotionClient:
             [hydrated],
         )
 
+    def query_data_source(
+        self,
+        data_source_id: str,
+        *,
+        client_id: str,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        start_cursor: str = "",
+    ) -> NotionReadResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return NotionReadResponse(blocked, [])
+        missing = self._not_configured_data_source_result()
+        if missing is not None:
+            return NotionReadResponse(missing, [])
+        try:
+            safe_id = _safe_uuid(data_source_id)
+            scoped_ids = self._mapped_data_source_ids(client_id)
+            if safe_id not in scoped_ids:
+                raise NotionReadError("Notion data source is outside the tenant scope")
+            bounded_size = _bounded_page_size(page_size)
+            body: dict[str, object] = {"page_size": bounded_size}
+            if start_cursor:
+                body["start_cursor"] = _safe_cursor(start_cursor)
+        except NotionReadError as exc:
+            return NotionReadResponse(ConnectorReadResult("failed", exc.message), [])
+        response = self._request(
+            "POST", f"data_sources/{safe_id}/query", body=body, require_page_mapping=False
+        )
+        if isinstance(response, NotionReadResponse):
+            return response
+        rows = _payload_rows(response)
+        pages = [
+            page
+            for row in rows
+            if (page := _normalize_search_page(row)) is not None
+        ]
+        return NotionReadResponse(
+            ConnectorReadResult("ready", "Notion data source query succeeded.", len(pages)),
+            pages,
+            _next_cursor(response),
+        )
+
     def _request(
         self,
         method: str,
         endpoint: str,
         *,
         body: dict[str, object] | None = None,
+        require_page_mapping: bool = True,
     ) -> object | NotionReadResponse:
         blocked = self._blocked_result()
         if blocked is not None:
             return NotionReadResponse(blocked, [])
-        missing = self._not_configured_result()
+        missing = (
+            self._not_configured_result()
+            if require_page_mapping
+            else self._not_configured_data_source_result()
+        )
         if missing is not None:
             return NotionReadResponse(missing, [])
         try:
@@ -223,32 +282,23 @@ class NotionClient:
             )
 
     def _mapped_page_ids(self, client_id: str) -> set[str]:
-        if not client_id or not client_id.strip():
-            raise NotionReadError("Notion operations require an explicit tenant scope")
-        try:
-            mapping = json.loads(self.settings.notion_client_page_map_json or "{}")
-        except ValueError as exc:
-            raise NotionReadError("WAIT_NOTION_CLIENT_PAGE_MAP_JSON is malformed") from exc
-        if not isinstance(mapping, Mapping):
-            raise NotionReadError("WAIT_NOTION_CLIENT_PAGE_MAP_JSON must be an object")
-        raw_ids = mapping.get(client_id.strip())
-        if client_id == "health" and raw_ids is None:
-            raw_ids = next(iter(mapping.values()), None)
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise NotionReadError("Notion tenant page mapping is missing")
-        if len(raw_ids) > MAX_MAPPED_PAGES:
-            raise NotionReadError(
-                f"Notion tenant page mapping exceeds {MAX_MAPPED_PAGES} pages"
-            )
-        normalized: set[str] = set()
-        for raw_id in raw_ids:
-            if not isinstance(raw_id, str):
-                raise NotionReadError("Notion page IDs must be UUIDs")
-            try:
-                normalized.add(str(UUID(raw_id.strip())))
-            except ValueError as exc:
-                raise NotionReadError("Notion page IDs must be UUIDs") from exc
-        return normalized
+        return _mapped_uuid_ids(
+            self.settings.notion_client_page_map_json,
+            client_id,
+            mapping_name="WAIT_NOTION_CLIENT_PAGE_MAP_JSON",
+            resource_name="page",
+            max_items=MAX_MAPPED_PAGES,
+            health_fallback=True,
+        )
+
+    def _mapped_data_source_ids(self, client_id: str) -> set[str]:
+        return _mapped_uuid_ids(
+            self.settings.notion_client_data_source_map_json,
+            client_id,
+            mapping_name="WAIT_NOTION_CLIENT_DATA_SOURCE_MAP_JSON",
+            resource_name="data source",
+            max_items=MAX_MAPPED_DATA_SOURCES,
+        )
 
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
@@ -263,6 +313,21 @@ class NotionClient:
             for key, value in {
                 "WAIT_NOTION_API_TOKEN": self.settings.notion_api_token,
                 "WAIT_NOTION_CLIENT_PAGE_MAP_JSON": self.settings.notion_client_page_map_json,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorReadResult(
+                "not_configured", f"Notion credentials are incomplete: {', '.join(missing)}."
+            )
+        return None
+
+    def _not_configured_data_source_result(self) -> ConnectorReadResult | None:
+        missing = [
+            key
+            for key, value in {
+                "WAIT_NOTION_API_TOKEN": self.settings.notion_api_token,
+                "WAIT_NOTION_CLIENT_DATA_SOURCE_MAP_JSON": self.settings.notion_client_data_source_map_json,
             }.items()
             if not value
         ]
@@ -292,6 +357,15 @@ def _safe_version(value: str) -> str:
     return normalized
 
 
+def _safe_cursor(value: str) -> str:
+    normalized = value.strip()
+    if not normalized or len(normalized) > MAX_CURSOR_LENGTH:
+        raise NotionReadError("Notion cursor is invalid")
+    if any(ord(char) < 32 for char in normalized):
+        raise NotionReadError("Notion cursor is invalid")
+    return normalized
+
+
 def _safe_endpoint(value: str) -> str:
     parts = value.strip("/").split("/")
     if not parts or any(not part or part in {".", ".."} for part in parts):
@@ -312,6 +386,43 @@ def _safe_query(value: str) -> str:
     if len(value.strip()) > 200 or any(ord(char) < 32 for char in value):
         raise NotionReadError("Notion search query is invalid")
     return value.strip()
+
+
+def _mapped_uuid_ids(
+    raw_json: str,
+    client_id: str,
+    *,
+    mapping_name: str,
+    resource_name: str,
+    max_items: int,
+    health_fallback: bool = False,
+) -> set[str]:
+    if not client_id or not client_id.strip():
+        raise NotionReadError("Notion operations require an explicit tenant scope")
+    try:
+        mapping = json.loads(raw_json or "{}")
+    except ValueError as exc:
+        raise NotionReadError(f"{mapping_name} is malformed") from exc
+    if not isinstance(mapping, Mapping):
+        raise NotionReadError(f"{mapping_name} must be an object")
+    raw_ids = mapping.get(client_id.strip())
+    if health_fallback and client_id == "health" and raw_ids is None:
+        raw_ids = next(iter(mapping.values()), None)
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise NotionReadError(f"Notion tenant {resource_name} mapping is missing")
+    if len(raw_ids) > max_items:
+        raise NotionReadError(
+            f"Notion tenant {resource_name} mapping exceeds {max_items} {resource_name}s"
+        )
+    normalized: set[str] = set()
+    for raw_id in raw_ids:
+        if not isinstance(raw_id, str):
+            raise NotionReadError(f"Notion {resource_name} IDs must be UUIDs")
+        try:
+            normalized.add(str(UUID(raw_id.strip())))
+        except ValueError as exc:
+            raise NotionReadError(f"Notion {resource_name} IDs must be UUIDs") from exc
+    return normalized
 
 
 def _bounded_page_size(value: int) -> int:

@@ -1910,6 +1910,24 @@ def notion_page(page_id: str, client_id: str) -> None:
     )
 
 
+@connectors_app.command("notion-data-source-pages")
+def notion_data_source_pages(
+    data_source_id: str,
+    client_id: str,
+    page_size: int | None = None,
+    start_cursor: str = "",
+) -> None:
+    _print_notion_response(
+        "data-sources.query",
+        _notion_client().query_data_source(
+            data_source_id,
+            client_id=client_id,
+            page_size=page_size if page_size is not None else load_settings().notion_page_size,
+            start_cursor=start_cursor,
+        ),
+    )
+
+
 @connectors_app.command("sharepoint-health")
 def sharepoint_health() -> None:
     result = _sharepoint_client().health()

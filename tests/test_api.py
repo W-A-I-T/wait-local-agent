@@ -3515,6 +3515,13 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
                 [NotionPage(page_id, "MFA", "/mfa", "today", False, "token=secret")],
             )
 
+        def query_data_source(self, data_source_id, *, client_id, page_size, start_cursor):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", str(data_source_id), 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "MFA", "/mfa", "today", False, "")],
+                "next-cursor",
+            )
+
     monkeypatch.setattr(app_module, "NotionClient", FakeNotionClient)
     client = TestClient(create_app(settings))
 
@@ -3528,6 +3535,10 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
         "/connectors/notion/pages/11111111-2222-3333-4444-555555555555",
         params={"client_id": "acme"},
     )
+    data_source_pages = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000/pages",
+        params={"client_id": "acme", "page_size": 2, "start_cursor": "cursor"},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -3535,6 +3546,8 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
     assert health.status_code == 200
     assert pages.json()["items"][0]["title"] == "MFA"
     assert page.json()["items"][0]["markdown"] == "token=[redacted]"
+    assert data_source_pages.status_code == 200
+    assert data_source_pages.json()["next_cursor"] == "next-cursor"
     assert any(connector["id"] == "notion" for connector in connectors.json())
     assert any(event["event_type"] == "notion.read" for event in audit.json())
 

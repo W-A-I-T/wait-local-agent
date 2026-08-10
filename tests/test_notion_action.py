@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Literal, cast
 
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.notion import NotionPage, NotionReadResponse
-from wait_local_agent.smart_actions import ActionContext, NotionDocumentationSearchAction
+from wait_local_agent.smart_actions import (
+    ActionContext,
+    NotionDataSourceQueryAction,
+    NotionDocumentationSearchAction,
+)
 from wait_local_agent.store import Store
 
 PAGE_ID = "11111111-2222-3333-4444-555555555555"
+DATA_SOURCE_ID = "66666666-7777-8888-9999-000000000000"
 
 
 class FakeNotionClient:
@@ -27,6 +33,15 @@ class FakeNotionClient:
         return NotionReadResponse(
             ConnectorReadResult("ready", "page ok", 1),
             [NotionPage(PAGE_ID, "MFA runbook", "", "", False, "Rotate MFA keys.")],
+        )
+
+    def query_data_source(
+        self, data_source_id: str, *, client_id: str, page_size: int, start_cursor: str
+    ) -> NotionReadResponse:
+        return NotionReadResponse(
+            ConnectorReadResult("ready", "query ok", 1),
+            [NotionPage(PAGE_ID, "MFA runbook", "/page", "", False, "")],
+            "next-cursor",
         )
 
 
@@ -69,3 +84,65 @@ def test_notion_action_rejects_cross_tenant_and_provider_failure(settings) -> No
     assert failed.status == "failed"
     assert cast(list[object], failed.output["pages"]) == []
     assert failed.error_detail == "provider unavailable"
+
+
+def test_notion_data_source_action_is_scoped_and_bounded(settings) -> None:
+    result = NotionDataSourceQueryAction().run(
+        _context(settings, FakeNotionClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme", "limit": 1},
+    )
+
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.output["next_cursor"] == "next-cursor"
+    assert result.evidence[0]["operation"] == "data-sources.query"
+
+    cross_tenant = NotionDataSourceQueryAction().run(
+        _context(settings, FakeNotionClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "other"},
+    )
+    assert cross_tenant.status == "failed"
+    assert "outside the tenant scope" in cross_tenant.error_detail
+
+
+def test_notion_data_source_action_rejects_bad_inputs_and_provider_edges(settings) -> None:
+    context = _context(settings, FakeNotionClient())
+    action = NotionDataSourceQueryAction()
+    for payload in (
+        {"data_source_id": "", "client_id": "acme"},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": ""},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme", "limit": 0},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme", "start_cursor": 1},
+    ):
+        assert action.run(context, cast(dict[str, object], payload)).status == "failed"
+
+    class RaisingClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+    assert action.run(
+        _context(settings, RaisingClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    ).error_detail == "Notion data-source query failed"
+
+    class MalformedClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            return SimpleNamespace(
+                result=ConnectorReadResult("ready", "ok"), items="not-a-list"
+            )
+
+    assert action.run(
+        _context(settings, MalformedClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    ).error_detail == "Notion returned malformed data-source rows"
+
+    class FailedClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            return NotionReadResponse(ConnectorReadResult("failed", "secret=hidden"), [])
+
+    failed = action.run(
+        _context(settings, FailedClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    )
+    assert failed.status == "failed"
+    assert failed.error_detail == "secret=[redacted]"

@@ -116,8 +116,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   an explicit local tenant scope, and never accept connector credentials in
   action payloads. Confluence and SharePoint tools return metadata only; they
   do not expose page bodies or file contents. The Notion tool returns only
-  mapped page metadata and bounded markdown, and does not expose database
-  queries, comments, or writes.
+  mapped page metadata and bounded markdown. A separate data-source query tool
+  uses an explicit local client-to-data-source map and a fixed bounded read
+  body; comments and writes remain unavailable.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,

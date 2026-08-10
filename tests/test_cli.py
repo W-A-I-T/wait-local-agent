@@ -1365,6 +1365,13 @@ def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_
                 [NotionPage(page_id, "Runbook", "/page", "today", False, "token=secret")],
             )
 
+        def query_data_source(self, data_source_id, *, client_id, page_size, start_cursor):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "Runbook", "/page", "today", False, "")],
+                "next-cursor",
+            )
+
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setattr(cli_module, "NotionClient", FakeNotionClient)
     runner = CliRunner()
@@ -1374,12 +1381,23 @@ def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_
         app,
         ["connectors", "notion-page", "11111111-2222-3333-4444-555555555555", "acme"],
     )
+    data_source_pages = runner.invoke(
+        app,
+        [
+            "connectors",
+            "notion-data-source-pages",
+            "66666666-7777-8888-9999-000000000000",
+            "acme",
+        ],
+    )
 
     assert pages.exit_code == 0
     assert "Runbook" in pages.output
     assert page.exit_code == 0
     assert "token=secret" not in page.output
     assert "token=[redacted]" in page.output
+    assert data_source_pages.exit_code == 0
+    assert "next-cursor" in data_source_pages.output
 
 
 def test_sharepoint_cli_document_content_is_bounded_and_redacted(monkeypatch, tmp_path) -> None:
