@@ -56,7 +56,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   reads through its documented RESTful API Manager extension. This is
   alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
-  search), Confluence, and SharePoint (including bounded Graph drive search), and
+  search), Confluence, Notion, and SharePoint (including bounded Graph drive search), and
   ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
   tenant-scoped ticket runs, and approval pause/resume. Agents may
   run manually, on a persisted five-field cron schedule, or from authenticated
@@ -552,6 +552,36 @@ The API mirrors these commands under `/connectors/confluence/*`. Direct API
 access uses Confluence Cloud basic authentication from settings/vault, only
 GET requests are issued, and live network access remains gated by
 `WAIT_ALLOW_HTTP_PROBING` ([Confluence REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/)).
+
+### Notion
+
+Required settings:
+
+```text
+WAIT_NOTION_BASE_URL=https://api.notion.com
+WAIT_NOTION_API_TOKEN=
+WAIT_NOTION_VERSION=2026-03-11
+WAIT_NOTION_CLIENT_PAGE_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_NOTION_PAGE_SIZE=25
+```
+
+Notion reads require an explicit local client-to-page UUID map. Bounded title
+search uses Notion's documented `POST /v1/search` endpoint, then filters the
+provider response to the mapped page IDs. Page reads retrieve metadata and
+bounded markdown through `GET /v1/pages/{page_id}` and
+`GET /v1/pages/{page_id}/markdown`:
+
+```bash
+wait-local-agent connectors validate notion
+wait-local-agent connectors notion-health
+wait-local-agent connectors notion-pages acme --query MFA
+wait-local-agent connectors notion-page <page-id> acme
+```
+
+The API mirrors these commands under `/connectors/notion/*`. The adapter is
+read-only: database queries, comments, page updates, and other writes are not
+exposed. Requests use the configured bearer token and `Notion-Version` header,
+and remain gated by `WAIT_ALLOW_HTTP_PROBING` ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown)).
 
 ### SharePoint
 

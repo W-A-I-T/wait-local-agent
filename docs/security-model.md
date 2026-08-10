@@ -215,7 +215,10 @@ documents that identify a different organization.
 Confluence and SharePoint documentation tools are read-only metadata surfaces.
 They require a space/site identifier matching the caller's tenant scope, bound
 the provider page or drive-item query, and do not return page bodies or file
-contents.
+contents. The Notion documentation tool is also read-only: it requires a
+configured bearer token and explicit local client-to-page UUID map, validates
+mapped UUID scope before page retrieval, bounds search and markdown length,
+and does not expose database queries, comments, or writes.
 
 The `m365-live-context` tool accepts only a fixed read-resource enum and bounded
 identity/page-size inputs. It never accepts a Graph token or tenant identifier;

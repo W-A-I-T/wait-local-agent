@@ -97,6 +97,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -217,6 +218,10 @@ def _confluence_client() -> ConfluenceClient:
     return ConfluenceClient(load_settings())
 
 
+def _notion_client() -> NotionClient:
+    return NotionClient(load_settings())
+
+
 def _sharepoint_client() -> SharePointClient:
     return SharePointClient(load_settings())
 
@@ -291,6 +296,10 @@ def doctor() -> None:
         and settings.confluence_api_token
     )
     typer.echo(f"confluence_configured={confluence_configured}")
+    notion_configured = bool(
+        settings.notion_api_token and settings.notion_client_page_map_json
+    )
+    typer.echo(f"notion_configured={notion_configured}")
     sharepoint_configured = bool(
         settings.sharepoint_base_url and settings.sharepoint_access_token
     )
@@ -941,7 +950,7 @@ def validate_connector(
         typer.Argument(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
-                "autotask, itglue, or confluence."
+                "autotask, itglue, confluence, or notion."
                 " SharePoint and m365 are also supported for read-only connector reads."
             )
         ),
@@ -960,6 +969,7 @@ def validate_connector(
             autotask_client=_autotask_client(),
             itglue_client=_itglue_client(),
             confluence_client=_confluence_client(),
+            notion_client=_notion_client(),
             sharepoint_client=_sharepoint_client(),
             m365_client=_m365_client(),
         )
@@ -1869,6 +1879,37 @@ def confluence_page(page_id: str) -> None:
     _print_confluence_response("pages.get", _confluence_client().get_page(page_id))
 
 
+@connectors_app.command("notion-health")
+def notion_health() -> None:
+    result = _notion_client().health()
+    _audit_notion_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("notion-pages")
+def notion_pages(
+    client_id: str,
+    query: str = "",
+    page_size: int | None = None,
+) -> None:
+    _print_notion_response(
+        "pages.search",
+        _notion_client().search_pages(
+            client_id=client_id,
+            query=query,
+            page_size=page_size if page_size is not None else load_settings().notion_page_size,
+        ),
+    )
+
+
+@connectors_app.command("notion-page")
+def notion_page(page_id: str, client_id: str) -> None:
+    _print_notion_response(
+        "pages.get",
+        _notion_client().get_page(page_id, client_id=client_id),
+    )
+
+
 @connectors_app.command("sharepoint-health")
 def sharepoint_health() -> None:
     result = _sharepoint_client().health()
@@ -2515,6 +2556,7 @@ def invoke_smart_action(
         autotask_client=_autotask_client(),
         itglue_client=_itglue_client(),
         confluence_client=_confluence_client(),
+        notion_client=_notion_client(),
         sharepoint_client=_sharepoint_client(),
         m365_client=_m365_client(),
     )
@@ -3267,6 +3309,25 @@ def _print_confluence_response(read_type: str, response: ConfluenceReadResponse)
 
 def _audit_confluence_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("confluence.read", read_type, f"{status} count={count}")
+
+
+def _print_notion_response(read_type: str, response: NotionReadResponse) -> None:
+    _audit_notion_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(asdict(item)) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_notion_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("notion.read", read_type, f"{status} count={count}")
 
 
 def _print_sharepoint_response(read_type: str, response: SharePointReadResponse) -> None:

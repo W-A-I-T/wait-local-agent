@@ -37,7 +37,7 @@ The MSP AI automation market in 2026 divides into four categories:
 | **MSPbots** | Standalone AI agent | $399–$1,799/mo | ConnectWise, Autotask, HaloPSA | Cloud SaaS | ✗ | ✗ | Bot + approvals | Price; local; open-source |
 | **Mizo** | AI triage entry | <$250/mo entry | ConnectWise, Autotask | Cloud SaaS | ✗ | ✗ | Human reviews all | Full workflow, not just triage |
 | **Rewst** | Rule-based RPA | Not public (high) | Any with REST API | Cloud (hybrid scripting) | Partial | ✗ | Explicit rule-defined | No developer required; deterministic built-in |
-| **WAIT Local Agent** | **Local-first open agent** | **Open core; pack pricing not established in this repo** | HaloPSA, Hudu, ConnectWise, Autotask, ServiceNow, IT Glue, Confluence, SharePoint, bounded M365, NinjaOne, Datto, and N-central capabilities | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Approval required for supported writes; reads and analysis are non-mutating** | **Local, inspectable, bounded** |
+| **WAIT Local Agent** | **Local-first open agent** | **Open core; pack pricing not established in this repo** | HaloPSA, Hudu, ConnectWise, Autotask, ServiceNow, IT Glue, Confluence, Notion, SharePoint, bounded M365, NinjaOne, Datto, and N-central capabilities | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Approval required for supported writes; reads and analysis are non-mutating** | **Local, inspectable, bounded** |
 
 ---
 
@@ -52,7 +52,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 - **Deployment**: Cloud-only, Microsoft Azure; no self-hosted option
 - **PSA**: ConnectWise PSA, Autotask, HaloPSA, ServiceNow
 - **RMM**: NinjaOne, Datto RMM, N-able, ConnectWise RMM variants, Kaseya
-- **Documentation**: IT Glue, Hudu
+- **Documentation**: IT Glue, Hudu, Notion
 - **Identity**: Microsoft Entra ID, on-prem AD/Exchange
 - **Comms**: Slack, Microsoft Teams
 - **Distribution**: Pax8, D&H, Sherweb, Ingram Micro
@@ -76,6 +76,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | Kaseya | ✓ | ✓ bounded VSA X device and device-notification reads | Script execution and broader remediation | Incremental |
 | ScreenConnect | Public RESTful API Manager session reads | ✓ bounded tenant-scoped session/device lookup | Alert lookup, script catalog, command execution, and polling | Incremental |
 | IT Glue | ✓ | ✓ read-only organization/document retrieval | Broader search and write operations | Incremental |
+| Notion | ✓ | ✓ bounded mapped-page title search and page-markdown retrieval | Database queries, comments, writes, and broader search remain unavailable | Incremental |
 | M365 / Entra | ✓ | ✓ bounded reads plus approved user, group, license, session, Intune, mailbox-settings, and message mutations | Broader resource and policy coverage | Incremental |
 | Slack / Teams | ✓ | ✓ preview, configured webhook delivery, and local delivery receipts | Native provider features and provider-issued receipt IDs | Incremental |
 | Scheduled / proactive tasks | ✓ | ✓ (bounded cron + event agents) | Broader recurrence and event sources | Phase 3 |

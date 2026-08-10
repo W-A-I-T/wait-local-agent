@@ -156,6 +156,11 @@ class Settings:
     confluence_email: str = ""
     confluence_api_token: str = ""
     confluence_page_size: int = 25
+    notion_base_url: str = "https://api.notion.com"
+    notion_api_token: str = ""
+    notion_version: str = "2026-03-11"
+    notion_page_size: int = 25
+    notion_client_page_map_json: str = ""
     sharepoint_base_url: str = ""
     sharepoint_access_token: str = ""
     sharepoint_page_size: int = 25
@@ -475,6 +480,16 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         confluence_page_size=_int_env("WAIT_CONFLUENCE_PAGE_SIZE", 25),
+        notion_base_url=os.getenv("WAIT_NOTION_BASE_URL", "https://api.notion.com"),
+        notion_api_token=_secret_value(
+            "WAIT_NOTION_API_TOKEN",
+            os.getenv("WAIT_NOTION_API_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        notion_version=os.getenv("WAIT_NOTION_VERSION", "2026-03-11").strip(),
+        notion_page_size=_int_env("WAIT_NOTION_PAGE_SIZE", 25),
+        notion_client_page_map_json=os.getenv("WAIT_NOTION_CLIENT_PAGE_MAP_JSON", ""),
         sharepoint_base_url=_secret_value(
             "WAIT_SHAREPOINT_BASE_URL",
             os.getenv("WAIT_SHAREPOINT_BASE_URL", ""),
