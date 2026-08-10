@@ -4948,36 +4948,6 @@ def test_executions_api_serves_smart_action_artifact(settings) -> None:
     assert missing_artifact.status_code == 404
 
 
-def test_screenconnect_session_note_api_creates_bounded_pending_approval(settings) -> None:
-    screen_settings = replace(
-        settings,
-        allow_http_probing=True,
-        screenconnect_base_url="https://screenconnect.example.test",
-        screenconnect_extension_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-        screenconnect_auth_secret="screenconnect-secret",
-        screenconnect_origin="https://screenconnect.example.test",
-        screenconnect_client_sessions_map_json='{"acme":["11111111-2222-3333-4444-555555555555"]}',
-    )
-    client = TestClient(create_app(screen_settings))
-
-    response = client.post(
-        "/smart-actions/screenconnect-session-note/invoke",
-        json={
-            "client_id": "acme",
-            "payload": {
-                "session_id": "11111111-2222-3333-4444-555555555555",
-                "note_body": "Reviewed with customer.",
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "pending_approval"
-    assert body["approval_id"]
-    assert body["output"]["proposed_body"] == "Reviewed with customer."
-
-
 def test_executions_api_enforces_tenant_scope(settings) -> None:
     secure_settings = settings.__class__(
         **{

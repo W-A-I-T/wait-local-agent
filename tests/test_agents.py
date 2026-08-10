@@ -126,6 +126,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "syncro-ticket-lookup",
         "syncro-ticket-comments",
         "syncro-ticket-add-note",
+        "screenconnect-session-note",
+        "screenconnect-session-message",
         "servicenow-incident-add-work-note",
         "servicenow-incident-assign",
         "servicenow-incident-lookup",
