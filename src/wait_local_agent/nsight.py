@@ -3,7 +3,7 @@
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
-    monitoring-details, backup-session, bounded patch, and automated-task
+    monitoring-details, backup-session, bounded patch, check-configuration, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -19,13 +19,14 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import httpx
 from defusedxml import ElementTree as DefusedElementTree  # type: ignore[import-untyped]
 
 from wait_local_agent.config import Settings
+from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import (
     RmmAlert,
     RmmDevice,
@@ -50,6 +51,9 @@ MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
 MAX_BACKUP_CHECKS = 25
 MAX_BACKUP_HISTORY_DAYS = 60
+MAX_CHECK_CONFIG_DEPTH = 6
+MAX_CHECK_CONFIG_FIELDS = 50
+MAX_CHECK_CONFIG_LIST_ITEMS = 25
 MAX_TEXT_LENGTH = 500
 MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
@@ -152,6 +156,50 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _check_records(root)[:MAX_CHECKS]
+
+    def get_check_config(
+        self,
+        device_id: str,
+        check_id: int,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Read one documented check configuration after a mapped-device recheck."""
+
+        _device_numeric_id(device_id)
+        numeric_check_id = _positive_id(str(check_id))
+        if numeric_check_id is None:
+            raise NSightRmmError("N-sight check ID must be a positive integer")
+        checks = self.list_checks(device_id, client_id=client_id)
+        matching = next(
+            (check for check in checks if check.get("check_id") == numeric_check_id),
+            None,
+        )
+        if matching is None:
+            raise NSightRmmError("N-sight check is outside the mapped device scope")
+        root = self._request(
+            "list_check_config",
+            {"checkid": str(numeric_check_id)},
+            client_id=client_id,
+        )
+        check_config = root.find(".//check_config")
+        if check_config is None:
+            raise NSightRmmError("N-sight returned malformed check configuration")
+        configuration = _xml_config_value(check_config, depth=0)
+        if not isinstance(configuration, dict):
+            raise NSightRmmError("N-sight returned malformed check configuration")
+        return cast(
+            dict[str, object],
+            redact_value(
+                {
+                    "device_id": device_id,
+                    "check_id": numeric_check_id,
+                    "check_type": matching.get("check_type"),
+                    "description": matching.get("description"),
+                    "configuration": configuration,
+                }
+            )
+        )
 
     def list_performance_history(
         self,
@@ -735,6 +783,40 @@ def _check_records(root: Any) -> list[dict[str, object]]:
         if len(checks) >= MAX_CHECKS:
             break
     return checks
+
+
+def _xml_config_value(element: Any, *, depth: int) -> object:
+    """Convert bounded provider XML configuration into redaction-friendly data."""
+
+    if depth > MAX_CHECK_CONFIG_DEPTH:
+        return "[truncated]"
+    children = list(element)
+    attributes = {
+        _bounded_text(str(key)): _bounded_text(str(value))
+        for key, value in list(element.attrib.items())[:MAX_CHECK_CONFIG_FIELDS]
+    }
+    if not children:
+        text = _bounded_text(element.text or "")
+        if attributes:
+            return {"@attributes": attributes, "value": text}
+        return text
+    result: dict[str, object] = {}
+    if attributes:
+        result["@attributes"] = attributes
+    for child in children[:MAX_CHECK_CONFIG_FIELDS]:
+        key = _bounded_text(str(child.tag))
+        if not key:
+            continue
+        value = _xml_config_value(child, depth=depth + 1)
+        previous = result.get(key)
+        if previous is None:
+            result[key] = value
+        elif isinstance(previous, list):
+            if len(previous) < MAX_CHECK_CONFIG_LIST_ITEMS:
+                previous.append(value)
+        else:
+            result[key] = [previous, value]
+    return result
 
 
 _PERFORMANCE_TARGET_FIELDS = {

@@ -2695,6 +2695,9 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
 
     tools = client.get("/tools", headers=_auth("tech-token"))
     detail = client.get("/smart-actions/nsight-run-task-now", headers=_auth("tech-token"))
+    check_config_detail = client.get(
+        "/smart-actions/nsight-check-config", headers=_auth("tech-token")
+    )
     preview = client.post(
         "/smart-actions/nsight-run-task-now/invoke",
         headers=_auth("tech-token"),
@@ -2709,6 +2712,8 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     assert detail.status_code == 200
     assert detail.json()["requires_approval"] is True
     assert detail.json()["access_mode"] == "write"
+    assert check_config_detail.status_code == 200
+    assert check_config_detail.json()["access_mode"] == "read"
     assert preview.status_code == 200
     assert preview.json()["status"] == "pending_approval"
     assert preview.json()["output"]["check_id"] == 1304847

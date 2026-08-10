@@ -998,9 +998,15 @@ action exposes bounded open and recent outages for one mapped device. The
 `nsight-backup-sessions` action exposes bounded Backup & Recovery session
 history for one mapped device. The `nsight-backup-history` action exposes
 bounded 60-day Backup Check status history for one mapped device. The
-`nsight-check-inventory` action exposes documented check configuration and
-latest status records for one mapped device. The `nsight-performance-history`
+`nsight-check-inventory` action exposes documented check inventory and latest
+status records for one mapped device. The read-only `nsight-check-config`
+action re-reads the mapped check ID and exposes the provider's bounded
+`list_check_config` XML as redaction-safe structured data, including script or
+automated-task metadata when returned. The `nsight-performance-history`
 action exposes bounded performance and bandwidth history for one mapped device.
+The check-configuration action is available through the generic
+`/smart-actions/nsight-check-config` API, `smart-actions invoke` CLI command,
+and `/agents` definition editor.
 The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
 `nsight-monitoring-details` action exposes bounded documented device metadata,
@@ -1016,8 +1022,9 @@ approval service only for patches present on that mapped device. Each request is
 mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
 records per bounded read surface. The API key remains in settings or the encrypted vault and is never
 accepted in action payloads or included in errors/audit records. Generic script
-discovery, arbitrary script arguments, and execution polling remain explicitly
-unavailable; the documented automated-task action is limited to the mapped
+catalog discovery, arbitrary script arguments, and execution polling remain
+explicitly unavailable; check configuration is read-only and the documented
+automated-task action is limited to the mapped
 check ID and returns the provider's bounded start delay. The
 `nsight-patch-reprocess` action uses the same approval, write-flag, inventory
 recheck, tenant scope, and bounded patch-ID controls for N-sight's documented
@@ -1051,6 +1058,7 @@ and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
 and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
+and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
 and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),

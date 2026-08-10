@@ -254,16 +254,24 @@ records through the shared RMM contract. Patch approval is a separate
 technician-approved write action that requires the global write flag and a
 mapped-device patch recheck. The read-only `nsight-backup-sessions` and
 `nsight-backup-history` actions return bounded session and check history.
-`nsight-check-inventory` returns documented per-device check configuration and
-latest status records. `nsight-performance-history` returns bounded documented
+`nsight-check-inventory` returns documented per-device check inventory and
+latest status records. The read-only `nsight-check-config` action rechecks the
+mapped device's check ID and returns bounded structured data from the documented
+`list_check_config` service, including script or automated-task metadata when
+present. `nsight-performance-history` returns bounded documented
 performance and bandwidth history. `nsight-asset-details` returns bounded
 documented asset metadata plus hardware/software rows and excludes the
 provider product key. `nsight-monitoring-details` returns bounded documented
 device metadata, checks, outages, notes, and monitoring feature flags.
 `nsight-run-task-now` previews and, after technician approval, invokes one
 documented automated task whose check ID is re-read from the mapped device;
-generic script discovery, arbitrary script arguments, execution polling, and
+generic script catalog discovery, arbitrary script arguments, execution polling, and
 other automated-task mutations remain unavailable.
+The check-configuration action is reachable through the generic
+`GET /smart-actions/nsight-check-config` and
+`POST /smart-actions/nsight-check-config/invoke` API paths, the
+`smart-actions invoke nsight-check-config` CLI command, and the Agents
+definition editor.
 
 Required settings:
 
@@ -290,6 +298,7 @@ and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-fa
 and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
 and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
+and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

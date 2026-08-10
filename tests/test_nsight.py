@@ -25,8 +25,10 @@ from wait_local_agent.nsight import (
     _outage_records,
     _patch_id_list,
     _performance_history_records,
+    _xml_config_value,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
+from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 
 CLIENT_XML = """
@@ -128,6 +130,13 @@ AUTOMATED_TASK_CHECKS_XML = CHECKS_XML.replace(
     "<check_type>1012</check_type>", "<check_type>1023</check_type>"
 )
 TASK_RUN_NOW_XML = '<result status="OK"><message time="15">15 minutes</message></result>'
+CHECK_CONFIG_XML = """
+<result status="OK"><check_config><ScriptCheck uid="58">
+  <description>Maintenance script</description><scriptname>cleanup.ps1</scriptname>
+  <scriptlanguage>7</scriptlanguage><timeout>60</timeout>
+  <password>provider-secret</password><argument>one</argument><argument>two</argument>
+</ScriptCheck></check_config></result>
+"""
 PERFORMANCE_HISTORY_XML = """
 <result status="OK">
   <bandwidth><host>
@@ -428,6 +437,87 @@ def test_nsight_run_task_now_rechecks_device_and_uses_documented_service(setting
     assert seen[:2] == ["list_sites", "list_servers"]
     assert "list_checks" in seen
     assert seen[-1] == "task_run_now"
+
+
+def test_nsight_check_config_rechecks_device_and_uses_documented_service(settings) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        seen.append(service or "")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_checks":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=CHECKS_XML)
+        if service == "list_check_config":
+            assert request.url.params.get("checkid") == "1304847"
+            return httpx.Response(200, text=CHECK_CONFIG_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    result = adapter.get_check_config("server:49324", 1304847, client_id="acme")
+
+    assert result["device_id"] == "server:49324"
+    assert result["check_id"] == 1304847
+    assert result["check_type"] == 1012
+    configuration = result["configuration"]
+    assert isinstance(configuration, dict)
+    script = configuration["ScriptCheck"]
+    assert isinstance(script, dict)
+    assert script["@attributes"] == {"uid": "58"}
+    assert script["argument"] == ["one", "two"]
+    assert script["password"] == "[redacted]"
+    assert seen[-1] == "list_check_config"
+
+    service = SmartActionService(
+        Store(adapter.settings.data_path),
+        adapter.settings,
+        rmm_provider=adapter,
+    )
+    action = service.invoke(
+        "nsight-check-config",
+        {"device_id": "server:49324", "check_id": "1304847"},
+        "tech",
+        client_id="acme",
+    )
+    assert action.status == "success"
+    assert action.output["check_id"] == 1304847
+    assert action.evidence[0]["operation"] == "list_check_config"
+
+
+def test_nsight_check_config_rejects_out_of_scope_and_malformed_results(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_checks":
+            return httpx.Response(200, text=CHECKS_XML)
+        if service == "list_check_config":
+            return httpx.Response(200, text='<result status="OK"><items /></result>')
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    with pytest.raises(NSightRmmError, match="outside the mapped device scope"):
+        adapter.get_check_config("server:49324", 999999, client_id="acme")
+    with pytest.raises(NSightRmmError, match="malformed check configuration"):
+        adapter.get_check_config("server:49324", 1304847, client_id="acme")
+
+
+def test_nsight_xml_config_value_is_bounded() -> None:
+    element = ElementTree.fromstring(
+        '<check_config><one><two><three><four><five><six><seven>value</seven>'
+        "</six></five></four></three></two></one></check_config>"
+    )
+    assert _xml_config_value(element, depth=0)["one"]["two"]["three"]["four"]["five"]["six"]["seven"] == "[truncated]"  # type: ignore[index]
 
 
 def test_nsight_run_task_now_blocks_without_write_flag(settings) -> None:
