@@ -112,6 +112,25 @@ def test_technician_chat_command_persists_plan_preview(monkeypatch, tmp_path) ->
     assert '"status": "preview"' in result.output
 
 
+def test_technician_chat_plan_reports_planner_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_plan(*_args, **_kwargs):
+        raise ValueError("planner unavailable")
+
+    monkeypatch.setattr(AgentService, "plan", fail_plan)
+    result = CliRunner().invoke(
+        app,
+        ["technician-chat", "plan triage for TCK-1001"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "blocked"' in result.output
+    assert "planner unavailable" in result.output
+
+
 def test_technician_chat_command_persists_bounded_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
 
