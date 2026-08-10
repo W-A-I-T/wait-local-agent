@@ -31,6 +31,7 @@ from wait_local_agent.nsight import (
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightAntivirusQuarantineAction,
     NSightAntivirusScanCancelAction,
     NSightAntivirusScansAction,
     NSightAntivirusScanStartAction,
@@ -115,6 +116,22 @@ MAV_SCANS_XML = """
 """
 MAV_SCAN_START_XML = '<result status="OK"><msg>scan accepted</msg></result>'
 MAV_SCAN_CANCEL_XML = '<result status="OK"><msg>scan cancelled</msg></result>'
+MAV_QUARANTINE_XML = """
+<quarantines>
+  <quarantine>
+    <quarantineguid>q-123</quarantineguid>
+    <statusid>1</statusid>
+    <group>0</group>
+    <quarantineStatus>Quarantined</quarantineStatus>
+    <eventDate>2026-08-10 10:00:00</eventDate>
+    <threatName>EICAR (v)</threatName>
+    <traces>2</traces>
+    <eventtype>Deep scan</eventtype>
+    <engine>Bitdefender</engine>
+  </quarantine>
+  <quarantine><statusid>1</statusid></quarantine>
+</quarantines>
+"""
 OUTAGES_XML = """
 <result status="OK"><outage>
   <reason>CHECK_FAILURE</reason><state>OPEN</state>
@@ -686,6 +703,70 @@ def test_nsight_antivirus_threats_recheck_device_scope(settings) -> None:
     ]
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_antivirus_threats("server:999", client_id="acme")
+
+
+def test_nsight_antivirus_quarantine_rechecks_device_and_bounds_records(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "mav_quarantine_list":
+            assert request.url.params.get("deviceid") == "49324"
+            assert request.url.params.get("v") == "2"
+            return httpx.Response(200, text=MAV_QUARANTINE_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    quarantine = adapter.list_antivirus_quarantine("server:49324", client_id="acme")
+    assert quarantine == [
+        {
+            "quarantine_id": "q-123",
+            "status_id": 1,
+            "group": 0,
+            "status": "Quarantined",
+            "event_date": "2026-08-10 10:00:00",
+            "threat_name": "EICAR (v)",
+            "trace_count": 2,
+            "event_type": "Deep scan",
+            "engine": "Bitdefender",
+        }
+    ]
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_antivirus_quarantine("server:999", client_id="acme")
+
+
+def test_nsight_antivirus_quarantine_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
+    action = NSightAntivirusQuarantineAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_quarantine=lambda device_id, **kwargs: [
+            {"quarantine_id": "q-123", "status": "Quarantined"}
+        ],
+    )
+    assert run(provider, {}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {"device_id": "server:1"}).status == "failed"
+    result = run(provider, {"device_id": "server:1"})
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.evidence[0]["type"] == "rmm_antivirus_quarantine"
+
+    malformed = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_quarantine=lambda device_id, **kwargs: {},
+    )
+    assert run(malformed, {"device_id": "server:1"}).status == "failed"
 
 
 def test_nsight_antivirus_scans_recheck_device_and_expose_documented_details(settings) -> None:
