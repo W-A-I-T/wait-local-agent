@@ -34,6 +34,7 @@ from wait_local_agent.models import (
     SyncroWriteRequest,
     Ticket,
 )
+from wait_local_agent.notion import NotionClient, NotionClientProtocol
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
@@ -321,6 +322,7 @@ class ActionContext:
     autotask_client: AutotaskReadProvider | AutotaskWriteProvider | None = None
     itglue_client: ItGlueClientProtocol | None = None
     confluence_client: ConfluenceClientProtocol | None = None
+    notion_client: NotionClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
     m365_client: (
         M365GraphReadProvider
@@ -4278,6 +4280,113 @@ class ConfluenceDocumentationSearchAction:
         )
 
 
+class NotionDocumentationSearchAction:
+    manifest = SmartActionManifest(
+        action_id="notion-documentation-search",
+        title="Notion documentation search",
+        description=(
+            "Search tenant-scoped Notion page titles and retrieve bounded page "
+            "markdown through the existing read-only connector."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["query", "client_id"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+        },
+        output_schema={"pages": "array", "count": "integer", "connector_status": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        query = payload.get("query")
+        client_id = payload.get("client_id")
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > 200:
+            return _failed("query must be a non-empty string of at most 200 characters")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        limit = payload.get("limit", 10)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 20:
+            return _failed("limit must be an integer between 1 and 20")
+        provider = context.notion_client or NotionClient(context.settings)
+        try:
+            response = provider.search_pages(
+                client_id=scoped_client_id,
+                query=query.strip(),
+                page_size=limit,
+            )
+        except Exception:
+            return _failed("Notion documentation lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Notion read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Notion returned malformed page data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={"client_id": scoped_client_id, "connector_status": status, "pages": [], "count": 0},
+                error_detail=message,
+            )
+        pages: list[dict[str, object]] = []
+        for item in items[:limit]:
+            page_id = str(getattr(item, "id", ""))
+            try:
+                detail = provider.get_page(page_id, client_id=scoped_client_id)
+            except Exception:
+                return _failed("Notion page retrieval failed")
+            detail_result = getattr(detail, "result", None)
+            if str(getattr(detail_result, "status", "failed")) != "ready":
+                return ActionResult(
+                    status="failed",
+                    output={
+                        "client_id": scoped_client_id,
+                        "connector_status": str(getattr(detail_result, "status", "failed")),
+                        "pages": [],
+                        "count": 0,
+                    },
+                    error_detail=redact_text(
+                        str(getattr(detail_result, "message", "Notion page retrieval failed"))
+                    ),
+                )
+            detail_items = getattr(detail, "items", [])
+            if not isinstance(detail_items, list) or not detail_items:
+                return _failed("Notion returned malformed page detail")
+            page = detail_items[0]
+            if not hasattr(page, "__dataclass_fields__"):
+                return _failed("Notion returned malformed page detail")
+            pages.append(cast(dict[str, object], redact_value(asdict(page))))
+        return ActionResult(
+            status="success",
+            output={
+                "client_id": scoped_client_id,
+                "connector_status": status,
+                "pages": pages,
+                "count": len(pages),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "notion",
+                    "operation": "search-and-markdown",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
 class SharePointDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="sharepoint-documentation-search",
@@ -5199,6 +5308,7 @@ def _build_default_registry() -> SmartActionRegistry:
         HuduDocumentationSearchAction(),
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),
+        NotionDocumentationSearchAction(),
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),
@@ -5285,6 +5395,7 @@ class SmartActionService:
         autotask_client: AutotaskReadProvider | AutotaskWriteProvider | None = None,
         itglue_client: ItGlueClientProtocol | None = None,
         confluence_client: ConfluenceClientProtocol | None = None,
+        notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
         m365_client: (
             M365GraphReadProvider
@@ -5317,6 +5428,7 @@ class SmartActionService:
         self.autotask_client = autotask_client
         self.itglue_client = itglue_client
         self.confluence_client = confluence_client
+        self.notion_client = notion_client
         self.sharepoint_client = sharepoint_client
         self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
@@ -5684,6 +5796,7 @@ class SmartActionService:
             autotask_client=self.autotask_client,
             itglue_client=self.itglue_client,
             confluence_client=self.confluence_client,
+            notion_client=self.notion_client,
             sharepoint_client=self.sharepoint_client,
             m365_client=self.m365_client,
         )

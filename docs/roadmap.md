@@ -62,7 +62,8 @@ requester-role rules.
 
 ## Phase 4: MSP Stack Expansion
 
-- Documentation connectors: Hudu first, then IT Glue and SharePoint.
+- Documentation connectors: Hudu first, then IT Glue, Notion, and SharePoint;
+  the current bounded Notion read surface is tracked in the parity matrix.
 - RMM: read-only inventory before approved script recommendation and execution.
 - Microsoft 365 and Entra: read-only identity, group, license, and mailbox
   lookup before approved changes.

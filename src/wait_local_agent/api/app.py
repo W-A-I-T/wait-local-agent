@@ -119,6 +119,7 @@ from wait_local_agent.models import (
     AgentDefinition,
     WorkflowRun,
 )
+from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
@@ -547,6 +548,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     autotask_client = AutotaskClient(active_settings)
     itglue_client = ItGlueClient(active_settings)
     confluence_client = ConfluenceClient(active_settings)
+    notion_client = NotionClient(active_settings)
     sharepoint_client = SharePointClient(active_settings)
     m365_client = M365GraphClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
@@ -564,6 +566,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         autotask_client=autotask_client,
         itglue_client=itglue_client,
         confluence_client=confluence_client,
+        notion_client=notion_client,
         sharepoint_client=sharepoint_client,
         m365_client=m365_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
@@ -3088,6 +3091,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = confluence_client.get_page(page_id)
         return _confluence_response("pages.get", response)
 
+    @app.get("/connectors/notion/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def notion_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = notion_client.health()
+        _audit_notion_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/notion/pages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def notion_pages(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+        query: str = "",
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
+        response = notion_client.search_pages(
+            client_id=scoped_client_id,
+            query=query,
+            page_size=page_size if page_size is not None else active_settings.notion_page_size,
+        )
+        return _notion_response("pages.search", response)
+
+    @app.get("/connectors/notion/pages/{page_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def notion_page(
+        page_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
+        response = notion_client.get_page(page_id, client_id=scoped_client_id)
+        return _notion_response("pages.get", response)
+
     @app.get("/connectors/sharepoint/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def sharepoint_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -4286,6 +4329,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_confluence_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("confluence.read", read_type, f"{status} count={count}")
+
+    def _notion_response(read_type: str, response: NotionReadResponse) -> dict[str, object]:
+        _audit_notion_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _audit_notion_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("notion.read", read_type, f"{status} count={count}")
 
     def _sharepoint_response(
         read_type: str,

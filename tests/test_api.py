@@ -66,6 +66,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.notion import NotionPage, NotionReadResponse
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
@@ -3491,6 +3492,56 @@ def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> No
 def test_confluence_routes_keep_viewer_auth_boundary(settings) -> None:
     settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/confluence/health")
+    assert response.status_code == 401
+
+
+def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeypatch) -> None:
+    class FakeNotionClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Notion ready", 0)
+
+        def search_pages(self, **kwargs):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "MFA", "/mfa", "today", False, "body")],
+            )
+
+        def get_page(self, page_id, *, client_id):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", "page ready", 1),
+                [NotionPage(page_id, "MFA", "/mfa", "today", False, "token=secret")],
+            )
+
+    monkeypatch.setattr(app_module, "NotionClient", FakeNotionClient)
+    client = TestClient(create_app(settings))
+
+    missing_scope = client.get("/connectors/notion/pages", params={"query": "MFA"})
+    health = client.get("/connectors/notion/health")
+    pages = client.get(
+        "/connectors/notion/pages",
+        params={"client_id": "acme", "query": "MFA", "page_size": 2},
+    )
+    page = client.get(
+        "/connectors/notion/pages/11111111-2222-3333-4444-555555555555",
+        params={"client_id": "acme"},
+    )
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert missing_scope.status_code == 403
+    assert health.status_code == 200
+    assert pages.json()["items"][0]["title"] == "MFA"
+    assert page.json()["items"][0]["markdown"] == "token=[redacted]"
+    assert any(connector["id"] == "notion" for connector in connectors.json())
+    assert any(event["event_type"] == "notion.read" for event in audit.json())
+
+
+def test_notion_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/notion/health")
     assert response.status_code == 401
 
 

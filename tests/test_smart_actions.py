@@ -1047,6 +1047,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-session-revocation",
         "m365-user-offboarding",
         "m365-user-onboarding",
+        "notion-documentation-search",
         "recurring-service-review",
         "rmm-alert-lookup",
         "rmm-device-lookup",

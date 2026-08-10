@@ -390,6 +390,40 @@ wait-local-agent connectors confluence-page <page-id>
 The API mirrors these commands under `/connectors/confluence/health`,
 `/connectors/confluence/pages`, and `/connectors/confluence/pages/{page-id}`.
 
+## Notion
+
+### Required settings
+
+```text
+WAIT_NOTION_BASE_URL=https://api.notion.com
+WAIT_NOTION_API_TOKEN=
+WAIT_NOTION_VERSION=2026-03-11
+WAIT_NOTION_CLIENT_PAGE_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_NOTION_PAGE_SIZE=25
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+The adapter is read-only and requires an explicit local client-to-page UUID
+map. Search uses Notion's documented title-oriented `POST /v1/search` contract,
+filters results to the mapped page IDs, and returns a bounded cursor. Page reads
+retrieve metadata and bounded markdown through the documented page and page
+markdown endpoints. Database queries, comments, page updates, and other writes
+are intentionally unavailable ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown)).
+
+### Validate and read
+
+```bash
+wait-local-agent connectors validate notion
+wait-local-agent connectors notion-health
+wait-local-agent connectors notion-pages acme --query MFA
+wait-local-agent connectors notion-page <page-id> acme
+```
+
+The API mirrors these commands under `/connectors/notion/health`,
+`/connectors/notion/pages`, and `/connectors/notion/pages/{page-id}`. Live
+requests remain blocked unless `WAIT_ALLOW_HTTP_PROBING=true`; the API token is
+kept in settings/vault and is never accepted in request payloads.
+
 ## SharePoint
 
 ### Required settings

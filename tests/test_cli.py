@@ -31,6 +31,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.notion import NotionPage, NotionReadResponse
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
@@ -1344,6 +1345,40 @@ def test_confluence_cli_commands_redact_page_content(monkeypatch, tmp_path) -> N
     assert "token=secret" not in pages.output
     assert "token=[redacted]" in pages.output
     assert page.exit_code == 0
+    assert "token=[redacted]" in page.output
+
+
+def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_path) -> None:
+    class FakeNotionClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def search_pages(self, **kwargs):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "Runbook", "/page", "today", False, "")],
+            )
+
+        def get_page(self, page_id, *, client_id):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [NotionPage(page_id, "Runbook", "/page", "today", False, "token=secret")],
+            )
+
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(cli_module, "NotionClient", FakeNotionClient)
+    runner = CliRunner()
+
+    pages = runner.invoke(app, ["connectors", "notion-pages", "acme", "--query", "MFA"])
+    page = runner.invoke(
+        app,
+        ["connectors", "notion-page", "11111111-2222-3333-4444-555555555555", "acme"],
+    )
+
+    assert pages.exit_code == 0
+    assert "Runbook" in pages.output
+    assert page.exit_code == 0
+    assert "token=secret" not in page.output
     assert "token=[redacted]" in page.output
 
 

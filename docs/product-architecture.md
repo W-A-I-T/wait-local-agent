@@ -238,6 +238,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | NinjaOne RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | Datto RMM | Phase 4 | ✓ inventory | — | MSP Pack |
 | M365 / Entra | Phase 4 | ✓ bounded | ✓ approval-gated user/group membership/license/session actions | Public core |
+| Notion | Current | ✓ mapped-page title search and markdown | — | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
 | Kaseya VSA | Phase 5 | ✓ read-only device/notification inventory | Script/remediation parity | Public core |

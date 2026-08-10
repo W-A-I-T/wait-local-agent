@@ -42,6 +42,7 @@ from wait_local_agent.models import (
     HaloWriteResult,
     SecretRecord,
 )
+from wait_local_agent.notion import NotionClient
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
@@ -148,6 +149,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     confluence_status: ConnectorStatusValue = "not_configured"
     if confluence_configured:
         confluence_status = "configured" if settings.allow_http_probing else "blocked"
+    notion_configured = bool(
+        settings.notion_api_token and settings.notion_client_page_map_json
+    )
+    notion_status: ConnectorStatusValue = "not_configured"
+    if notion_configured:
+        notion_status = "configured" if settings.allow_http_probing else "blocked"
     sharepoint_configured = bool(
         settings.sharepoint_base_url and settings.sharepoint_access_token
     )
@@ -367,6 +374,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
+            id="notion",
+            kind="documentation",
+            name="Notion",
+            status=notion_status,
+            message=(
+                "Notion is configured for tenant-scoped read-only page search and markdown retrieval."
+                if notion_status == "configured"
+                else "Notion is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if notion_status == "blocked"
+                else (
+                    "Set WAIT_NOTION_API_TOKEN and WAIT_NOTION_CLIENT_PAGE_MAP_JSON "
+                    "to enable Notion reads."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
             id="sharepoint",
             kind="documentation",
             name="SharePoint",
@@ -512,6 +536,15 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord("WAIT_CONFLUENCE_EMAIL", bool(settings.confluence_email), "confluence"),
         SecretRecord("WAIT_CONFLUENCE_API_TOKEN", bool(settings.confluence_api_token), "confluence"),
         SecretRecord("WAIT_CONFLUENCE_PAGE_SIZE", bool(settings.confluence_page_size), "confluence"),
+        SecretRecord("WAIT_NOTION_BASE_URL", bool(settings.notion_base_url), "notion"),
+        SecretRecord("WAIT_NOTION_API_TOKEN", bool(settings.notion_api_token), "notion"),
+        SecretRecord("WAIT_NOTION_VERSION", bool(settings.notion_version), "notion"),
+        SecretRecord("WAIT_NOTION_PAGE_SIZE", bool(settings.notion_page_size), "notion"),
+        SecretRecord(
+            "WAIT_NOTION_CLIENT_PAGE_MAP_JSON",
+            bool(settings.notion_client_page_map_json),
+            "notion",
+        ),
         SecretRecord("WAIT_SHAREPOINT_BASE_URL", bool(settings.sharepoint_base_url), "sharepoint"),
         SecretRecord(
             "WAIT_SHAREPOINT_ACCESS_TOKEN",
@@ -630,6 +663,7 @@ def validate_connector_credentials(
     autotask_client: AutotaskClient | None = None,
     itglue_client: ItGlueClient | None = None,
     confluence_client: ConfluenceClient | None = None,
+    notion_client: NotionClient | None = None,
     sharepoint_client: SharePointClient | None = None,
     m365_client: M365GraphClient | None = None,
 ) -> ConnectorValidationResult:
@@ -704,6 +738,23 @@ def validate_connector_credentials(
                 f"Confluence credentials are incomplete: {', '.join(missing)}.",
             )
         result = (confluence_client or ConfluenceClient(settings)).health()
+    elif connector == "notion":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_NOTION_API_TOKEN": settings.notion_api_token,
+                "WAIT_NOTION_CLIENT_PAGE_MAP_JSON": settings.notion_client_page_map_json,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"Notion credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (notion_client or NotionClient(settings)).health()
     elif connector == "sharepoint":
         missing = [
             key
