@@ -4,7 +4,8 @@ N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
     monitoring-details, backup-session, bounded patch, check-configuration,
-    antivirus-scan, antivirus-scan-start, antivirus-scan-cancel, and automated-task
+    antivirus-scan, antivirus-scan-start, antivirus-scan-cancel,
+    antivirus-quarantine, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -57,6 +58,7 @@ MAX_CHECK_CONFIG_FIELDS = 50
 MAX_CHECK_CONFIG_LIST_ITEMS = 25
 MAX_ANTIVIRUS_SCANS = 50
 MAX_ANTIVIRUS_SCAN_THREATS = 25
+MAX_ANTIVIRUS_QUARANTINE = 100
 MAX_TEXT_LENGTH = 500
 MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
@@ -298,6 +300,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _antivirus_threat_records(root)[:MAX_ANTIVIRUS_THREATS]
+
+    def list_antivirus_quarantine(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented managed-antivirus quarantine records for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "mav_quarantine_list",
+            {"deviceid": str(numeric_device_id), "v": "2"},
+            client_id=client_id,
+        )
+        return _antivirus_quarantine_records(root)[:MAX_ANTIVIRUS_QUARANTINE]
 
     def list_antivirus_scans(
         self,
@@ -1279,6 +1300,28 @@ def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return threats
+
+
+def _antivirus_quarantine_records(root: Any) -> list[dict[str, object]]:
+    quarantine: list[dict[str, object]] = []
+    for item in root.iter("quarantine"):
+        quarantine_id = _bounded_text(_text(item, "quarantineguid"))
+        if not quarantine_id:
+            continue
+        quarantine.append(
+            {
+                "quarantine_id": quarantine_id,
+                "status_id": _optional_integer(_text(item, "statusid")),
+                "group": _optional_integer(_text(item, "group")),
+                "status": _bounded_text(_text(item, "quarantineStatus")),
+                "event_date": _bounded_text(_text(item, "eventDate")),
+                "threat_name": _bounded_text(_text(item, "threatName")),
+                "trace_count": _optional_integer(_text(item, "traces")),
+                "event_type": _bounded_text(_text(item, "eventtype")),
+                "engine": _bounded_text(_text(item, "engine")),
+            }
+        )
+    return quarantine
 
 
 def _antivirus_scan_records(root: Any, *, include_details: bool) -> list[dict[str, object]]:

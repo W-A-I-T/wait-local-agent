@@ -122,6 +122,15 @@ describe("Agents", () => {
             access_mode: "write"
           },
           {
+            id: "nsight-antivirus-quarantine",
+            name: "N-sight antivirus quarantine lookup",
+            description: "Read mapped antivirus quarantine records.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
             id: "scalepad-compliance-health",
             name: "ScalePad compliance health",
             description: "Read one mapped compliance-health snapshot.",

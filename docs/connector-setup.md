@@ -276,6 +276,10 @@ The read-only `nsight-antivirus-scans` action exposes documented Managed
 Antivirus scan history through the same generic API, CLI, and Agents definition
 editor paths. It accepts only a mapped device and an optional boolean to
 include bounded threat summaries.
+The read-only `nsight-antivirus-quarantine` action exposes documented Managed
+Antivirus quarantine records through the same generic API, CLI, and Agents
+paths. It accepts only a mapped device, rechecks scope, and never releases or
+removes an item.
 The approval-gated `nsight-antivirus-scan-start` action starts one documented
 Managed Antivirus scan only after technician approval, the write flag, and the
 same mapped-device recheck. Caller payloads cannot choose a provider engine or
@@ -320,6 +324,7 @@ and [check configuration](https://developer.n-able.com/n-sight/docs/listing-chec
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
+and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

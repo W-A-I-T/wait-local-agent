@@ -4098,6 +4098,67 @@ class NSightAntivirusThreatsAction:
         )
 
 
+class NSightAntivirusQuarantineAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-quarantine",
+        title="N-sight antivirus quarantine lookup",
+        description=(
+            "Read bounded managed-antivirus quarantine records for one mapped "
+            "N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"quarantine": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_quarantine = getattr(provider, "list_antivirus_quarantine", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_quarantine):
+            return _failed("N-sight antivirus quarantine requires the N-sight RMM adapter")
+        try:
+            quarantine = list_quarantine(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight antivirus quarantine is unavailable")
+        if not isinstance(quarantine, list) or any(
+            not isinstance(item, dict) for item in quarantine
+        ):
+            return _failed("N-sight returned malformed antivirus quarantine data")
+        output_quarantine = [
+            cast(dict[str, object], redact_value(item)) for item in quarantine[:100]
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "quarantine": output_quarantine,
+                "count": len(output_quarantine),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_antivirus_quarantine",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                }
+                for _ in output_quarantine
+            ],
+        )
+
+
 class NSightAntivirusScansAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-scans",
@@ -7646,6 +7707,7 @@ def _build_default_registry() -> SmartActionRegistry:
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
         RmmAlertLookupAction(),
+        NSightAntivirusQuarantineAction(),
         NSightAntivirusThreatsAction(),
         NSightAntivirusScansAction(),
         NSightAntivirusScanCancelAction(),
