@@ -287,13 +287,18 @@ WAIT_ALLOW_HTTP_PROBING=true
 Each mapped session is queried through `GetSessionDetailsBySessionID`, and
 returned details are normalized as tenant-scoped device inventory. The
 extension ID and session IDs must be UUIDs; the map is capped at 100 sessions
-per client. An optional local command catalog maps bounded script IDs to
-operator-reviewed command text. It provides metadata, preview, and
-approval-gated `SendCommandToSession` submission; commands do not accept
-runtime arguments, and execution reports provider acceptance without claiming
-polling or completion. Provider-native alert lookup and script discovery remain
-unavailable. The authentication secret stays in the settings/vault boundary
-and is never part of a smart-action payload. See the
+per client. The generic smart-action API/CLI catalog exposes approval-gated
+`screenconnect-session-note` and `screenconnect-session-message` operations,
+which call the documented `AddNoteToSession` and `SendMessageToSession`
+endpoints after approval. `AddNoteToSession` requires RESTful API Manager
+extension 1.0.6 or newer and the configured ScreenConnect role must have the
+corresponding provider permission. An optional local command catalog maps
+bounded script IDs to operator-reviewed command text. It provides metadata,
+preview, and approval-gated `SendCommandToSession` submission; commands do not
+accept runtime arguments, and execution reports provider acceptance without
+claiming polling or completion. Provider-native alert lookup and script
+discovery remain unavailable. The authentication secret stays in the
+settings/vault boundary and is never part of a smart-action payload. See the
 [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
 and [RESTful API Manager](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/RESTful_API_Manager).
 

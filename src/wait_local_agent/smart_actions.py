@@ -51,6 +51,7 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     rmm_provider_from_settings,
 )
+from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 from wait_local_agent.servicenow import ServiceNowReadProvider, ServiceNowWriteProvider
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
@@ -3011,6 +3012,162 @@ class RmmScriptExecutionLookupAction:
         )
 
 
+class ScreenConnectSessionNoteAction:
+    manifest = SmartActionManifest(
+        action_id="screenconnect-session-note",
+        title="Add ScreenConnect session note",
+        description="Preview and, after approval, add a bounded note to one mapped ScreenConnect session.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["session_id", "note_body"],
+            "properties": {
+                "session_id": "string",
+                "note_body": "string",
+            },
+        },
+        output_schema={
+            "session_id": "string",
+            "operation": "string",
+            "status": "string",
+            "proposed_body": "string",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=2,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        provider = _screenconnect_session_provider(context)
+        if isinstance(provider, ActionResult):
+            return provider
+        session_id = payload.get("session_id")
+        note_body = payload.get("note_body")
+        if not isinstance(session_id, str) or not isinstance(note_body, str):
+            return _failed("session_id and note_body must be strings")
+        try:
+            if payload.get("_approval_completed"):
+                if not context.settings.allow_write_actions:
+                    return _failed(
+                        "ScreenConnect session notes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+                    )
+                operation = provider.add_note(
+                    session_id, note_body, client_id=context.client_id
+                )
+            else:
+                operation = provider.preview_note(
+                    session_id, note_body, client_id=context.client_id
+                )
+        except Exception as exc:
+            return _failed(redact_text(str(exc)))
+        output = {
+            **asdict(operation),
+            "proposed_body": note_body.strip(),
+            "approval_required": not bool(payload.get("_approval_completed")),
+            "approved": bool(payload.get("_approval_completed")),
+        }
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "screenconnect_session_mutation",
+                    "operation": "add_note",
+                    "session_id": operation.session_id,
+                }
+            ],
+        )
+
+
+class ScreenConnectSessionMessageAction:
+    manifest = SmartActionManifest(
+        action_id="screenconnect-session-message",
+        title="Send ScreenConnect session message",
+        description="Preview and, after approval, send a bounded message to one mapped ScreenConnect session.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["session_id", "by_host", "message"],
+            "properties": {
+                "session_id": "string",
+                "by_host": "string",
+                "message": "string",
+            },
+        },
+        output_schema={
+            "session_id": "string",
+            "operation": "string",
+            "status": "string",
+            "by_host": "string",
+            "proposed_body": "string",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=2,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        provider = _screenconnect_session_provider(context)
+        if isinstance(provider, ActionResult):
+            return provider
+        session_id = payload.get("session_id")
+        by_host = payload.get("by_host")
+        message = payload.get("message")
+        if (
+            not isinstance(session_id, str)
+            or not isinstance(by_host, str)
+            or not isinstance(message, str)
+        ):
+            return _failed("session_id, by_host, and message must be strings")
+        try:
+            if payload.get("_approval_completed"):
+                if not context.settings.allow_write_actions:
+                    return _failed(
+                        "ScreenConnect session messages are blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+                    )
+                operation = provider.send_message(
+                    session_id, by_host, message, client_id=context.client_id
+                )
+            else:
+                operation = provider.preview_message(
+                    session_id, by_host, message, client_id=context.client_id
+                )
+        except Exception as exc:
+            return _failed(redact_text(str(exc)))
+        output = {
+            **asdict(operation),
+            "proposed_body": message.strip(),
+            "approval_required": not bool(payload.get("_approval_completed")),
+            "approved": bool(payload.get("_approval_completed")),
+        }
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "screenconnect_session_mutation",
+                    "operation": "send_message",
+                    "session_id": operation.session_id,
+                }
+            ],
+        )
+
+
+def _screenconnect_session_provider(
+    context: ActionContext,
+) -> ScreenConnectRmmAdapter | ActionResult:
+    provider = context.rmm_provider
+    if not isinstance(provider, ScreenConnectRmmAdapter):
+        return _failed(
+            "ScreenConnect session operations require a configured ScreenConnect adapter"
+        )
+    return provider
+
+
 class HaloPSATicketLookupAction:
     manifest = SmartActionManifest(
         action_id="halopsa-ticket-lookup",
@@ -5416,6 +5573,8 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmScriptPreviewAction(),
         RmmScriptExecuteAction(),
         RmmScriptExecutionLookupAction(),
+        ScreenConnectSessionNoteAction(),
+        ScreenConnectSessionMessageAction(),
         HaloPSATicketLookupAction(),
         HaloPSATicketWriteAction(
             action_id="halopsa-ticket-add-note",

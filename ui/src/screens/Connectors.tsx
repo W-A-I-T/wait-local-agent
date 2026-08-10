@@ -32,8 +32,15 @@ type SyncroCommentsResponse = {
   meta: { total_pages?: number; page?: number; per_page?: number };
 };
 
+type ScreenConnectActionResponse = {
+  status: string;
+  approval_id?: number;
+  error_detail?: string;
+  output?: { message?: string };
+};
+
 export function Connectors() {
-  const { connectors, haloConnector, huduConnector, writeHealth, loading } = useDashboard();
+  const { connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
   const [connectwiseHealth, setConnectwiseHealth] = useState<HealthState | null>(null);
   const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
@@ -45,6 +52,13 @@ export function Connectors() {
   const [syncroMeta, setSyncroMeta] = useState<SyncroCommentsResponse["meta"]>({});
   const [syncroStatus, setSyncroStatus] = useState<HealthState | null>(null);
   const [syncroLoading, setSyncroLoading] = useState(false);
+  const [screenConnectClientId, setScreenConnectClientId] = useState("");
+  const [screenConnectSessionId, setScreenConnectSessionId] = useState("");
+  const [screenConnectNote, setScreenConnectNote] = useState("");
+  const [screenConnectHost, setScreenConnectHost] = useState("");
+  const [screenConnectMessage, setScreenConnectMessage] = useState("");
+  const [screenConnectActionStatus, setScreenConnectActionStatus] = useState<HealthState | null>(null);
+  const [screenConnectActionLoading, setScreenConnectActionLoading] = useState(false);
 
   const refreshConnectivity = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -119,6 +133,51 @@ export function Connectors() {
       });
     } finally {
       setSyncroLoading(false);
+    }
+  };
+
+  const prepareScreenConnectAction = async (
+    event: FormEvent<HTMLFormElement>,
+    actionId: "screenconnect-session-note" | "screenconnect-session-message"
+  ) => {
+    event.preventDefault();
+    const clientId = screenConnectClientId.trim();
+    const sessionId = screenConnectSessionId.trim();
+    const sessionUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!clientId || clientId.length > 200 || !sessionUuid.test(sessionId)) {
+      setScreenConnectActionStatus({ status: "failed", message: "Enter a client ID and mapped ScreenConnect session UUID." });
+      return;
+    }
+    const body = actionId === "screenconnect-session-note" ? screenConnectNote.trim() : screenConnectMessage.trim();
+    if (!body || body.length > 10000) {
+      setScreenConnectActionStatus({ status: "failed", message: "Enter a message of at most 10,000 characters." });
+      return;
+    }
+    if (actionId === "screenconnect-session-message" && (!screenConnectHost.trim() || screenConnectHost.trim().length > 200)) {
+      setScreenConnectActionStatus({ status: "failed", message: "Enter the technician display name (at most 200 characters)." });
+      return;
+    }
+    setScreenConnectActionLoading(true);
+    setScreenConnectActionStatus(null);
+    try {
+      const payload = actionId === "screenconnect-session-note"
+        ? { session_id: sessionId, note_body: body }
+        : { session_id: sessionId, by_host: screenConnectHost.trim(), message: body };
+      const response = await apiFetch<ScreenConnectActionResponse>(`/smart-actions/${actionId}/invoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, payload })
+      });
+      setScreenConnectActionStatus({
+        status: response.status,
+        message: response.approval_id
+          ? `Approval request ${response.approval_id} created. Review it in Approvals before sending.`
+          : response.output?.message || response.error_detail || "ScreenConnect action completed."
+      });
+    } catch (error) {
+      setScreenConnectActionStatus({ status: "failed", message: error instanceof Error ? error.message : "ScreenConnect action could not be prepared." });
+    } finally {
+      setScreenConnectActionLoading(false);
     }
   };
 
@@ -208,6 +267,28 @@ export function Connectors() {
           ))}
           {huduData.companies.length === 0 ? <p>No Hudu companies returned.</p> : null}
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>ScreenConnect session actions</h2>
+          <span>approval required</span>
+        </div>
+        <p className="screen-note">Prepare a bounded note or message for one locally mapped session. WAIT validates the tenant/session map and places the proposed provider mutation in the approval queue.</p>
+        <div className="grid">
+          <label>Client ID<input aria-label="ScreenConnect client ID" value={screenConnectClientId} onChange={(event) => setScreenConnectClientId(event.target.value)} placeholder="acme" /></label>
+          <label>Session UUID<input aria-label="ScreenConnect session UUID" value={screenConnectSessionId} onChange={(event) => setScreenConnectSessionId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
+        </div>
+        <form className="draft-form" onSubmit={(event) => void prepareScreenConnectAction(event, "screenconnect-session-note")}>
+          <label>Session note<textarea aria-label="ScreenConnect session note" rows={3} maxLength={10000} value={screenConnectNote} onChange={(event) => setScreenConnectNote(event.target.value)} placeholder="Add an operator note to the mapped session" /></label>
+          <button type="submit" disabled={screenConnectActionLoading || !canWrite}>Prepare note approval</button>
+        </form>
+        <form className="draft-form" onSubmit={(event) => void prepareScreenConnectAction(event, "screenconnect-session-message")}>
+          <label>Technician display name<input aria-label="ScreenConnect technician display name" maxLength={200} value={screenConnectHost} onChange={(event) => setScreenConnectHost(event.target.value)} placeholder="WAIT technician" /></label>
+          <label>Session message<textarea aria-label="ScreenConnect session message" rows={3} maxLength={10000} value={screenConnectMessage} onChange={(event) => setScreenConnectMessage(event.target.value)} placeholder="Send a bounded message to the mapped session" /></label>
+          <button type="submit" disabled={screenConnectActionLoading || !canWrite}>Prepare message approval</button>
+        </form>
+        {screenConnectActionStatus ? <p className={`screen-note ${screenConnectActionStatus.status === "failed" ? "danger" : ""}`} role="status">{screenConnectActionStatus.message}</p> : null}
       </section>
 
       <section className="panel">

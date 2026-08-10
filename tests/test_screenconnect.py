@@ -191,6 +191,59 @@ def test_screenconnect_command_catalog_preview_and_send_use_documented_endpoint(
     assert len(requests) == 1
 
 
+def test_screenconnect_session_notes_and_messages_use_documented_endpoints(settings) -> None:
+    requests: list[tuple[str, list[str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operation = request.url.path.rsplit("/", 1)[-1]
+        requests.append((operation, json.loads(request.content)))
+        return httpx.Response(204)
+
+    adapter = _adapter(settings, handler)
+    note_preview = adapter.preview_note(
+        SESSION_ID, "first line\nsecond line", client_id="acme"
+    )
+    message_preview = adapter.preview_message(
+        SESSION_ID, "WAIT technician", "Please save your work.", client_id="acme"
+    )
+
+    assert note_preview.operation == "add_note"
+    assert note_preview.status == "preview"
+    assert message_preview.operation == "send_message"
+    assert message_preview.by_host == "WAIT technician"
+    assert requests == []
+
+    note = adapter.add_note(SESSION_ID, "first line\nsecond line", client_id="acme")
+    message = adapter.send_message(
+        SESSION_ID,
+        "WAIT technician",
+        "Please save your work.",
+        client_id="acme",
+    )
+
+    assert note.status == "queued"
+    assert message.status == "queued"
+    assert requests == [
+        ("AddNoteToSession", [SESSION_ID, "first line\nsecond line"]),
+        ("SendMessageToSession", [SESSION_ID, "WAIT technician", "Please save your work."]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("operation", "args", "message"),
+    [
+        ("preview_note", (SESSION_ID, ""), "note body"),
+        ("preview_message", (SESSION_ID, "", "hello"), "by_host"),
+        ("preview_message", (SESSION_ID, "host", "\x00bad"), "message"),
+        ("preview_note", ("not-a-uuid", "hello"), "mapped session UUID"),
+    ],
+)
+def test_screenconnect_session_mutations_validate_input(settings, operation, args, message) -> None:
+    adapter = _adapter(settings, lambda request: httpx.Response(204))
+    with pytest.raises(ScreenConnectRmmError, match=message):
+        getattr(adapter, operation)(*args, client_id="acme")
+
+
 @pytest.mark.parametrize(
     ("catalog", "message"),
     [

@@ -1,19 +1,20 @@
-"""Bounded ConnectWise ScreenConnect session lookup adapter.
+"""Bounded ConnectWise ScreenConnect session and command adapter.
 
-The official RESTful API Manager extension documents read endpoints such as
-``GetSessionDetailsBySessionID`` and requires an instance URL, extension ID,
-trusted Origin, and extension authentication secret. WAIT keeps the tenant
+The official RESTful API Manager extension documents session reads plus bounded
+session notes, messages, and commands. It requires an instance URL, extension
+ID, trusted Origin, and extension authentication secret. WAIT keeps the tenant
 boundary local by requiring an explicit client-to-session-ID map. Command
 execution is limited to an operator-supplied local catalog and the documented
-``SendCommandToSession`` endpoint; provider-side alert lookup and polling are
-not claimed.
+``SendCommandToSession`` endpoint; provider-side alert lookup, script discovery,
+and polling are not claimed.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -27,14 +28,27 @@ MAX_SCRIPTS = 100
 MAX_SCRIPT_ID_LENGTH = 100
 MAX_SCRIPT_NAME_LENGTH = 200
 MAX_COMMAND_LENGTH = 8_000
+MAX_SESSION_MESSAGE_LENGTH = 10_000
+MAX_SESSION_HOST_LENGTH = 200
 
 
 class ScreenConnectRmmError(Exception):
     """Safe, operator-facing ScreenConnect adapter error."""
 
 
+@dataclass(frozen=True)
+class ScreenConnectSessionOperation:
+    """A bounded, auditable ScreenConnect session mutation result."""
+
+    session_id: str
+    operation: Literal["add_note", "send_message"]
+    status: Literal["preview", "queued"]
+    message: str
+    by_host: str = ""
+
+
 class ScreenConnectRmmAdapter:
-    """Read-only ScreenConnect session/device adapter."""
+    """Bounded ScreenConnect session/device and approved-operation adapter."""
 
     adapter_id = "screenconnect"
 
@@ -121,6 +135,93 @@ class ScreenConnectRmmAdapter:
             device_id=session_id,
             status="queued",
             message="ScreenConnect accepted the command; provider polling is unavailable.",
+        )
+
+    def preview_note(
+        self,
+        session_id: str,
+        note_body: str,
+        *,
+        client_id: str | None = None,
+    ) -> ScreenConnectSessionOperation:
+        safe_session_id = self._validate_session_action(
+            session_id, client_id=client_id
+        )
+        _safe_session_body(note_body, "note body")
+        return ScreenConnectSessionOperation(
+            session_id=safe_session_id,
+            operation="add_note",
+            status="preview",
+            message="ScreenConnect session note is ready for approval.",
+        )
+
+    def add_note(
+        self,
+        session_id: str,
+        note_body: str,
+        *,
+        client_id: str | None = None,
+    ) -> ScreenConnectSessionOperation:
+        preview = self.preview_note(session_id, note_body, client_id=client_id)
+        self._request(
+            "AddNoteToSession",
+            [preview.session_id, _safe_session_body(note_body, "note body")],
+            client_id=client_id,
+        )
+        return ScreenConnectSessionOperation(
+            session_id=preview.session_id,
+            operation=preview.operation,
+            status="queued",
+            message="ScreenConnect accepted the session note.",
+        )
+
+    def preview_message(
+        self,
+        session_id: str,
+        by_host: str,
+        message: str,
+        *,
+        client_id: str | None = None,
+    ) -> ScreenConnectSessionOperation:
+        safe_session_id = self._validate_session_action(
+            session_id, client_id=client_id
+        )
+        _safe_session_host(by_host)
+        _safe_session_body(message, "message")
+        return ScreenConnectSessionOperation(
+            session_id=safe_session_id,
+            operation="send_message",
+            status="preview",
+            message="ScreenConnect session message is ready for approval.",
+            by_host=by_host.strip(),
+        )
+
+    def send_message(
+        self,
+        session_id: str,
+        by_host: str,
+        message: str,
+        *,
+        client_id: str | None = None,
+    ) -> ScreenConnectSessionOperation:
+        preview = self.preview_message(
+            session_id, by_host, message, client_id=client_id
+        )
+        self._request(
+            "SendMessageToSession",
+            [
+                preview.session_id,
+                preview.by_host,
+                _safe_session_body(message, "message"),
+            ],
+            client_id=client_id,
+        )
+        return ScreenConnectSessionOperation(
+            session_id=preview.session_id,
+            operation=preview.operation,
+            status="queued",
+            message="ScreenConnect accepted the session message.",
+            by_host=preview.by_host,
         )
 
     def get_execution(
@@ -220,6 +321,20 @@ class ScreenConnectRmmAdapter:
         if session_id not in session_ids:
             raise ScreenConnectRmmError("ScreenConnect device is outside the tenant scope")
         return session_id, entry["command"]
+
+    def _validate_session_action(
+        self, session_id: str, *, client_id: str | None
+    ) -> str:
+        session_ids = self._session_ids(client_id)
+        try:
+            normalized = str(UUID(session_id.strip()))
+        except (AttributeError, ValueError) as exc:
+            raise ScreenConnectRmmError(
+                "ScreenConnect session ID must be a mapped session UUID"
+            ) from exc
+        if normalized not in session_ids:
+            raise ScreenConnectRmmError("ScreenConnect session is outside the tenant scope")
+        return normalized
 
     def _request(self, operation: str, body: list[str], *, client_id: str | None) -> object:
         self._session_ids(client_id)
@@ -341,4 +456,43 @@ def _safe_text(value: object, maximum: int, label: str) -> str:
     return normalized
 
 
-__all__ = ["ScreenConnectRmmAdapter", "ScreenConnectRmmError"]
+def _safe_session_body(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ScreenConnectRmmError(f"ScreenConnect {label} must be text")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_SESSION_MESSAGE_LENGTH
+        or any(
+            ord(character) < 32 and character not in {"\n", "\r", "\t"}
+            for character in normalized
+        )
+    ):
+        raise ScreenConnectRmmError(
+            f"ScreenConnect {label} must be non-empty text of at most "
+            f"{MAX_SESSION_MESSAGE_LENGTH} characters"
+        )
+    return normalized
+
+
+def _safe_session_host(value: object) -> str:
+    if not isinstance(value, str):
+        raise ScreenConnectRmmError("ScreenConnect by_host must be text")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_SESSION_HOST_LENGTH
+        or any(ord(character) < 32 for character in normalized)
+    ):
+        raise ScreenConnectRmmError(
+            f"ScreenConnect by_host must be non-empty text of at most "
+            f"{MAX_SESSION_HOST_LENGTH} characters"
+        )
+    return normalized
+
+
+__all__ = [
+    "ScreenConnectRmmAdapter",
+    "ScreenConnectRmmError",
+    "ScreenConnectSessionOperation",
+]

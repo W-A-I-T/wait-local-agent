@@ -8,6 +8,7 @@ vi.mock("../src/app/DashboardContext", () => ({
     haloConnector: { status: "blocked", message: "not configured" },
     huduConnector: { status: "blocked", message: "not configured" },
     writeHealth: { status: "blocked", message: "writes disabled" },
+    canWrite: true,
     loading: false
   })
 }));
@@ -47,6 +48,9 @@ describe("Connectors screen", () => {
           meta: { total_pages: 3, page: 2, per_page: 10 }
         });
       }
+      if (path === "/smart-actions/screenconnect-session-note/invoke") {
+        return json({ status: "pending_approval", approval_id: 17, output: { message: "note ready" } });
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -75,5 +79,34 @@ describe("Connectors screen", () => {
 
     expect(await screen.findByText("Enter a positive numeric Syncro ticket ID and page.")).toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/connectors/syncro/tickets/"))).toBe(false);
+  });
+
+  it("prepares a ScreenConnect note through the approval API", async () => {
+    render(<Connectors />);
+
+    fireEvent.change(screen.getByLabelText("ScreenConnect client ID"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
+    fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Reviewed with customer." } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare note approval" }));
+
+    expect(await screen.findByText("Approval request 17 created. Review it in Approvals before sending.")).toBeInTheDocument();
+    const request = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/smart-actions/screenconnect-session-note/invoke");
+    expect(request).toBeDefined();
+    expect(JSON.parse(String(request?.[1] && typeof request[1] === "object" && "body" in request[1] ? request[1].body : ""))).toEqual({
+      client_id: "acme",
+      payload: { session_id: "11111111-2222-3333-4444-555555555555", note_body: "Reviewed with customer." }
+    });
+  });
+
+  it("rejects an unmapped ScreenConnect session before making a request", async () => {
+    render(<Connectors />);
+
+    fireEvent.change(screen.getByLabelText("ScreenConnect client ID"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "not-a-session" } });
+    fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Do not send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare note approval" }));
+
+    expect(await screen.findByText("Enter a client ID and mapped ScreenConnect session UUID.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/smart-actions/screenconnect-session-note/invoke"))).toBe(false);
   });
 });
