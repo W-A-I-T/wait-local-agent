@@ -131,6 +131,24 @@ describe("Agents", () => {
             access_mode: "read"
           },
           {
+            id: "nsight-antivirus-quarantine-release",
+            name: "Release N-sight antivirus quarantine",
+            description: "Release selected quarantine items after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
+          },
+          {
+            id: "nsight-antivirus-quarantine-remove",
+            name: "Remove N-sight antivirus quarantine",
+            description: "Remove selected quarantine items after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
+          },
+          {
             id: "scalepad-compliance-health",
             name: "ScalePad compliance health",
             description: "Read one mapped compliance-health snapshot.",

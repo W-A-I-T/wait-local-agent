@@ -59,6 +59,7 @@ MAX_CHECK_CONFIG_LIST_ITEMS = 25
 MAX_ANTIVIRUS_SCANS = 50
 MAX_ANTIVIRUS_SCAN_THREATS = 25
 MAX_ANTIVIRUS_QUARANTINE = 100
+MAX_ANTIVIRUS_QUARANTINE_IDS = 20
 MAX_TEXT_LENGTH = 500
 MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
@@ -319,6 +320,83 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _antivirus_quarantine_records(root)[:MAX_ANTIVIRUS_QUARANTINE]
+
+    def release_antivirus_quarantine(
+        self,
+        device_id: str,
+        guids: list[str],
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Release mapped quarantine items through the documented service."""
+
+        return self._mutate_antivirus_quarantine(
+            device_id,
+            guids,
+            service="mav_quarantine_release",
+            operation="release",
+            client_id=client_id,
+        )
+
+    def remove_antivirus_quarantine(
+        self,
+        device_id: str,
+        guids: list[str],
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Remove mapped quarantine items through the documented service."""
+
+        return self._mutate_antivirus_quarantine(
+            device_id,
+            guids,
+            service="mav_quarantine_remove",
+            operation="remove",
+            client_id=client_id,
+        )
+
+    def _mutate_antivirus_quarantine(
+        self,
+        device_id: str,
+        guids: list[str],
+        *,
+        service: str,
+        operation: str,
+        client_id: str | None,
+    ) -> dict[str, object]:
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                f"N-sight antivirus quarantine {operation} is blocked until "
+                "WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        normalized_guids = _quarantine_guid_list(guids)
+        available_guids = {
+            str(item["quarantine_id"])
+            for item in self.list_antivirus_quarantine(device_id, client_id=client_id)
+            if isinstance(item.get("quarantine_id"), str)
+        }
+        if any(guid not in available_guids for guid in normalized_guids):
+            raise NSightRmmError(
+                f"N-sight quarantine {operation} includes an item outside the device scope"
+            )
+        root = self._request(
+            service,
+            {
+                "deviceid": str(_device_numeric_id(device_id)),
+                "guids": ",".join(normalized_guids),
+            },
+            client_id=client_id,
+        )
+        return {
+            "status": "accepted",
+            "operation": operation,
+            "device_id": device_id,
+            "guids": normalized_guids,
+            "message": _bounded_text(
+                _text(root, "msg")
+                or f"N-sight accepted the antivirus quarantine {operation} request."
+            ),
+        }
 
     def list_antivirus_scans(
         self,
@@ -1485,6 +1563,21 @@ def _patch_id_list(values: list[str]) -> list[str]:
             raise NSightRmmError("N-sight patch IDs must be positive integers")
         if str(patch_id) not in normalized:
             normalized.append(str(patch_id))
+    return normalized
+
+
+def _quarantine_guid_list(values: list[str]) -> list[str]:
+    if not isinstance(values, list) or not values or len(values) > MAX_ANTIVIRUS_QUARANTINE_IDS:
+        raise NSightRmmError("N-sight quarantine mutation requires 1 to 20 quarantine IDs")
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise NSightRmmError("N-sight quarantine IDs must be non-empty strings")
+        guid = value.strip()
+        if not guid or len(guid) > 200:
+            raise NSightRmmError("N-sight quarantine IDs must be non-empty strings")
+        if guid not in normalized:
+            normalized.append(guid)
     return normalized
 
 

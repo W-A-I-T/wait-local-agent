@@ -2710,6 +2710,12 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     antivirus_quarantine_detail = client.get(
         "/smart-actions/nsight-antivirus-quarantine", headers=_auth("tech-token")
     )
+    antivirus_quarantine_release_detail = client.get(
+        "/smart-actions/nsight-antivirus-quarantine-release", headers=_auth("tech-token")
+    )
+    antivirus_quarantine_remove_detail = client.get(
+        "/smart-actions/nsight-antivirus-quarantine-remove", headers=_auth("tech-token")
+    )
     preview = client.post(
         "/smart-actions/nsight-run-task-now/invoke",
         headers=_auth("tech-token"),
@@ -2748,6 +2754,12 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     assert antivirus_quarantine_detail.status_code == 200
     assert antivirus_quarantine_detail.json()["requires_approval"] is False
     assert antivirus_quarantine_detail.json()["access_mode"] == "read"
+    assert antivirus_quarantine_release_detail.status_code == 200
+    assert antivirus_quarantine_release_detail.json()["requires_approval"] is True
+    assert antivirus_quarantine_release_detail.json()["access_mode"] == "write"
+    assert antivirus_quarantine_remove_detail.status_code == 200
+    assert antivirus_quarantine_remove_detail.json()["requires_approval"] is True
+    assert antivirus_quarantine_remove_detail.json()["access_mode"] == "write"
     assert preview.status_code == 200
     assert preview.json()["status"] == "pending_approval"
     assert preview.json()["output"]["check_id"] == 1304847
