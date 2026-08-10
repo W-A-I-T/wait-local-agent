@@ -310,6 +310,11 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
         "/tickets/EUS-missing/end-user-messages",
         headers=_auth("tech-token"),
     )
+    missing_reply = client.post(
+        "/tickets/EUS-missing/end-user-messages",
+        headers=_auth("tech-token"),
+        json={"body": "No ticket"},
+    )
     operator_messages = client.get(
         f"/tickets/{ticket_id}/end-user-messages",
         headers=_auth("viewer-token"),
@@ -317,6 +322,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
 
     assert viewer_reply.status_code == 403
     assert requester_message.status_code == 200
+    assert missing_reply.status_code == 404
     assert wrong_ticket.status_code == 200
     assert wrong_ticket.json() == []
     assert operator_messages.status_code == 200
@@ -394,3 +400,19 @@ def test_end_user_store_rejects_invalid_messages_and_missing_tickets(settings) -
     assert store.list_end_user_messages(
         "EUS-missing", client_id="", requester_id="user-1"
     ) == []
+
+    with pytest.raises(ValueError, match="client scope"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="", author_id="tech", body="body"
+        )
+    with pytest.raises(ValueError, match="author identity"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="acme", author_id=" ", body="body"
+        )
+    with pytest.raises(ValueError, match="body"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="acme", author_id="tech", body=" "
+        )
+    assert store.create_support_end_user_message(
+        "EUS-missing", client_id="acme", author_id="tech", body="body"
+    ) is None
