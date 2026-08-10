@@ -104,6 +104,15 @@ describe("Agents", () => {
             access_mode: "read"
           },
           {
+            id: "nsight-antivirus-products",
+            name: "N-sight supported antivirus products",
+            description: "Read supported antivirus products.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
             id: "nsight-antivirus-scan-start",
             name: "Start N-sight antivirus scan",
             description: "Start a mapped antivirus scan after approval.",
@@ -331,6 +340,24 @@ describe("Agents", () => {
     );
     expect(String(request?.[1]?.body)).toContain("nsight-antivirus-scans");
     expect(String(request?.[1]?.body)).toContain("include_details");
+  });
+
+  it("exposes the N-sight supported antivirus product input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const products = await screen.findByRole("checkbox", { name: /N-sight supported antivirus products/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Review antivirus products" } });
+    fireEvent.click(products);
+    fireEvent.change(screen.getByLabelText("N-sight supported antivirus products input JSON"), {
+      target: { value: "{}" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("nsight-antivirus-products");
   });
 
   it("exposes the approval-gated N-sight antivirus scan-start input", async () => {

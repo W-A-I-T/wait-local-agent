@@ -31,6 +31,7 @@ from wait_local_agent.nsight import (
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightAntivirusProductsAction,
     NSightAntivirusQuarantineAction,
     NSightAntivirusQuarantineMutationAction,
     NSightAntivirusScanCancelAction,
@@ -117,6 +118,14 @@ MAV_SCANS_XML = """
 """
 MAV_SCAN_START_XML = '<result status="OK"><msg>scan accepted</msg></result>'
 MAV_SCAN_CANCEL_XML = '<result status="OK"><msg>scan cancelled</msg></result>'
+MAV_PRODUCTS_XML = """
+<products>
+  <product><name>Bitdefender</name><id>bitdefender</id></product>
+  <product><name>Sophos Anti-Virus</name><id>sophos</id></product>
+  <product><name></name><id>ignored</id></product>
+  <product><name>Ignored</name><id></id></product>
+</products>
+"""
 MAV_QUARANTINE_XML = """
 <quarantines>
   <quarantine>
@@ -739,6 +748,52 @@ def test_nsight_antivirus_quarantine_rechecks_device_and_bounds_records(settings
     ]
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_antivirus_quarantine("server:999", client_id="acme")
+
+
+def test_nsight_supported_antivirus_products_are_bounded_and_mapped(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("service") == "list_supported_av_products"
+        return httpx.Response(200, text=MAV_PRODUCTS_XML)
+
+    adapter = _adapter(settings, handler)
+    assert adapter.list_supported_antivirus_products(client_id="acme") == [
+        {"id": "bitdefender", "name": "Bitdefender"},
+        {"id": "sophos", "name": "Sophos Anti-Virus"},
+    ]
+
+
+def test_nsight_supported_antivirus_products_action_rejects_inputs_and_failures(settings) -> None:
+    action = NSightAntivirusProductsAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_supported_antivirus_products=lambda **kwargs: [
+            {"id": "bitdefender", "name": "Bitdefender"}
+        ],
+    )
+    assert run(provider, {}).status == "success"
+    assert run(provider, {"unexpected": True}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {}).status == "failed"
+    assert run(
+        SimpleNamespace(
+            adapter_id="n-sight",
+            list_supported_antivirus_products=lambda **kwargs: (_ for _ in ()).throw(
+                RuntimeError("unavailable")
+            ),
+        ),
+        {},
+    ).status == "failed"
+    assert run(
+        SimpleNamespace(adapter_id="n-sight", list_supported_antivirus_products=lambda **kwargs: {}),
+        {},
+    ).status == "failed"
 
 
 def test_nsight_antivirus_quarantine_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
