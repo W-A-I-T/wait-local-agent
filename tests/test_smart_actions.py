@@ -1019,6 +1019,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "connectwise-ticket-status-update",
         "connectwise-ticket-update-fields",
         "dispatch-suggestion",
+        "documentation-assisted-response",
         "find-similar-tickets",
         "halopsa-ticket-add-note",
         "halopsa-ticket-assign-technician",
@@ -3069,6 +3070,153 @@ def test_ai_actions_use_deterministic_local_fallback(settings) -> None:
     assert resolution.output["suggestion"]
     assert result.run_id is not None
     assert store.get_smart_action_run(result.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_documentation_assisted_response_drafts_and_delivers_local_note_after_approval(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = SmartActionService(store, replace(settings, allow_write_actions=True))
+
+    pending = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001"},
+        "requester",
+    )
+
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert pending.output["response"]
+    assert pending.output["citations"]
+    citations = cast(list[dict[str, object]], pending.output["citations"])
+    assert citations[0]["type"] == "ticket"
+    assert any(item["type"] == "knowledge" for item in citations)
+    assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
+
+    completed = service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="technician",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert completed.status == "approved"
+    notes = store.list_ticket_notes("TCK-1001", client_id="acme")
+    assert [note.body for note in notes] == [pending.output["response"]]
+
+
+def test_documentation_assisted_response_fails_closed_without_knowledge(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+    (doc_root / "unrelated.md").write_text("# Unrelated\n\nOther material.", encoding="utf-8")
+    active_settings = replace(settings, allowed_doc_root=doc_root)
+    store = Store(active_settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, active_settings)
+
+    result = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001"},
+        "requester",
+    )
+
+    assert result.status == "failed"
+    assert result.error_detail == "no_relevant_sources"
+    assert store.list_approval_requests() == []
+
+
+def test_documentation_assisted_response_reports_unavailable_provider(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(
+        store,
+        settings,
+        provider=UnavailableProvider(),
+        provider_configured=True,
+    )
+
+    result = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001"},
+        "requester",
+    )
+
+    assert result.status == "provider_not_configured"
+    assert store.list_approval_requests() == []
+
+
+def test_documentation_assisted_response_validates_payload_and_provider_failures(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+
+    service = SmartActionService(store, settings)
+    assert service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001", "unexpected": True},
+        "requester",
+    ).error_detail.endswith("unsupported fields")
+    assert service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "NOPE"},
+        "requester",
+    ).error_detail == "ticket_id must identify an existing ticket"
+    unavailable = SmartActionService(
+        store,
+        settings,
+        provider=FakeProvider(),
+        provider_configured=False,
+    ).invoke("documentation-assisted-response", {"ticket_id": "TCK-1001"}, "requester")
+    assert unavailable.status == "provider_not_configured"
+
+    failing = SmartActionService(
+        store,
+        settings,
+        provider=FailingProvider(),
+        provider_configured=True,
+    ).invoke("documentation-assisted-response", {"ticket_id": "TCK-1001"}, "requester")
+    assert failing.status == "failed"
+    assert failing.error_detail == "provider request failed: provider exploded"
+
+    invalid = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001", "response": " "},
+        "requester",
+    )
+    assert invalid.status == "failed"
+    assert invalid.error_detail.startswith("response must be")
+    bad_channel = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001", "response": "Reviewed.", "channel": "carrier-pigeon"},
+        "requester",
+    )
+    assert bad_channel.status == "failed"
+    assert "channel must be" in bad_channel.error_detail
+
+
+def test_documentation_assisted_response_uses_edited_response_and_preserves_write_gate(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    service = SmartActionService(store, settings)
+
+    pending = service.invoke(
+        "documentation-assisted-response",
+        {"ticket_id": "TCK-1001", "response": "Reviewed response."},
+        "requester",
+    )
+    assert pending.status == "pending_approval"
+    assert pending.output["response"] == "Reviewed response."
+
+    service.update_approval(
+        pending.approval_id or 0,
+        "approved",
+        approver="technician",
+        approver_role=Role.TECHNICIAN,
+    )
+    smart_run = store.get_smart_action_run(pending.run_id or 0)
+    assert smart_run is not None
+    assert smart_run.status == "failed"
+    assert store.list_ticket_notes("TCK-1001", client_id="acme") == []
 
 
 def test_deterministic_provider_never_reports_ai_when_inference_is_enabled(settings) -> None:

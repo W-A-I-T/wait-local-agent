@@ -84,7 +84,7 @@ def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings
     asyncio.run(scenario())
 
 
-def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path) -> None:
+def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path, settings) -> None:
     db_path = tmp_path / "state.db"
     _seed_tickets(db_path)
     with Store(db_path)._connect() as connection:  # noqa: SLF001
@@ -92,14 +92,17 @@ def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_pat
 
     async def scenario() -> None:
         store = Store(db_path)
+        service = SmartActionService(store, replace(settings, data_path=db_path))
         manual_run = run_workflow_template(
             store,
             "documentation-assisted-response",
             "TCK-1001",
             client_id="acme",
+            actor="requester",
+            tool_executor=service,
         )
         manual_approval = store.get_approval_request(manual_run.approval_request_id or 0)
-        manager = SchedulerManager(store, enabled=False)
+        manager = SchedulerManager(store, enabled=False, smart_action_service=service)
         scheduled_job = manager.register(
             "documentation-assisted-response",
             "0 9 * * *",
@@ -115,10 +118,11 @@ def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_pat
         assert scheduled_approval is not None
         assert scheduled_run.status == manual_run.status == "pending_approval"
         assert scheduled_approval.action_type == manual_approval.action_type
-        assert scheduled_approval.subject_id == manual_approval.subject_id
-        assert json.loads(scheduled_approval.payload_json)["template_id"] == json.loads(
-            manual_approval.payload_json
-        )["template_id"]
+        assert scheduled_approval.subject_id != manual_approval.subject_id
+        scheduled_payload = json.loads(scheduled_approval.payload_json)
+        manual_payload = json.loads(manual_approval.payload_json)
+        assert scheduled_payload["action_id"] == manual_payload["action_id"]
+        assert scheduled_payload["payload"]["ticket_id"] == manual_payload["payload"]["ticket_id"]
 
     asyncio.run(scenario())
 
@@ -182,6 +186,7 @@ def test_scheduled_pending_workflow_does_not_emit_completion_event(tmp_path: Pat
         store,
         enabled=False,
         agent_service=service,
+        smart_action_service=SmartActionService(store, settings),
         event_dispatcher=EventDispatcher(store, service),
     )
     scheduled_job = manager.register(

@@ -916,7 +916,10 @@ def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) 
 
     assert run.status_code == 200
     assert run.json()["client_id"] == "acme"
-    assert [request["subject_id"] for request in approvals.json()] == ["TCK-1002"]
+    assert [request["action_type"] for request in approvals.json()] == [
+        "smart_action:documentation-assisted-response"
+    ]
+    assert approvals.json()[0]["client_id"] == "acme"
     assert [item["ticket_id"] for item in runs.json()] == ["TCK-1002"]
 
 
@@ -1351,30 +1354,54 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
-    client = TestClient(create_app(settings))
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    client = TestClient(create_app(secure_settings))
 
     run = client.post(
         "/workflows/templates/documentation-assisted-response/runs",
+        headers=_auth("tech-token"),
         json={"ticket_id": "TCK-1002"},
     )
     approval_request_id = run.json()["approval_request_id"]
 
     approved = client.post(
         f"/approval-requests/{approval_request_id}",
+        headers=_auth("admin-token"),
         json={"status": "approved", "comment": "ready"},
     )
-    approved_runs = client.get("/workflow-runs")
+    approved_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
+    second_run = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1002"},
+    )
     rejected = client.post(
-        f"/approval-requests/{approval_request_id}",
+        f"/approval-requests/{second_run.json()['approval_request_id']}",
+        headers=_auth("admin-token"),
         json={"status": "rejected", "comment": "needs changes"},
     )
-    rejected_runs = client.get("/workflow-runs")
+    rejected_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
 
     assert approved.status_code == 200
-    assert approved_runs.json()[0]["status"] == "approved"
+    approved_view = next(item for item in approved_runs.json() if item["id"] == run.json()["id"])
+    assert approved_view["status"] == "approved"
     assert rejected.status_code == 200
-    assert rejected_runs.json()[0]["status"] == "rejected"
+    rejected_view = next(
+        item for item in rejected_runs.json() if item["id"] == second_run.json()["id"]
+    )
+    assert rejected_view["status"] == "rejected"
 
 
 def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registration(settings) -> None:

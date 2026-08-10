@@ -723,6 +723,126 @@ class SuggestResolutionAction:
         )
 
 
+class DocumentationAssistedResponseAction:
+    manifest = SmartActionManifest(
+        action_id="documentation-assisted-response",
+        title="Documentation-assisted response",
+        description=(
+            "Draft a client-safe response grounded in tenant-scoped local knowledge, "
+            "then deliver it only after technician approval."
+        ),
+        kind="ai_assisted",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id"],
+            "properties": {
+                "ticket_id": {"type": "string"},
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "response": "optional operator-edited response",
+            },
+        },
+        output_schema={
+            "ticket_id": "string",
+            "response": "string",
+            "citations": "array",
+            "channel": "string",
+            "recipient": "string",
+            "subject": "string",
+            "approval_required": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=10,
+        risk_level="medium",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "ticket_id",
+            "channel",
+            "recipient",
+            "subject",
+            "response",
+            "_approval_completed",
+        }
+        if set(payload) - allowed:
+            return _failed("documentation-assisted response payload contains unsupported fields")
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("ticket_id must identify an existing ticket")
+
+        sources = _sources_for_ticket(context, ticket)
+        if not sources:
+            return _failed("no_relevant_sources")
+        citations = [
+            _ticket_evidence(ticket, ["client", "subject", "body", "priority", "status"]),
+            *[_source_citation(source) for source in sources],
+        ]
+
+        response = payload.get("response")
+        if response is None:
+            if not context.provider_available or context.provider is None:
+                return _provider_not_configured()
+            try:
+                response = context.provider.draft_response(ticket, sources)
+            except ProviderUnavailableError as exc:
+                return _provider_not_configured(str(exc))
+            except Exception as exc:
+                return _failed(f"provider request failed: {redact_text(str(exc))}")
+        if not isinstance(response, str) or not response.strip() or len(response) > 10_000:
+            return _failed("response must be a non-empty string of at most 10000 characters")
+        response = response.strip()
+
+        channel = payload.get("channel", "ticket_note")
+        recipient = payload.get("recipient", "")
+        subject = payload.get("subject", "")
+        delivery_payload: dict[str, object] = {
+            "channel": channel,
+            "recipient": recipient,
+            "subject": subject,
+            "body": response,
+            "ticket_id": ticket.id,
+        }
+        message_or_error = _communication_message(context, delivery_payload)
+        if isinstance(message_or_error, ActionResult):
+            return message_or_error
+
+        output: dict[str, object] = {
+            "ticket_id": ticket.id,
+            "response": response,
+            "citations": citations,
+            "channel": message_or_error.channel,
+            "recipient": message_or_error.recipient,
+            "subject": message_or_error.subject,
+            "approval_required": True,
+            "ai_assisted": _provider_is_ai_assisted(context),
+            "provider_id": _provider_id(context),
+            "estimate": self.manifest.estimated_minutes_saved,
+        }
+        if not payload.get("_approval_completed"):
+            return ActionResult(status="success", output=output, evidence=citations)
+
+        delivery = CommunicationSendAction().run(
+            context,
+            {**delivery_payload, "_approval_completed": True},
+        )
+        if delivery.status != "success":
+            return ActionResult(
+                status=delivery.status,
+                output=output,
+                evidence=[*citations, *delivery.evidence],
+                error_detail=delivery.error_detail,
+            )
+        return ActionResult(
+            status="success",
+            output={**output, **delivery.output, "approved": True},
+            evidence=[*citations, *delivery.evidence],
+        )
+
+
 class KnowledgeSearchAction:
     manifest = SmartActionManifest(
         action_id="knowledge-search",
@@ -4956,6 +5076,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TicketTriageAction(),
         TicketSummaryAction(),
         SuggestResolutionAction(),
+        DocumentationAssistedResponseAction(),
         KnowledgeSearchAction(),
         M365IdentityLookupAction(),
         RmmDeviceLookupAction(),
