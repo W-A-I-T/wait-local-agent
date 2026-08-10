@@ -57,8 +57,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   backup-check history inventory, mapped patch reads, and approval-gated
   patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
-  exposes separately mapped Core client inventory, ControlMap risk summaries,
-  and Lifecycle Manager goal and assessment reads,
+  exposes separately mapped Core client inventory, ControlMap risk summaries
+  and single-client compliance-health snapshots, and Lifecycle Manager goal and
+  assessment reads,
   Kaseya
   VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
@@ -1098,7 +1099,8 @@ authentication guide](https://developer.timezest.com/authentication/),
 ### ScalePad
 
 The ScalePad adapter exposes bounded, read-only Core client, ControlMap
-risk-summary, and Lifecycle Manager goal and assessment reads through the
+risk-summary and single-client compliance-health, and Lifecycle Manager goal
+and assessment reads through the
 shared smart-action catalog. Configure separate documented provider IDs per
 WAIT client:
 
@@ -1107,23 +1109,27 @@ WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
 WAIT_SCALEPAD_API_KEY=
 WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
 WAIT_SCALEPAD_RISK_TENANT_MAP_JSON={"acme":"scalepad-tenant-id"}
+WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON={"acme":"365bcf1e-a26b-4abc-ad9a-8607e2f43910"}
 WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON={"acme":"scalepad-lifecycle-client-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-`scalepad-client-lookup`, `scalepad-risk-summary`, `scalepad-goal-lookup`, and
+`scalepad-client-lookup`, `scalepad-risk-summary`,
+`scalepad-compliance-health`, `scalepad-goal-lookup`, and
 `scalepad-assessment-lookup` are reachable through the generic smart-action API,
 CLI, agent planner/tool catalog, and `/agents` UI;
 dedicated health and read routes are also available under
 `/connectors/scalepad`. WAIT builds the exact documented Core client-ID or
 ControlMap tenant-ID filter locally, caps each page, rechecks the returned
 provider scope, and exposes only bounded, redacted records. The Core,
-ControlMap, and Lifecycle Manager mappings are intentionally separate because
+ControlMap risk-summary, ControlMap compliance-health, and Lifecycle Manager
+mappings are intentionally separate because
 ScalePad's public docs do not establish that their identifiers are
 interchangeable. ScalePad writes and other product APIs remain unavailable.
 See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
 [List Clients Risk Summaries reference](https://developer.scalepad.com/reference/03_listclientsrisksummary-1),
+[Get Client Compliance Health reference](https://developer.scalepad.com/reference/02_clienthealth-1),
 [List Goals reference](https://developer.scalepad.com/reference/apipublicv1goallist),
 [List Assessments reference](https://developer.scalepad.com/reference/apipublicv1assessmentslist),
 and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).

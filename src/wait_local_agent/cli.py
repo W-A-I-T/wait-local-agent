@@ -119,6 +119,7 @@ from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
     ScalePadClientResponse,
+    ScalePadComplianceHealthResponse,
     ScalePadGoalResponse,
     ScalePadRiskSummaryResponse,
 )
@@ -2068,6 +2069,14 @@ def scalepad_risk_summaries(client_id: str) -> None:
     )
 
 
+@connectors_app.command("scalepad-compliance-health")
+def scalepad_compliance_health(client_id: str) -> None:
+    _print_scalepad_compliance_health_response(
+        "clients.health",
+        _scalepad_client().get_compliance_health(client_id=client_id),
+    )
+
+
 @connectors_app.command("scalepad-goals")
 def scalepad_goals(
     client_id: str,
@@ -3511,6 +3520,23 @@ def _print_scalepad_risk_summary_response(
                 "items": [redact_value(item) for item in response.items],
                 "next_cursor": response.next_cursor,
                 "total_count": response.total_count,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_scalepad_compliance_health_response(
+    read_type: str,
+    response: ScalePadComplianceHealthResponse,
+) -> None:
+    _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "item": redact_value(response.item) if response.item is not None else None,
             },
             sort_keys=True,
             indent=2,

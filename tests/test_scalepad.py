@@ -20,6 +20,7 @@ from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
     ScalePadClientResponse,
+    ScalePadComplianceHealthResponse,
     ScalePadGoalResponse,
     ScalePadReadError,
     ScalePadRiskSummaryResponse,
@@ -101,6 +102,15 @@ ASSESSMENTS_JSON = {
     "next_cursor": "Y3Vyc29yLWFzc2Vzc21lbnRz",
 }
 
+COMPLIANCE_HEALTH_JSON = {
+    "client": {"id": "365bcf1e-a26b-4abc-ad9a-8607e2f43910", "name": "Acme Corporation"},
+    "compliance_score": 82,
+    "risk_score": 3,
+    "frameworks": {"CIS": {"score": 91}},
+    "work_progress": {"open": 4, "completed": 12},
+    "secret": "scalepad-secret-token",
+}
+
 
 def _client(settings, handler, **overrides) -> ScalePadClient:
     values = {
@@ -158,6 +168,74 @@ def test_scalepad_risk_summary_uses_separate_tenant_mapping_and_rechecks_scope(s
     assert response.items[0]["client"]["tenant_id"] == "sp-tenant-1"  # type: ignore[index]
     assert "scalepad-secret-token" not in json.dumps(response.items)
     assert len(seen) == 1
+
+
+def test_scalepad_compliance_health_uses_separate_uuid_mapping_and_rechecks_scope(settings) -> None:
+    seen: list[httpx.Request] = []
+    provider_id = "365bcf1e-a26b-4abc-ad9a-8607e2f43910"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.url.path == f"/controlmap/v1/clients/{provider_id}/health"
+        assert request.headers["x-api-key"] == "scalepad-secret-token"
+        return httpx.Response(200, json=COMPLIANCE_HEALTH_JSON)
+
+    response = _client(
+        settings,
+        handler,
+        scalepad_compliance_client_map_json=json.dumps({"acme": provider_id}),
+    ).get_compliance_health(client_id="acme")
+
+    assert response.result.status == "ready"
+    assert response.result.count == 1
+    assert response.item is not None
+    assert response.item["client"]["id"] == provider_id  # type: ignore[index]
+    assert "scalepad-secret-token" not in json.dumps(response.item)
+    assert len(seen) == 1
+
+
+def test_scalepad_compliance_health_fails_closed_for_scope_and_configuration(settings) -> None:
+    provider_id = "365bcf1e-a26b-4abc-ad9a-8607e2f43910"
+    client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        scalepad_compliance_client_map_json=json.dumps({"acme": provider_id}),
+    )
+    outside = client.get_compliance_health(client_id="other")
+    assert outside.result.status == "failed"
+    assert "tenant scope" in outside.result.message
+
+    mismatch = _client(
+        settings,
+        lambda request: httpx.Response(200, json={"client": {"id": "3f3e1d35-8d5a-4b1e-9c9c-2c4b7e4b6b11"}}),
+        scalepad_compliance_client_map_json=json.dumps({"acme": provider_id}),
+    ).get_compliance_health(client_id="acme")
+    assert mismatch.result.status == "failed"
+    assert "outside" in mismatch.result.message
+
+    missing = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+    ).get_compliance_health(client_id="acme")
+    assert missing.result.status == "not_configured"
+    assert "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON" in missing.result.message
+
+    blocked = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        allow_http_probing=False,
+        scalepad_compliance_client_map_json=json.dumps({"acme": provider_id}),
+    ).get_compliance_health(client_id="acme")
+    assert blocked.result.status == "blocked"
+
+    for mapping, expected in (("not-json", "malformed"), ('{"acme":"not-a-uuid"}', "UUID")):
+        invalid = _client(
+            settings,
+            lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+            scalepad_compliance_client_map_json=mapping,
+        ).get_compliance_health(client_id="acme")
+        assert invalid.result.status == "failed"
+        assert expected in invalid.result.message
 
 
 def test_scalepad_goals_use_separate_mapping_filters_and_recheck_scope(settings) -> None:
@@ -428,6 +506,30 @@ def test_scalepad_health_action_and_connector_surfaces(settings) -> None:
     assert risk_result.output["count"] == 1
     assert risk_result.evidence[0]["operation"] == "clients.risks-summary"
 
+    compliance_client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        scalepad_compliance_client_map_json=json.dumps(
+            {"acme": "365bcf1e-a26b-4abc-ad9a-8607e2f43910"}
+        ),
+    )
+    compliance_service = SmartActionService(
+        Store(compliance_client.settings.data_path),
+        compliance_client.settings,
+        scalepad_client=compliance_client,
+    )
+    compliance_result = compliance_service.invoke(
+        "scalepad-compliance-health",
+        {"client_id": "acme"},
+        "tech",
+        client_id="acme",
+    )
+    assert compliance_result.status == "success"
+    health = compliance_result.output["health"]
+    assert isinstance(health, dict)
+    assert health["compliance_score"] == 82
+    assert compliance_result.evidence[0]["operation"] == "clients.health"
+
     goal_client = _client(
         settings,
         lambda request: httpx.Response(200, json=GOALS_JSON),
@@ -475,6 +577,7 @@ def test_scalepad_api_routes_are_reachable_and_tenant_scoped(settings) -> None:
     assert "/connectors/scalepad/health" in routes
     assert "/connectors/scalepad/clients" in routes
     assert "/connectors/scalepad/risk-summaries" in routes
+    assert "/connectors/scalepad/compliance-health" in routes
     assert "/connectors/scalepad/goals" in routes
     assert "/connectors/scalepad/assessments" in routes
 
@@ -497,6 +600,13 @@ def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, mo
                 [{"client": {"tenant_id": "sp-tenant-1"}, "open": 2}],
                 "Y3Vyc29yLTI=",
                 1,
+            )
+
+        def get_compliance_health(self, *, client_id: str) -> ScalePadComplianceHealthResponse:
+            assert client_id == "acme"
+            return ScalePadComplianceHealthResponse(
+                ConnectorReadResult("ready", "health ready", 1),
+                {"client": {"id": "365bcf1e-a26b-4abc-ad9a-8607e2f43910"}, "score": 82},
             )
 
         def get_goals(
@@ -545,6 +655,19 @@ def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, mo
     with pytest.raises(HTTPException) as denied_error:
         route.endpoint(request, AuthContext(Role.ADMIN, None), None)
     assert getattr(denied_error.value, "status_code", None) == 403
+
+    health_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", "") == "/connectors/scalepad/compliance-health"
+    )
+    assert isinstance(health_route, APIRoute)
+    health = health_route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    assert health["result"]["status"] == "ready"
+    assert health["item"]["score"] == 82
+    with pytest.raises(HTTPException) as health_denied_error:
+        health_route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+    assert getattr(health_denied_error.value, "status_code", None) == 403
 
 
 def test_scalepad_goals_api_executes_scoped_and_denied_paths(settings, monkeypatch) -> None:
@@ -667,6 +790,25 @@ def test_scalepad_risk_summary_cli_is_reachable(settings, monkeypatch) -> None:
     payload = json.loads(result.output)
     assert payload["result"]["status"] == "ready"
     assert payload["total_count"] == 1
+
+
+def test_scalepad_compliance_health_cli_is_reachable(settings, monkeypatch) -> None:
+    client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        scalepad_compliance_client_map_json=json.dumps(
+            {"acme": "365bcf1e-a26b-4abc-ad9a-8607e2f43910"}
+        ),
+    )
+    monkeypatch.setattr(cli_module, "_scalepad_client", lambda: client)
+    monkeypatch.setattr(cli_module, "_store", lambda: Store(client.settings.data_path))
+
+    result = CliRunner().invoke(cli_module.app, ["connectors", "scalepad-compliance-health", "acme"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"]["status"] == "ready"
+    assert payload["item"]["compliance_score"] == 82
 
 
 def test_scalepad_goals_cli_is_reachable(settings, monkeypatch) -> None:

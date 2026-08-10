@@ -84,6 +84,15 @@ describe("Agents", () => {
             required_role: "technician",
             approval_required: true,
             access_mode: "write"
+          },
+          {
+            id: "scalepad-compliance-health",
+            name: "ScalePad compliance health",
+            description: "Read one mapped compliance-health snapshot.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
           }
         ]), { status: 200 }));
       }
@@ -221,6 +230,25 @@ describe("Agents", () => {
     );
     expect(String(request?.[1]?.body)).toContain("nsight-run-task-now");
     expect(String(request?.[1]?.body)).toContain("1304847");
+  });
+
+  it("exposes the mapped ScalePad compliance-health input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const health = await screen.findByRole("checkbox", { name: /ScalePad compliance health/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Compliance review" } });
+    fireEvent.click(health);
+    fireEvent.change(screen.getByLabelText("ScalePad compliance health input JSON"), {
+      target: { value: JSON.stringify({ client_id: "acme" }) }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("scalepad-compliance-health");
+    expect(String(request?.[1]?.body)).toContain("acme");
   });
 
   it("loads, compares, and restores agent revisions", async () => {

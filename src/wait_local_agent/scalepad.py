@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 
@@ -72,6 +73,12 @@ class ScalePadRiskSummaryResponse:
 
 
 @dataclass(frozen=True)
+class ScalePadComplianceHealthResponse:
+    result: ConnectorReadResult
+    item: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
 class ScalePadGoalResponse:
     result: ConnectorReadResult
     items: list[dict[str, object]]
@@ -103,6 +110,9 @@ class ScalePadReadProvider(Protocol):
         ...
 
     def get_risk_summary(self, *, client_id: str) -> ScalePadRiskSummaryResponse:
+        ...
+
+    def get_compliance_health(self, *, client_id: str) -> ScalePadComplianceHealthResponse:
         ...
 
     def get_goals(
@@ -143,6 +153,10 @@ class ScalePadClient:
         configured_surfaces = (
             (self.settings.scalepad_client_map_json, self._client_mapping),
             (self.settings.scalepad_risk_tenant_map_json, self._risk_tenant_mapping),
+            (
+                self.settings.scalepad_compliance_client_map_json,
+                self._compliance_client_mapping,
+            ),
             (
                 self.settings.scalepad_lifecycle_client_map_json,
                 self._lifecycle_client_mapping,
@@ -248,6 +262,49 @@ class ScalePadClient:
             items,
             _optional_cursor(payload.get("next_cursor")),
             _optional_nonnegative_int(payload.get("total_count")),
+        )
+
+    def get_compliance_health(self, *, client_id: str) -> ScalePadComplianceHealthResponse:
+        """Read one explicitly mapped client's documented ControlMap health snapshot."""
+
+        blocked = self._blocked_compliance_response()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_compliance_response()
+        if missing is not None:
+            return missing
+        try:
+            provider_id = self._compliance_client_mapping(client_id)
+            payload = self._get(
+                f"controlmap/v1/clients/{provider_id}/health",
+                configuration="compliance",
+            )
+        except ScalePadReadError as exc:
+            return ScalePadComplianceHealthResponse(ConnectorReadResult("failed", exc.message))
+        if not isinstance(payload, Mapping):
+            return ScalePadComplianceHealthResponse(
+                ConnectorReadResult("failed", "ScalePad returned a malformed health response object.")
+            )
+        bounded = _bound_risk_value(payload, depth=0)
+        if not isinstance(bounded, dict):
+            return ScalePadComplianceHealthResponse(
+                ConnectorReadResult("failed", "ScalePad returned malformed compliance health data.")
+            )
+        client = bounded.get("client")
+        if isinstance(client, Mapping) and "id" in client:
+            returned_id = _optional_provider_id(client.get("id"))
+            if returned_id != provider_id:
+                return ScalePadComplianceHealthResponse(
+                    ConnectorReadResult("failed", "ScalePad compliance health is outside the mapped client scope.")
+                )
+        redacted = redact_value(bounded)
+        if not isinstance(redacted, dict):
+            return ScalePadComplianceHealthResponse(
+                ConnectorReadResult("failed", "ScalePad returned malformed compliance health data.")
+            )
+        return ScalePadComplianceHealthResponse(
+            ConnectorReadResult("ready", "ScalePad compliance health read succeeded.", 1),
+            redacted,
         )
 
     def get_goals(
@@ -381,6 +438,8 @@ class ScalePadClient:
             )
         if configuration == "risk":
             missing = self._not_configured_risk_result()
+        elif configuration == "compliance":
+            missing = self._not_configured_compliance_result()
         elif configuration == "lifecycle":
             missing = self._not_configured_lifecycle_result()
         else:
@@ -477,6 +536,29 @@ class ScalePadClient:
             )
         return _bounded_provider_id(raw_provider_id)
 
+    def _compliance_client_mapping(self, client_id: str) -> str:
+        safe_client_id = _safe_client_id(client_id)
+        try:
+            mapping = json.loads(self.settings.scalepad_compliance_client_map_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON is malformed."
+            ) from exc
+        if not isinstance(mapping, Mapping):
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON must be an object."
+            )
+        if safe_client_id not in mapping:
+            raise ScalePadReadError(
+                "ScalePad compliance health mapping is outside the tenant scope."
+            )
+        raw_provider_id = mapping[safe_client_id]
+        if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
+            raise ScalePadReadError(
+                "ScalePad compliance health mapping must use non-empty UUID strings."
+            )
+        return _uuid_provider_id(raw_provider_id, "ScalePad compliance client IDs")
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
@@ -554,6 +636,25 @@ class ScalePadClient:
             f"ScalePad Lifecycle credentials are incomplete: {', '.join(missing)}.",
         )
 
+    def _not_configured_compliance_result(self) -> ConnectorReadResult | None:
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SCALEPAD_BASE_URL": self.settings.scalepad_base_url,
+                "WAIT_SCALEPAD_API_KEY": self.settings.scalepad_api_key,
+                "WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON": (
+                    self.settings.scalepad_compliance_client_map_json
+                ),
+            }.items()
+            if not value
+        ]
+        if not missing:
+            return None
+        return ConnectorReadResult(
+            "not_configured",
+            f"ScalePad compliance health credentials are incomplete: {', '.join(missing)}.",
+        )
+
     def _blocked_response(self) -> ScalePadClientResponse | None:
         result = self._blocked_result()
         return ScalePadClientResponse(result, []) if result is not None else None
@@ -585,6 +686,14 @@ class ScalePadClient:
     def _not_configured_assessment_response(self) -> ScalePadAssessmentResponse | None:
         result = self._not_configured_lifecycle_result()
         return ScalePadAssessmentResponse(result, []) if result is not None else None
+
+    def _blocked_compliance_response(self) -> ScalePadComplianceHealthResponse | None:
+        result = self._blocked_result()
+        return ScalePadComplianceHealthResponse(result) if result is not None else None
+
+    def _not_configured_compliance_response(self) -> ScalePadComplianceHealthResponse | None:
+        result = self._not_configured_compliance_result()
+        return ScalePadComplianceHealthResponse(result) if result is not None else None
 
 
 def _normalize_client(row: object, provider_id: str) -> ScalePadClientRecord | None:
@@ -656,6 +765,13 @@ def _bounded_provider_id(value: object) -> str:
     if any(ord(character) < 32 for character in normalized):
         raise ScalePadReadError("ScalePad provider client IDs must not contain control characters.")
     return normalized
+
+
+def _uuid_provider_id(value: str, label: str) -> str:
+    try:
+        return str(UUID(value.strip()))
+    except (AttributeError, ValueError) as exc:
+        raise ScalePadReadError(f"{label} must be valid UUID strings.") from exc
 
 
 def _optional_provider_id(value: object) -> str:
@@ -748,7 +864,11 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         "controlmap/v1/clients/risks-summary",
         "lifecycle-manager/v1/goals",
         "lifecycle-manager/v1/assessments",
-    }:
+    } and not (
+        endpoint.startswith("controlmap/v1/clients/")
+        and endpoint.endswith("/health")
+        and _is_uuid_segment(endpoint[len("controlmap/v1/clients/") : -len("/health")])
+    ):
         raise ScalePadReadError("ScalePad endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"
 
@@ -767,11 +887,20 @@ def _optional_nonnegative_int(value: object) -> int | None:
     return parsed if parsed >= 0 else None
 
 
+def _is_uuid_segment(value: str) -> bool:
+    try:
+        UUID(value)
+    except (AttributeError, ValueError):
+        return False
+    return True
+
+
 __all__ = [
     "ScalePadClient",
     "ScalePadClientRecord",
     "ScalePadClientResponse",
     "ScalePadRiskSummaryResponse",
+    "ScalePadComplianceHealthResponse",
     "ScalePadGoalResponse",
     "ScalePadAssessmentResponse",
     "ScalePadReadError",
