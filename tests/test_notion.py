@@ -229,9 +229,33 @@ def test_notion_page_comment_is_scoped_bounded_and_fail_closed(settings) -> None
 def test_notion_comment_helpers_validate_bounds() -> None:
     assert _safe_comment_markdown(" comment ") == "comment"
     assert _comment_id({"id": "33333333-4444-5555-6666-777777777777"}) == "33333333-4444-5555-6666-777777777777"
+    assert _comment_id(None) is None
+    assert _comment_id({"id": 1}) is None
     assert _comment_id({"id": "bad"}) is None
     with pytest.raises(NotionReadError):
+        _safe_comment_markdown(None)
+    with pytest.raises(NotionReadError):
         _safe_comment_markdown("x" * (MAX_COMMENT_MARKDOWN_LENGTH + 1))
+
+
+def test_notion_page_comment_fails_closed_for_missing_config_and_provider_errors(settings) -> None:
+    missing = NotionClient(replace(settings, allow_http_probing=True)).preview_page_comment(
+        PAGE_ID, "comment", client_id="acme"
+    )
+    blocked_create = NotionClient(_configured(settings, allow_http_probing=False)).create_page_comment(
+        PAGE_ID, "comment", client_id="acme"
+    )
+    provider_error = NotionClient(
+        _configured(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, json={"message": "down"})),
+    ).create_page_comment(PAGE_ID, "comment", client_id="acme")
+
+    assert missing.status == "failed"
+    assert "credentials are incomplete" in missing.message
+    assert blocked_create.status == "failed"
+    assert "blocked" in blocked_create.message
+    assert provider_error.status == "failed"
+    assert "request failed" in provider_error.message
 
 
 def test_notion_data_source_query_is_mapped_bounded_and_read_only(settings) -> None:

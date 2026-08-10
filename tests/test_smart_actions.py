@@ -1337,6 +1337,46 @@ def test_notion_page_comments_are_previewed_approval_gated_and_scoped(settings) 
     assert foreign.status == "failed"
 
 
+def test_notion_page_comment_action_rejects_bad_payload_and_provider_edges(settings) -> None:
+    store = Store(settings.data_path)
+    context = _action_context(store, settings, client_id="acme")
+    action = NotionPageCommentAction()
+    valid: dict[str, object] = {
+        "page_id": "11111111-2222-3333-4444-555555555555",
+        "client_id": "acme",
+        "markdown": "comment",
+    }
+
+    for payload in (
+        {**valid, "page_id": ""},
+        {**valid, "client_id": ""},
+        {**valid, "markdown": ""},
+    ):
+        assert action.run(context, payload).status == "failed"
+
+    class RaisingProvider:
+        def preview_page_comment(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+        def create_page_comment(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+    raising = action.run(replace(context, notion_client=RaisingProvider()), valid)
+    assert raising.status == "failed"
+    assert raising.error_detail == "Notion page comment operation failed"
+
+    class FailedProvider:
+        def preview_page_comment(self, *args, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", comment_id="")
+
+        def create_page_comment(self, *args, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", comment_id="")
+
+    failed = action.run(replace(context, notion_client=FailedProvider()), valid)
+    assert failed.status == "failed"
+    assert failed.error_detail == "provider rejected"
+
+
 def test_syncro_ticket_writes_are_approval_gated_and_tenant_scoped(settings) -> None:
     class FakeSyncroWrites:
         def __init__(self, *, health_status="ready", result_status="succeeded"):
