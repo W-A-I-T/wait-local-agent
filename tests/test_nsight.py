@@ -668,6 +668,16 @@ def test_nsight_inventory_and_performance_parsers_enforce_bounds() -> None:
     assert _optional_number("1e100") is None
 
 
+def test_nsight_asset_details_omit_invalid_numeric_fields_and_empty_inventory() -> None:
+    asset = _asset_detail_records(
+        ElementTree.fromstring(
+            "<result><chassistype>not-a-number</chassistype>"
+            "<ram>999999999999999999999999999999</ram></result>"
+        )
+    )
+    assert asset == {"details": {}, "hardware": [], "software": []}
+
+
 def test_backup_history_parser_enforces_documented_bounds() -> None:
     checks = "".join(f"<name>Check {index}</name>" for index in range(30))
     days = "".join(
