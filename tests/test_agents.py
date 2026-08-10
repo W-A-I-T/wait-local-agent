@@ -137,6 +137,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "sharepoint-document-content",
         "sharepoint-documentation-search",
         "scalepad-client-lookup",
+        "scalepad-risk-summary",
         "timezest-scheduling-request-lookup",
         "dispatch-suggestion",
         "collector-preview",

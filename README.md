@@ -54,7 +54,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and health
   inventory, TimeZest exposes tenant-mapped scheduling-request reads, ScalePad
-  exposes tenant-mapped Core client inventory, Kaseya
+  exposes separately mapped Core client inventory and ControlMap risk summaries,
+  Kaseya
   VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
   reads through its documented RESTful API Manager extension plus an optional
@@ -1030,17 +1031,21 @@ per WAIT client:
 WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
 WAIT_SCALEPAD_API_KEY=
 WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
+WAIT_SCALEPAD_RISK_TENANT_MAP_JSON={"acme":"scalepad-tenant-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-`scalepad-client-lookup` is reachable through the generic smart-action API,
-CLI, agent planner/tool catalog, and `/agents` UI; dedicated health and client
-read routes are also available under `/connectors/scalepad`. WAIT builds the
-exact documented client-ID filter locally, caps the read to one mapped client,
-rechecks the returned ID, and exposes only bounded client summary fields.
-ScalePad writes, unscoped partner-wide reads, risk summaries, and other product
-APIs are not claimed in this slice. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
+`scalepad-client-lookup` and `scalepad-risk-summary` are reachable through the
+generic smart-action API, CLI, agent planner/tool catalog, and `/agents` UI;
+dedicated health and read routes are also available under
+`/connectors/scalepad`. WAIT builds the exact documented Core client-ID or
+ControlMap tenant-ID filter locally, caps each page, rechecks the returned
+provider scope, and exposes only bounded, redacted records. The two mappings
+are intentionally separate because ScalePad's public docs do not establish
+that Core client IDs and ControlMap tenant IDs are interchangeable. ScalePad
+writes and other product APIs remain unavailable. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
+[List Clients Risk Summaries reference](https://developer.scalepad.com/reference/03_listclientsrisksummary-1),
 and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
 
 ### Kaseya VSA X

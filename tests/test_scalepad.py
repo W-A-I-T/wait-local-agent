@@ -5,17 +5,27 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
+from starlette.requests import Request
+from typer.testing import CliRunner
 
+import wait_local_agent.api.app as app_module
+import wait_local_agent.cli as cli_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records, validate_connector_credentials
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.scalepad import (
     ScalePadClient,
     ScalePadClientResponse,
     ScalePadReadError,
+    ScalePadRiskSummaryResponse,
+    _bound_risk_value,
     _bounded_provider_id,
     _endpoint_url,
     _normalize_client,
+    _optional_cursor,
     _optional_nonnegative_int,
     _optional_provider_id,
     _safe_client_id,
@@ -39,6 +49,20 @@ CLIENTS_JSON = {
     ],
     "total_count": 1,
     "next_cursor": "cursor-next",
+}
+
+RISK_SUMMARIES_JSON = {
+    "data": [
+        {
+            "client": {"tenant_id": "sp-tenant-1", "name": "Acme Corporation"},
+            "summary": {"open": 2, "closed": 4},
+            "api_key": "scalepad-secret-token",
+        },
+        {"client": {"tenant_id": "sp-other-tenant"}, "summary": {"open": 99}},
+        "malformed row",
+    ],
+    "total_count": 1,
+    "next_cursor": "Y3Vyc29yLTI=",
 }
 
 
@@ -74,6 +98,90 @@ def test_scalepad_client_read_is_filtered_and_rechecked(settings) -> None:
     assert len(seen) == 1
 
 
+def test_scalepad_risk_summary_uses_separate_tenant_mapping_and_rechecks_scope(settings) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.url.path == "/controlmap/v1/clients/risks-summary"
+        assert request.headers["x-api-key"] == "scalepad-secret-token"
+        assert request.url.params["filter[client.tenant_id]"] == "eq:sp-tenant-1"
+        assert request.url.params["page_size"] == "20"
+        return httpx.Response(200, json=RISK_SUMMARIES_JSON)
+
+    response = _client(
+        settings,
+        handler,
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    ).get_risk_summary(client_id="acme")
+
+    assert response.result.status == "ready"
+    assert response.result.count == 1
+    assert response.total_count == 1
+    assert response.next_cursor == "Y3Vyc29yLTI="
+    assert response.items[0]["client"]["tenant_id"] == "sp-tenant-1"  # type: ignore[index]
+    assert "scalepad-secret-token" not in json.dumps(response.items)
+    assert len(seen) == 1
+
+
+def test_scalepad_risk_summary_requires_separate_mapping_and_handles_malformed_data(settings) -> None:
+    client = _client(settings, lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON))
+    missing = client.get_risk_summary(client_id="acme")
+    assert missing.result.status == "not_configured"
+    assert "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON" in missing.result.message
+
+    malformed = _client(
+        settings,
+        lambda request: httpx.Response(200, json={"data": {}}),
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    ).get_risk_summary(client_id="acme")
+    assert malformed.result.status == "failed"
+    assert "malformed risk-summary data" in malformed.result.message
+
+    outside = _client(
+        settings,
+        lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON),
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    ).get_risk_summary(client_id="other")
+    assert outside.result.status == "failed"
+    assert "tenant scope" in outside.result.message
+
+    invalid_object = _client(
+        settings,
+        lambda request: httpx.Response(200, json=[]),
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    ).get_risk_summary(client_id="acme")
+    assert invalid_object.result.status == "failed"
+    assert "malformed response object" in invalid_object.result.message
+
+    blocked = _client(
+        settings,
+        lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON),
+        allow_http_probing=False,
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    ).get_risk_summary(client_id="acme")
+    assert blocked.result.status == "blocked"
+
+    for mapping, expected in [
+        ("not-json", "malformed"),
+        ("[]", "must be an object"),
+        ('{"acme": 1}', "non-empty strings"),
+    ]:
+        invalid_mapping = _client(
+            settings,
+            lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON),
+            scalepad_risk_tenant_map_json=mapping,
+        ).get_risk_summary(client_id="acme")
+        assert invalid_mapping.result.status == "failed"
+        assert expected in invalid_mapping.result.message
+
+    assert _optional_cursor(None) == ""
+    assert _optional_cursor("invalid cursor") == ""
+    assert _optional_cursor("x" * 201) == ""
+    assert isinstance(_bound_risk_value(object(), depth=0), str)
+    assert _bound_risk_value("value", depth=5) == "[truncated]"
+
+
 def test_scalepad_health_action_and_connector_surfaces(settings) -> None:
     client = _client(settings, lambda request: httpx.Response(200, json=CLIENTS_JSON))
     assert client.health().status == "ready"
@@ -101,12 +209,99 @@ def test_scalepad_health_action_and_connector_surfaces(settings) -> None:
     assert result.output["count"] == 1
     assert result.evidence[0]["operation"] == "clients.get"
 
+    risk_client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON),
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    )
+    risk_service = SmartActionService(
+        Store(risk_client.settings.data_path),
+        risk_client.settings,
+        scalepad_client=risk_client,
+    )
+    risk_result = risk_service.invoke(
+        "scalepad-risk-summary",
+        {"client_id": "acme"},
+        "tech",
+        client_id="acme",
+    )
+    assert risk_result.status == "success"
+    assert risk_result.output["count"] == 1
+    assert risk_result.evidence[0]["operation"] == "clients.risks-summary"
+
 
 def test_scalepad_api_routes_are_reachable_and_tenant_scoped(settings) -> None:
     active = replace(settings, allow_http_probing=True)
     routes = {getattr(route, "path", "") for route in create_app(active).routes}
     assert "/connectors/scalepad/health" in routes
     assert "/connectors/scalepad/clients" in routes
+    assert "/connectors/scalepad/risk-summaries" in routes
+
+
+def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, monkeypatch) -> None:
+    class FakeScalePadClient:
+        def __init__(self, active_settings) -> None:
+            self.settings = active_settings
+
+        def health(self):
+            return ConnectorReadResult("ready", "ready")
+
+        def get_client(self, *, client_id: str):
+            return ScalePadClientResponse(ConnectorReadResult("ready", "ready"), [])
+
+        def get_risk_summary(self, *, client_id: str) -> ScalePadRiskSummaryResponse:
+            assert client_id == "acme"
+            return ScalePadRiskSummaryResponse(
+                ConnectorReadResult("ready", "risk summary ready", 1),
+                [{"client": {"tenant_id": "sp-tenant-1"}, "open": 2}],
+                "Y3Vyc29yLTI=",
+                1,
+            )
+
+    monkeypatch.setattr(app_module, "ScalePadClient", FakeScalePadClient)
+    app = app_module.create_app(replace(settings, demo_mode=True, client_id=""))
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", "") == "/connectors/scalepad/risk-summaries"
+    )
+    assert isinstance(route, APIRoute)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/connectors/scalepad/risk-summaries",
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "root_path": "",
+        }
+    )
+    scoped = route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    assert scoped["result"]["status"] == "ready"
+    assert scoped["total_count"] == 1
+    with pytest.raises(HTTPException) as denied_error:
+        route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+    assert getattr(denied_error.value, "status_code", None) == 403
+
+
+def test_scalepad_risk_summary_cli_is_reachable(settings, monkeypatch) -> None:
+    client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON),
+        scalepad_risk_tenant_map_json=json.dumps({"acme": "sp-tenant-1"}),
+    )
+    monkeypatch.setattr(cli_module, "_scalepad_client", lambda: client)
+    monkeypatch.setattr(cli_module, "_store", lambda: Store(client.settings.data_path))
+
+    result = CliRunner().invoke(cli_module.app, ["connectors", "scalepad-risk-summaries", "acme"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"]["status"] == "ready"
+    assert payload["total_count"] == 1
 
 
 @pytest.mark.parametrize(

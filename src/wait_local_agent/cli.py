@@ -115,7 +115,11 @@ from wait_local_agent.reports.msp import (
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.scalepad import ScalePadClient, ScalePadClientResponse
+from wait_local_agent.scalepad import (
+    ScalePadClient,
+    ScalePadClientResponse,
+    ScalePadRiskSummaryResponse,
+)
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
@@ -2054,6 +2058,14 @@ def scalepad_client(client_id: str) -> None:
     _print_scalepad_response("clients.get", _scalepad_client().get_client(client_id=client_id))
 
 
+@connectors_app.command("scalepad-risk-summaries")
+def scalepad_risk_summaries(client_id: str) -> None:
+    _print_scalepad_risk_summary_response(
+        "clients.risks-summary",
+        _scalepad_client().get_risk_summary(client_id=client_id),
+    )
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -3447,6 +3459,25 @@ def _print_scalepad_response(read_type: str, response: ScalePadClientResponse) -
 
 def _audit_scalepad_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("scalepad.read", read_type, f"{status} count={count}")
+
+
+def _print_scalepad_risk_summary_response(
+    read_type: str,
+    response: ScalePadRiskSummaryResponse,
+) -> None:
+    _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+                "total_count": response.total_count,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
 
 
 def _print_m365_response(read_type: str, response: M365GraphReadResponse) -> None:

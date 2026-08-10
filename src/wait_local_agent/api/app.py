@@ -143,7 +143,11 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.scalepad import ScalePadClient, ScalePadClientResponse
+from wait_local_agent.scalepad import (
+    ScalePadClient,
+    ScalePadClientResponse,
+    ScalePadRiskSummaryResponse,
+)
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
@@ -3287,6 +3291,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = scalepad_client.get_client(client_id=scoped_client_id)
         return _scalepad_response("clients.get", response)
 
+    @app.get("/connectors/scalepad/risk-summaries")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def scalepad_risk_summaries(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="ScalePad risk-summary reads require a tenant scope",
+            )
+        response = scalepad_client.get_risk_summary(client_id=scoped_client_id)
+        return _scalepad_risk_summary_response("clients.risks-summary", response)
+
     @app.get("/connectors/m365/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -4464,6 +4484,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result": asdict(response.result),
             "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
             "next_cursor": response.next_cursor,
+        }
+
+    def _scalepad_risk_summary_response(
+        read_type: str,
+        response: ScalePadRiskSummaryResponse,
+    ) -> dict[str, object]:
+        _audit_scalepad_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
+            "next_cursor": response.next_cursor,
+            "total_count": response.total_count,
         }
 
     def _audit_scalepad_read(read_type: str, status: str, count: int) -> None:

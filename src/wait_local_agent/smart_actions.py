@@ -548,6 +548,83 @@ class ScalePadClientLookupAction:
         )
 
 
+class ScalePadRiskSummaryAction:
+    manifest = SmartActionManifest(
+        action_id="scalepad-risk-summary",
+        title="ScalePad client risk summary",
+        description=(
+            "Read one explicitly mapped ScalePad ControlMap risk-summary page "
+            "through the documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "risk_summaries": "array",
+            "count": "integer",
+            "total_count": "integer|null",
+            "next_cursor": "string",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        provider = context.scalepad_client or ScalePadClient(context.settings)
+        try:
+            response = provider.get_risk_summary(client_id=scoped_client_id)
+        except Exception:
+            return _failed("ScalePad risk-summary lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "ScalePad risk-summary read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            return _failed("ScalePad returned malformed risk-summary data")
+        output = {
+            "client_id": scoped_client_id,
+            "connector_status": status,
+            "risk_summaries": [cast(dict[str, object], redact_value(item)) for item in items[:20]],
+            "count": len(items[:20]),
+            "total_count": getattr(response, "total_count", None),
+            "next_cursor": str(getattr(response, "next_cursor", "")),
+        }
+        if status != "ready":
+            output["risk_summaries"] = []
+            output["count"] = 0
+            output["total_count"] = None
+            output["next_cursor"] = ""
+            return ActionResult(status="failed", output=output, error_detail=message)
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "scalepad",
+                    "operation": "clients.risks-summary",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
 class CommunicationPreviewAction:
     manifest = SmartActionManifest(
         action_id="communication-draft",
@@ -5953,6 +6030,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationContentAction(),
         TimeZestSchedulingRequestLookupAction(),
         ScalePadClientLookupAction(),
+        ScalePadRiskSummaryAction(),
         M365LiveContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),

@@ -556,7 +556,12 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="ScalePad",
             status=scalepad_status,
             message=(
-                "ScalePad is configured for tenant-mapped, read-only client inventory."
+                "ScalePad is configured for tenant-mapped, read-only client inventory"
+                + (
+                    " and ControlMap risk-summary reads."
+                    if settings.scalepad_risk_tenant_map_json
+                    else "; add WAIT_SCALEPAD_RISK_TENANT_MAP_JSON for ControlMap risk-summary reads."
+                )
                 if scalepad_status == "configured"
                 else "ScalePad is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if scalepad_status == "blocked"
@@ -717,6 +722,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord(
             "WAIT_SCALEPAD_CLIENT_MAP_JSON",
             bool(settings.scalepad_client_map_json),
+            "scalepad",
+        ),
+        SecretRecord(
+            "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON",
+            bool(settings.scalepad_risk_tenant_map_json),
             "scalepad",
         ),
         SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
