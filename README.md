@@ -990,7 +990,8 @@ encrypted vault and never enter action payloads. See the
 ### ConnectWise ScreenConnect
 
 The bounded ScreenConnect adapter uses the documented RESTful API Manager
-extension for tenant-scoped, read-only session/device lookup. Configure an
+extension for tenant-scoped session/device lookup and approval-gated session
+notes/messages. Configure an
 explicit local client-to-session UUID map:
 
 ```text
@@ -1004,7 +1005,10 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The optional local catalog exposes bounded metadata, preview, and
-approval-gated `SendCommandToSession` submission. Catalog commands do not
+approval-gated `SendCommandToSession` submission. The generic smart-action
+catalog also exposes `screenconnect-session-note` and
+`screenconnect-session-message`, which call `AddNoteToSession` and
+`SendMessageToSession` only after approval. Catalog commands do not
 accept runtime arguments, and execution reports provider acceptance without
 claiming polling or completion. Provider-native alert lookup and script
 discovery remain explicitly unavailable. See the [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)

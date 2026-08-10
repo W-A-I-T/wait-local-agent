@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import httpx
 import pytest
 
 from wait_local_agent.collectors import CollectorPreview
@@ -42,6 +44,7 @@ from wait_local_agent.providers import ProviderUnavailableError
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import LocalCollectorRmmAdapter
+from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 from wait_local_agent.sharepoint import SharePointDocument
 from wait_local_agent.smart_actions import (
     ActionContext,
@@ -1068,6 +1071,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "screenconnect-session-message",
+        "screenconnect-session-note",
         "security-alert-assessment",
         "servicenow-incident-add-work-note",
         "servicenow-incident-assign",
@@ -3324,6 +3329,99 @@ def test_resolution_has_retrieval_citations_and_provider_label(settings) -> None
     assert isinstance(citations, list)
     assert citations[0]["title"] == "Shared Mailbox Runbook"
     assert result.evidence == citations
+
+
+def test_screenconnect_session_actions_are_preview_first_and_approval_gated(settings) -> None:
+    requests: list[tuple[str, list[str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
+        return httpx.Response(204)
+
+    session_settings = replace(
+        settings,
+        allow_http_probing=True,
+        allow_write_actions=True,
+        screenconnect_base_url="https://screenconnect.example.test",
+        screenconnect_extension_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        screenconnect_auth_secret="screenconnect-secret",
+        screenconnect_origin="https://screenconnect.example.test",
+        screenconnect_client_sessions_map_json=json.dumps({"acme": [
+            "11111111-2222-3333-4444-555555555555"
+        ]}),
+    )
+    adapter = ScreenConnectRmmAdapter(
+        session_settings,
+        transport=httpx.MockTransport(handler),
+    )
+    store = Store(session_settings.data_path)
+    service = SmartActionService(store, session_settings, rmm_provider=adapter)
+
+    note_pending = service.invoke(
+        "screenconnect-session-note",
+        {
+            "session_id": "11111111-2222-3333-4444-555555555555",
+            "note_body": "Reviewed with the customer.",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert note_pending.status == "pending_approval"
+    assert requests == []
+    service.update_approval(
+        note_pending.approval_id,
+        "approved",
+        "reviewed",
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    note_completed = service.complete_approval(
+        note_pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert note_completed is not None
+    assert note_completed.status == "success"
+    assert requests == [
+        ("AddNoteToSession", [
+            "11111111-2222-3333-4444-555555555555",
+            "Reviewed with the customer.",
+        ])
+    ]
+
+    message_pending = service.invoke(
+        "screenconnect-session-message",
+        {
+            "session_id": "11111111-2222-3333-4444-555555555555",
+            "by_host": "WAIT technician",
+            "message": "Please save your work.",
+        },
+        "requester",
+        client_id="acme",
+    )
+    assert message_pending.status == "pending_approval"
+    service.update_approval(
+        message_pending.approval_id,
+        "approved",
+        "reviewed",
+        approver="approver-2",
+        approver_role=Role.TECHNICIAN,
+    )
+    message_completed = service.complete_approval(
+        message_pending.approval_id,
+        approver="approver-2",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert message_completed is not None
+    assert message_completed.status == "success"
+    assert requests[-1] == (
+        "SendMessageToSession",
+        [
+            "11111111-2222-3333-4444-555555555555",
+            "WAIT technician",
+            "Please save your work.",
+        ],
+    )
 
 
 def test_dispatch_requires_approval_and_completes_after_approval(settings) -> None:

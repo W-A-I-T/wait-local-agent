@@ -107,10 +107,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   execution, and remediation remain unavailable until a documented,
   approval-tested path exists.
 - ScreenConnect session/device reads through the documented RESTful API Manager
-  extension with an explicit local client-to-session UUID map, plus an optional
-  local command catalog and approval-gated `SendCommandToSession` submission.
-  Provider-native alert lookup, script discovery, and command polling remain
-  unavailable; local commands report provider acceptance rather than completion.
+  extension with an explicit local client-to-session UUID map, plus approval-gated
+  session notes (`AddNoteToSession`), session messages (`SendMessageToSession`),
+  and an optional local command catalog with approval-gated
+  `SendCommandToSession` submission. Provider-native alert lookup, script
+  discovery, and command polling remain unavailable; local commands report
+  provider acceptance rather than completion.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - Notion read-only mapped-page title search, page-markdown retrieval,
@@ -405,7 +407,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | Notion connector | Read-only mapped-page search, bounded markdown retrieval, data-source schema retrieval, and data-source row query built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect session/device plus optional local-command adapters built; broader vendor coverage, provider-native ScreenConnect discovery/polling, and remediation remain future |
+| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, provider-native ScreenConnect discovery/polling, and remediation remain future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built with JSON, Markdown, and PDF export; provider-backed lifecycle enrichment remains future work |
