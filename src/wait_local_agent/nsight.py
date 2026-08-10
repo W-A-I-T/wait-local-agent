@@ -37,6 +37,12 @@ MAX_ALERTS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_TEXT_LENGTH = 500
+PATCH_POLICY_SERVICES = {
+    "do_nothing": "patch_do_nothing",
+    "ignore": "patch_ignore",
+    "inherit": "patch_inherit",
+    "retry": "patch_retry",
+}
 
 
 class NSightRmmError(Exception):
@@ -203,6 +209,49 @@ class NSightRmmAdapter(RmmInventoryProvider):
             "status": "accepted",
             "message": _bounded_text(
                 _text(root, "msg") or "N-sight accepted the patch reprocessing request."
+            ),
+            "device_id": device_id,
+            "patch_ids": normalized_ids,
+        }
+
+    def apply_patch_policy(
+        self,
+        device_id: str,
+        patch_ids: list[str],
+        operation: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Apply one documented, allowlisted patch policy operation."""
+
+        service = PATCH_POLICY_SERVICES.get(operation)
+        if service is None:
+            raise NSightRmmError("N-sight patch policy operation is not supported")
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                "N-sight patch policy is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        normalized_ids = _patch_id_list(patch_ids)
+        available_ids = {
+            str(item["patch_id"])
+            for item in self.list_patches(device_id, client_id=client_id)
+            if isinstance(item.get("patch_id"), int)
+        }
+        if any(patch_id not in available_ids for patch_id in normalized_ids):
+            raise NSightRmmError("N-sight patch policy includes a patch outside the device scope")
+        root = self._request(
+            service,
+            {
+                "deviceid": str(_device_numeric_id(device_id)),
+                "patchids": ",".join(normalized_ids),
+            },
+            client_id=client_id,
+        )
+        return {
+            "status": "accepted",
+            "operation": operation,
+            "message": _bounded_text(
+                _text(root, "msg") or f"N-sight accepted the {operation} patch policy request."
             ),
             "device_id": device_id,
             "patch_ids": normalized_ids,

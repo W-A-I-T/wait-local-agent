@@ -267,8 +267,8 @@ N-sight client ID. The adapter then scopes requests to that mapped client and
 its returned sites, caps the response at 25 sites, 100 devices, and 100 alerts,
 and keeps the API key inside settings/vault. Credentials and provider IDs never come
 from smart-action payloads, errors, or audit records. The documented patch
-approval and patch reprocessing services are separate technician-approved
-actions. See N-able's [N-sight API
+approval, patch reprocessing, and allowlisted patch-policy services are separate
+technician-approved actions. See N-able's [N-sight API
 getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
@@ -276,7 +276,10 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
-and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch).
+and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),
+[patch ignore](https://developer.n-able.com/n-sight/docs/ignore-patch),
+[patch inherit](https://developer.n-able.com/n-sight/docs/inherit-patch), and
+[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch).
 
 ## TimeZest
 
