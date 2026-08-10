@@ -295,6 +295,12 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
     )
     ticket_id = created.json()["ticket_id"]
 
+    requester_message = client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Here is an additional detail for the technician."},
+    )
+
     viewer_reply = client.post(
         f"/tickets/{ticket_id}/end-user-messages",
         headers=_auth("viewer-token"),
@@ -310,6 +316,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
     )
 
     assert viewer_reply.status_code == 403
+    assert requester_message.status_code == 200
     assert wrong_ticket.status_code == 200
     assert wrong_ticket.json() == []
     assert operator_messages.status_code == 200
