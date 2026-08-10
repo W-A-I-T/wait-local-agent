@@ -120,6 +120,7 @@ class Settings:
     scalepad_api_key: str = ""
     scalepad_client_map_json: str = ""
     scalepad_risk_tenant_map_json: str = ""
+    scalepad_lifecycle_client_map_json: str = ""
     kaseya_rmm_base_url: str = ""
     kaseya_rmm_token_id: str = ""
     kaseya_rmm_token_secret: str = ""
@@ -393,6 +394,9 @@ def load_settings() -> Settings:
         ),
         scalepad_client_map_json=os.getenv("WAIT_SCALEPAD_CLIENT_MAP_JSON", ""),
         scalepad_risk_tenant_map_json=os.getenv("WAIT_SCALEPAD_RISK_TENANT_MAP_JSON", ""),
+        scalepad_lifecycle_client_map_json=os.getenv(
+            "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON", ""
+        ),
         kaseya_rmm_base_url=_secret_value(
             "WAIT_KASEYA_RMM_BASE_URL",
             os.getenv("WAIT_KASEYA_RMM_BASE_URL", ""),

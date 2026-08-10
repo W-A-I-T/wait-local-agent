@@ -138,6 +138,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "sharepoint-documentation-search",
         "scalepad-client-lookup",
         "scalepad-risk-summary",
+        "scalepad-goal-lookup",
         "timezest-scheduling-request-create",
         "timezest-scheduling-request-lookup",
         "dispatch-suggestion",
@@ -2164,6 +2165,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "autotask-ticket-add-note",
         "autotask-ticket-update-status",
         "autotask-ticket-update-resolution",
+        "scalepad-goal-lookup",
     } <= tool_ids
     assert (
         next(

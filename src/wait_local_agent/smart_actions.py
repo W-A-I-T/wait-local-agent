@@ -827,6 +827,107 @@ class ScalePadRiskSummaryAction:
         )
 
 
+class ScalePadGoalLookupAction:
+    manifest = SmartActionManifest(
+        action_id="scalepad-goal-lookup",
+        title="ScalePad Lifecycle goal lookup",
+        description=(
+            "Read tenant-mapped ScalePad Lifecycle Manager goals through the "
+            "documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "status": {
+                    "type": "string",
+                    "enum": ["AtRisk", "Complete", "OffTrack", "OnHold", "OnTrack"],
+                },
+                "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                "cursor": {"type": "string", "maxLength": 200},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "goals": "array",
+            "count": "integer",
+            "total_count": "integer|null",
+            "next_cursor": "string",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+
+        filters: dict[str, str | None] = {}
+        for key, limit in (("status", 32), ("title", 200), ("cursor", 200)):
+            value = payload.get(key)
+            if value is not None:
+                if not isinstance(value, str) or not value.strip() or len(value.strip()) > limit:
+                    return _failed(f"{key} must be a non-empty string of at most {limit} characters")
+                filters[key] = value.strip()
+            else:
+                filters[key] = None
+        provider = context.scalepad_client or ScalePadClient(context.settings)
+        try:
+            response = provider.get_goals(
+                client_id=scoped_client_id,
+                status=filters["status"],
+                title=filters["title"],
+                cursor=filters["cursor"],
+            )
+        except Exception:
+            return _failed("ScalePad goal lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "ScalePad goal read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            return _failed("ScalePad returned malformed goal data")
+        goals = [cast(dict[str, object], redact_value(item)) for item in items[:20]]
+        total_count = getattr(response, "total_count", None)
+        if not isinstance(total_count, int) or total_count < 0:
+            total_count = None
+        next_cursor = getattr(response, "next_cursor", "")
+        if not isinstance(next_cursor, str):
+            next_cursor = ""
+        output = {
+            "client_id": scoped_client_id,
+            "connector_status": status,
+            "goals": goals if status == "ready" else [],
+            "count": len(goals) if status == "ready" else 0,
+            "total_count": total_count if status == "ready" else None,
+            "next_cursor": next_cursor if status == "ready" else "",
+        }
+        if status != "ready":
+            return ActionResult(status="failed", output=output, error_detail=message)
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "scalepad",
+                    "operation": "lifecycle-manager.goals",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
 class CommunicationPreviewAction:
     manifest = SmartActionManifest(
         action_id="communication-draft",
@@ -6234,6 +6335,7 @@ def _build_default_registry() -> SmartActionRegistry:
         TimeZestSchedulingRequestCreateAction(),
         ScalePadClientLookupAction(),
         ScalePadRiskSummaryAction(),
+        ScalePadGoalLookupAction(),
         M365LiveContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),

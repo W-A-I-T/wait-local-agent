@@ -209,7 +209,11 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     scalepad_configured = bool(
         settings.scalepad_base_url
         and settings.scalepad_api_key
-        and settings.scalepad_client_map_json
+        and (
+            settings.scalepad_client_map_json
+            or settings.scalepad_risk_tenant_map_json
+            or settings.scalepad_lifecycle_client_map_json
+        )
     )
     scalepad_status: ConnectorStatusValue = "not_configured"
     if scalepad_configured:
@@ -557,12 +561,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="ScalePad",
             status=scalepad_status,
             message=(
-                "ScalePad is configured for tenant-mapped, read-only client inventory"
-                + (
-                    " and ControlMap risk-summary reads."
-                    if settings.scalepad_risk_tenant_map_json
-                    else "; add WAIT_SCALEPAD_RISK_TENANT_MAP_JSON for ControlMap risk-summary reads."
-                )
+                "ScalePad is configured for explicitly mapped read surfaces."
                 if scalepad_status == "configured"
                 else "ScalePad is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if scalepad_status == "blocked"
@@ -728,6 +727,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord(
             "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON",
             bool(settings.scalepad_risk_tenant_map_json),
+            "scalepad",
+        ),
+        SecretRecord(
+            "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON",
+            bool(settings.scalepad_lifecycle_client_map_json),
             "scalepad",
         ),
         SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
@@ -1006,7 +1010,12 @@ def validate_connector_credentials(
             for key, value in {
                 "WAIT_SCALEPAD_BASE_URL": settings.scalepad_base_url,
                 "WAIT_SCALEPAD_API_KEY": settings.scalepad_api_key,
-                "WAIT_SCALEPAD_CLIENT_MAP_JSON": settings.scalepad_client_map_json,
+                "WAIT_SCALEPAD_CLIENT_MAP_JSON or WAIT_SCALEPAD_RISK_TENANT_MAP_JSON or "
+                "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON": (
+                    settings.scalepad_client_map_json
+                    or settings.scalepad_risk_tenant_map_json
+                    or settings.scalepad_lifecycle_client_map_json
+                ),
             }.items()
             if not value
         ]

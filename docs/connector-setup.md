@@ -308,10 +308,11 @@ See TimeZest's [authentication guide](https://developer.timezest.com/authenticat
 
 ## ScalePad
 
-The ScalePad adapter exposes a bounded, read-only Core client lookup through
-the documented API. It is reachable through the shared smart-action,
-planner/tool-catalog, API, CLI, and Agents UI surfaces, with dedicated health
-and client-read routes under `/connectors/scalepad`.
+The ScalePad adapter exposes bounded, read-only Core client, ControlMap
+risk-summary, and Lifecycle Manager goal reads through the documented APIs. It
+is reachable through the shared smart-action, planner/tool-catalog, API, CLI,
+and Agents UI surfaces, with dedicated health and read routes under
+`/connectors/scalepad`.
 
 Required settings:
 
@@ -320,17 +321,24 @@ WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
 WAIT_SCALEPAD_API_KEY=
 WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
 WAIT_SCALEPAD_RISK_TENANT_MAP_JSON={"acme":"scalepad-tenant-id"}
+WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON={"acme":"scalepad-lifecycle-client-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 `WAIT_SCALEPAD_CLIENT_MAP_JSON` maps each WAIT client to exactly one ScalePad
-Core client ID. `WAIT_SCALEPAD_RISK_TENANT_MAP_JSON` is a separate explicit map
-for the ControlMap `client.tenant_id` value; do not copy the Core ID into it
-unless the operator has independently verified that mapping. WAIT sends the
-documented `x-api-key` header, fixes both provider filters locally, caps each
-page, rechecks the returned provider scope, and exposes bounded redacted
-records. API keys stay in settings/vault and never enter payloads, errors, or
-audit records. ScalePad writes and other product APIs remain unavailable.
+Core client ID. `WAIT_SCALEPAD_RISK_TENANT_MAP_JSON` separately maps the
+ControlMap `client.tenant_id` value, and
+`WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON` separately maps the Lifecycle Manager
+`client.id` value; do not copy an ID between maps unless the operator has
+independently verified that mapping. WAIT sends the documented `x-api-key`
+header, fixes provider filters locally, caps each page, rechecks the returned
+provider scope, and exposes bounded redacted records. Goal reads support the
+documented status/title filters and opaque cursor returned by the provider.
+API keys stay in settings/vault and never enter payloads, errors, or audit
+records. ScalePad writes and other product APIs remain unavailable. Lifecycle
+Manager access may require a higher ScalePad subscription than Core or
+ControlMap. See the [Lifecycle Manager goals reference](https://developer.scalepad.com/reference/apipublicv1goallist)
+and [product API subscription requirements](https://developer.scalepad.com/docs/product-apis-and-subscriptions).
 Regional ScalePad hosts may be configured explicitly when the tenant's data
 residency requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),

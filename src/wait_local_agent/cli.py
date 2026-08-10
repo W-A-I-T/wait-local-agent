@@ -118,6 +118,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scalepad import (
     ScalePadClient,
     ScalePadClientResponse,
+    ScalePadGoalResponse,
     ScalePadRiskSummaryResponse,
 )
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
@@ -2066,6 +2067,24 @@ def scalepad_risk_summaries(client_id: str) -> None:
     )
 
 
+@connectors_app.command("scalepad-goals")
+def scalepad_goals(
+    client_id: str,
+    status: str | None = None,
+    title: str | None = None,
+    cursor: str | None = None,
+) -> None:
+    _print_scalepad_goal_response(
+        "lifecycle-manager.goals",
+        _scalepad_client().get_goals(
+            client_id=client_id,
+            status=status,
+            title=title,
+            cursor=cursor,
+        ),
+    )
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -3465,6 +3484,22 @@ def _print_scalepad_risk_summary_response(
     read_type: str,
     response: ScalePadRiskSummaryResponse,
 ) -> None:
+    _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+                "total_count": response.total_count,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_scalepad_goal_response(read_type: str, response: ScalePadGoalResponse) -> None:
     _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
         json.dumps(
