@@ -1068,6 +1068,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "notion-page-comment",
         "nsight-patch-approve",
         "nsight-patch-lookup",
+        "nsight-patch-policy",
         "nsight-patch-reprocess",
         "recurring-service-review",
         "rmm-alert-lookup",

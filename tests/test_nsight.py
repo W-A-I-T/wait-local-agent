@@ -176,6 +176,10 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
             assert request.url.params.get("deviceid") == "49324"
             assert request.url.params.get("patchids") == "681806"
             return httpx.Response(200, text=PATCH_REPROCESS_XML)
+        if service in {"patch_do_nothing", "patch_ignore", "patch_inherit", "patch_retry"}:
+            assert request.url.params.get("deviceid") == "49324"
+            assert request.url.params.get("patchids") == "681806"
+            return httpx.Response(200, text='<result status="OK" />')
         raise AssertionError(f"unexpected service {service}")
 
     adapter = _adapter(settings, handler)
@@ -221,6 +225,20 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
     assert reprocessed["status"] == "accepted"
     assert reprocessed["message"] == "Reprocessing patches: 681806"
 
+    for operation in ("do_nothing", "ignore", "inherit", "retry"):
+        result = _adapter(
+            settings,
+            handler,
+            allow_write_actions=True,
+        ).apply_patch_policy("server:49324", ["681806"], operation, client_id="acme")
+        assert result["status"] == "accepted"
+        assert result["operation"] == operation
+
+    with pytest.raises(NSightRmmError, match="not supported"):
+        _adapter(settings, handler, allow_write_actions=True).apply_patch_policy(
+            "server:49324", ["681806"], "execute", client_id="acme"
+        )
+
     with pytest.raises(NSightRmmError, match="outside the device scope"):
         _adapter(
             settings,
@@ -233,6 +251,9 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
 
     with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
         adapter.reprocess_patches("server:49324", ["681806"], client_id="acme")
+
+    with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        adapter.apply_patch_policy("server:49324", ["681806"], "ignore", client_id="acme")
 
 
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])

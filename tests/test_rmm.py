@@ -17,6 +17,7 @@ from wait_local_agent.smart_actions import (
     ActionContext,
     NSightPatchApproveAction,
     NSightPatchLookupAction,
+    NSightPatchPolicyAction,
     NSightPatchReprocessAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
@@ -70,6 +71,16 @@ class _NSightProvider(_Provider):
         return {
             "status": "accepted",
             "message": "reprocessed",
+            "device_id": device_id,
+            "patch_ids": patch_ids,
+        }
+
+    def apply_patch_policy(self, device_id, patch_ids, operation, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "status": "accepted",
+            "operation": operation,
+            "message": "policy applied",
             "device_id": device_id,
             "patch_ids": patch_ids,
         }
@@ -192,6 +203,37 @@ def test_nsight_patch_reprocess_is_approval_gated(settings) -> None:
     )
     assert approved.status == "success"
     assert approved.output["status"] == "accepted"
+
+
+def test_nsight_patch_policy_is_allowlisted_and_approval_gated(settings) -> None:
+    payload: dict[str, object] = {
+        "device_id": "server:49324",
+        "patch_ids": ["681806"],
+        "operation": "ignore",
+    }
+    provider = _NSightProvider()
+    preview = NSightPatchPolicyAction().run(_context(settings, provider), payload)
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    assert preview.output["operation"] == "ignore"
+
+    blocked = NSightPatchPolicyAction().run(
+        _context(settings, provider), {**payload, "_approval_completed": True}
+    )
+    assert blocked.error_detail == "N-sight patch policy is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+
+    approved = NSightPatchPolicyAction().run(
+        _context(replace(settings, allow_write_actions=True), provider),
+        {**payload, "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["operation"] == "ignore"
+
+    invalid = NSightPatchPolicyAction().run(
+        _context(settings, provider), {**payload, "operation": "execute"}
+    )
+    assert invalid.status == "failed"
+    assert "do_nothing" in invalid.error_detail
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:

@@ -1001,6 +1001,9 @@ result because no documented contract is claimed for those operations. The
 `nsight-patch-reprocess` action uses the same approval, write-flag, inventory
 recheck, tenant scope, and bounded patch-ID controls for N-sight's documented
 patch reprocessing service. See
+patch reprocessing service. The `nsight-patch-policy` action exposes only the
+documented `do_nothing`, `ignore`, `inherit`, and `retry` operations through an
+explicit allowlist with the same controls. See
 N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
@@ -1008,7 +1011,10 @@ N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/g
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
-and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch).
+and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),
+[patch ignore](https://developer.n-able.com/n-sight/docs/ignore-patch),
+[patch inherit](https://developer.n-able.com/n-sight/docs/inherit-patch), and
+[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch).
 
 ### TimeZest
 

@@ -35,6 +35,7 @@ from wait_local_agent.models import (
     Ticket,
 )
 from wait_local_agent.notion import NotionClient, NotionClientProtocol
+from wait_local_agent.nsight import PATCH_POLICY_SERVICES
 from wait_local_agent.observability import ArtifactRecord, ExecutionRecorder, StepRecord
 from wait_local_agent.providers import (
     DeterministicLocalProvider,
@@ -3660,6 +3661,60 @@ class NSightPatchReprocessAction:
         )
 
 
+class NSightPatchPolicyAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-patch-policy",
+        title="Manage N-sight patch policy",
+        description=(
+            "Preview and, after technician approval, apply one documented N-sight "
+            "patch policy operation to existing patches on a mapped device."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id", "patch_ids", "operation"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "patch_ids": {"type": "array", "minItems": 1, "maxItems": 20},
+                "operation": {"type": "string", "enum": sorted(PATCH_POLICY_SERVICES)},
+            },
+        },
+        output_schema={
+            "status": "string",
+            "operation": "string",
+            "device_id": "string",
+            "patch_ids": "array",
+            "approval_required": "boolean",
+            "approved": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=5,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        operation = payload.get("operation")
+        if not isinstance(operation, str) or operation not in PATCH_POLICY_SERVICES:
+            return _failed(
+                "N-sight patch operation must be one of: "
+                + ", ".join(sorted(PATCH_POLICY_SERVICES))
+            )
+        clean_payload = {key: value for key, value in payload.items() if key != "operation"}
+        result = _run_nsight_patch_write(
+            context,
+            clean_payload,
+            operation_label="policy",
+            provider_method="apply_patch_policy",
+            provider_operation=PATCH_POLICY_SERVICES[operation],
+            provider_kwargs={"operation": operation},
+        )
+        if result.status == "success":
+            result.output["operation"] = operation
+        return result
+
+
 def _run_nsight_patch_write(
     context: ActionContext,
     payload: dict[str, object],
@@ -3667,6 +3722,7 @@ def _run_nsight_patch_write(
     operation_label: str,
     provider_method: str,
     provider_operation: str,
+    provider_kwargs: dict[str, object] | None = None,
 ) -> ActionResult:
     if set(payload) - {"device_id", "patch_ids", "_approval_completed"}:
         return _failed(f"N-sight patch {operation_label} payload contains unsupported fields")
@@ -3709,7 +3765,10 @@ def _run_nsight_patch_write(
             f"N-sight patch {operation_label} is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
         )
     try:
-        operation = operation_fn(device_id.strip(), normalized_ids, client_id=context.client_id)
+        call_kwargs: dict[str, object] = {"client_id": context.client_id}
+        if provider_kwargs:
+            call_kwargs.update(provider_kwargs)
+        operation = operation_fn(device_id.strip(), normalized_ids, **call_kwargs)
     except Exception:
         return _failed(f"N-sight patch {operation_label} failed")
     if not isinstance(operation, dict):
@@ -6532,6 +6591,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),
+        NSightPatchPolicyAction(),
         RmmScriptCatalogAction(),
         RmmScriptPreviewAction(),
         RmmScriptExecuteAction(),
