@@ -51,6 +51,7 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     rmm_provider_from_settings,
 )
+from wait_local_agent.scalepad import ScalePadClient, ScalePadReadProvider
 from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 from wait_local_agent.servicenow import ServiceNowReadProvider, ServiceNowWriteProvider
 from wait_local_agent.services import classify_ticket
@@ -347,6 +348,7 @@ class ActionContext:
     communication_provider: CommunicationProvider | None = None
     communication_sender: CommunicationSender | None = None
     timezest_client: TimeZestReadProvider | None = None
+    scalepad_client: ScalePadReadProvider | None = None
 
 
 class HaloPSAReadProvider(Protocol):
@@ -455,6 +457,91 @@ class TimeZestSchedulingRequestLookupAction:
                     "type": "connector_read",
                     "connector": "timezest",
                     "operation": "scheduling_requests.list",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
+class ScalePadClientLookupAction:
+    manifest = SmartActionManifest(
+        action_id="scalepad-client-lookup",
+        title="ScalePad client lookup",
+        description=(
+            "Read one tenant-mapped ScalePad Core client record through the "
+            "documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "clients": "array",
+            "count": "integer",
+            "next_cursor": "string",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        provider = context.scalepad_client or ScalePadClient(context.settings)
+        try:
+            response = provider.get_client(client_id=scoped_client_id)
+        except Exception:
+            return _failed("ScalePad client lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "ScalePad read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("ScalePad returned malformed client data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "client_id": scoped_client_id,
+                    "connector_status": status,
+                    "clients": [],
+                    "count": 0,
+                    "next_cursor": "",
+                },
+                error_detail=message,
+            )
+        clients: list[dict[str, object]] = []
+        for item in items[:1]:
+            if not hasattr(item, "__dataclass_fields__"):
+                return _failed("ScalePad returned malformed client data")
+            clients.append(cast(dict[str, object], redact_value(asdict(item))))
+        return ActionResult(
+            status="success",
+            output={
+                "client_id": scoped_client_id,
+                "connector_status": status,
+                "clients": clients,
+                "count": len(clients),
+                "next_cursor": str(getattr(response, "next_cursor", "")),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "scalepad",
+                    "operation": "clients.get",
                     "client_id": scoped_client_id,
                 }
             ],
@@ -5865,6 +5952,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         TimeZestSchedulingRequestLookupAction(),
+        ScalePadClientLookupAction(),
         M365LiveContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
@@ -5952,6 +6040,7 @@ class SmartActionService:
         notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
         timezest_client: TimeZestReadProvider | None = None,
+        scalepad_client: ScalePadReadProvider | None = None,
         m365_client: (
             M365GraphReadProvider
             | M365LifecycleWriteProvider
@@ -5986,6 +6075,7 @@ class SmartActionService:
         self.notion_client = notion_client
         self.sharepoint_client = sharepoint_client
         self.timezest_client = timezest_client
+        self.scalepad_client = scalepad_client
         self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
@@ -6355,6 +6445,7 @@ class SmartActionService:
             notion_client=self.notion_client,
             sharepoint_client=self.sharepoint_client,
             timezest_client=self.timezest_client,
+            scalepad_client=self.scalepad_client,
             m365_client=self.m365_client,
         )
 

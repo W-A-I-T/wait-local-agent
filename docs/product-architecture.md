@@ -136,6 +136,7 @@ Includes:
 - Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
 - N-able N-sight connector with tenant-scoped device and health inventory
 - TimeZest connector with tenant-mapped, read-only scheduling-request inventory
+- ScalePad connector with tenant-mapped, read-only Core client inventory
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
 - Bounded per-client QBR report generator (JSON/Markdown/PDF ticket counts, explicit resolution evidence, automation estimates); provider-backed lifecycle enrichment remains a future extension
@@ -245,6 +246,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
 | N-able N-sight | Phase 4 | ✓ site/server/workstation and derived health inventory | Script/write parity remains unavailable | Public core |
 | TimeZest | Phase 5 | ✓ tenant-mapped scheduling-request reads | Create/reschedule/cancel and broader marketplace parity | Public core |
+| ScalePad | Phase 5 | ✓ tenant-mapped Core client lookup | Writes, unscoped reads, risk summaries, and broader product APIs | Public core |
 | Kaseya VSA | Phase 5 | ✓ read-only device/notification inventory | Script/remediation parity | Public core |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |

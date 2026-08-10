@@ -143,6 +143,7 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.scalepad import ScalePadClient, ScalePadClientResponse
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
@@ -552,6 +553,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     notion_client = NotionClient(active_settings)
     sharepoint_client = SharePointClient(active_settings)
     timezest_client = TimeZestClient(active_settings)
+    scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
@@ -571,6 +573,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         notion_client=notion_client,
         sharepoint_client=sharepoint_client,
         timezest_client=timezest_client,
+        scalepad_client=scalepad_client,
         m365_client=m365_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
@@ -3264,6 +3267,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = sharepoint_client.get_document_content(site_id, item_id)
         return _sharepoint_response("documents.content", response)
 
+    @app.get("/connectors/scalepad/health")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def scalepad_health(request: Request, _: ViewerAccess) -> dict[str, object]:
+        result = scalepad_client.health()
+        _audit_scalepad_read("health", result.status, result.count)
+        return asdict(result)
+
+    @app.get("/connectors/scalepad/clients")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def scalepad_client_lookup(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="ScalePad reads require a tenant scope")
+        response = scalepad_client.get_client(client_id=scoped_client_id)
+        return _scalepad_response("clients.get", response)
+
     @app.get("/connectors/m365/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -4431,6 +4454,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _audit_sharepoint_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
+
+    def _scalepad_response(
+        read_type: str,
+        response: ScalePadClientResponse,
+    ) -> dict[str, object]:
+        _audit_scalepad_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    def _audit_scalepad_read(read_type: str, status: str, count: int) -> None:
+        store.add_audit_event("scalepad.read", read_type, f"{status} count={count}")
 
     def _m365_response(
         read_type: str,

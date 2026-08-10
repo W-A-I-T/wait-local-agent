@@ -71,6 +71,13 @@ and keeps the bearer key out of action payloads, errors, and audit records.
 Only scheduling-request reads are exposed; create, reschedule, and cancel
 operations are not inferred.
 
+ScalePad calls use the same outbound HTTP gate and require a client ID that
+resolves through `WAIT_SCALEPAD_CLIENT_MAP_JSON` to exactly one ScalePad client
+ID. The adapter sends the documented `x-api-key` header, fixes the Core client
+filter locally, caps the read to one mapped record, rechecks the returned ID,
+and keeps the API key out of action payloads, errors, and audit records. Writes,
+unscoped partner-wide reads, and other ScalePad product APIs are not inferred.
+
 ScreenConnect calls use the same outbound HTTP gate and require a client ID
 that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
 mapped session ID must be an explicit UUID, and requests use only the

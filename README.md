@@ -53,7 +53,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and health
-  inventory, TimeZest exposes tenant-mapped scheduling-request reads, Kaseya
+  inventory, TimeZest exposes tenant-mapped scheduling-request reads, ScalePad
+  exposes tenant-mapped Core client inventory, Kaseya
   VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
   reads through its documented RESTful API Manager extension plus an optional
@@ -1018,6 +1019,29 @@ authentication guide](https://developer.timezest.com/authentication/),
 [scheduling-request API](https://developer.timezest.com/scheduling_requests/),
 [pagination guide](https://developer.timezest.com/pagination/), and
 [TQL guide](https://developer.timezest.com/tql/).
+
+### ScalePad
+
+The ScalePad adapter exposes a bounded, read-only Core client lookup through
+the shared smart-action catalog. Configure one documented ScalePad client ID
+per WAIT client:
+
+```text
+WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
+WAIT_SCALEPAD_API_KEY=
+WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`scalepad-client-lookup` is reachable through the generic smart-action API,
+CLI, agent planner/tool catalog, and `/agents` UI; dedicated health and client
+read routes are also available under `/connectors/scalepad`. WAIT builds the
+exact documented client-ID filter locally, caps the read to one mapped client,
+rechecks the returned ID, and exposes only bounded client summary fields.
+ScalePad writes, unscoped partner-wide reads, risk summaries, and other product
+APIs are not claimed in this slice. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
+[List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
+and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
 
 ### Kaseya VSA X
 

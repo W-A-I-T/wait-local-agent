@@ -115,6 +115,7 @@ from wait_local_agent.reports.msp import (
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.scalepad import ScalePadClient, ScalePadClientResponse
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
@@ -233,6 +234,10 @@ def _m365_client() -> M365GraphClient:
 
 def _timezest_client() -> TimeZestClient:
     return TimeZestClient(load_settings())
+
+
+def _scalepad_client() -> ScalePadClient:
+    return ScalePadClient(load_settings())
 
 
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
@@ -956,7 +961,7 @@ def validate_connector(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
                 "autotask, itglue, confluence, or notion."
-                " SharePoint, m365, and timezest are also supported for read-only connector reads."
+                " SharePoint, m365, timezest, and scalepad are also supported for read-only connector reads."
             )
         ),
     ]
@@ -978,6 +983,7 @@ def validate_connector(
             sharepoint_client=_sharepoint_client(),
             m365_client=_m365_client(),
             timezest_client=_timezest_client(),
+            scalepad_client=_scalepad_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -2036,6 +2042,18 @@ def sharepoint_document_content(site_id: str, item_id: str) -> None:
     )
 
 
+@connectors_app.command("scalepad-health")
+def scalepad_health() -> None:
+    result = _scalepad_client().health()
+    _audit_scalepad_cli_read("health", result.status, result.count)
+    typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("scalepad-client")
+def scalepad_client(client_id: str) -> None:
+    _print_scalepad_response("clients.get", _scalepad_client().get_client(client_id=client_id))
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -2619,6 +2637,8 @@ def invoke_smart_action(
         confluence_client=_confluence_client(),
         notion_client=_notion_client(),
         sharepoint_client=_sharepoint_client(),
+        timezest_client=_timezest_client(),
+        scalepad_client=_scalepad_client(),
         m365_client=_m365_client(),
     )
     context = _cli_access(settings, token, Role.TECHNICIAN)
@@ -3408,6 +3428,25 @@ def _print_sharepoint_response(read_type: str, response: SharePointReadResponse)
 
 def _audit_sharepoint_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
+
+
+def _print_scalepad_response(read_type: str, response: ScalePadClientResponse) -> None:
+    _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(asdict(item)) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _audit_scalepad_cli_read(read_type: str, status: str, count: int) -> None:
+    _store().add_audit_event("scalepad.read", read_type, f"{status} count={count}")
 
 
 def _print_m365_response(read_type: str, response: M365GraphReadResponse) -> None:
