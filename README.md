@@ -56,7 +56,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   inventory, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
   exposes separately mapped Core client inventory, ControlMap risk summaries,
-  and Lifecycle Manager goal reads,
+  and Lifecycle Manager goal and assessment reads,
   Kaseya
   VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
@@ -1035,8 +1035,9 @@ authentication guide](https://developer.timezest.com/authentication/),
 ### ScalePad
 
 The ScalePad adapter exposes bounded, read-only Core client, ControlMap
-risk-summary, and Lifecycle Manager goal reads through the shared smart-action
-catalog. Configure separate documented provider IDs per WAIT client:
+risk-summary, and Lifecycle Manager goal and assessment reads through the
+shared smart-action catalog. Configure separate documented provider IDs per
+WAIT client:
 
 ```text
 WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
@@ -1047,9 +1048,9 @@ WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON={"acme":"scalepad-lifecycle-client-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-`scalepad-client-lookup`, `scalepad-risk-summary`, and
-`scalepad-goal-lookup` are reachable through the generic smart-action API, CLI,
-agent planner/tool catalog, and `/agents` UI;
+`scalepad-client-lookup`, `scalepad-risk-summary`, `scalepad-goal-lookup`, and
+`scalepad-assessment-lookup` are reachable through the generic smart-action API,
+CLI, agent planner/tool catalog, and `/agents` UI;
 dedicated health and read routes are also available under
 `/connectors/scalepad`. WAIT builds the exact documented Core client-ID or
 ControlMap tenant-ID filter locally, caps each page, rechecks the returned
@@ -1061,6 +1062,7 @@ See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/get
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
 [List Clients Risk Summaries reference](https://developer.scalepad.com/reference/03_listclientsrisksummary-1),
 [List Goals reference](https://developer.scalepad.com/reference/apipublicv1goallist),
+[List Assessments reference](https://developer.scalepad.com/reference/apipublicv1assessmentslist),
 and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
 
 ### Kaseya VSA X

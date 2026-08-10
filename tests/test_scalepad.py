@@ -17,6 +17,7 @@ from wait_local_agent.connectors import list_connector_statuses, list_secret_rec
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.scalepad import (
+    ScalePadAssessmentResponse,
     ScalePadClient,
     ScalePadClientResponse,
     ScalePadGoalResponse,
@@ -82,6 +83,22 @@ GOALS_JSON = {
     ],
     "total_count": 1,
     "next_cursor": "Y3Vyc29yLWdvYWxz",
+}
+
+ASSESSMENTS_JSON = {
+    "data": [
+        {
+            "id": "assessment-1",
+            "status": "Completed",
+            "assessment_template_id": "template-1",
+            "client": {"id": "sp-lifecycle-client-1", "name": "Acme Corporation"},
+            "secret": "scalepad-secret-token",
+        },
+        {"id": "assessment-other", "client": {"id": "sp-other-client"}},
+        "malformed row",
+    ],
+    "total_count": 1,
+    "next_cursor": "Y3Vyc29yLWFzc2Vzc21lbnRz",
 }
 
 
@@ -233,6 +250,66 @@ def test_scalepad_goals_require_mapping_and_reject_invalid_filters(settings) -> 
     assert blocked.result.status == "blocked"
 
 
+def test_scalepad_assessments_use_documented_filters_and_recheck_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/lifecycle-manager/v1/assessments"
+        assert request.url.params["filter[client.id]"] == "eq:sp-lifecycle-client-1"
+        assert request.url.params["filter[status]"] == "eq:Completed"
+        assert request.url.params["filter[assessment_template_id]"] == "eq:template-1"
+        assert request.url.params["cursor"] == "Y3Vyc29yLW9sZA=="
+        assert request.url.params["page_size"] == "20"
+        return httpx.Response(200, json=ASSESSMENTS_JSON)
+
+    response = _client(
+        settings,
+        handler,
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    ).get_assessments(
+        client_id="acme",
+        status="Completed",
+        assessment_template_id="template-1",
+        cursor="Y3Vyc29yLW9sZA==",
+    )
+    assert response.result.status == "ready"
+    assert response.result.count == 1
+    assert response.items[0]["client"]["id"] == "sp-lifecycle-client-1"  # type: ignore[index]
+    assert response.total_count == 1
+    assert response.next_cursor == "Y3Vyc29yLWFzc2Vzc21lbnRz"
+    assert "scalepad-secret-token" not in json.dumps(response.items)
+
+
+def test_scalepad_assessments_validate_filters_and_fail_closed(settings) -> None:
+    mapped = _client(
+        settings,
+        lambda request: httpx.Response(200, json=ASSESSMENTS_JSON),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    )
+    assert "assessment status" in mapped.get_assessments(client_id="acme", status="Unknown").result.message
+    assert "bounded strings" in mapped.get_assessments(
+        client_id="acme", assessment_template_id=""
+    ).result.message
+    invalid_object = _client(
+        settings,
+        lambda request: httpx.Response(200, json=[]),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    ).get_assessments(client_id="acme")
+    assert invalid_object.result.status == "failed"
+    assert "malformed response object" in invalid_object.result.message
+    malformed = _client(
+        settings,
+        lambda request: httpx.Response(200, json={"data": {}}),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    ).get_assessments(client_id="acme")
+    assert "malformed assessment data" in malformed.result.message
+    blocked = _client(
+        settings,
+        lambda request: httpx.Response(200, json=ASSESSMENTS_JSON),
+        allow_http_probing=False,
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    ).get_assessments(client_id="acme")
+    assert blocked.result.status == "blocked"
+
+
 def test_scalepad_risk_summary_requires_separate_mapping_and_handles_malformed_data(settings) -> None:
     client = _client(settings, lambda request: httpx.Response(200, json=RISK_SUMMARIES_JSON))
     missing = client.get_risk_summary(client_id="acme")
@@ -371,6 +448,26 @@ def test_scalepad_health_action_and_connector_surfaces(settings) -> None:
     assert goal_result.output["count"] == 1
     assert goal_result.evidence[0]["operation"] == "lifecycle-manager.goals"
 
+    assessment_client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=ASSESSMENTS_JSON),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    )
+    assessment_service = SmartActionService(
+        Store(assessment_client.settings.data_path),
+        assessment_client.settings,
+        scalepad_client=assessment_client,
+    )
+    assessment_result = assessment_service.invoke(
+        "scalepad-assessment-lookup",
+        {"client_id": "acme", "status": "Completed"},
+        "tech",
+        client_id="acme",
+    )
+    assert assessment_result.status == "success"
+    assert assessment_result.output["count"] == 1
+    assert assessment_result.evidence[0]["operation"] == "lifecycle-manager.assessments"
+
 
 def test_scalepad_api_routes_are_reachable_and_tenant_scoped(settings) -> None:
     active = replace(settings, allow_http_probing=True)
@@ -379,6 +476,7 @@ def test_scalepad_api_routes_are_reachable_and_tenant_scoped(settings) -> None:
     assert "/connectors/scalepad/clients" in routes
     assert "/connectors/scalepad/risk-summaries" in routes
     assert "/connectors/scalepad/goals" in routes
+    assert "/connectors/scalepad/assessments" in routes
 
 
 def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, monkeypatch) -> None:
@@ -497,6 +595,63 @@ def test_scalepad_goals_api_executes_scoped_and_denied_paths(settings, monkeypat
     assert getattr(denied_error.value, "status_code", None) == 403
 
 
+def test_scalepad_assessments_api_executes_scoped_and_denied_paths(settings, monkeypatch) -> None:
+    class FakeScalePadClient:
+        def __init__(self, active_settings) -> None:
+            self.settings = active_settings
+
+        def health(self):
+            return ConnectorReadResult("ready", "ready")
+
+        def get_client(self, *, client_id: str):
+            return ScalePadClientResponse(ConnectorReadResult("ready", "ready"), [])
+
+        def get_risk_summary(self, *, client_id: str):
+            return ScalePadRiskSummaryResponse(ConnectorReadResult("ready", "ready"), [])
+
+        def get_goals(self, *, client_id: str, status=None, title=None, cursor=None):
+            return ScalePadGoalResponse(ConnectorReadResult("ready", "ready"), [])
+
+        def get_assessments(
+            self, *, client_id: str, status=None, assessment_template_id=None, cursor=None
+        ):
+            assert client_id == "acme"
+            return ScalePadAssessmentResponse(
+                ConnectorReadResult("ready", "assessments ready", 1),
+                [{"client": {"id": "sp-lifecycle-client-1"}, "status": "Completed"}],
+                "Y3Vyc29yLWFzc2Vzc21lbnRz",
+                1,
+            )
+
+    monkeypatch.setattr(app_module, "ScalePadClient", FakeScalePadClient)
+    app = app_module.create_app(replace(settings, demo_mode=True, client_id=""))
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", "") == "/connectors/scalepad/assessments"
+    )
+    assert isinstance(route, APIRoute)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/connectors/scalepad/assessments",
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "root_path": "",
+        }
+    )
+    scoped = route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    assert scoped["result"]["status"] == "ready"
+    assert scoped["total_count"] == 1
+    with pytest.raises(HTTPException) as denied_error:
+        route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+    assert getattr(denied_error.value, "status_code", None) == 403
+
+
 def test_scalepad_risk_summary_cli_is_reachable(settings, monkeypatch) -> None:
     client = _client(
         settings,
@@ -524,6 +679,23 @@ def test_scalepad_goals_cli_is_reachable(settings, monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "_store", lambda: Store(client.settings.data_path))
 
     result = CliRunner().invoke(cli_module.app, ["connectors", "scalepad-goals", "acme"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"]["status"] == "ready"
+    assert payload["total_count"] == 1
+
+
+def test_scalepad_assessments_cli_is_reachable(settings, monkeypatch) -> None:
+    client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=ASSESSMENTS_JSON),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    )
+    monkeypatch.setattr(cli_module, "_scalepad_client", lambda: client)
+    monkeypatch.setattr(cli_module, "_store", lambda: Store(client.settings.data_path))
+
+    result = CliRunner().invoke(cli_module.app, ["connectors", "scalepad-assessments", "acme"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

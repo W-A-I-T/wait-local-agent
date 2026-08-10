@@ -113,7 +113,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Rescheduling and cancellation remain unavailable because no documented
   mutation contract is claimed.
 - ScalePad tenant-mapped Core client inventory, separately mapped ControlMap
-  risk-summary reads, and separately mapped Lifecycle Manager goal reads through
+  risk-summary reads, and separately mapped Lifecycle Manager goal and
+  assessment reads through
   the documented APIs, with exact provider filters, returned-scope rechecking,
   bounded redacted records, and explicit regional base-URL configuration.
   ScalePad writes and other product APIs remain unavailable.
@@ -423,7 +424,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | TimeZest connector | Tenant-mapped scheduling-request inventory plus approval-gated documented creation built; rescheduling, cancellation, and broader marketplace actions remain future |
-| ScalePad connector | Tenant-mapped, read-only Core client, separately mapped ControlMap risk-summary, and separately mapped Lifecycle Manager goal reads built; documented status/title filters and cursor pagination are bounded and surfaced through API, CLI, and Agents tooling; writes, unscoped reads, and other ScalePad product APIs remain future |
+| ScalePad connector | Tenant-mapped, read-only Core client, separately mapped ControlMap risk-summary, and separately mapped Lifecycle Manager goal/assessment reads built; documented filters and cursor pagination are bounded and surfaced through API, CLI, and Agents tooling; writes, unscoped reads, and other ScalePad product APIs remain future |
 | Confluence connector | Read-only core surface built |
 | Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |

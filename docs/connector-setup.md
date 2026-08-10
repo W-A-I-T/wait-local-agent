@@ -309,7 +309,7 @@ See TimeZest's [authentication guide](https://developer.timezest.com/authenticat
 ## ScalePad
 
 The ScalePad adapter exposes bounded, read-only Core client, ControlMap
-risk-summary, and Lifecycle Manager goal reads through the documented APIs. It
+risk-summary, and Lifecycle Manager goal and assessment reads through the documented APIs. It
 is reachable through the shared smart-action, planner/tool-catalog, API, CLI,
 and Agents UI surfaces, with dedicated health and read routes under
 `/connectors/scalepad`.
@@ -334,11 +334,14 @@ independently verified that mapping. WAIT sends the documented `x-api-key`
 header, fixes provider filters locally, caps each page, rechecks the returned
 provider scope, and exposes bounded redacted records. Goal reads support the
 documented status/title filters and opaque cursor returned by the provider.
+Assessment reads support the documented status and assessment-template filters
+and the same opaque cursor contract.
 API keys stay in settings/vault and never enter payloads, errors, or audit
 records. ScalePad writes and other product APIs remain unavailable. Lifecycle
 Manager access may require a higher ScalePad subscription than Core or
 ControlMap. See the [Lifecycle Manager goals reference](https://developer.scalepad.com/reference/apipublicv1goallist)
 and [product API subscription requirements](https://developer.scalepad.com/docs/product-apis-and-subscriptions).
+See also the [Lifecycle Manager assessments reference](https://developer.scalepad.com/reference/apipublicv1assessmentslist).
 Regional ScalePad hosts may be configured explicitly when the tenant's data
 residency requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
