@@ -280,16 +280,20 @@ WAIT_SCREENCONNECT_EXTENSION_ID=
 WAIT_SCREENCONNECT_AUTH_SECRET=
 WAIT_SCREENCONNECT_ORIGIN=https://your-screenconnect-host
 WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON={"collect-info":{"name":"Collect information","command":"systeminfo"}}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 Each mapped session is queried through `GetSessionDetailsBySessionID`, and
 returned details are normalized as tenant-scoped device inventory. The
 extension ID and session IDs must be UUIDs; the map is capped at 100 sessions
-per client. Alert lookup, script catalogs, command execution, and command
-polling remain explicitly unavailable until a separately reviewed provider
-contract and approval path exists. The authentication secret stays in the
-settings/vault boundary and is never part of a smart-action payload. See the
+per client. An optional local command catalog maps bounded script IDs to
+operator-reviewed command text. It provides metadata, preview, and
+approval-gated `SendCommandToSession` submission; commands do not accept
+runtime arguments, and execution reports provider acceptance without claiming
+polling or completion. Provider-native alert lookup and script discovery remain
+unavailable. The authentication secret stays in the settings/vault boundary
+and is never part of a smart-action payload. See the
 [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
 and [RESTful API Manager](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/RESTful_API_Manager).
 

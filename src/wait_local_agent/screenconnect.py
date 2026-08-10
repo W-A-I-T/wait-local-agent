@@ -3,9 +3,10 @@
 The official RESTful API Manager extension documents read endpoints such as
 ``GetSessionDetailsBySessionID`` and requires an instance URL, extension ID,
 trusted Origin, and extension authentication secret. WAIT keeps the tenant
-boundary local by requiring an explicit client-to-session-ID map. The adapter
-does not guess session groups, execute commands, or expose alert/script
-operations without a documented and separately governed provider contract.
+boundary local by requiring an explicit client-to-session-ID map. Command
+execution is limited to an operator-supplied local catalog and the documented
+``SendCommandToSession`` endpoint; provider-side alert lookup and polling are
+not claimed.
 """
 
 from __future__ import annotations
@@ -22,6 +23,10 @@ from wait_local_agent.config import Settings
 from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmScript, RmmScriptExecution, RmmScriptPreview
 
 MAX_SESSIONS = 100
+MAX_SCRIPTS = 100
+MAX_SCRIPT_ID_LENGTH = 100
+MAX_SCRIPT_NAME_LENGTH = 200
+MAX_COMMAND_LENGTH = 8_000
 
 
 class ScreenConnectRmmError(Exception):
@@ -74,10 +79,11 @@ class ScreenConnectRmmAdapter:
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
         self._session_ids(client_id)
-        raise ScreenConnectRmmError(
-            "ScreenConnect script catalog is unavailable: the documented RESTful API "
-            "Manager contract does not expose a script catalog"
-        )
+        catalog = self._script_catalog()
+        return [
+            RmmScript(script_id, entry["name"], "Locally approved ScreenConnect command")
+            for script_id, entry in catalog.items()
+        ]
 
     def preview_script(
         self,
@@ -87,10 +93,15 @@ class ScreenConnectRmmAdapter:
         *,
         client_id: str | None = None,
     ) -> RmmScriptPreview:
-        self._session_ids(client_id)
-        raise ScreenConnectRmmError(
-            "ScreenConnect command execution is unavailable until a reviewed script "
-            "catalog and approval contract are configured"
+        session_id, _ = self._validate_command_request(
+            script_id, device_id, arguments, client_id=client_id
+        )
+        return RmmScriptPreview(
+            script_id=script_id.strip(),
+            device_id=session_id,
+            arguments={},
+            status="preview",
+            message="ScreenConnect command is ready for approval.",
         )
 
     def execute_script(
@@ -101,10 +112,15 @@ class ScreenConnectRmmAdapter:
         *,
         client_id: str | None = None,
     ) -> RmmScriptExecution:
-        self._session_ids(client_id)
-        raise ScreenConnectRmmError(
-            "ScreenConnect command execution is unavailable until a reviewed script "
-            "catalog and approval contract are configured"
+        session_id, command = self._validate_command_request(
+            script_id, device_id, arguments, client_id=client_id
+        )
+        self._request("SendCommandToSession", [session_id, command], client_id=client_id)
+        return RmmScriptExecution(
+            script_id=script_id.strip(),
+            device_id=session_id,
+            status="queued",
+            message="ScreenConnect accepted the command; provider polling is unavailable.",
         )
 
     def get_execution(
@@ -142,6 +158,69 @@ class ScreenConnectRmmAdapter:
                 raise ScreenConnectRmmError("ScreenConnect session IDs must be UUIDs") from exc
         return session_ids
 
+    def _script_catalog(self) -> dict[str, dict[str, str]]:
+        raw_json = self.settings.screenconnect_script_catalog_json or ""
+        if not raw_json.strip():
+            raise ScreenConnectRmmError(
+                "ScreenConnect script catalog is unavailable until "
+                "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON is configured"
+            )
+        try:
+            catalog = json.loads(raw_json)
+        except ValueError as exc:
+            raise ScreenConnectRmmError(
+                "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON is malformed"
+            ) from exc
+        if not isinstance(catalog, Mapping):
+            raise ScreenConnectRmmError(
+                "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON must be an object"
+            )
+        if len(catalog) > MAX_SCRIPTS:
+            raise ScreenConnectRmmError(
+                f"ScreenConnect script catalog exceeds {MAX_SCRIPTS} scripts"
+            )
+        normalized: dict[str, dict[str, str]] = {}
+        for raw_id, raw_entry in catalog.items():
+            script_id = _safe_script_id(raw_id)
+            if not isinstance(raw_entry, Mapping):
+                raise ScreenConnectRmmError(
+                    "ScreenConnect script catalog entries must be objects"
+                )
+            name = _safe_text(raw_entry.get("name"), MAX_SCRIPT_NAME_LENGTH, "script name")
+            command = _safe_text(raw_entry.get("command"), MAX_COMMAND_LENGTH, "command")
+            normalized[script_id] = {"name": name, "command": command}
+        return normalized
+
+    def _validate_command_request(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None,
+    ) -> tuple[str, str]:
+        session_ids = self._session_ids(client_id)
+        catalog = self._script_catalog()
+        safe_script_id = _safe_script_id(script_id)
+        entry = catalog.get(safe_script_id)
+        if entry is None:
+            raise ScreenConnectRmmError(
+                "ScreenConnect script ID is not in the local command catalog"
+            )
+        if arguments:
+            raise ScreenConnectRmmError(
+                "ScreenConnect catalog commands do not accept runtime arguments"
+            )
+        try:
+            session_id = str(UUID(device_id.strip()))
+        except (AttributeError, ValueError) as exc:
+            raise ScreenConnectRmmError(
+                "ScreenConnect device ID must be a mapped session UUID"
+            ) from exc
+        if session_id not in session_ids:
+            raise ScreenConnectRmmError("ScreenConnect device is outside the tenant scope")
+        return session_id, entry["command"]
+
     def _request(self, operation: str, body: list[str], *, client_id: str | None) -> object:
         self._session_ids(client_id)
         if not self.settings.allow_http_probing:
@@ -174,6 +253,8 @@ class ScreenConnectRmmAdapter:
             if response.status_code in {401, 403}:
                 raise ScreenConnectRmmError("ScreenConnect request was unauthorized")
             raise ScreenConnectRmmError(f"ScreenConnect request failed with HTTP {response.status_code}")
+        if response.status_code == 204 or not response.content:
+            return None
         try:
             return response.json()
         except ValueError as exc:
@@ -229,6 +310,35 @@ def _extension_id(value: str) -> str:
         return str(UUID(value.strip()))
     except (AttributeError, ValueError) as exc:
         raise ScreenConnectRmmError("ScreenConnect extension ID must be a UUID") from exc
+
+
+def _safe_script_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise ScreenConnectRmmError("ScreenConnect script IDs must be strings")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_SCRIPT_ID_LENGTH
+        or any(
+            not (character.isalnum() or character in {"-", "_", "."})
+            for character in normalized
+        )
+    ):
+        raise ScreenConnectRmmError("ScreenConnect script ID is invalid")
+    return normalized
+
+
+def _safe_text(value: object, maximum: int, label: str) -> str:
+    if not isinstance(value, str):
+        raise ScreenConnectRmmError(f"ScreenConnect {label} must be text")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > maximum
+        or any(ord(character) < 32 for character in normalized)
+    ):
+        raise ScreenConnectRmmError(f"ScreenConnect {label} is invalid")
+    return normalized
 
 
 __all__ = ["ScreenConnectRmmAdapter", "ScreenConnectRmmError"]

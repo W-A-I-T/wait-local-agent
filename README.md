@@ -53,7 +53,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, Kaseya VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
-  reads through its documented RESTful API Manager extension. This is
+  reads through its documented RESTful API Manager extension plus an optional
+  local command catalog with approval-gated command submission. This is
   alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
   search), Confluence, Notion, and SharePoint (including bounded Graph drive search), and
@@ -993,11 +994,15 @@ WAIT_SCREENCONNECT_EXTENSION_ID=
 WAIT_SCREENCONNECT_AUTH_SECRET=
 WAIT_SCREENCONNECT_ORIGIN=https://your-screenconnect-host
 WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON={"collect-info":{"name":"Collect information","command":"systeminfo"}}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-Alert lookup, script catalogs, command execution, and command polling remain
-explicitly unavailable. See the [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
+The optional local catalog exposes bounded metadata, preview, and
+approval-gated `SendCommandToSession` submission. Catalog commands do not
+accept runtime arguments, and execution reports provider acceptance without
+claiming polling or completion. Provider-native alert lookup and script
+discovery remain explicitly unavailable. See the [ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
 and [RESTful API Manager](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/RESTful_API_Manager).
 
 ## Scheduled Workflows and Tenancy Filters

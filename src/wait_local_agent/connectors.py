@@ -278,7 +278,10 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     else (
                         "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
                         if kaseya_rmm_configured
-                        else "ScreenConnect is configured for tenant-scoped read-only session/device lookup."
+                        else (
+                            "ScreenConnect is configured for tenant-scoped session/device "
+                            "lookup and an optional local command catalog."
+                        )
                     )
                 )
             )
@@ -651,6 +654,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord(
             "WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON",
             bool(settings.screenconnect_client_sessions_map_json),
+            "screenconnect",
+        ),
+        SecretRecord(
+            "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON",
+            bool(settings.screenconnect_script_catalog_json),
             "screenconnect",
         ),
     ]

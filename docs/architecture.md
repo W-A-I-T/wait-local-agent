@@ -168,9 +168,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   client-to-organization map, and read-only device plus device-notification
   paths; script execution and remediation remain unavailable in this adapter.
   The ScreenConnect adapter uses the documented RESTful API Manager extension,
-  an explicit client-to-session UUID map, and read-only session detail lookup;
-  alerts, script catalogs, command execution, and command polling remain
-  unavailable until separately reviewed contracts exist.
+  an explicit client-to-session UUID map, and read-only session detail lookup.
+  An optional local command catalog supports approval-gated command submission;
+  provider-side alerts, script discovery, and polling are not inferred.
 - Communication drafts and delivery use the same smart-action contract, tenant
   scope, redaction, and approval pause as other proposed actions. Local ticket
   notes are persisted only for an existing tenant-scoped ticket; external

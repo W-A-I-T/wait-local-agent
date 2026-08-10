@@ -59,10 +59,12 @@ request-supplied.
 ScreenConnect calls use the same outbound HTTP gate and require a client ID
 that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
 mapped session ID must be an explicit UUID, and requests use only the
-documented RESTful API Manager session-detail operation. The extension ID,
+documented RESTful API Manager session-detail operation or the approval-gated
+`SendCommandToSession` operation for a local catalog entry. The extension ID,
 Origin, base URL, and authentication secret are validated locally; credentials
-and session scope are never accepted in smart-action payloads. Alerts, script
-catalogs, command execution, and command polling remain unavailable.
+and session scope are never accepted in smart-action payloads. Local commands
+accept no runtime arguments and report provider acceptance; provider-native
+alerts, script discovery, and command polling remain unavailable.
 
 ## API authentication
 
