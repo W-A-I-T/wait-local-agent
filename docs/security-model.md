@@ -90,7 +90,8 @@ tenant in the request, invoke smart actions, or read tickets belonging to a
 different requester. Technician replies use the separate
 `/tickets/{ticket_id}/end-user-messages` operator route, require technician or
 admin authorization, retain the ticket's requester scope, and never expose the
-author identity to the end-user.
+author identity or client ID to the end-user. End-user ticket responses contain
+only that requester's redacted subject and body plus status fields.
 `GET /end-user/config` uses the same token and fixed client/requester scope and
 returns only bounded display branding; it does not expose the client ID,
 credentials, or operator configuration.

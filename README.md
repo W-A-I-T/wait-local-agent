@@ -308,7 +308,9 @@ Behavior:
   `WAIT_END_USER_BRAND_SURFACE_COLOR`. Logos must be local base64 PNG/JPEG/WebP/GIF
   data URIs; remote image URLs are rejected. The authenticated
   `/end-user/config` response contains only those validated display values; it never
-  returns client identity, credentials, or operator settings.
+  returns client identity, credentials, or operator settings. End-user ticket
+  responses contain only the requester's redacted subject/body and status
+  fields, never the client ID.
 - When `WAIT_DEMO_MODE=true`, requests resolve as local admin for demo use.
 
 ## Configuration
