@@ -57,6 +57,7 @@ from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.syncro import SyncroReadProvider, SyncroWriteProvider
+from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorPreview
@@ -345,6 +346,7 @@ class ActionContext:
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
     communication_sender: CommunicationSender | None = None
+    timezest_client: TimeZestReadProvider | None = None
 
 
 class HaloPSAReadProvider(Protocol):
@@ -368,6 +370,95 @@ class HuduReadProvider(Protocol):
         page_size: int | None = None,
     ) -> object:
         """Read documentation articles through the existing guarded client."""
+
+
+class TimeZestSchedulingRequestLookupAction:
+    manifest = SmartActionManifest(
+        action_id="timezest-scheduling-request-lookup",
+        title="TimeZest scheduling-request lookup",
+        description=(
+            "Read tenant-mapped TimeZest scheduling requests and appointment status "
+            "through the documented read-only API."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "requests": "array",
+            "count": "integer",
+            "has_more": "boolean",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        limit = payload.get("limit", 20)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            return _failed("limit must be an integer between 1 and 20")
+        provider = context.timezest_client or TimeZestClient(context.settings)
+        try:
+            response = provider.list_scheduling_requests(client_id=scoped_client_id, limit=limit)
+        except Exception:
+            return _failed("TimeZest scheduling-request lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "TimeZest read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("TimeZest returned malformed scheduling-request data")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "client_id": scoped_client_id,
+                    "connector_status": status,
+                    "requests": [],
+                    "count": 0,
+                    "has_more": False,
+                },
+                error_detail=message,
+            )
+        requests: list[dict[str, object]] = []
+        for item in items[:limit]:
+            if not hasattr(item, "__dataclass_fields__"):
+                return _failed("TimeZest returned malformed scheduling-request data")
+            requests.append(cast(dict[str, object], redact_value(asdict(item))))
+        return ActionResult(
+            status="success",
+            output={
+                "client_id": scoped_client_id,
+                "connector_status": status,
+                "requests": requests,
+                "count": len(requests),
+                "has_more": bool(getattr(response, "has_more", False)),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "timezest",
+                    "operation": "scheduling_requests.list",
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
 
 
 class CommunicationPreviewAction:
@@ -5773,6 +5864,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NotionPageCommentAction(),
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
+        TimeZestSchedulingRequestLookupAction(),
         M365LiveContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
@@ -5859,6 +5951,7 @@ class SmartActionService:
         confluence_client: ConfluenceClientProtocol | None = None,
         notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
+        timezest_client: TimeZestReadProvider | None = None,
         m365_client: (
             M365GraphReadProvider
             | M365LifecycleWriteProvider
@@ -5892,6 +5985,7 @@ class SmartActionService:
         self.confluence_client = confluence_client
         self.notion_client = notion_client
         self.sharepoint_client = sharepoint_client
+        self.timezest_client = timezest_client
         self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
@@ -6260,6 +6354,7 @@ class SmartActionService:
             confluence_client=self.confluence_client,
             notion_client=self.notion_client,
             sharepoint_client=self.sharepoint_client,
+            timezest_client=self.timezest_client,
             m365_client=self.m365_client,
         )
 

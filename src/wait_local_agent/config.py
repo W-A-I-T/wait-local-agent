@@ -113,6 +113,9 @@ class Settings:
     n_sight_base_url: str = ""
     n_sight_api_key: str = ""
     n_sight_client_map_json: str = ""
+    timezest_base_url: str = "https://api.timezest.com"
+    timezest_api_key: str = ""
+    timezest_client_map_json: str = ""
     kaseya_rmm_base_url: str = ""
     kaseya_rmm_token_id: str = ""
     kaseya_rmm_token_secret: str = ""
@@ -359,6 +362,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         n_sight_client_map_json=os.getenv("WAIT_NSIGHT_CLIENT_MAP_JSON", ""),
+        timezest_base_url=_secret_value(
+            "WAIT_TIMEZEST_BASE_URL",
+            os.getenv("WAIT_TIMEZEST_BASE_URL", "https://api.timezest.com"),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        timezest_api_key=_secret_value(
+            "WAIT_TIMEZEST_API_KEY",
+            os.getenv("WAIT_TIMEZEST_API_KEY", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        timezest_client_map_json=os.getenv("WAIT_TIMEZEST_CLIENT_MAP_JSON", ""),
         kaseya_rmm_base_url=_secret_value(
             "WAIT_KASEYA_RMM_BASE_URL",
             os.getenv("WAIT_KASEYA_RMM_BASE_URL", ""),

@@ -152,6 +152,7 @@ from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
+from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -550,6 +551,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     confluence_client = ConfluenceClient(active_settings)
     notion_client = NotionClient(active_settings)
     sharepoint_client = SharePointClient(active_settings)
+    timezest_client = TimeZestClient(active_settings)
     m365_client = M365GraphClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
@@ -568,6 +570,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         confluence_client=confluence_client,
         notion_client=notion_client,
         sharepoint_client=sharepoint_client,
+        timezest_client=timezest_client,
         m365_client=m365_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )

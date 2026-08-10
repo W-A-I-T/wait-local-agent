@@ -48,6 +48,7 @@ from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient
+from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 HALOPSA_ACTION_TYPES = {
@@ -196,6 +197,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     m365_status: ConnectorStatusValue = "not_configured"
     if m365_configured:
         m365_status = "configured" if settings.allow_http_probing else "blocked"
+    timezest_configured = bool(
+        settings.timezest_base_url
+        and settings.timezest_api_key
+        and settings.timezest_client_map_json
+    )
+    timezest_status: ConnectorStatusValue = "not_configured"
+    if timezest_configured:
+        timezest_status = "configured" if settings.allow_http_probing else "blocked"
     ninjaone_configured = bool(
         settings.ninjaone_base_url
         and settings.ninjaone_access_token
@@ -516,6 +525,23 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
+            id="timezest",
+            kind="marketplace",
+            name="TimeZest",
+            status=timezest_status,
+            message=(
+                "TimeZest is configured for tenant-mapped, read-only scheduling-request lookup."
+                if timezest_status == "configured"
+                else "TimeZest is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
+                if timezest_status == "blocked"
+                else (
+                    "Set WAIT_TIMEZEST_BASE_URL, WAIT_TIMEZEST_API_KEY, and "
+                    "WAIT_TIMEZEST_CLIENT_MAP_JSON to enable scheduling-request reads."
+                )
+            ),
+            http_probing_enabled=settings.allow_http_probing,
+        ),
+        ConnectorStatus(
             id="rmm",
             kind="rmm",
             name=rmm_configured_name,
@@ -653,6 +679,13 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             bool(settings.n_sight_client_map_json),
             "nsight",
         ),
+        SecretRecord("WAIT_TIMEZEST_BASE_URL", bool(settings.timezest_base_url), "timezest"),
+        SecretRecord("WAIT_TIMEZEST_API_KEY", bool(settings.timezest_api_key), "timezest"),
+        SecretRecord(
+            "WAIT_TIMEZEST_CLIENT_MAP_JSON",
+            bool(settings.timezest_client_map_json),
+            "timezest",
+        ),
         SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
         SecretRecord("WAIT_KASEYA_RMM_TOKEN_ID", bool(settings.kaseya_rmm_token_id), "kaseya"),
         SecretRecord(
@@ -706,6 +739,7 @@ def validate_connector_credentials(
     notion_client: NotionClient | None = None,
     sharepoint_client: SharePointClient | None = None,
     m365_client: M365GraphClient | None = None,
+    timezest_client: TimeZestClient | None = None,
 ) -> ConnectorValidationResult:
     if connector == "halopsa":
         missing = [
@@ -903,6 +937,24 @@ def validate_connector_credentials(
                 f"Autotask credentials are incomplete: {', '.join(missing)}.",
             )
         result = (autotask_client or AutotaskClient(settings)).health()
+    elif connector == "timezest":
+        missing = [
+            key
+            for key, value in {
+                "WAIT_TIMEZEST_BASE_URL": settings.timezest_base_url,
+                "WAIT_TIMEZEST_API_KEY": settings.timezest_api_key,
+                "WAIT_TIMEZEST_CLIENT_MAP_JSON": settings.timezest_client_map_json,
+            }.items()
+            if not value
+        ]
+        if missing:
+            return ConnectorValidationResult(
+                connector,
+                False,
+                "config",
+                f"TimeZest credentials are incomplete: {', '.join(missing)}.",
+            )
+        result = (timezest_client or TimeZestClient(settings)).health()
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)

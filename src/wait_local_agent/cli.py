@@ -124,6 +124,7 @@ from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
+from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
@@ -228,6 +229,10 @@ def _sharepoint_client() -> SharePointClient:
 
 def _m365_client() -> M365GraphClient:
     return M365GraphClient(load_settings())
+
+
+def _timezest_client() -> TimeZestClient:
+    return TimeZestClient(load_settings())
 
 
 def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
@@ -951,7 +956,7 @@ def validate_connector(
             help=(
                 "Connector id: halopsa, hudu, connectwise, syncro, servicenow, "
                 "autotask, itglue, confluence, or notion."
-                " SharePoint and m365 are also supported for read-only connector reads."
+                " SharePoint, m365, and timezest are also supported for read-only connector reads."
             )
         ),
     ]
@@ -972,6 +977,7 @@ def validate_connector(
             notion_client=_notion_client(),
             sharepoint_client=_sharepoint_client(),
             m365_client=_m365_client(),
+            timezest_client=_timezest_client(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

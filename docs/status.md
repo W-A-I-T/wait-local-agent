@@ -106,6 +106,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   derived health alerts through the documented XML Data Extraction API and an
   explicit client map. Script catalog, preview, execution, and polling remain
   explicitly unavailable because no write contract is assumed.
+- TimeZest tenant-mapped scheduling-request reads through the documented API,
+  with fixed company scoping, bounded status/appointment metadata, and local
+  associated-company rechecking. Scheduling-request creation, rescheduling,
+  and cancellation remain unavailable.
 - Kaseya VSA X device and device-notification inventory through the same bounded
   contract with explicit client-to-organization mapping. Script catalog,
   execution, and remediation remain unavailable until a documented,
@@ -410,6 +414,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Syncro connector | Bounded ticket/customer reads, documented paginated ticket-comment history, and approval-gated documented ticket comments built; broader writes remain future |
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
+| TimeZest connector | Tenant-mapped, read-only scheduling-request inventory built; creation, rescheduling, cancellation, and broader marketplace actions remain future |
 | Confluence connector | Read-only core surface built |
 | Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |

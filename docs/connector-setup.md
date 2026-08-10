@@ -270,6 +270,34 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
 
+## TimeZest
+
+The TimeZest adapter exposes a bounded, read-only scheduling-request inventory
+through the documented API. It supports the shared smart-action, planner,
+tool-catalog, API, CLI, and Agents UI surfaces.
+
+Required settings:
+
+```text
+WAIT_TIMEZEST_BASE_URL=https://api.timezest.com
+WAIT_TIMEZEST_API_KEY=
+WAIT_TIMEZEST_CLIENT_MAP_JSON={"acme":{"connectwise_psa_company_id":209116}}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`WAIT_TIMEZEST_CLIENT_MAP_JSON` maps each WAIT client to exactly one documented
+Autotask or ConnectWise PSA company ID. WAIT builds the equality filter locally,
+rechecks the returned associated company before exposing a request, and keeps
+the API key out of payloads, results, errors, and audit records. One provider
+page is read at a time, capped at TimeZest's documented 20-item page size.
+Returned data is limited to scheduling-request status and bounded appointment
+metadata; scheduling URLs, end-user email addresses, and provider payloads are
+not exposed. Creating, rescheduling, and cancelling requests are not claimed.
+See TimeZest's [authentication guide](https://developer.timezest.com/authentication/),
+[scheduling-request API](https://developer.timezest.com/scheduling_requests/),
+[pagination guide](https://developer.timezest.com/pagination/), and
+[TQL guide](https://developer.timezest.com/tql/).
+
 ## Kaseya VSA X
 
 The Kaseya adapter implements the shared RMM contract for organization-scoped

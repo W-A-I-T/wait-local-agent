@@ -53,7 +53,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and health
-  inventory, Kaseya VSA X exposes organization-scoped device and
+  inventory, TimeZest exposes tenant-mapped scheduling-request reads, Kaseya
+  VSA X exposes organization-scoped device and
   notification reads, and ScreenConnect exposes tenant-scoped session/device
   reads through its documented RESTful API Manager extension plus an optional
   local command catalog with approval-gated command submission. This is
@@ -992,6 +993,31 @@ documented read API. See N-able's [API getting started guide](https://developer.
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
+
+### TimeZest
+
+The TimeZest adapter exposes bounded, read-only scheduling-request status
+through the shared smart-action catalog. Configure one documented Autotask or
+ConnectWise PSA company mapping per WAIT client:
+
+```text
+WAIT_TIMEZEST_BASE_URL=https://api.timezest.com
+WAIT_TIMEZEST_API_KEY=
+WAIT_TIMEZEST_CLIENT_MAP_JSON={"acme":{"connectwise_psa_company_id":209116}}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`timezest-scheduling-request-lookup` is reachable through the generic smart
+action API, CLI, agent planner/tool catalog, and `/agents` UI. The adapter
+uses the documented scheduling-request list endpoint and fixed cursor page
+size, applies a deterministic local associated-company check, and returns
+appointment status and bounded scheduling metadata without exposing the
+provider scheduling URL or end-user email. Scheduling-request creation,
+rescheduling, and cancellation are not claimed. See the [TimeZest API
+authentication guide](https://developer.timezest.com/authentication/),
+[scheduling-request API](https://developer.timezest.com/scheduling_requests/),
+[pagination guide](https://developer.timezest.com/pagination/), and
+[TQL guide](https://developer.timezest.com/tql/).
 
 ### Kaseya VSA X
 
