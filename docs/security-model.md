@@ -61,11 +61,11 @@ that resolves through `WAIT_NSIGHT_CLIENT_MAP_JSON`. The adapter uses the
 documented API-key request contract only after resolving that local map, then
 limits reads to the mapped sites and bounded device count. The API key remains
 in settings/vault and is not copied into action payloads, errors, or audit
-records. Patch approval is a separate technician-approved operation that
-requires `WAIT_ALLOW_WRITE_ACTIONS=true`, rechecks the mapped device and its
-patch inventory, and sends only bounded numeric patch IDs. Script discovery,
-execution, and other writes remain unavailable unless a documented contract is
-implemented behind the same approval boundary.
+records. Patch approval and patch reprocessing are separate technician-approved
+operations that require `WAIT_ALLOW_WRITE_ACTIONS=true`, recheck the mapped
+device and its patch inventory, and send only bounded numeric patch IDs. Script
+discovery, execution, and other writes remain unavailable unless a documented
+contract is implemented behind the same approval boundary.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
