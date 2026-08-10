@@ -2827,6 +2827,26 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         headers=_auth("tech-token"),
         json={"message": "plan triage and suggest a fix for TCK-ACME"},
     )
+    blocked_plan = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "plan invent a new unsupported operation for TCK-ACME"},
+    )
+    missing_ticket_plan = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "plan triage TCK-NOT-FOUND"},
+    )
+    session = client.post(
+        "/technician/chat/sessions",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "ticket_id": "TCK-ACME"},
+    )
+    session_plan = client.post(
+        f"/technician/chat/sessions/{session.json()['id']}/messages",
+        headers=_auth("tech-token"),
+        json={"message": "plan triage for TCK-ACME"},
+    )
     cross_tenant = client.post(
         "/technician/chat",
         headers=_auth("tech-token"),
@@ -2856,6 +2876,13 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         "suggest-resolution",
     ]
     assert plan.json()["plan"]["definition"]["enabled"] is False
+    assert blocked_plan.status_code == 200
+    assert blocked_plan.json()["status"] == "blocked"
+    assert missing_ticket_plan.status_code == 200
+    assert missing_ticket_plan.json()["status"] == "blocked"
+    assert session.status_code == 200
+    assert session_plan.status_code == 200
+    assert session_plan.json()["session_id"] == session.json()["id"]
     assert cross_tenant.status_code == 200
     assert cross_tenant.json()["result"]["status"] == "failed"
     assert "TCK-BETA" not in cross_tenant.text
