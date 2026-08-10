@@ -110,7 +110,7 @@ def test_nsight_patch_lookup_uses_mapped_provider_surface(settings) -> None:
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:
     provider = _NSightProvider()
     context = _context(settings, provider)
-    payload = {"device_id": "server:49324", "patch_ids": ["681806"]}
+    payload: dict[str, object] = {"device_id": "server:49324", "patch_ids": ["681806"]}
     preview = NSightPatchApproveAction().run(context, payload)
     assert preview.status == "success"
     assert preview.output["approval_required"] is True
