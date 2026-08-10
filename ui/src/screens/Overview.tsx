@@ -13,6 +13,9 @@ export function Overview() {
     writeHealth,
     workflowRuns,
     eventHistory,
+    eventDeliveries,
+    retryEventDelivery,
+    canWrite,
     isConfigured,
     configurationLoading
   } = useDashboard();
@@ -107,6 +110,44 @@ export function Overview() {
             ))}
             {eventHistory.length === 0 ? <p>No event history visible.</p> : null}
           </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>Automation delivery retries</h2>
+            <span>{eventDeliveries.length} deliveries</span>
+          </div>
+          <div className="event-list">
+            {eventDeliveries.map((delivery) => {
+              const retryable = delivery.status === "failed" && delivery.retry_count < delivery.max_retries;
+              return (
+                <article className="event-row" key={delivery.id}>
+                  <span>{delivery.event_type}</span>
+                  <strong>{delivery.entity_id}</strong>
+                  <em>{delivery.status}</em>
+                  <p>
+                    Attempt {delivery.retry_count} of {delivery.max_retries}.
+                    {delivery.error_detail ? ` ${delivery.error_detail}` : ""}
+                    {delivery.next_retry_at ? ` Next retry: ${delivery.next_retry_at}.` : ""}
+                  </p>
+                  {retryable ? (
+                    <button
+                      type="button"
+                      className="icon-button"
+                      disabled={!canWrite}
+                      onClick={() => void retryEventDelivery(delivery.id)}
+                    >
+                      Retry event delivery {delivery.id}
+                    </button>
+                  ) : null}
+                </article>
+              );
+            })}
+            {eventDeliveries.length === 0 ? <p>No automation deliveries visible.</p> : null}
+          </div>
+          {!canWrite && eventDeliveries.some((delivery) => delivery.status === "failed") ? (
+            <p className="screen-note">Technician or administrator access is required to retry a failed delivery.</p>
+          ) : null}
         </section>
       </div>
 
