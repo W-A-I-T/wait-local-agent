@@ -16,6 +16,7 @@ from wait_local_agent.rmm import (
 from wait_local_agent.smart_actions import (
     ActionContext,
     NSightAntivirusThreatsAction,
+    NSightBackupHistoryAction,
     NSightBackupSessionsAction,
     NSightOutageLookupAction,
     NSightPatchApproveAction,
@@ -72,6 +73,13 @@ class _NSightProvider(_Provider):
         assert client_id == "acme"
         return [{"session_id": 12345, "status": "COMPLETED", "device_id": device_id}]
 
+    def list_backup_history(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "checks": ["Backup Check - Example"],
+            "days": [{"date": "2026-08-10", "status": "PASS"}],
+        }
+
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         assert client_id == "acme"
         return {
@@ -119,6 +127,16 @@ class _FailingBackupNSightProvider(_NSightProvider):
 class _MalformedBackupNSightProvider(_NSightProvider):
     def list_backup_sessions(self, device_id, *, client_id=None):
         return {"session_id": 12345}
+
+
+class _FailingBackupHistoryNSightProvider(_NSightProvider):
+    def list_backup_history(self, device_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedBackupHistoryNSightProvider(_NSightProvider):
+    def list_backup_history(self, device_id, *, client_id=None):
+        return {"checks": ["Backup Check - Example"], "days": "invalid"}
 
 
 def _context(settings, provider=None):
@@ -211,6 +229,27 @@ def test_nsight_backup_lookup_is_read_only_and_bounded(settings) -> None:
         _context(settings, _MalformedBackupNSightProvider()), {"device_id": "server:49324"}
     )
     assert malformed.error_detail == "N-sight returned malformed backup session data"
+
+
+def test_nsight_backup_history_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightBackupHistoryAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert cast(list[dict[str, object]], result.output["days"])[0]["status"] == "PASS"
+    wrong = NSightBackupHistoryAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight backup history requires the N-sight RMM adapter"
+    failed = NSightBackupHistoryAction().run(
+        _context(settings, _FailingBackupHistoryNSightProvider()), {"device_id": "server:49324"}
+    )
+    assert failed.error_detail == "N-sight backup history is unavailable"
+    malformed = NSightBackupHistoryAction().run(
+        _context(settings, _MalformedBackupHistoryNSightProvider()), {"device_id": "server:49324"}
+    )
+    assert malformed.error_detail == "N-sight returned malformed backup history data"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

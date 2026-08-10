@@ -3756,6 +3756,79 @@ class NSightBackupSessionsAction:
         )
 
 
+class NSightBackupHistoryAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-backup-history",
+        title="N-sight backup history lookup",
+        description=(
+            "Read bounded 60-day Backup Check status history for one mapped "
+            "N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={
+            "checks": "array",
+            "days": "array",
+            "count": "integer",
+            "source": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_history = getattr(provider, "list_backup_history", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_history):
+            return _failed("N-sight backup history requires the N-sight RMM adapter")
+        try:
+            history = list_history(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight backup history is unavailable")
+        if not isinstance(history, dict):
+            return _failed("N-sight returned malformed backup history data")
+        checks = history.get("checks")
+        days = history.get("days")
+        if not isinstance(checks, list) or any(not isinstance(name, str) for name in checks):
+            return _failed("N-sight returned malformed backup history data")
+        if not isinstance(days, list) or any(
+            not isinstance(day, dict)
+            or not isinstance(day.get("date"), str)
+            or not isinstance(day.get("status"), str)
+            for day in days
+        ):
+            return _failed("N-sight returned malformed backup history data")
+        output = cast(dict[str, object], redact_value({"checks": checks, "days": days}))
+        output["count"] = len(days)
+        output["source"] = provider.adapter_id
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "rmm_backup_history",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                    "date": day.get("date"),
+                    "status": day.get("status"),
+                }
+                for day in days
+            ],
+        )
+
+
 class NSightPatchApproveAction:
     manifest = SmartActionManifest(
         action_id="nsight-patch-approve",
@@ -6768,6 +6841,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightAntivirusThreatsAction(),
         NSightOutageLookupAction(),
         NSightBackupSessionsAction(),
+        NSightBackupHistoryAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),

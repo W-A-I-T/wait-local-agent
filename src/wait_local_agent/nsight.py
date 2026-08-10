@@ -40,6 +40,8 @@ MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
 MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
+MAX_BACKUP_CHECKS = 25
+MAX_BACKUP_HISTORY_DAYS = 60
 MAX_TEXT_LENGTH = 500
 MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
@@ -199,6 +201,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _backup_session_records(root)[:MAX_BACKUP_SESSIONS]
+
+    def list_backup_history(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Read documented 60-day backup-check history for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_backup_history",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _backup_history_records(root)
 
     def approve_patches(
         self,
@@ -635,6 +656,31 @@ def _backup_session_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return sessions
+
+
+def _backup_history_records(root: Any) -> dict[str, object]:
+    checks: list[str] = []
+    for checks_node in root.iter("checks"):
+        for name in checks_node.findall("name"):
+            value = _bounded_text(name.text.strip() if isinstance(name.text, str) else "")
+            if value and value not in checks:
+                checks.append(value)
+            if len(checks) >= MAX_BACKUP_CHECKS:
+                break
+        if len(checks) >= MAX_BACKUP_CHECKS:
+            break
+
+    days: list[dict[str, str]] = []
+    for days_node in root.iter("days"):
+        for day in days_node.findall("day"):
+            date = _bounded_text(_text(day, "date"))
+            status = _bounded_text(_text(day, "status"))
+            if not date or not status:
+                continue
+            days.append({"date": date, "status": status})
+            if len(days) >= MAX_BACKUP_HISTORY_DAYS:
+                return {"checks": checks, "days": days}
+    return {"checks": checks, "days": days}
 
 
 def _device_numeric_id(value: str) -> int:
