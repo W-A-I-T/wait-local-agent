@@ -39,6 +39,9 @@ describe("TechnicianChat", () => {
       if (path === "/technician/chat/sessions/TCS-1/close") {
         return Promise.resolve(json({ ...session, status: "closed", messages: [] }));
       }
+      if (path === "/smart-actions/communication-send/invoke" && init?.method === "POST") {
+        return Promise.resolve(json({ status: "pending_approval", approval_id: 9 }));
+      }
       throw new Error(`Unexpected request: ${path} ${init?.method ?? "GET"}`);
     }));
   });
@@ -64,6 +67,26 @@ describe("TechnicianChat", () => {
     const calls = vi.mocked(fetch).mock.calls;
     expect(calls.some(([input, request]) => String(input) === "/technician/chat/sessions" && request?.method === "POST" && String(request.body).includes("acme"))).toBe(true);
     expect(calls.some(([input, request]) => String(input) === "/technician/chat/sessions/TCS-1/messages" && request?.method === "POST" && String(request.body).includes("summarize TCK-1001"))).toBe(true);
+  });
+
+  it("prepares a scoped Teams notification approval", async () => {
+    render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Technician Chat" });
+    fireEvent.change(screen.getByLabelText("Client id (optional for a scoped technician token)"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Notification channel"), { target: { value: "teams" } });
+    fireEvent.change(screen.getByLabelText("Recipient or channel"), { target: { value: "support-ops" } });
+    fireEvent.change(screen.getByLabelText("Notification message"), { target: { value: "TCK-1001 needs review" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare notification approval" }));
+
+    expect(await screen.findByText("teams notification approval 9 created. Review it before delivery.")).toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/smart-actions/communication-send/invoke",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"channel":"teams"')
+      })
+    ));
   });
 
   it("does not expose chat controls to a viewer", async () => {

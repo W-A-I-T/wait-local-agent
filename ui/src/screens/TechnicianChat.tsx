@@ -14,6 +14,11 @@ export function TechnicianChat() {
   const [message, setMessage] = useState("");
   const [plan, setPlan] = useState<TechnicianChatResponse["plan"] | null>(null);
   const [error, setError] = useState("");
+  const [notificationChannel, setNotificationChannel] = useState<"teams" | "slack">("teams");
+  const [notificationRecipient, setNotificationRecipient] = useState("");
+  const [notificationSubject, setNotificationSubject] = useState("");
+  const [notificationBody, setNotificationBody] = useState("");
+  const [notificationBusy, setNotificationBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [busy, setBusy] = useState<"create" | "send" | "close" | null>(null);
@@ -127,6 +132,38 @@ export function TechnicianChat() {
     }
   }
 
+  async function prepareNotification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!notificationRecipient.trim() || !notificationBody.trim() || !canWrite) return;
+    setNotificationBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiFetch<{ approval_id?: number; status: string }>("/smart-actions/communication-send/invoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId.trim() || undefined,
+          payload: {
+            channel: notificationChannel,
+            recipient: notificationRecipient.trim(),
+            subject: notificationSubject.trim() || undefined,
+            body: notificationBody.trim(),
+            ticket_id: ticketId.trim() || undefined
+          }
+        })
+      });
+      setMessage(result.approval_id
+        ? `${notificationChannel} notification approval ${result.approval_id} created. Review it before delivery.`
+        : `${notificationChannel} notification request completed with status ${result.status}.`);
+      setNotificationBody("");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to prepare the technician notification.");
+    } finally {
+      setNotificationBusy(false);
+    }
+  }
+
   if (!canWrite) {
     return <section className="panel"><div className="panel-heading"><h2>Technician Chat</h2><span>Technician access required</span></div><p>Chat can prepare bounded actions for technicians and administrators. Viewer access does not expose this control.</p></section>;
   }
@@ -144,6 +181,16 @@ export function TechnicianChat() {
             <label>Ticket id (optional)<input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="TCK-1001" /></label>
           </div>
           <button type="submit" disabled={busy !== null}><Plus size={17} aria-hidden="true" />{busy === "create" ? "Starting…" : "New chat session"}</button>
+        </form>
+        <form className="draft-form" onSubmit={(event) => void prepareNotification(event)}>
+          <div className="panel-heading"><div><h3>Technician notification</h3><p className="screen-note">Prepare a Teams or Slack notification through the existing approval-gated communication action.</p></div></div>
+          <div className="grid">
+            <label>Notification channel<select aria-label="Notification channel" value={notificationChannel} onChange={(event) => setNotificationChannel(event.target.value as "teams" | "slack")}><option value="teams">Teams</option><option value="slack">Slack</option></select></label>
+            <label>Recipient or channel<input required maxLength={320} value={notificationRecipient} onChange={(event) => setNotificationRecipient(event.target.value)} placeholder="support-ops" /></label>
+            <label>Subject (optional)<input maxLength={500} value={notificationSubject} onChange={(event) => setNotificationSubject(event.target.value)} placeholder="Ticket needs review" /></label>
+          </div>
+          <label>Notification message<textarea required maxLength={10000} rows={3} value={notificationBody} onChange={(event) => setNotificationBody(event.target.value)} placeholder="A bounded update for the configured technician channel" /></label>
+          <button type="submit" disabled={notificationBusy || !notificationRecipient.trim() || !notificationBody.trim()}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
         </form>
       </section>
 
