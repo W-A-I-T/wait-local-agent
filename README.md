@@ -52,8 +52,9 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
-  write paths, N-able N-sight exposes tenant-scoped device, failing-check,
-  outage, antivirus-threat, Backup & Recovery session, and backup-check history inventory, mapped patch reads, and approval-gated
+  write paths, N-able N-sight exposes tenant-scoped device and check inventory,
+  failing-check, outage, antivirus-threat, Backup & Recovery session, and
+  backup-check history inventory, mapped patch reads, and approval-gated
   patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
   exposes separately mapped Core client inventory, ControlMap risk summaries,
@@ -977,8 +978,8 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ### N-able N-sight
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
-tenant-scoped site, server, and workstation inventory plus documented failing
-checks, outages, managed-antivirus threats, Backup & Recovery sessions, and
+tenant-scoped site, server, and workstation inventory plus documented per-device
+check inventory, failing checks, outages, managed-antivirus threats, Backup & Recovery sessions, and
 backup-check history. It uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -996,6 +997,8 @@ action exposes bounded open and recent outages for one mapped device. The
 `nsight-backup-sessions` action exposes bounded Backup & Recovery session
 history for one mapped device. The `nsight-backup-history` action exposes
 bounded 60-day Backup Check status history for one mapped device. The
+`nsight-check-inventory` action exposes documented check configuration and
+latest status records for one mapped device. The
 `nsight-patch-lookup`
 action exposes bounded patch inventory for one mapped server or workstation
 after a local device-scope recheck. The `nsight-patch-approve` action previews
@@ -1020,7 +1023,8 @@ mapped-device recheck. The `nsight-backup-sessions` action uses the documented
 `list_mob_sessions` service after the same recheck and never starts or changes a
 backup job. The `nsight-backup-history` action uses the documented
 `list_backup_history` service after the same recheck and never changes a backup
-check. See
+check. The `nsight-check-inventory` action uses the documented `list_checks`
+service after the same recheck and never changes check configuration. See
 N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
@@ -1029,6 +1033,7 @@ and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-fa
 and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
 and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
+and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),

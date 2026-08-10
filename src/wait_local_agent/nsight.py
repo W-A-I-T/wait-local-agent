@@ -1,8 +1,8 @@
 """Bounded N-able N-sight RMM Data Extraction API adapter.
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
-documented client, site, server, workstation, failing-check, outage,
-antivirus-threat, backup-session, and bounded patch services here. A local
+documented client, site, server, workstation, check-inventory, failing-check,
+outage, antivirus-threat, backup-session, and bounded patch services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
@@ -35,6 +35,7 @@ from wait_local_agent.rmm import (
 MAX_SITES = 25
 MAX_DEVICES = 100
 MAX_ALERTS = 100
+MAX_CHECKS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
@@ -125,6 +126,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _failing_check_alerts(root, provider_client_id)[:MAX_ALERTS]
+
+    def list_checks(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented check inventory only after a mapped-device recheck."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_checks",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _check_records(root)[:MAX_CHECKS]
 
     def list_patches(
         self,
@@ -570,6 +590,36 @@ def _patch_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return patches
+
+
+def _check_records(root: Any) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    for check in root.iter("check"):
+        check_id = _positive_id(_text(check, "checkid"))
+        if check_id is None:
+            continue
+        checks.append(
+            {
+                "check_id": check_id,
+                "uid": _optional_integer(_text(check, "uid")),
+                "sync_status": _optional_integer(_text(check, "sync_status")),
+                "description": _bounded_text(_text(check, "description")),
+                "status_id": _optional_integer(_text(check, "statusid")),
+                "date": _bounded_text(_text(check, "date")),
+                "time": _bounded_text(_text(check, "time")),
+                "utc_run": _bounded_text(_text(check, "utc_run")),
+                "email_alerts": _optional_flag(_text(check, "email")),
+                "sms_alerts": _optional_flag(_text(check, "sms")),
+                "check_type": _optional_integer(_text(check, "check_type")),
+                "dsc_247": _optional_integer(_text(check, "dsc_247")),
+                "consecutive_fails": _optional_integer(
+                    _text(check, "consecutive_fails")
+                ),
+            }
+        )
+        if len(checks) >= MAX_CHECKS:
+            break
+    return checks
 
 
 def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:

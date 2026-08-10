@@ -3579,6 +3579,64 @@ class NSightPatchLookupAction:
         )
 
 
+class NSightCheckInventoryAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-check-inventory",
+        title="N-sight check inventory",
+        description=(
+            "Read bounded documented check configuration and latest status for one "
+            "mapped N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"checks": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_checks = getattr(provider, "list_checks", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_checks):
+            return _failed("N-sight check inventory requires the N-sight RMM adapter")
+        try:
+            checks = list_checks(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight check inventory is unavailable")
+        if not isinstance(checks, list) or any(not isinstance(check, dict) for check in checks):
+            return _failed("N-sight returned malformed check inventory data")
+        output_checks = [cast(dict[str, object], redact_value(check)) for check in checks[:100]]
+        return ActionResult(
+            status="success",
+            output={
+                "checks": output_checks,
+                "count": len(output_checks),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_check",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                    "check_id": check.get("check_id"),
+                }
+                for check in output_checks
+            ],
+        )
+
+
 class NSightAntivirusThreatsAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-threats",
@@ -6842,6 +6900,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightOutageLookupAction(),
         NSightBackupSessionsAction(),
         NSightBackupHistoryAction(),
+        NSightCheckInventoryAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),

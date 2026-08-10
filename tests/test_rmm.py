@@ -18,6 +18,7 @@ from wait_local_agent.smart_actions import (
     NSightAntivirusThreatsAction,
     NSightBackupHistoryAction,
     NSightBackupSessionsAction,
+    NSightCheckInventoryAction,
     NSightOutageLookupAction,
     NSightPatchApproveAction,
     NSightPatchLookupAction,
@@ -80,6 +81,10 @@ class _NSightProvider(_Provider):
             "days": [{"date": "2026-08-10", "status": "PASS"}],
         }
 
+    def list_checks(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return [{"check_id": 1304847, "description": "Web Page Check", "device_id": device_id}]
+
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         assert client_id == "acme"
         return {
@@ -137,6 +142,16 @@ class _FailingBackupHistoryNSightProvider(_NSightProvider):
 class _MalformedBackupHistoryNSightProvider(_NSightProvider):
     def list_backup_history(self, device_id, *, client_id=None):
         return {"checks": ["Backup Check - Example"], "days": "invalid"}
+
+
+class _FailingCheckInventoryNSightProvider(_NSightProvider):
+    def list_checks(self, device_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedCheckInventoryNSightProvider(_NSightProvider):
+    def list_checks(self, device_id, *, client_id=None):
+        return {"check_id": 1304847}
 
 
 class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
@@ -260,6 +275,30 @@ def test_nsight_backup_history_lookup_is_read_only_and_bounded(settings) -> None
         {"device_id": "server:49324"},
     )
     assert malformed_checks.error_detail == "N-sight returned malformed backup history data"
+
+
+def test_nsight_check_inventory_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightCheckInventoryAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    checks = cast(list[dict[str, object]], result.output["checks"])
+    assert checks[0]["check_id"] == 1304847
+    wrong = NSightCheckInventoryAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight check inventory requires the N-sight RMM adapter"
+    failed = NSightCheckInventoryAction().run(
+        _context(settings, _FailingCheckInventoryNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert failed.error_detail == "N-sight check inventory is unavailable"
+    malformed = NSightCheckInventoryAction().run(
+        _context(settings, _MalformedCheckInventoryNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert malformed.error_detail == "N-sight returned malformed check inventory data"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:
