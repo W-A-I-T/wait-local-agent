@@ -68,8 +68,13 @@ resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
 Autotask or ConnectWise PSA company ID. The adapter builds the fixed company
 filter locally, rechecks the returned associated company, bounds the response,
 and keeps the bearer key out of action payloads, errors, and audit records.
-Only scheduling-request reads are exposed; create, reschedule, and cancel
-operations are not inferred.
+Scheduling-request creation is a separate high-risk smart action: it requires
+both HTTP probing and `WAIT_ALLOW_WRITE_ACTIONS`, a provider read/write key,
+documented allowlisted fields, a locally persisted approval, and a second
+technician/admin approval before POST. The mapped company is inserted by WAIT,
+not accepted as arbitrary caller-supplied association data. Reschedule and
+cancel operations remain unavailable because no documented provider mutation
+contract is claimed.
 
 ScalePad calls use the same outbound HTTP gate. Core client reads require a
 client ID that resolves through `WAIT_SCALEPAD_CLIENT_MAP_JSON` to exactly one

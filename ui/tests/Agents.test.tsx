@@ -66,6 +66,15 @@ describe("Agents", () => {
             required_role: "technician",
             approval_required: false,
             access_mode: "read"
+          },
+          {
+            id: "timezest-scheduling-request-create",
+            name: "TimeZest create scheduling request",
+            description: "Create an approved scheduling request.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
           }
         ]), { status: 200 }));
       }
@@ -155,6 +164,35 @@ describe("Agents", () => {
     expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
       ([input, init]) => String(input) === "/agents/agent-1" && init?.method === "PUT" && String(init.body).includes("Updated bounded triage.")
     )).toBe(true);
+  });
+
+  it("persists configured JSON inputs for selected tools", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByRole("checkbox", { name: /TimeZest create scheduling request/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Scheduling agent" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /TimeZest create scheduling request/ }));
+    fireEvent.change(screen.getByLabelText("TimeZest create scheduling request input JSON"), {
+      target: {
+        value: JSON.stringify({
+          appointment_type_id: "apty_1",
+          trigger_mode: "generate_url",
+          resource_ids: ["agnt_1"],
+          end_user_name: "Rodney Smith",
+          end_user_email: "rodney@example.test"
+        })
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(request).toBeDefined();
+    expect(String(request?.[1]?.body)).toContain("apty_1");
+    expect(String(request?.[1]?.body)).toContain("generate_url");
+    expect(String(request?.[1]?.body)).toContain("rodney@example.test");
   });
 
   it("loads, compares, and restores agent revisions", async () => {

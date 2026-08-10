@@ -58,7 +58,7 @@ from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.syncro import SyncroReadProvider, SyncroWriteProvider
-from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider
+from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider, TimeZestWriteProvider
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorPreview
@@ -347,7 +347,7 @@ class ActionContext:
     hudu_client: HuduReadProvider | None = None
     communication_provider: CommunicationProvider | None = None
     communication_sender: CommunicationSender | None = None
-    timezest_client: TimeZestReadProvider | None = None
+    timezest_client: TimeZestReadProvider | TimeZestWriteProvider | None = None
     scalepad_client: ScalePadReadProvider | None = None
 
 
@@ -460,6 +460,208 @@ class TimeZestSchedulingRequestLookupAction:
                     "client_id": scoped_client_id,
                 }
             ],
+        )
+
+
+class TimeZestSchedulingRequestCreateAction:
+    manifest = SmartActionManifest(
+        action_id="timezest-scheduling-request-create",
+        title="TimeZest create scheduling request",
+        description=(
+            "Prepare an approval-gated TimeZest scheduling request using the documented "
+            "create API and one tenant-mapped PSA company."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": [
+                "appointment_type_id",
+                "trigger_mode",
+                "resource_ids",
+                "end_user_name",
+                "end_user_email",
+            ],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "appointment_type_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "trigger_mode": {"type": "string", "enum": ["pod", "generate_url"]},
+                "resource_ids": {"type": "array", "minItems": 1, "maxItems": 20},
+                "duration_mins": {"type": "integer", "minimum": 1, "maximum": 1440},
+                "earliest_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                "earliest_time": {"type": "string", "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+                "latest_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                "latest_time": {"type": "string", "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+                "end_user_name": {"type": "string", "minLength": 1, "maxLength": 500},
+                "end_user_email": {"type": "string", "minLength": 3, "maxLength": 320},
+                "end_user_company": {"type": "string", "minLength": 1, "maxLength": 500},
+            },
+        },
+        output_schema={
+            "operation": "string",
+            "connector_status": "string",
+            "client_id": "string",
+            "request": "object",
+            "approval_required": "boolean",
+            "approved": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=5,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        allowed = {
+            "client_id",
+            "appointment_type_id",
+            "trigger_mode",
+            "resource_ids",
+            "duration_mins",
+            "earliest_date",
+            "earliest_time",
+            "latest_date",
+            "latest_time",
+            "end_user_name",
+            "end_user_email",
+            "end_user_company",
+            "_approval_completed",
+        }
+        if set(payload) - allowed:
+            return _failed("TimeZest scheduling-request create payload contains unsupported fields")
+        client_id = payload.get("client_id", context.client_id)
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        appointment_type_id = payload.get("appointment_type_id")
+        trigger_mode = payload.get("trigger_mode")
+        resource_ids = payload.get("resource_ids")
+        end_user_name = payload.get("end_user_name")
+        end_user_email = payload.get("end_user_email")
+        if not isinstance(appointment_type_id, str) or not appointment_type_id.strip():
+            return _failed("appointment_type_id must be a non-empty string")
+        if not isinstance(trigger_mode, str) or trigger_mode not in {"pod", "generate_url"}:
+            return _failed("trigger_mode must be pod or generate_url")
+        if (
+            not isinstance(resource_ids, list)
+            or not resource_ids
+            or len(resource_ids) > 20
+            or any(not isinstance(item, str) or not item.strip() for item in resource_ids)
+        ):
+            return _failed("resource_ids must be a non-empty array of at most 20 strings")
+        if len({item.strip() for item in resource_ids}) != len(resource_ids):
+            return _failed("resource_ids must not contain duplicates")
+        if not isinstance(end_user_name, str) or not end_user_name.strip():
+            return _failed("end_user_name must be a non-empty string")
+        if (
+            not isinstance(end_user_email, str)
+            or end_user_email.count("@") != 1
+            or any(character.isspace() for character in end_user_email)
+        ):
+            return _failed("end_user_email must be a valid email address")
+
+        optional_values = {
+            name: payload.get(name)
+            for name in (
+                "duration_mins",
+                "earliest_date",
+                "earliest_time",
+                "latest_date",
+                "latest_time",
+                "end_user_company",
+            )
+        }
+        for name, value in optional_values.items():
+            if value is not None and not isinstance(value, (str, int)):
+                return _failed(f"{name} has an invalid type")
+        duration_mins = optional_values["duration_mins"]
+        if duration_mins is not None and (
+            isinstance(duration_mins, bool)
+            or not isinstance(duration_mins, int)
+            or not 1 <= duration_mins <= 1_440
+        ):
+            return _failed("duration_mins must be an integer between 1 and 1440")
+        for name in ("earliest_date", "earliest_time", "latest_date", "latest_time", "end_user_company"):
+            value = optional_values[name]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                return _failed(f"{name} must be a non-empty string when provided")
+
+        provider = cast(
+            TimeZestWriteProvider,
+            context.timezest_client or TimeZestClient(context.settings),
+        )
+        try:
+            health = provider.write_health()
+        except Exception:
+            return _failed("TimeZest write readiness check failed")
+        connector_status = str(getattr(health, "status", "failed"))
+        connector_message = redact_text(
+            str(getattr(health, "message", "TimeZest writes are unavailable"))
+        )
+        output: dict[str, object] = {
+            "operation": "scheduling_request.create",
+            "connector_status": connector_status,
+            "client_id": scoped_client_id,
+            "approval_required": not bool(payload.get("_approval_completed")),
+            "approved": bool(payload.get("_approval_completed")),
+        }
+        evidence = [
+            {
+                "type": "connector_write_preflight",
+                "connector": "timezest",
+                "operation": "scheduling_requests.create",
+                "client_id": scoped_client_id,
+                "appointment_type_id": appointment_type_id.strip(),
+                "trigger_mode": trigger_mode,
+                "resource_count": len(resource_ids),
+                "end_user_email_provided": True,
+            }
+        ]
+        if connector_status != "ready":
+            return ActionResult(status="failed", output=output, evidence=evidence, error_detail=connector_message)
+        if not payload.get("_approval_completed"):
+            return ActionResult(status="success", output=output, evidence=evidence)
+        try:
+            response = provider.create_scheduling_request(
+                client_id=scoped_client_id,
+                appointment_type_id=appointment_type_id.strip(),
+                trigger_mode=trigger_mode,
+                resource_ids=resource_ids,
+                duration_mins=cast(int | None, duration_mins),
+                earliest_date=cast(str | None, optional_values["earliest_date"]),
+                earliest_time=cast(str | None, optional_values["earliest_time"]),
+                latest_date=cast(str | None, optional_values["latest_date"]),
+                latest_time=cast(str | None, optional_values["latest_time"]),
+                end_user_name=end_user_name.strip(),
+                end_user_email=end_user_email.strip(),
+                end_user_company=cast(str | None, optional_values["end_user_company"]),
+            )
+        except Exception:
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail="TimeZest scheduling-request creation failed",
+            )
+        response_result = getattr(response, "result", None)
+        response_status = str(getattr(response_result, "status", "failed"))
+        response_message = redact_text(
+            str(getattr(response_result, "message", "TimeZest scheduling-request creation failed"))
+        )
+        request = getattr(response, "request", {})
+        if response_status != "ready" or not isinstance(request, dict) or not request.get("id"):
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=response_message,
+            )
+        return ActionResult(
+            status="success",
+            output={**output, "connector_status": response_status, "request": redact_value(request)},
+            evidence=evidence,
         )
 
 
@@ -6029,6 +6231,7 @@ def _build_default_registry() -> SmartActionRegistry:
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         TimeZestSchedulingRequestLookupAction(),
+        TimeZestSchedulingRequestCreateAction(),
         ScalePadClientLookupAction(),
         ScalePadRiskSummaryAction(),
         M365LiveContextAction(),
@@ -6117,7 +6320,7 @@ class SmartActionService:
         confluence_client: ConfluenceClientProtocol | None = None,
         notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
-        timezest_client: TimeZestReadProvider | None = None,
+        timezest_client: TimeZestReadProvider | TimeZestWriteProvider | None = None,
         scalepad_client: ScalePadReadProvider | None = None,
         m365_client: (
             M365GraphReadProvider

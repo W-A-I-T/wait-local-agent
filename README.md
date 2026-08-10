@@ -53,7 +53,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and health
-  inventory, TimeZest exposes tenant-mapped scheduling-request reads, ScalePad
+  inventory, TimeZest exposes tenant-mapped scheduling-request reads and an
+  approval-gated documented scheduling-request create action, ScalePad
   exposes separately mapped Core client inventory and ControlMap risk summaries,
   Kaseya
   VSA X exposes organization-scoped device and
@@ -998,9 +999,10 @@ documented read API. See N-able's [API getting started guide](https://developer.
 
 ### TimeZest
 
-The TimeZest adapter exposes bounded, read-only scheduling-request status
-through the shared smart-action catalog. Configure one documented Autotask or
-ConnectWise PSA company mapping per WAIT client:
+The TimeZest adapter exposes bounded scheduling-request reads and one
+approval-gated documented create mutation through the shared smart-action
+catalog. Configure one documented Autotask or ConnectWise PSA company mapping
+per WAIT client:
 
 ```text
 WAIT_TIMEZEST_BASE_URL=https://api.timezest.com
@@ -1009,13 +1011,21 @@ WAIT_TIMEZEST_CLIENT_MAP_JSON={"acme":{"connectwise_psa_company_id":209116}}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-`timezest-scheduling-request-lookup` is reachable through the generic smart
-action API, CLI, agent planner/tool catalog, and `/agents` UI. The adapter
-uses the documented scheduling-request list endpoint and fixed cursor page
-size, applies a deterministic local associated-company check, and returns
-appointment status and bounded scheduling metadata without exposing the
-provider scheduling URL or end-user email. Scheduling-request creation,
-rescheduling, and cancellation are not claimed. See the [TimeZest API
+`timezest-scheduling-request-lookup` and
+`timezest-scheduling-request-create` are reachable through the generic
+smart-action API, CLI, agent planner/tool catalog, and `/agents` UI. The
+create action requires a client-scoped mapped company, documented appointment
+type, trigger mode, resource IDs, and end-user name/email; it creates a
+persisted approval draft first and only sends the documented POST after a
+second technician or administrator approves it. Set
+`WAIT_ALLOW_WRITE_ACTIONS=true` in addition to the HTTP probing flag for the
+live write. Reads use the documented scheduling-request list endpoint and
+fixed cursor page size, apply a deterministic local associated-company check,
+and return bounded appointment metadata without exposing the provider
+scheduling URL or end-user email. The approved create result returns the
+bounded scheduling-request ID and scheduling URL; rescheduling and
+cancellation remain unavailable because the documented mutation contract is
+not present. See the [TimeZest API
 authentication guide](https://developer.timezest.com/authentication/),
 [scheduling-request API](https://developer.timezest.com/scheduling_requests/),
 [pagination guide](https://developer.timezest.com/pagination/), and

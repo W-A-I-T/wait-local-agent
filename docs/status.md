@@ -106,10 +106,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   derived health alerts through the documented XML Data Extraction API and an
   explicit client map. Script catalog, preview, execution, and polling remain
   explicitly unavailable because no write contract is assumed.
-- TimeZest tenant-mapped scheduling-request reads through the documented API,
-  with fixed company scoping, bounded status/appointment metadata, and local
-  associated-company rechecking. Scheduling-request creation, rescheduling,
-  and cancellation remain unavailable.
+- TimeZest tenant-mapped scheduling-request reads and an approval-gated
+  documented create action through the documented API, with fixed company
+  scoping, bounded status/appointment metadata, local associated-company
+  rechecking, explicit HTTP/write flags, and read/write-key enforcement.
+  Rescheduling and cancellation remain unavailable because no documented
+  mutation contract is claimed.
 - ScalePad tenant-mapped Core client inventory and separately mapped ControlMap
   risk-summary reads through the documented APIs, with exact provider filters,
   returned-scope rechecking, bounded redacted records, and explicit regional
@@ -419,7 +421,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Syncro connector | Bounded ticket/customer reads, documented paginated ticket-comment history, and approval-gated documented ticket comments built; broader writes remain future |
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
-| TimeZest connector | Tenant-mapped, read-only scheduling-request inventory built; creation, rescheduling, cancellation, and broader marketplace actions remain future |
+| TimeZest connector | Tenant-mapped scheduling-request inventory plus approval-gated documented creation built; rescheduling, cancellation, and broader marketplace actions remain future |
 | ScalePad connector | Tenant-mapped, read-only Core client lookup and separately mapped ControlMap risk-summary read built; writes, unscoped reads, and other ScalePad product APIs remain future |
 | Confluence connector | Read-only core surface built |
 | Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |

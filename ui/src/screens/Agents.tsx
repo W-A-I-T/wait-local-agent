@@ -17,6 +17,7 @@ export function Agents() {
   const [description, setDescription] = useState("");
   const [clientId, setClientId] = useState("");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [stepPayloads, setStepPayloads] = useState<Record<string, string>>({});
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
   const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
   const [approvalRequiredTools, setApprovalRequiredTools] = useState<string[]>([]);
@@ -59,6 +60,7 @@ export function Agents() {
     setDescription("");
     setClientId("");
     setSelectedTools([]);
+    setStepPayloads({});
     setContextSources(["ticket"]);
     setApprovalExpiryHours("");
     setApprovalRequiredTools([]);
@@ -72,6 +74,7 @@ export function Agents() {
     setDescription(agent.description);
     setClientId(agent.client_id ?? "");
     setSelectedTools(agent.enabled_tools.slice(0, 8));
+    setStepPayloads(Object.fromEntries(agent.steps.map((step) => [step.tool_id, JSON.stringify(step.payload, null, 2)])));
     setContextSources(agent.context_sources.length ? agent.context_sources : ["ticket"]);
     setApprovalExpiryHours(agent.approval_expiry_seconds ? String(agent.approval_expiry_seconds / 3600) : "");
     setApprovalRequiredTools(agent.approval_required_tools ?? []);
@@ -86,6 +89,14 @@ export function Agents() {
 
   function agentPayload(agent?: AgentDefinition) {
     const boundedTools = selectedTools.slice(0, 8);
+    const parsedStepPayloads = Object.fromEntries(boundedTools.map((tool_id) => {
+      const raw = stepPayloads[tool_id]?.trim() || "{}";
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+        throw new Error(`${tool_id} input must be a JSON object.`);
+      }
+      return [tool_id, parsed as Record<string, unknown>];
+    }));
     const parsedApprovalExpiryHours = approvalExpiryHours.trim()
       ? Number(approvalExpiryHours)
       : undefined;
@@ -109,7 +120,7 @@ export function Agents() {
       entity_type: agent?.entity_type ?? "ticket",
       filters: agent?.filters ?? {},
       enabled_tools: boundedTools,
-      steps: boundedTools.map((tool_id) => ({ tool_id, payload: agent?.steps.find((step) => step.tool_id === tool_id)?.payload ?? {} })),
+      steps: boundedTools.map((tool_id) => ({ tool_id, payload: parsedStepPayloads[tool_id] ?? agent?.steps.find((step) => step.tool_id === tool_id)?.payload ?? {} })),
       max_steps: boundedTools.length,
       execution_timeout_seconds: agent?.execution_timeout_seconds ?? 30,
       context_sources: contextSources,
@@ -148,6 +159,12 @@ export function Agents() {
     const existing = editingAgentId ? agents.find((agent) => agent.id === editingAgentId) : undefined;
     if (editingAgentId && !existing) {
       setMessage("This agent is no longer available. Refresh the list before saving.");
+      return;
+    }
+    try {
+      agentPayload(existing);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Each tool input must be a JSON object.");
       return;
     }
     try {
@@ -290,11 +307,15 @@ export function Agents() {
                 return;
               }
               setSelectedTools((current) => toggleValue(current, tool.id));
+              if (!selected && !stepPayloads[tool.id]) {
+                setStepPayloads((current) => ({ ...current, [tool.id]: "{}" }));
+              }
               if (selected) {
                 setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
               }
             }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
           })}</fieldset>
+          <fieldset className="agent-option-group"><legend>Tool inputs (JSON objects)</legend><p className="screen-note">Provide the bounded inputs each selected tool needs. The ticket id is added automatically when a tool supports it; client-scoped tools can use the agent's client mapping.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`payload-${tool.id}`}>{tool.name}<textarea aria-label={`${tool.name} input JSON`} rows={4} value={stepPayloads[tool.id] ?? "{}"} onChange={(event) => setStepPayloads((current) => ({ ...current, [tool.id]: event.target.value }))} /></label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Additional approval rules</legend><p className="screen-note">Require approval for selected tools even when their catalog policy is read-only. Built-in approval requirements cannot be disabled.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`approval-${tool.id}`}><input type="checkbox" checked={approvalRequiredTools.includes(tool.id)} onChange={() => setApprovalRequiredTools((current) => toggleValue(current, tool.id))} />{tool.name}{tool.approval_required ? " · already required" : " · require approval"}</label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Conditional approval rules</legend><p className="screen-note">Require approval only when the ticket matches explicit priority, status, or requester-role values. Enter comma-separated values; matches are case-insensitive and all entered fields must match. Scheduled and event runs have no authenticated requester role, so a role condition does not match them.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
             const draft = approvalRuleDrafts[tool.id] ?? { priority: "", status: "", actor_role: "" };

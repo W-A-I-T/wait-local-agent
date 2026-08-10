@@ -1,10 +1,10 @@
-"""Bounded, read-only TimeZest scheduling-request adapter.
+"""Bounded TimeZest scheduling-request adapter.
 
 TimeZest exposes a documented HTTP API for scheduling requests. WAIT uses the
 documented list endpoint with one explicit local mapping per WAIT client to an
 Autotask or ConnectWise PSA company identifier. The provider filter is fixed
 by WAIT, returned records are checked against the mapped associated entity, and
-no scheduling-request creation or mutation is exposed here.
+creation is separately gated by the shared approval-aware write runtime.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, time
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -27,6 +28,9 @@ MAX_ID_LENGTH = 120
 MAX_TEXT_LENGTH = 500
 MAX_ENTITIES = 20
 MAX_RESOURCES = 20
+MAX_RESOURCE_ID_LENGTH = 120
+MAX_EMAIL_LENGTH = 320
+MAX_URL_LENGTH = 2_000
 
 _CLIENT_MAP_FIELDS = {
     "autotask_company_id": ("autotask/company", "id"),
@@ -58,6 +62,12 @@ class TimeZestSchedulingResponse:
     has_more: bool = False
 
 
+@dataclass(frozen=True)
+class TimeZestSchedulingCreateResponse:
+    result: ConnectorReadResult
+    request: dict[str, object]
+
+
 class TimeZestReadError(Exception):
     """Safe, operator-facing TimeZest adapter error."""
 
@@ -76,8 +86,31 @@ class TimeZestReadProvider(Protocol):
         ...
 
 
+class TimeZestWriteProvider(TimeZestReadProvider, Protocol):
+    def write_health(self) -> ConnectorReadResult:
+        ...
+
+    def create_scheduling_request(
+        self,
+        *,
+        client_id: str,
+        appointment_type_id: str,
+        trigger_mode: str,
+        resource_ids: Sequence[str],
+        duration_mins: int | None = None,
+        earliest_date: str | None = None,
+        earliest_time: str | None = None,
+        latest_date: str | None = None,
+        latest_time: str | None = None,
+        end_user_name: str | None = None,
+        end_user_email: str | None = None,
+        end_user_company: str | None = None,
+    ) -> TimeZestSchedulingCreateResponse:
+        ...
+
+
 class TimeZestClient:
-    """Normalize the documented TimeZest scheduling-request read contract."""
+    """Normalize the documented TimeZest scheduling-request contract."""
 
     def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
@@ -152,10 +185,139 @@ class TimeZestClient:
             has_more,
         )
 
+    def write_health(self) -> ConnectorReadResult:
+        if not self.settings.allow_http_probing:
+            return ConnectorReadResult(
+                "blocked",
+                "TimeZest writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
+            )
+        if not self.settings.allow_write_actions:
+            return ConnectorReadResult(
+                "blocked",
+                "TimeZest writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.",
+            )
+        missing = self._not_configured_result()
+        if missing is not None:
+            return missing
+        try:
+            mapping = json.loads(self.settings.timezest_client_map_json or "{}")
+            if not isinstance(mapping, Mapping) or not mapping:
+                raise TimeZestReadError(
+                    "WAIT_TIMEZEST_CLIENT_MAP_JSON must contain at least one client mapping."
+                )
+            self._client_mapping(str(next(iter(mapping))))
+        except (TimeZestReadError, StopIteration, TypeError, json.JSONDecodeError) as exc:
+            if isinstance(exc, TimeZestReadError):
+                return ConnectorReadResult("failed", exc.message)
+            return ConnectorReadResult(
+                "failed",
+                "WAIT_TIMEZEST_CLIENT_MAP_JSON must contain a valid client mapping.",
+            )
+        return ConnectorReadResult("ready", "TimeZest write prerequisites are ready.")
+
+    def create_scheduling_request(
+        self,
+        *,
+        client_id: str,
+        appointment_type_id: str,
+        trigger_mode: str,
+        resource_ids: Sequence[str],
+        duration_mins: int | None = None,
+        earliest_date: str | None = None,
+        earliest_time: str | None = None,
+        latest_date: str | None = None,
+        latest_time: str | None = None,
+        end_user_name: str | None = None,
+        end_user_email: str | None = None,
+        end_user_company: str | None = None,
+    ) -> TimeZestSchedulingCreateResponse:
+        health = self.write_health()
+        if health.status != "ready":
+            return TimeZestSchedulingCreateResponse(health, {})
+        try:
+            _validate_create_fields(
+                appointment_type_id=appointment_type_id,
+                trigger_mode=trigger_mode,
+                resource_ids=resource_ids,
+                duration_mins=duration_mins,
+                earliest_date=earliest_date,
+                earliest_time=earliest_time,
+                latest_date=latest_date,
+                latest_time=latest_time,
+                end_user_name=end_user_name,
+                end_user_email=end_user_email,
+                end_user_company=end_user_company,
+            )
+            field, provider_value = self._client_mapping(client_id)
+            entity_type, _ = _CLIENT_MAP_FIELDS[field]
+            request_payload: dict[str, object] = {
+                "appointment_type_id": appointment_type_id.strip(),
+                "trigger_mode": trigger_mode,
+                "associated_entities": [{"type": entity_type, "id": provider_value}],
+                "resource_ids": [item.strip() for item in resource_ids],
+            }
+            for key, value in (
+                ("duration_mins", duration_mins),
+                ("earliest_date", earliest_date),
+                ("earliest_time", earliest_time),
+                ("latest_date", latest_date),
+                ("latest_time", latest_time),
+                ("end_user_name", end_user_name),
+                ("end_user_email", end_user_email),
+                ("end_user_company", end_user_company),
+            ):
+                if value is not None:
+                    request_payload[key] = value
+        except TimeZestReadError as exc:
+            return TimeZestSchedulingCreateResponse(
+                ConnectorReadResult("failed", exc.message),
+                {},
+            )
+        try:
+            response_payload = self._post("v1/scheduling_requests", json_body=request_payload)
+        except TimeZestReadError as exc:
+            return TimeZestSchedulingCreateResponse(ConnectorReadResult("failed", exc.message), {})
+        if not isinstance(response_payload, Mapping):
+            return TimeZestSchedulingCreateResponse(
+                ConnectorReadResult(
+                    "failed", "TimeZest returned a malformed scheduling-request response."
+                ),
+                {},
+            )
+        normalized = _normalize_created_request(response_payload)
+        if normalized is None:
+            return TimeZestSchedulingCreateResponse(
+                ConnectorReadResult(
+                    "failed", "TimeZest returned an invalid scheduling-request response."
+                ),
+                {},
+            )
+        return TimeZestSchedulingCreateResponse(
+            ConnectorReadResult("ready", "TimeZest scheduling-request creation succeeded.", 1),
+            normalized,
+        )
+
     def _get(self, endpoint: str, *, params: Mapping[str, str] | None = None) -> object:
+        return self._request("GET", endpoint, params=params)
+
+    def _post(self, endpoint: str, *, json_body: Mapping[str, object]) -> object:
+        if not self.settings.allow_write_actions:
+            raise TimeZestReadError(
+                "TimeZest writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            )
+        return self._request("POST", endpoint, json_body=json_body)
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        json_body: Mapping[str, object] | None = None,
+    ) -> object:
         if not self.settings.allow_http_probing:
             raise TimeZestReadError(
-                "TimeZest live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+                "TimeZest live requests are blocked until WAIT_ALLOW_HTTP_PROBING=true."
             )
         missing = self._not_configured_result()
         if missing is not None:
@@ -166,14 +328,20 @@ class TimeZestClient:
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
-                response = client.get(
-                    url,
-                    headers={
-                        "Accept": "application/json",
-                        "Authorization": f"Bearer {self.settings.timezest_api_key.strip()}",
-                    },
-                    params=params,
-                )
+                headers = {
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self.settings.timezest_api_key.strip()}",
+                }
+                if method == "GET":
+                    response = client.get(url, headers=headers, params=params)
+                elif method == "POST":
+                    response = client.post(
+                        url,
+                        headers={**headers, "Content-Type": "application/json"},
+                        json=json_body,
+                    )
+                else:
+                    raise TimeZestReadError("TimeZest HTTP method is not supported.")
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise TimeZestReadError("TimeZest request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
@@ -331,9 +499,130 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         raise TimeZestReadError("TimeZest base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise TimeZestReadError("TimeZest base URL must not contain credentials or query data.")
-    if endpoint != "v1/scheduling_requests":
+    if endpoint not in {"v1/scheduling_requests"}:
         raise TimeZestReadError("TimeZest endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"
+
+
+def _validate_create_fields(
+    *,
+    appointment_type_id: str,
+    trigger_mode: str,
+    resource_ids: Sequence[str],
+    duration_mins: int | None,
+    earliest_date: str | None,
+    earliest_time: str | None,
+    latest_date: str | None,
+    latest_time: str | None,
+    end_user_name: str | None,
+    end_user_email: str | None,
+    end_user_company: str | None,
+) -> None:
+    _required_text(appointment_type_id, "appointment_type_id", MAX_ID_LENGTH)
+    if trigger_mode not in {"pod", "generate_url"}:
+        raise TimeZestReadError("trigger_mode must be pod or generate_url.")
+    if isinstance(resource_ids, (str, bytes)) or not isinstance(resource_ids, Sequence):
+        raise TimeZestReadError("resource_ids must be a non-empty array.")
+    if not 1 <= len(resource_ids) <= MAX_RESOURCES:
+        raise TimeZestReadError(f"resource_ids must contain between 1 and {MAX_RESOURCES} items.")
+    normalized_resources: set[str] = set()
+    for resource_id in resource_ids:
+        normalized = _required_text(resource_id, "resource_id", MAX_RESOURCE_ID_LENGTH)
+        if normalized in normalized_resources:
+            raise TimeZestReadError("resource_ids must not contain duplicates.")
+        normalized_resources.add(normalized)
+    if duration_mins is not None and (
+        isinstance(duration_mins, bool)
+        or not isinstance(duration_mins, int)
+        or not 1 <= duration_mins <= 1_440
+    ):
+        raise TimeZestReadError("duration_mins must be an integer between 1 and 1440.")
+    _optional_date(earliest_date, "earliest_date")
+    _optional_date(latest_date, "latest_date")
+    _optional_time(earliest_time, "earliest_time")
+    _optional_time(latest_time, "latest_time")
+    if earliest_date and latest_date and earliest_date > latest_date:
+        raise TimeZestReadError("earliest_date must not be after latest_date.")
+    if end_user_name is None:
+        raise TimeZestReadError("end_user_name is required when the mapped company is the only associated entity.")
+    _required_text(end_user_name, "end_user_name", MAX_TEXT_LENGTH)
+    if end_user_email is None:
+        raise TimeZestReadError("end_user_email is required when the mapped company is the only associated entity.")
+    email = _required_text(end_user_email, "end_user_email", MAX_EMAIL_LENGTH)
+    if email.count("@") != 1 or any(character.isspace() for character in email):
+        raise TimeZestReadError("end_user_email must be a valid email address.")
+    if end_user_company is not None:
+        _required_text(end_user_company, "end_user_company", MAX_TEXT_LENGTH)
+
+
+def _required_text(value: object, name: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
+        raise TimeZestReadError(
+            f"{name} must be a non-empty string of at most {maximum} characters."
+        )
+    normalized = value.strip()
+    if any(ord(character) < 32 for character in normalized if character not in "\r\n\t"):
+        raise TimeZestReadError(f"{name} contains control characters.")
+    return normalized
+
+
+def _optional_date(value: str | None, name: str) -> None:
+    if value is None:
+        return
+    normalized = _required_text(value, name, 10)
+    try:
+        parsed = date.fromisoformat(normalized)
+    except ValueError as exc:
+        raise TimeZestReadError(f"{name} must use YYYY-MM-DD format.") from exc
+    if parsed.isoformat() != normalized:
+        raise TimeZestReadError(f"{name} must use YYYY-MM-DD format.")
+
+
+def _optional_time(value: str | None, name: str) -> None:
+    if value is None:
+        return
+    normalized = _required_text(value, name, 8)
+    try:
+        parsed = time.fromisoformat(normalized)
+    except ValueError as exc:
+        raise TimeZestReadError(f"{name} must use HH:MM:SS format.") from exc
+    if parsed.isoformat(timespec="seconds") != normalized:
+        raise TimeZestReadError(f"{name} must use HH:MM:SS format.")
+
+
+def _normalize_created_request(row: Mapping[str, object]) -> dict[str, object] | None:
+    if row.get("object") != "scheduling_request":
+        return None
+    request_id = _bounded_text(row.get("id"))
+    if not request_id or len(request_id) > MAX_ID_LENGTH:
+        return None
+    return {
+        "id": request_id,
+        "appointment_type_id": _bounded_text(row.get("appointment_type_id")),
+        "status": _bounded_text(row.get("status")),
+        "duration_mins": _positive_int(row.get("duration_mins")),
+        "earliest_date": _bounded_text(row.get("earliest_date")),
+        "earliest_time": _bounded_text(row.get("earliest_time")),
+        "latest_date": _bounded_text(row.get("latest_date")),
+        "latest_time": _bounded_text(row.get("latest_time")),
+        "scheduling_url": _safe_scheduling_url(row.get("scheduling_url")),
+        "associated_entities": _normalize_entities(row.get("associated_entities")),
+        "resources": _normalize_entities(row.get("resources"), limit=MAX_RESOURCES),
+        "created_at": _optional_int(row.get("created_at")),
+        "updated_at": _optional_int(row.get("updated_at")),
+    }
+
+
+def _safe_scheduling_url(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > MAX_URL_LENGTH:
+        return ""
+    normalized = value.strip()
+    parsed = urlsplit(normalized)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        return ""
+    if any(ord(character) < 32 for character in normalized):
+        return ""
+    return normalized
 
 
 def _bounded_text(value: object) -> str:
@@ -358,6 +647,8 @@ __all__ = [
     "TimeZestClient",
     "TimeZestReadError",
     "TimeZestReadProvider",
+    "TimeZestSchedulingCreateResponse",
     "TimeZestSchedulingRequest",
     "TimeZestSchedulingResponse",
+    "TimeZestWriteProvider",
 ]
