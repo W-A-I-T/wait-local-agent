@@ -4709,16 +4709,15 @@ def _invoke_technician_chat_message(
                 if plan.status == "preview"
                 else f"The plan is blocked: {plan.blocked_reason}"
             )
-        if session_id is not None:
-            store.add_technician_chat_message(
-                session_id,
-                role="assistant",
-                message=plan_message,
-                status=plan_status,
-                ticket_id=resolved_ticket_id,
-                client_id=client_id,
-                principal_id=principal_id,
-            )
+        _record_technician_chat_assistant(
+            store,
+            session_id=session_id,
+            message=plan_message,
+            status=plan_status,
+            ticket_id=resolved_ticket_id,
+            client_id=client_id,
+            principal_id=principal_id,
+        )
         response = {
             "status": plan_status,
             "message": plan_message,
@@ -4737,17 +4736,16 @@ def _invoke_technician_chat_message(
         actor,
         client_id=client_id,
     )
-    if session_id is not None:
-        store.add_technician_chat_message(
-            session_id,
-            role="assistant",
-            message=command.reply,
-            action_id=action_id,
-            status=result.status,
-            ticket_id=resolved_ticket_id,
-            client_id=client_id,
-            principal_id=principal_id,
-        )
+    _record_technician_chat_assistant(
+        store,
+        session_id=session_id,
+        message=command.reply,
+        action_id=action_id,
+        status=result.status,
+        ticket_id=resolved_ticket_id,
+        client_id=client_id,
+        principal_id=principal_id,
+    )
     response = {
         "status": result.status,
         "message": command.reply,
@@ -4757,6 +4755,31 @@ def _invoke_technician_chat_message(
     if session_id is not None:
         response["session_id"] = session_id
     return response
+
+
+def _record_technician_chat_assistant(
+    store: Store,
+    *,
+    session_id: str | None,
+    message: str,
+    status: str,
+    ticket_id: str | None,
+    client_id: str | None,
+    principal_id: str | None,
+    action_id: str | None = None,
+) -> None:
+    if session_id is None:
+        return
+    store.add_technician_chat_message(
+        session_id,
+        role="assistant",
+        message=message,
+        action_id=action_id,
+        status=status,
+        ticket_id=ticket_id,
+        client_id=client_id,
+        principal_id=principal_id,
+    )
 
 
 def _safe_end_user_ticket_id(ticket_id: str) -> bool:
