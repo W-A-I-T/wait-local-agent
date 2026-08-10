@@ -543,12 +543,14 @@ def _validate_create_fields(
     _optional_time(latest_time, "latest_time")
     if earliest_date and latest_date and earliest_date > latest_date:
         raise TimeZestReadError("earliest_date must not be after latest_date.")
-    if end_user_name is not None:
-        _required_text(end_user_name, "end_user_name", MAX_TEXT_LENGTH)
-    if end_user_email is not None:
-        email = _required_text(end_user_email, "end_user_email", MAX_EMAIL_LENGTH)
-        if email.count("@") != 1 or any(character.isspace() for character in email):
-            raise TimeZestReadError("end_user_email must be a valid email address.")
+    if end_user_name is None:
+        raise TimeZestReadError("end_user_name is required when the mapped company is the only associated entity.")
+    _required_text(end_user_name, "end_user_name", MAX_TEXT_LENGTH)
+    if end_user_email is None:
+        raise TimeZestReadError("end_user_email is required when the mapped company is the only associated entity.")
+    email = _required_text(end_user_email, "end_user_email", MAX_EMAIL_LENGTH)
+    if email.count("@") != 1 or any(character.isspace() for character in email):
+        raise TimeZestReadError("end_user_email must be a valid email address.")
     if end_user_company is not None:
         _required_text(end_user_company, "end_user_company", MAX_TEXT_LENGTH)
 

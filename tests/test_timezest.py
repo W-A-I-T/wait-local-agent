@@ -7,6 +7,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+import wait_local_agent.timezest as timezest_module
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records, validate_connector_credentials
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.rbac import Role
@@ -328,6 +329,15 @@ def test_timezest_write_health_rejects_invalid_write_maps(settings) -> None:
         assert message in result.message
 
 
+def test_timezest_write_health_redacts_unexpected_mapping_parse_errors(settings, monkeypatch) -> None:
+    client = _write_client(settings, lambda request: httpx.Response(200, json={}))
+    monkeypatch.setattr(timezest_module.json, "loads", lambda value: (_ for _ in ()).throw(TypeError("secret")))
+    result = client.write_health()
+    assert result.status == "failed"
+    assert result.message == "WAIT_TIMEZEST_CLIENT_MAP_JSON must contain a valid client mapping."
+    assert "secret" not in result.message
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -391,9 +401,66 @@ def test_timezest_create_validates_date_time_shape_and_safe_urls() -> None:
             end_user_email="rodney@example.test",
             end_user_company=None,
         )
+    with pytest.raises(TimeZestReadError, match="HH:MM:SS"):
+        _validate_create_fields(
+            appointment_type_id="apty_remote",
+            trigger_mode="pod",
+            resource_ids=["agnt_1"],
+            duration_mins=None,
+            earliest_date=None,
+            earliest_time="xx:yy:zz",
+            latest_date=None,
+            latest_time=None,
+            end_user_name="Rodney Smith",
+            end_user_email="rodney@example.test",
+            end_user_company=None,
+        )
+    with pytest.raises(TimeZestReadError, match="control characters"):
+        _validate_create_fields(
+            appointment_type_id="apty_remote",
+            trigger_mode="pod",
+            resource_ids=["agnt_1"],
+            duration_mins=None,
+            earliest_date=None,
+            earliest_time=None,
+            latest_date=None,
+            latest_time=None,
+            end_user_name="Rodney\x01Smith",
+            end_user_email="rodney@example.test",
+            end_user_company=None,
+        )
     assert _safe_scheduling_url("https://example.timezest.com/schedule/ok")
-    for value in (None, "", "http://example.test/x", "https://user:pass@example.test/x", "x" * 2_001):
+    for value in (
+        None,
+        "",
+        "http://example.test/x",
+        "https://user:pass@example.test/x",
+        "https://example.test/\x01",
+        "x" * 2_001,
+    ):
         assert _safe_scheduling_url(value) == ""
+
+
+def test_timezest_create_requires_end_user_identity_for_company_mapping(settings) -> None:
+    client = _write_client(settings, lambda request: httpx.Response(201, json=CREATE_JSON))
+    missing_name = client.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_email="rodney@example.test",
+    )
+    missing_email = client.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+    )
+    assert missing_name.result.status == "failed"
+    assert "end_user_name is required" in missing_name.result.message
+    assert missing_email.result.status == "failed"
+    assert "end_user_email is required" in missing_email.result.message
 
 
 def test_timezest_connector_status_validation_and_secrets(settings) -> None:
