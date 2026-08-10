@@ -116,6 +116,7 @@ from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.renderers import render_json as render_report_json
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.scalepad import (
+    ScalePadAssessmentResponse,
     ScalePadClient,
     ScalePadClientResponse,
     ScalePadGoalResponse,
@@ -2085,6 +2086,24 @@ def scalepad_goals(
     )
 
 
+@connectors_app.command("scalepad-assessments")
+def scalepad_assessments(
+    client_id: str,
+    status: str | None = None,
+    assessment_template_id: str | None = None,
+    cursor: str | None = None,
+) -> None:
+    _print_scalepad_assessment_response(
+        "lifecycle-manager.assessments",
+        _scalepad_client().get_assessments(
+            client_id=client_id,
+            status=status,
+            assessment_template_id=assessment_template_id,
+            cursor=cursor,
+        ),
+    )
+
+
 @connectors_app.command("m365-health")
 def m365_health() -> None:
     result = _m365_client().health()
@@ -3500,6 +3519,25 @@ def _print_scalepad_risk_summary_response(
 
 
 def _print_scalepad_goal_response(read_type: str, response: ScalePadGoalResponse) -> None:
+    _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+                "total_count": response.total_count,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_scalepad_assessment_response(
+    read_type: str,
+    response: ScalePadAssessmentResponse,
+) -> None:
     _audit_scalepad_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
         json.dumps(

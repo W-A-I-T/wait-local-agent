@@ -2,7 +2,8 @@
 
 ScalePad's documented Core API exposes client inventory, its ControlMap API
 exposes partner-wide risk summaries, and its Lifecycle Manager API exposes
-client goals with an API key and cursor pagination. WAIT uses fixed, local
+client goals and assessments with an API key and cursor pagination. WAIT uses
+fixed, local
 mappings for each provider identifier and an exact provider filter; returned
 records are checked against those mappings before they leave the connector
 boundary. Core client, ControlMap tenant, and Lifecycle client IDs are kept as
@@ -30,6 +31,8 @@ RISK_SUMMARY_PAGE_SIZE = 20
 MAX_RISK_SUMMARY_ROWS = 20
 GOALS_PAGE_SIZE = 20
 MAX_GOAL_ROWS = 20
+ASSESSMENTS_PAGE_SIZE = 20
+MAX_ASSESSMENT_ROWS = 20
 MAX_CLIENT_ID_LENGTH = 120
 MAX_PROVIDER_ID_LENGTH = 200
 MAX_TEXT_LENGTH = 500
@@ -39,6 +42,7 @@ MAX_RISK_SUMMARY_FIELDS = 64
 MAX_RISK_SUMMARY_LIST_ITEMS = 20
 MAX_GOAL_TITLE_LENGTH = 200
 _GOAL_STATUSES = frozenset({"AtRisk", "Complete", "OffTrack", "OnHold", "OnTrack"})
+_ASSESSMENT_STATUSES = frozenset({"Completed", "InProgress"})
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,14 @@ class ScalePadGoalResponse:
     total_count: int | None = None
 
 
+@dataclass(frozen=True)
+class ScalePadAssessmentResponse:
+    result: ConnectorReadResult
+    items: list[dict[str, object]]
+    next_cursor: str = ""
+    total_count: int | None = None
+
+
 class ScalePadReadError(Exception):
     """Safe, operator-facing ScalePad adapter error."""
 
@@ -101,6 +113,16 @@ class ScalePadReadProvider(Protocol):
         title: str | None = None,
         cursor: str | None = None,
     ) -> ScalePadGoalResponse:
+        ...
+
+    def get_assessments(
+        self,
+        *,
+        client_id: str,
+        status: str | None = None,
+        assessment_template_id: str | None = None,
+        cursor: str | None = None,
+    ) -> ScalePadAssessmentResponse:
         ...
 
 
@@ -281,6 +303,66 @@ class ScalePadClient:
                 items.append(normalized)
         return ScalePadGoalResponse(
             ConnectorReadResult("ready", "ScalePad goal read succeeded.", len(items)),
+            items,
+            _optional_cursor(payload.get("next_cursor")),
+            _optional_nonnegative_int(payload.get("total_count")),
+        )
+
+    def get_assessments(
+        self,
+        *,
+        client_id: str,
+        status: str | None = None,
+        assessment_template_id: str | None = None,
+        cursor: str | None = None,
+    ) -> ScalePadAssessmentResponse:
+        """Read one explicitly mapped client's Lifecycle assessments page."""
+
+        blocked = self._blocked_assessment_response()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_assessment_response()
+        if missing is not None:
+            return missing
+        try:
+            provider_id = self._lifecycle_client_mapping(client_id)
+            params: dict[str, str] = {
+                "filter[client.id]": f"eq:{provider_id}",
+                "page_size": str(ASSESSMENTS_PAGE_SIZE),
+            }
+            if status is not None:
+                params["filter[status]"] = f"eq:{_assessment_status(status)}"
+            if assessment_template_id is not None:
+                params["filter[assessment_template_id]"] = (
+                    f"eq:{_assessment_template_id(assessment_template_id)}"
+                )
+            if cursor is not None:
+                params["cursor"] = _required_cursor(cursor)
+            payload = self._get(
+                "lifecycle-manager/v1/assessments",
+                params=params,
+                configuration="lifecycle",
+            )
+        except ScalePadReadError as exc:
+            return ScalePadAssessmentResponse(ConnectorReadResult("failed", exc.message), [])
+        if not isinstance(payload, Mapping):
+            return ScalePadAssessmentResponse(
+                ConnectorReadResult("failed", "ScalePad returned a malformed response object."),
+                [],
+            )
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            return ScalePadAssessmentResponse(
+                ConnectorReadResult("failed", "ScalePad returned malformed assessment data."),
+                [],
+            )
+        items: list[dict[str, object]] = []
+        for row in rows[:MAX_ASSESSMENT_ROWS]:
+            normalized = _normalize_goal(row, provider_id)
+            if normalized is not None:
+                items.append(normalized)
+        return ScalePadAssessmentResponse(
+            ConnectorReadResult("ready", "ScalePad assessment read succeeded.", len(items)),
             items,
             _optional_cursor(payload.get("next_cursor")),
             _optional_nonnegative_int(payload.get("total_count")),
@@ -496,6 +578,14 @@ class ScalePadClient:
         result = self._not_configured_lifecycle_result()
         return ScalePadGoalResponse(result, []) if result is not None else None
 
+    def _blocked_assessment_response(self) -> ScalePadAssessmentResponse | None:
+        result = self._blocked_result()
+        return ScalePadAssessmentResponse(result, []) if result is not None else None
+
+    def _not_configured_assessment_response(self) -> ScalePadAssessmentResponse | None:
+        result = self._not_configured_lifecycle_result()
+        return ScalePadAssessmentResponse(result, []) if result is not None else None
+
 
 def _normalize_client(row: object, provider_id: str) -> ScalePadClientRecord | None:
     if not isinstance(row, Mapping):
@@ -612,6 +702,17 @@ def _goal_title(value: str) -> str:
     return normalized
 
 
+def _assessment_status(value: str) -> str:
+    normalized = value.strip()
+    if normalized not in _ASSESSMENT_STATUSES:
+        raise ScalePadReadError("ScalePad assessment status must be Completed or InProgress.")
+    return normalized
+
+
+def _assessment_template_id(value: str) -> str:
+    return _bounded_provider_id(value)
+
+
 def _bound_risk_value(value: object, *, depth: int) -> object:
     if depth > MAX_RISK_SUMMARY_DEPTH:
         return "[truncated]"
@@ -646,6 +747,7 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         "core/v1/clients",
         "controlmap/v1/clients/risks-summary",
         "lifecycle-manager/v1/goals",
+        "lifecycle-manager/v1/assessments",
     }:
         raise ScalePadReadError("ScalePad endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"
@@ -671,6 +773,7 @@ __all__ = [
     "ScalePadClientResponse",
     "ScalePadRiskSummaryResponse",
     "ScalePadGoalResponse",
+    "ScalePadAssessmentResponse",
     "ScalePadReadError",
     "ScalePadReadProvider",
 ]

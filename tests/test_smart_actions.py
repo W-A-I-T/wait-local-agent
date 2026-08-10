@@ -1073,6 +1073,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "rmm-script-execute",
         "rmm-script-execution-lookup",
         "rmm-script-preview",
+        "scalepad-assessment-lookup",
         "scalepad-client-lookup",
         "scalepad-goal-lookup",
         "scalepad-risk-summary",
