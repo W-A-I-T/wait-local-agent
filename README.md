@@ -52,8 +52,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
-  write paths, N-able N-sight exposes tenant-scoped device and health
-  inventory, TimeZest exposes tenant-mapped scheduling-request reads and an
+  write paths, N-able N-sight exposes tenant-scoped device and failing-check
+  inventory, mapped patch reads, and approval-gated patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
   exposes separately mapped Core client inventory, ControlMap risk summaries,
   and Lifecycle Manager goal and assessment reads,
@@ -975,7 +975,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 ### N-able N-sight
 
-The N-sight adapter is a bounded, read-only XML Data Extraction API surface for
+The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented failing
 checks. It uses an explicit local WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -990,18 +990,21 @@ WAIT_ALLOW_HTTP_PROBING=true
 The shared `rmm-device-lookup` and `rmm-alert-lookup` actions expose the mapped
 inventory and provider-reported failing checks. The `nsight-patch-lookup`
 action exposes bounded patch inventory for one mapped server or workstation
-after a local device-scope recheck. Each request is limited to
+after a local device-scope recheck. The `nsight-patch-approve` action previews
+and, after technician approval and the write flag, calls the documented patch
+approval service only for patches present on that mapped device. Each request is limited to
 mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
 alerts. The API key remains in settings or the encrypted vault and is never
 accepted in action payloads or included in errors/audit records. Script
 discovery, preview, execution, and polling return an explicit unavailable
-result because this slice does not infer a write contract from the documented
-read API. See N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
+result because no documented contract is claimed for those operations. See
+N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
-and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device).
+and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
+and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch).
 
 ### TimeZest
 

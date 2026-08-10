@@ -15,6 +15,7 @@ from wait_local_agent.rmm import (
 )
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightPatchApproveAction,
     NSightPatchLookupAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
@@ -53,6 +54,25 @@ class _NSightProvider(_Provider):
     def list_patches(self, device_id, *, client_id=None):
         assert client_id == "acme"
         return [{"patch_id": 681806, "status_label": "Installed", "device_id": device_id}]
+
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "status": "accepted",
+            "message": "approved",
+            "device_id": device_id,
+            "patch_ids": patch_ids,
+        }
+
+
+class _FailingNSightProvider(_NSightProvider):
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedNSightProvider(_NSightProvider):
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        return []
 
 
 def _context(settings, provider=None):
@@ -95,6 +115,55 @@ def test_nsight_patch_lookup_uses_mapped_provider_surface(settings) -> None:
     assert NSightPatchLookupAction().run(
         _context(settings, _Provider()), {"device_id": "server:49324"}
     ).error_detail == "N-sight patch lookup requires the N-sight RMM adapter"
+
+
+def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:
+    provider = _NSightProvider()
+    context = _context(settings, provider)
+    payload: dict[str, object] = {"device_id": "server:49324", "patch_ids": ["681806"]}
+    preview = NSightPatchApproveAction().run(context, payload)
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    blocked = NSightPatchApproveAction().run(
+        context, {**payload, "_approval_completed": True}
+    )
+    assert blocked.error_detail == "N-sight patch approval is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+    approved = NSightPatchApproveAction().run(
+        _context(replace(settings, allow_write_actions=True), provider),
+        {**payload, "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["status"] == "accepted"
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"unexpected": True}, "unsupported fields"),
+        ({"device_id": "", "patch_ids": ["681806"]}, "device_id"),
+        ({"device_id": "server:49324", "patch_ids": []}, "between 1 and 20"),
+        ({"device_id": "server:49324", "patch_ids": [681806]}, "only strings"),
+        ({"device_id": "server:49324", "patch_ids": ["0"]}, "positive integers"),
+    ],
+)
+def test_nsight_patch_approval_rejects_invalid_payloads(settings, payload, message) -> None:
+    result = NSightPatchApproveAction().run(
+        _context(settings, _NSightProvider()), payload
+    )
+    assert result.status == "failed"
+    assert message in result.error_detail
+
+
+def test_nsight_patch_approval_handles_provider_boundaries(settings) -> None:
+    payload = {"device_id": "server:49324", "patch_ids": ["681806"], "_approval_completed": True}
+    wrong_adapter = NSightPatchApproveAction().run(_context(settings, _Provider()), payload)
+    assert wrong_adapter.error_detail == "N-sight patch approval requires the N-sight RMM adapter"
+
+    enabled = replace(settings, allow_write_actions=True)
+    failed = NSightPatchApproveAction().run(_context(enabled, _FailingNSightProvider()), payload)
+    assert failed.error_detail == "N-sight patch approval failed"
+    malformed = NSightPatchApproveAction().run(_context(enabled, _MalformedNSightProvider()), payload)
+    assert malformed.error_detail == "N-sight returned malformed patch approval data"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
