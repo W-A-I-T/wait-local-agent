@@ -78,7 +78,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | M365 / Entra | ✓ | ✓ bounded reads plus approved user, group, license, session, Intune, mailbox-settings, and message mutations | Broader resource and policy coverage | Incremental |
 | Slack / Teams | ✓ | ✓ preview, configured webhook delivery, and local delivery receipts | Native provider features and provider-issued receipt IDs | Incremental |
 | Scheduled / proactive tasks | ✓ | ✓ (bounded cron + event agents) | Broader recurrence and event sources | Phase 3 |
-| QBR / ROI reporting | ✓ | Bounded client-scoped QBR and automation-opportunity reports from local evidence | Provider-backed lifecycle enrichment, measured ROI, and PDF export | Incremental |
+| QBR / ROI reporting | ✓ | Bounded client-scoped QBR and automation-opportunity reports from local evidence with JSON, Markdown, and PDF export | Provider-backed lifecycle enrichment and measured ROI | Incremental |
 | Pax8 / distribution channel | ✓ | ✗ | GTM work | Phase 8 |
 | SOC 2 certification | ✓ (Type I) | ✗ | Compliance work | Phase 7+ |
 | **Self-hosted / on-prem** | ✗ | **✓ Docker Compose** | — | **Core win** |

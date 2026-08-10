@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { ApiRequestError, apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch, apiFetchBlob } from "../api/client";
 import {
   type EvidenceReport,
   type EvidenceStatus,
@@ -127,20 +127,21 @@ export function Reports() {
     }
   }
 
-  async function exportReport(report: EvidenceReport, format: "json" | "markdown") {
+  async function exportReport(report: EvidenceReport, format: "json" | "markdown" | "pdf") {
     try {
+      if (format === "pdf") {
+        const blob = await apiFetchBlob(`/reports/${encodeURIComponent(report.id)}/export?export_format=pdf`);
+        downloadBlob(blob, `wait-report-${report.id}.pdf`);
+        setStatusMessage("PDF report downloaded.");
+        return;
+      }
       const payload = await apiFetch<ReportExport | string>(
         `/reports/${encodeURIComponent(report.id)}/export?export_format=${format}`
       );
       const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
       setExportText(text);
       const blob = new Blob([text], { type: format === "markdown" ? "text/markdown" : "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `wait-report-${report.id}.${format === "markdown" ? "md" : "json"}`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `wait-report-${report.id}.${format === "markdown" ? "md" : "json"}`);
     } catch (error) {
       showError(error, "Report export failed.", setStatusMessage, setTechnicalError);
     }
@@ -350,6 +351,7 @@ export function Reports() {
                 <button type="button" className="icon-button" onClick={() => setSelectedReport(report)}>Open</button>
                 <button type="button" className="icon-button" onClick={() => void exportReport(report, "json")}>Export JSON</button>
                 <button type="button" className="icon-button" onClick={() => void exportReport(report, "markdown")}>Export Markdown</button>
+                <button type="button" className="icon-button" onClick={() => void exportReport(report, "pdf")}>Export PDF</button>
               </div>
             </article>
           ))}
@@ -380,7 +382,7 @@ function EvidencePanel({
   description: string;
   status: EvidenceDisplayStatus;
   report?: EvidenceReport;
-  onExport: (report: EvidenceReport, format: "json" | "markdown") => Promise<void>;
+  onExport: (report: EvidenceReport, format: "json" | "markdown" | "pdf") => Promise<void>;
   children: ReactNode;
 }) {
   const kind = title === "Hardening posture" ? "hardening" : "restore";
@@ -402,10 +404,20 @@ function EvidencePanel({
         <div className="export-actions" aria-label={`${title} exports`}>
           <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "json")}>Export JSON</button>
           <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "markdown")}>Export Markdown</button>
+          <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "pdf")}>Export PDF</button>
         </div>
       </div>
     </section>
   );
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function HardeningCheckCard({ check }: { check: HardeningCheckResult }) {

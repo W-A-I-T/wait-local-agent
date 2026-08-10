@@ -136,7 +136,7 @@ Every arrow crossing the appliance boundary is opt-in, credentialed, and audited
 
 Everything the product does should end in a stored, exportable report. All twelve types are registered in the shipped `ReportType` enum (PR 1) so IDs are stable before providers exist.
 
-Shared plumbing for every type (shipped in PR 1): storage in the `reports` table; JSON schema in `reports/schemas.py`; JSON and Markdown renderers with mandatory secret redaction; `GET /reports`, `GET /reports/{id}`, `GET /reports/{id}/export`; `wait-local-agent reports list|show|export`; audit events `report.created` and `report.exported`; PDF rendering deferred (enum value reserved, renderer raises a clear error, covered by tests).
+Shared plumbing for every type (shipped in PR 1 and extended since): storage in the `reports` table; JSON schema in `reports/schemas.py`; JSON, Markdown, and local PDF renderers with mandatory secret redaction; `GET /reports`, `GET /reports/{id}`, `GET /reports/{id}/export`; `wait-local-agent reports list|show|export`; audit events `report.created` and `report.exported`.
 
 | # | Report type | Purpose | User | Inputs | Producer & repo |
 |---|---|---|---|---|---|
@@ -348,6 +348,6 @@ All commands existed as documented; no substitutions required. Note: the CI work
 
 ## 14. Risks and Next Step
 
-**Risks:** (1) private packs repo remains uninspected — PR 4+ design is provisional; (2) coverage floor headroom is still modest — keep new modules near 100%; (3) SQLite JSON columns for report sections trade queryability for simplicity — acceptable until report volume demands indexed columns; (4) PDF export is promised by the enum but intentionally unimplemented — tracked for the report-provider phase; (5) demo-mode compose file has auth off — hardening docs (PR 10) must state this loudly.
+**Risks:** (1) private packs repo remains uninspected — PR 4+ design is provisional; (2) coverage floor headroom is still modest — keep new modules near 100%; (3) SQLite JSON columns for report sections trade queryability for simplicity — acceptable until report volume demands indexed columns; (4) local PDF output is now available, while provider-backed lifecycle enrichment remains a separate gap; (5) demo-mode compose file has auth off — hardening docs (PR 10) must state this loudly.
 
 **Next PR:** PR 2 — `feat/report-first-health-audit` in `wait-local-agent`: produce `connector_health` and `audit_export` reports through the new framework, add `POST /reports/connector-health`, `wait-local-agent connectors validate`, and `wait-local-agent audit report`, with tests holding coverage ≥95%.
