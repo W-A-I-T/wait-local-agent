@@ -1069,6 +1069,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "nsight-antivirus-threats",
         "nsight-backup-history",
         "nsight-backup-sessions",
+        "nsight-check-inventory",
         "nsight-outage-lookup",
         "nsight-patch-approve",
         "nsight-patch-lookup",

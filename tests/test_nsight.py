@@ -15,6 +15,7 @@ from wait_local_agent.nsight import (
     _api_url,
     _backup_history_records,
     _backup_session_records,
+    _check_records,
     _device_numeric_id,
     _optional_flag,
     _optional_integer,
@@ -109,6 +110,15 @@ BACKUP_HISTORY_XML = """
 <days><day><date>2026-08-10</date><status>PASS</status></day></days>
 <days><day><date>2026-08-09</date><status>FAIL</status></day></days>
 <days><day><date></date><status>PASS</status></day></days></result>
+"""
+CHECKS_XML = """
+<result status="OK"><items><check>
+  <uid>19</uid><sync_status>0</sync_status>
+  <description>Web Page Check - Example</description><statusid>5</statusid>
+  <date>2026-08-10</date><time>01:08:38</time><utc_run>2026-08-10 08:08:38</utc_run>
+  <email>1</email><sms>0</sms><checkid>1304847</checkid><check_type>1012</check_type>
+  <dsc_247>1</dsc_247><consecutive_fails>0</consecutive_fails>
+</check><check><checkid>bad</checkid><description>ignored</description></check></items></result>
 """
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
@@ -448,6 +458,45 @@ def test_nsight_backup_history_rechecks_device_scope(settings) -> None:
     assert _backup_history_records(ElementTree.fromstring(BACKUP_HISTORY_XML)) == history
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_backup_history("server:999", client_id="acme")
+
+
+def test_nsight_check_inventory_rechecks_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_checks":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=CHECKS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    checks = adapter.list_checks("server:49324", client_id="acme")
+
+    assert checks == [
+        {
+            "check_id": 1304847,
+            "uid": 19,
+            "sync_status": 0,
+            "description": "Web Page Check - Example",
+            "status_id": 5,
+            "date": "2026-08-10",
+            "time": "01:08:38",
+            "utc_run": "2026-08-10 08:08:38",
+            "email_alerts": True,
+            "sms_alerts": False,
+            "check_type": 1012,
+            "dsc_247": 1,
+            "consecutive_fails": 0,
+        }
+    ]
+    assert _check_records(ElementTree.fromstring(CHECKS_XML)) == checks
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_checks("server:999", client_id="acme")
 
 
 def test_backup_history_parser_enforces_documented_bounds() -> None:
