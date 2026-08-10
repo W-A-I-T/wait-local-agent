@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 import wait_local_agent.api.app as app_module
 import wait_local_agent.cli as cli_module
+import wait_local_agent.scalepad as scalepad_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records, validate_connector_credentials
 from wait_local_agent.models import ConnectorReadResult
@@ -228,7 +229,12 @@ def test_scalepad_compliance_health_fails_closed_for_scope_and_configuration(set
     ).get_compliance_health(client_id="acme")
     assert blocked.result.status == "blocked"
 
-    for mapping, expected in (("not-json", "malformed"), ('{"acme":"not-a-uuid"}', "UUID")):
+    for mapping, expected in (
+        ("not-json", "malformed"),
+        ("[]", "must be an object"),
+        ('{"acme": 1}', "non-empty UUID strings"),
+        ('{"acme":"not-a-uuid"}', "UUID"),
+    ):
         invalid = _client(
             settings,
             lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
@@ -236,6 +242,38 @@ def test_scalepad_compliance_health_fails_closed_for_scope_and_configuration(set
         ).get_compliance_health(client_id="acme")
         assert invalid.result.status == "failed"
         assert expected in invalid.result.message
+
+
+def test_scalepad_compliance_health_rejects_malformed_provider_payloads(settings, monkeypatch) -> None:
+    provider_id = "365bcf1e-a26b-4abc-ad9a-8607e2f43910"
+    values = {"acme": provider_id}
+
+    malformed_object = _client(
+        settings,
+        lambda request: httpx.Response(200, json=[]),
+        scalepad_compliance_client_map_json=json.dumps(values),
+    ).get_compliance_health(client_id="acme")
+    assert malformed_object.result.status == "failed"
+    assert "malformed health response object" in malformed_object.result.message
+
+    monkeypatch.setattr(scalepad_module, "_bound_risk_value", lambda value, *, depth: [])
+    malformed_bounded = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        scalepad_compliance_client_map_json=json.dumps(values),
+    ).get_compliance_health(client_id="acme")
+    assert malformed_bounded.result.status == "failed"
+    assert "malformed compliance health data" in malformed_bounded.result.message
+
+    monkeypatch.setattr(scalepad_module, "_bound_risk_value", lambda value, *, depth: {"client": {}})
+    monkeypatch.setattr(scalepad_module, "redact_value", lambda value: [])
+    malformed_redacted = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+        scalepad_compliance_client_map_json=json.dumps(values),
+    ).get_compliance_health(client_id="acme")
+    assert malformed_redacted.result.status == "failed"
+    assert "malformed compliance health data" in malformed_redacted.result.message
 
 
 def test_scalepad_goals_use_separate_mapping_filters_and_recheck_scope(settings) -> None:
@@ -529,6 +567,58 @@ def test_scalepad_health_action_and_connector_surfaces(settings) -> None:
     assert isinstance(health, dict)
     assert health["compliance_score"] == 82
     assert compliance_result.evidence[0]["operation"] == "clients.health"
+
+    invalid_input = compliance_service.invoke(
+        "scalepad-compliance-health",
+        {"client_id": ""},
+        "tech",
+        client_id="acme",
+    )
+    assert invalid_input.status == "failed"
+    out_of_scope = compliance_service.invoke(
+        "scalepad-compliance-health",
+        {"client_id": "other"},
+        "tech",
+        client_id="acme",
+    )
+    assert out_of_scope.status == "failed"
+
+    not_configured_client = _client(
+        settings,
+        lambda request: httpx.Response(200, json=COMPLIANCE_HEALTH_JSON),
+    )
+    not_configured_service = SmartActionService(
+        Store(not_configured_client.settings.data_path),
+        not_configured_client.settings,
+        scalepad_client=not_configured_client,
+    )
+    not_configured = not_configured_service.invoke(
+        "scalepad-compliance-health",
+        {"client_id": "acme"},
+        "tech",
+        client_id="acme",
+    )
+    assert not_configured.status == "failed"
+
+    class MalformedProvider:
+        def get_compliance_health(self, *, client_id: str) -> ScalePadComplianceHealthResponse:
+            return ScalePadComplianceHealthResponse(
+                ConnectorReadResult("ready", "ready", 1),
+                [],  # type: ignore[arg-type]
+            )
+
+    malformed_service = SmartActionService(
+        Store(client.settings.data_path),
+        client.settings,
+        scalepad_client=MalformedProvider(),  # type: ignore[arg-type]
+    )
+    malformed = malformed_service.invoke(
+        "scalepad-compliance-health",
+        {"client_id": "acme"},
+        "tech",
+        client_id="acme",
+    )
+    assert malformed.status == "failed"
 
     goal_client = _client(
         settings,
