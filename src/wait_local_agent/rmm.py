@@ -197,6 +197,14 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.kaseya import KaseyaRmmAdapter
 
         return KaseyaRmmAdapter(settings)
+    if (
+        settings.screenconnect_base_url
+        or settings.screenconnect_extension_id
+        or settings.screenconnect_auth_secret
+    ):
+        from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
+
+        return ScreenConnectRmmAdapter(settings)
     return LocalCollectorRmmAdapter(store)
 
 

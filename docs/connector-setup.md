@@ -268,6 +268,31 @@ come from smart-action payloads. Script catalog, preview, execution, and
 execution lookup return an explicit unavailable result rather than pretending
 that VSA X remediation is supported. See the [VSA X REST API reference](https://api.vsax.net/).
 
+## ConnectWise ScreenConnect
+
+The bounded ScreenConnect adapter uses the documented RESTful API Manager
+extension for read-only session details. WAIT requires an explicit local map
+from each WAIT client ID to the ScreenConnect session UUIDs it may inspect:
+
+```text
+WAIT_SCREENCONNECT_BASE_URL=https://your-screenconnect-host
+WAIT_SCREENCONNECT_EXTENSION_ID=
+WAIT_SCREENCONNECT_AUTH_SECRET=
+WAIT_SCREENCONNECT_ORIGIN=https://your-screenconnect-host
+WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Each mapped session is queried through `GetSessionDetailsBySessionID`, and
+returned details are normalized as tenant-scoped device inventory. The
+extension ID and session IDs must be UUIDs; the map is capped at 100 sessions
+per client. Alert lookup, script catalogs, command execution, and command
+polling remain explicitly unavailable until a separately reviewed provider
+contract and approval path exists. The authentication secret stays in the
+settings/vault boundary and is never part of a smart-action payload. See the
+[ScreenConnect API security overview](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/ConnectWise_ScreenConnect_API_Security_Overview)
+and [RESTful API Manager](https://docs.connectwise.com/ScreenConnect_Documentation/Developers/RESTful_API_Manager).
+
 ## Hudu
 
 ### Required settings
