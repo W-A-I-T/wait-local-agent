@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
@@ -15,6 +15,23 @@ type HuduSnapshot = {
   articles: CompanyRow[];
 };
 
+type SyncroComment = {
+  id: string;
+  ticket_id: string;
+  created_at: string;
+  updated_at: string;
+  subject: string;
+  body: string;
+  tech: string;
+  hidden: boolean;
+};
+
+type SyncroCommentsResponse = {
+  result: { status: string; message: string; count: number };
+  items: SyncroComment[];
+  meta: { total_pages?: number; page?: number; per_page?: number };
+};
+
 export function Connectors() {
   const { connectors, haloConnector, huduConnector, writeHealth, loading } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
@@ -22,6 +39,12 @@ export function Connectors() {
   const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
   const [huduHealth, setHuduHealth] = useState<HealthState | null>(null);
   const [huduData, setHuduData] = useState<HuduSnapshot>({ companies: [], articles: [] });
+  const [syncroTicketId, setSyncroTicketId] = useState("");
+  const [syncroPage, setSyncroPage] = useState("1");
+  const [syncroComments, setSyncroComments] = useState<SyncroComment[]>([]);
+  const [syncroMeta, setSyncroMeta] = useState<SyncroCommentsResponse["meta"]>({});
+  const [syncroStatus, setSyncroStatus] = useState<HealthState | null>(null);
+  const [syncroLoading, setSyncroLoading] = useState(false);
 
   const refreshConnectivity = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -69,6 +92,35 @@ export function Connectors() {
   useEffect(() => {
     void refreshConnectivity();
   }, [refreshConnectivity]);
+
+  const loadSyncroComments = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const ticketId = syncroTicketId.trim();
+    const page = Number.parseInt(syncroPage, 10);
+    if (!ticketId || !/^[1-9][0-9]{0,18}$/.test(ticketId) || !Number.isInteger(page) || page < 1) {
+      setSyncroStatus({ status: "failed", message: "Enter a positive numeric Syncro ticket ID and page." });
+      return;
+    }
+    setSyncroLoading(true);
+    setSyncroStatus(null);
+    try {
+      const response = await apiFetch<SyncroCommentsResponse>(
+        `/connectors/syncro/tickets/${encodeURIComponent(ticketId)}/comments?page=${page}&per_page=10`
+      );
+      setSyncroComments(Array.isArray(response.items) ? response.items : []);
+      setSyncroMeta(response.meta ?? {});
+      setSyncroStatus(response.result);
+    } catch (error) {
+      setSyncroComments([]);
+      setSyncroMeta({});
+      setSyncroStatus({
+        status: "failed",
+        message: error instanceof Error ? error.message : "Syncro ticket comments could not be loaded."
+      });
+    } finally {
+      setSyncroLoading(false);
+    }
+  };
 
   const rows = connectors.length > 0 ? connectors : [
     { id: "halopsa", name: "HaloPSA", status: "loading", message: "Waiting for connector status" },
@@ -156,6 +208,32 @@ export function Connectors() {
           ))}
           {huduData.companies.length === 0 ? <p>No Hudu companies returned.</p> : null}
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Syncro ticket comments</h2>
+          <span>read-only history</span>
+        </div>
+        <p className="screen-note">Review bounded comment history from the configured Syncro account. This does not post or modify comments.</p>
+        <form className="inline-form" onSubmit={(event) => void loadSyncroComments(event)}>
+          <label>Ticket ID<input inputMode="numeric" required value={syncroTicketId} onChange={(event) => setSyncroTicketId(event.target.value)} placeholder="42" /></label>
+          <label>Page<input type="number" min="1" step="1" required value={syncroPage} onChange={(event) => setSyncroPage(event.target.value)} /></label>
+          <button type="submit" disabled={syncroLoading || !syncroTicketId.trim()}>{syncroLoading ? "Loading…" : "Load comments"}</button>
+        </form>
+        {syncroStatus ? <p className={`screen-note ${syncroStatus.status === "failed" ? "danger" : ""}`} role="status">{syncroStatus.message}</p> : null}
+        {syncroComments.length > 0 ? (
+          <div className="table-list" aria-label="Syncro ticket comments">
+            {syncroComments.map((comment) => (
+              <article className="table-row" key={comment.id}>
+                <div><strong>{comment.subject || "Comment"}</strong><span>{comment.tech || "Syncro user"} · {comment.created_at || "time unavailable"}</span></div>
+                <span>{comment.body}</span>
+                <em>{comment.hidden ? "internal" : "customer-visible"}</em>
+              </article>
+            ))}
+          </div>
+        ) : syncroStatus?.status === "ready" ? <p>No comments returned for this page.</p> : null}
+        {syncroMeta.total_pages && syncroMeta.total_pages > 1 ? <p className="screen-note">Page {syncroMeta.page ?? syncroPage} of {syncroMeta.total_pages}.</p> : null}
       </section>
 
       <section className="panel">
