@@ -71,6 +71,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.viewer_token == ""
     assert settings.end_user_brand_name == "WAIT Support"
     assert settings.end_user_brand_tagline == "Private help desk"
+    assert settings.end_user_brand_logo_data_uri == ""
+    assert settings.end_user_brand_accent_color == "#1f6f55"
+    assert settings.end_user_brand_surface_color == "#f3f5f2"
     assert settings.demo_mode is True
     assert settings.secrets_backend == "env"
     assert str(settings.vault_path) == ".wait-local-agent/vault"
@@ -154,11 +157,17 @@ def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
 def test_end_user_branding_env_values_are_loaded(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_END_USER_BRAND_NAME", "Acme Support")
     monkeypatch.setenv("WAIT_END_USER_BRAND_TAGLINE", "Help for Acme teams")
+    monkeypatch.setenv("WAIT_END_USER_BRAND_LOGO_DATA_URI", "data:image/png;base64,AA==")
+    monkeypatch.setenv("WAIT_END_USER_BRAND_ACCENT_COLOR", "#123456")
+    monkeypatch.setenv("WAIT_END_USER_BRAND_SURFACE_COLOR", "#abcdef")
 
     settings = load_settings()
 
     assert settings.end_user_brand_name == "Acme Support"
     assert settings.end_user_brand_tagline == "Help for Acme teams"
+    assert settings.end_user_brand_logo_data_uri == "data:image/png;base64,AA=="
+    assert settings.end_user_brand_accent_color == "#123456"
+    assert settings.end_user_brand_surface_color == "#abcdef"
 
 
 def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:

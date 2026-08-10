@@ -1,10 +1,16 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, type CSSProperties, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { apiFetch, ApiRequestError } from "../api/client";
 import type { EndUserBranding, EndUserMessage, EndUserTicket } from "../api/types";
 
 const tokenStorageKey = "wait-local-agent-end-user-token";
-const defaultBranding: EndUserBranding = { brand_name: "WAIT Support", brand_tagline: "Private help desk" };
+const defaultBranding: EndUserBranding = {
+  brand_name: "WAIT Support",
+  brand_tagline: "Private help desk",
+  brand_logo_data_uri: "",
+  brand_accent_color: "#1f6f55",
+  brand_surface_color: "#f3f5f2"
+};
 
 function loadToken(): string {
   try {
@@ -164,9 +170,9 @@ export function EndUserSupport() {
   }
 
   return (
-    <main className="end-user-shell">
+    <main className="end-user-shell" style={{ "--end-user-accent": branding.brand_accent_color, "--end-user-surface": branding.brand_surface_color } as CSSProperties}>
       <div className="end-user-header">
-        <div className="end-user-brand"><ShieldCheck size={30} aria-hidden="true" /><div><strong>{branding.brand_name}</strong><span>{branding.brand_tagline}</span></div></div>
+        <div className="end-user-brand">{branding.brand_logo_data_uri ? <img className="end-user-logo" src={branding.brand_logo_data_uri} alt="" /> : <ShieldCheck size={30} aria-hidden="true" />}<div><strong>{branding.brand_name}</strong><span>{branding.brand_tagline}</span></div></div>
         <div className="end-user-secure"><KeyRound size={16} aria-hidden="true" /> Access is limited to your support account</div>
       </div>
       <section className="end-user-intro">

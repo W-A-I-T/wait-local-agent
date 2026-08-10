@@ -268,9 +268,12 @@ the same requester and client; internal `ticket_notes` are never returned by
 the end-user message routes.
 The authenticated `/end-user/config` route returns optional local branding
 configured with `WAIT_END_USER_BRAND_NAME` and `WAIT_END_USER_BRAND_TAGLINE`.
-It returns only display strings after the same client/requester scope check;
-live PSA synchronization, outbound delivery, logos, and theme customization
-remain separate capabilities.
+Optional local white-label styling uses validated `WAIT_END_USER_BRAND_LOGO_DATA_URI`,
+`WAIT_END_USER_BRAND_ACCENT_COLOR`, and `WAIT_END_USER_BRAND_SURFACE_COLOR` values;
+remote image URLs are not loaded.
+It returns only validated display values after the same client/requester scope
+check; live PSA synchronization and outbound delivery remain separate
+capabilities.
 
 ## Event-triggered agents
 

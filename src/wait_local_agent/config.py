@@ -85,6 +85,9 @@ class Settings:
     end_user_support_enabled: bool = False
     end_user_brand_name: str = "WAIT Support"
     end_user_brand_tagline: str = "Private help desk"
+    end_user_brand_logo_data_uri: str = ""
+    end_user_brand_accent_color: str = "#1f6f55"
+    end_user_brand_surface_color: str = "#f3f5f2"
     communication_email_host: str = ""
     communication_email_port: int = 587
     communication_email_username: str = ""
@@ -226,6 +229,13 @@ def load_settings() -> Settings:
             "WAIT_END_USER_BRAND_TAGLINE", "Private help desk"
         ).strip()
         or "Private help desk",
+        end_user_brand_logo_data_uri=os.getenv("WAIT_END_USER_BRAND_LOGO_DATA_URI", "").strip(),
+        end_user_brand_accent_color=os.getenv(
+            "WAIT_END_USER_BRAND_ACCENT_COLOR", "#1f6f55"
+        ).strip(),
+        end_user_brand_surface_color=os.getenv(
+            "WAIT_END_USER_BRAND_SURFACE_COLOR", "#f3f5f2"
+        ).strip(),
         communication_email_host=_secret_value(
             "WAIT_COMMUNICATION_EMAIL_HOST",
             os.getenv("WAIT_COMMUNICATION_EMAIL_HOST", ""),

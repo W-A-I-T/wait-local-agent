@@ -202,8 +202,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   send isolated requester follow-up messages, and request technician escalation
   through both `/end-user/tickets*` and the separate `/end-user` React surface;
   it does not load the operator shell. The separately scoped
-  `/end-user/config` route supports local tenant branding name/tagline values;
-  live PSA sync, outbound delivery, logos, and theme customization remain
+  `/end-user/config` route supports local tenant branding name/tagline, a
+  validated local image data URI, and validated accent/surface colors; remote
+  image URLs are rejected, and live PSA sync plus outbound delivery remain
   unavailable.
 - The inactive-ticket follow-up workflow now reuses the shared communication
   action: it prepares a tenant-scoped local ticket-note draft by default, or an

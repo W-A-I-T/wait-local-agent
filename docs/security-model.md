@@ -81,6 +81,8 @@ WAIT_END_USER_CLIENT_ID=<client-id>
 WAIT_END_USER_USER_ID=<requester-id>
 WAIT_END_USER_BRAND_NAME=Acme Support
 WAIT_END_USER_BRAND_TAGLINE=Help for Acme teams
+WAIT_END_USER_BRAND_ACCENT_COLOR=#123456
+WAIT_END_USER_BRAND_SURFACE_COLOR=#abcdef
 ```
 
 The end-user token is not a technician or admin token. It cannot select a

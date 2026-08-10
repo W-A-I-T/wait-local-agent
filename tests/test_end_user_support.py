@@ -23,6 +23,9 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         end_user_user_id="user-1",
         end_user_brand_name="Acme Support",
         end_user_brand_tagline="Help for Acme teams",
+        end_user_brand_logo_data_uri="data:image/png;base64,AA==",
+        end_user_brand_accent_color="#123456",
+        end_user_brand_surface_color="#abcdef",
         tech_token="tech-token",
     )
     client = TestClient(create_app(enabled))
@@ -60,6 +63,9 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     assert branding.json() == {
         "brand_name": "Acme Support",
         "brand_tagline": "Help for Acme teams",
+        "brand_logo_data_uri": "data:image/png;base64,AA==",
+        "brand_accent_color": "#123456",
+        "brand_surface_color": "#abcdef",
     }
     assert "client_id" not in branding.json()
     assert created.json()["status"] == "new"
@@ -74,11 +80,32 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     assert escalated.status_code == 200
     assert escalated.json()["status"] == "escalated"
     assert technician.status_code == 403
-
     stored = Store(enabled.data_path).get_ticket(ticket_id, client_id="acme")
     assert stored is not None
     assert stored.requester_id == "user-1"
 
+
+def test_end_user_branding_rejects_remote_assets_and_invalid_colors(settings) -> None:
+    enabled = replace(
+        settings,
+        demo_mode=False,
+        end_user_support_enabled=True,
+        end_user_token="end-user-token",
+        end_user_client_id="acme",
+        end_user_user_id="user-1",
+        end_user_brand_logo_data_uri="https://example.com/logo.png",
+        end_user_brand_accent_color="red",
+        end_user_brand_surface_color="var(--unsafe)",
+    )
+    branding = TestClient(create_app(enabled)).get(
+        "/end-user/config",
+        headers=_auth("end-user-token"),
+    )
+
+    assert branding.status_code == 200
+    assert branding.json()["brand_logo_data_uri"] == ""
+    assert branding.json()["brand_accent_color"] == "#1f6f55"
+    assert branding.json()["brand_surface_color"] == "#f3f5f2"
 
 def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_default(settings) -> None:
     enabled = replace(
