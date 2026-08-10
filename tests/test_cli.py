@@ -31,7 +31,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
-from wait_local_agent.notion import NotionPage, NotionReadResponse
+from wait_local_agent.notion import NotionDataSource, NotionDataSourceResponse, NotionPage, NotionReadResponse
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
@@ -1372,6 +1372,12 @@ def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_
                 "next-cursor",
             )
 
+        def get_data_source(self, data_source_id, *, client_id):
+            return NotionDataSourceResponse(
+                ConnectorReadResult("ready", "ok", 1),
+                [NotionDataSource(data_source_id, {"Name": "title"})],
+            )
+
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setattr(cli_module, "NotionClient", FakeNotionClient)
     runner = CliRunner()
@@ -1390,6 +1396,15 @@ def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_
             "acme",
         ],
     )
+    data_source = runner.invoke(
+        app,
+        [
+            "connectors",
+            "notion-data-source",
+            "66666666-7777-8888-9999-000000000000",
+            "acme",
+        ],
+    )
 
     assert pages.exit_code == 0
     assert "Runbook" in pages.output
@@ -1398,6 +1413,8 @@ def test_notion_cli_commands_require_scope_and_redact_markdown(monkeypatch, tmp_
     assert "token=[redacted]" in page.output
     assert data_source_pages.exit_code == 0
     assert "next-cursor" in data_source_pages.output
+    assert data_source.exit_code == 0
+    assert '"Name": "title"' in data_source.output
 
 
 def test_sharepoint_cli_document_content_is_bounded_and_redacted(monkeypatch, tmp_path) -> None:

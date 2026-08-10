@@ -66,8 +66,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
 - Notion read-only mapped-page title search, bounded page-markdown retrieval,
-  and mapped data-source row queries through the common guarded HTTP boundary;
-  comments and write operations remain unavailable.
+  mapped data-source schema retrieval, and mapped data-source row queries
+  through the common guarded HTTP boundary; comments and write operations
+  remain unavailable.
 - SharePoint read-only site and drive-item metadata plus tenant-scoped Graph
   drive search across a site or folder hierarchy, and explicitly requested
   text-document content retrieval bounded to 20,000 characters; binary/office
@@ -111,9 +112,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   until separately reviewed contracts and approval paths exist.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
-- Notion read-only mapped-page title search, page-markdown retrieval, and
-  mapped data-source row queries through the common guarded HTTP boundary;
-  comments and writes remain unavailable.
+- Notion read-only mapped-page title search, page-markdown retrieval,
+  data-source schema retrieval, and mapped data-source row queries through the
+  common guarded HTTP boundary; comments and writes remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph, plus
   bounded site/folder search and supported text-file retrieval; write
   operations and binary/office extraction remain unavailable.
@@ -328,7 +329,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   local adapter remains inventory-only and blocks execution until a reviewed
   vendor adapter is installed. Existing HaloPSA ticket reads and
   Hudu article-content, IT Glue document-content, Confluence page-content,
-  Notion mapped-page markdown and data-source rows, and SharePoint
+  Notion mapped-page markdown, data-source schema, and data-source rows, and SharePoint
   documentation search, and
   ConnectWise PSA, Syncro, ServiceNow, and Autotask ticket lookup are available as
   tenant-scoped read tools using the guarded connector clients. ServiceNow work-note
@@ -391,7 +392,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Hudu read-only | Built, including bounded article content search |
 | IT Glue read-only | Built, including bounded organization document-content search and document-detail section retrieval |
 | Confluence read-only | Built, including bounded page content search |
-| Notion read-only | Built, including mapped-page title search, bounded page-markdown retrieval, and mapped data-source row queries |
+| Notion read-only | Built, including mapped-page title search, bounded page-markdown retrieval, mapped data-source schema retrieval, and mapped data-source row queries |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
@@ -401,7 +402,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
-| Notion connector | Read-only mapped-page search, bounded markdown retrieval, and data-source row query built |
+| Notion connector | Read-only mapped-page search, bounded markdown retrieval, data-source schema retrieval, and data-source row query built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect read-only session/device adapters built; broader vendor coverage and remediation future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
