@@ -97,11 +97,24 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         id="documentation-assisted-response",
         name="Documentation-assisted Response",
         trigger="ticket.created",
-        description="Use cited local knowledge to draft a client-safe response.",
+        description=(
+            "Use tenant-scoped local knowledge to draft a cited client-safe response "
+            "and deliver it through the existing approval-gated communication boundary."
+        ),
         action_type="ticket.draft_response",
         approval_required=True,
         risk_level="medium",
         preview_fields=("ticket_id", "response", "sources"),
+        tool_id="documentation-assisted-response",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "response": "optional operator-edited response; local/provider draft is used when omitted",
+            },
+        },
     ),
     WorkflowTemplate(
         id="l1-resolution-review",

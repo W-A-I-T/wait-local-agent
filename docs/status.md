@@ -210,6 +210,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - The P1 alert workflow uses the same approval-gated communication boundary,
   defaulting to a local ticket note and requiring an explicitly configured
   adapter for external notification channels.
+- The documentation-assisted response workflow now executes through the shared
+  smart-action catalog: it retrieves tenant-scoped local knowledge, drafts a
+  cited response with the deterministic local provider by default (or an
+  explicitly enabled provider), shows the draft before approval, and delivers
+  only after technician approval. Missing evidence, unavailable providers, and
+  unavailable delivery adapters remain explicit failures; no approval is
+  created for an ungrounded response.
 - Client-scoped QBR, automation-opportunity, and recurring-service-review
   reports are available through their matching `/reports/*` API routes, CLI
   commands, and the `/reports` dashboard. They use local ticket,

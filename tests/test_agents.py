@@ -115,6 +115,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "stale-ticket-sweep",
         "communication-draft",
         "communication-send",
+        "documentation-assisted-response",
         "connectwise-ticket-lookup",
         "connectwise-ticket-assign-technician",
         "connectwise-ticket-status-update",
