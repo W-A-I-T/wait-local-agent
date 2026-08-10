@@ -212,8 +212,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   it does not load the operator shell. The separately scoped
   `/end-user/config` route supports local tenant branding name/tagline, a
   validated local image data URI, and validated accent/surface colors; remote
-  image URLs are rejected, and live PSA sync plus outbound delivery remain
-  unavailable.
+  image URLs are rejected. Operators can manually prepare an approval-gated
+  HaloPSA note draft for a local end-user message after an explicit
+  client-to-client mapping and remote ticket ownership check; automatic PSA
+  sync and outbound delivery remain unavailable.
 - The inactive-ticket follow-up workflow now reuses the shared communication
   action: it prepares a tenant-scoped local ticket-note draft by default, or an
   explicitly selected configured channel, and cannot write or deliver until a

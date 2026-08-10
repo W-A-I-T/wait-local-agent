@@ -27,6 +27,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_OFFLINE_MODE", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TOKEN_URL", raising=False)
+    monkeypatch.delenv("WAIT_HALOPSA_CLIENT_MAP_JSON", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_TICKET_WRITE_ENDPOINT", raising=False)
     monkeypatch.delenv("WAIT_HALOPSA_ACTION_WRITE_ENDPOINT", raising=False)
     monkeypatch.delenv("WAIT_DOCUMENT_PARSER", raising=False)
@@ -89,6 +90,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.offline_mode is False
     assert settings.halopsa_base_url == ""
     assert settings.halopsa_token_url == ""
+    assert settings.halopsa_client_map_json == ""
     assert settings.halopsa_ticket_write_endpoint == "Ticket"
     assert settings.halopsa_action_write_endpoint == "Actions"
     assert settings.document_parser == "basic"

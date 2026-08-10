@@ -408,6 +408,18 @@ WAIT_HALOPSA_TENANT=
 WAIT_HALOPSA_TOKEN_URL=
 ```
 
+To manually prepare an approval-gated sync of a local end-user message to an
+existing HaloPSA ticket, also configure an explicit tenant mapping:
+
+```text
+WAIT_HALOPSA_CLIENT_MAP_JSON={"acme":"12345"}
+```
+
+The `/tickets` conversation controls verify the external ticket belongs to the
+mapped HaloPSA client before creating an `add_note` approval draft. This is a
+manual operator action; it does not provide automatic PSA polling or direct
+end-user writes.
+
 Credential validation:
 
 ```bash

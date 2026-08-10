@@ -375,6 +375,10 @@ class EndUserMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
 
 
+class EndUserHaloSyncDraftRequest(BaseModel):
+    external_ticket_id: str = Field(min_length=1, max_length=100)
+
+
 class ClientReportRequest(BaseModel):
     period_start: date
     period_end: date
@@ -1821,6 +1825,85 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if message is None:
             raise HTTPException(status_code=404, detail="end-user ticket not found")
         return _operator_end_user_message_view(message)
+
+    @app.post("/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def draft_end_user_halopsa_sync(
+        ticket_id: str,
+        message_id: int,
+        payload: EndUserHaloSyncDraftRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(
+            context,
+            active_settings.client_id if context.role >= Role.ADMIN else None,
+        )
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="technician has no tenant scope")
+        local_ticket = store.get_ticket(ticket_id, client_id=scoped_client_id)
+        if local_ticket is None or not local_ticket.requester_id:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        message = next(
+            (
+                item
+                for item in store.list_end_user_messages_for_operator(ticket_id, client_id=scoped_client_id)
+                if item.id == message_id
+            ),
+            None,
+        )
+        if message is None:
+            raise HTTPException(status_code=404, detail="end-user message not found")
+        external_ticket_id = payload.external_ticket_id.strip()
+        if not _safe_external_ticket_id(external_ticket_id):
+            raise HTTPException(status_code=422, detail="external HaloPSA ticket id is invalid")
+        expected_client_id = _halopsa_client_mapping(active_settings, scoped_client_id)
+        if expected_client_id is None:
+            raise HTTPException(status_code=409, detail="HaloPSA client mapping is not configured for this tenant")
+        remote = halopsa_client.get_ticket(external_ticket_id)
+        if remote.result.status != "ready" or len(remote.items) != 1:
+            raise HTTPException(status_code=409, detail="HaloPSA ticket could not be verified")
+        remote_ticket = remote.items[0]
+        if getattr(remote_ticket, "client_id", "") != expected_client_id:
+            raise HTTPException(status_code=403, detail="HaloPSA ticket is outside the configured tenant scope")
+        expected_fields = {"note": message.body, "hiddenfromuser": False}
+        for existing in store.list_approval_requests(client_id=scoped_client_id):
+            if existing.subject_id != external_ticket_id or existing.action_type != "halopsa.add_note":
+                continue
+            if existing.status not in {"pending", "approved"}:
+                continue
+            existing_payload = _safe_json_object(existing.payload_json)
+            if existing_payload.get("fields") != expected_fields:
+                continue
+            store.add_audit_event(
+                "end_user.halopsa_sync_draft_reused",
+                f"{ticket_id}:{message_id}",
+                f"Existing HaloPSA sync approval {existing.id} reused for external ticket {external_ticket_id}",
+                client_id=scoped_client_id,
+            )
+            return {
+                "ticket_id": existing.subject_id,
+                "action_type": "add_note",
+                "payload_json": _redact_json_text(existing.payload_json),
+                "payload": _redact_payload(existing_payload),
+                "approval_required": True,
+                "status": existing.status,
+                "approval_request_id": existing.id,
+            }
+        draft = draft_halopsa_ticket_action(
+            store,
+            external_ticket_id,
+            "add_note",
+            expected_fields,
+            client_id=scoped_client_id,
+        )
+        store.add_audit_event(
+            "end_user.halopsa_sync_draft",
+            f"{ticket_id}:{message_id}",
+            f"HaloPSA sync draft created for external ticket {external_ticket_id}",
+            client_id=scoped_client_id,
+        )
+        return _halopsa_draft_view(draft)
 
     @app.post("/end-user/tickets/{ticket_id}/escalate")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -4873,6 +4956,29 @@ def _safe_end_user_ticket_id(ticket_id: str) -> bool:
         and len(ticket_id) <= 100
         and not any(ord(character) < 32 or character.isspace() for character in ticket_id)
     )
+
+
+def _safe_external_ticket_id(ticket_id: str) -> bool:
+    return bool(ticket_id.strip()) and len(ticket_id) <= 100 and all(
+        ord(character) >= 32 and character not in "/?#\x00" for character in ticket_id
+    )
+
+
+def _halopsa_client_mapping(settings: Settings, client_id: str | None) -> str | None:
+    normalized_client_id = _normalize_client_id(client_id)
+    if normalized_client_id is None:
+        return None
+    try:
+        payload = json.loads(settings.halopsa_client_map_json or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    mapped = payload.get(normalized_client_id)
+    if isinstance(mapped, bool) or not isinstance(mapped, (str, int)):
+        return None
+    value = str(mapped).strip()
+    return value or None
 
 
 def _execution_run_view(run) -> dict[str, object]:
