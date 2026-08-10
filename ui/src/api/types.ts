@@ -609,7 +609,7 @@ export type ScheduledJob = {
 
 export type ScheduledJobRequestBody = {
   template_id?: string;
-  report_type?: "qbr" | "automation_opportunity";
+  report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
   cron: string;

@@ -24,7 +24,7 @@ visible here instead of being presented as a completed UI feature.
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
-| `/scheduled-jobs` | Workflow, agent, and client-report schedule lifecycle | `/scheduled-jobs/*` | Browser route render; UI test creates a bounded QBR schedule; recurring-service-review target covered by backend tests |
+| `/scheduled-jobs` | Workflow, agent, and client-report schedule lifecycle, including recurring-service-review report target | `/scheduled-jobs/*` | Browser route render; UI tests create QBR and recurring-service-review schedules; backend tests cover scheduled execution |
 | `/settings` | Packs, secrets, backups, acknowledgement-gated restore, update check, admin-triggered model health | `/settings/*`, `/settings/providers/health`, `/packs/*`, `/secrets`, `/backups*`, `/update-check` | Existing UI tests; browser route render |
 | `/founder` | Founder pack and Launch Passport boundary | `/founder/*` | Existing UI tests; browser route render; pack-not-installed state is explicit |
 
