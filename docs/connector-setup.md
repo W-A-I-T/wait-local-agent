@@ -340,9 +340,12 @@ and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpo
 ## Kaseya VSA X
 
 The Kaseya adapter implements the shared RMM contract for organization-scoped
-device inventory and device-notification reads using the documented VSA X v3
-REST API. It uses Basic authentication with an API token ID and secret and
-does not expose mutation or script execution paths.
+device and device-notification reads, script metadata, script preview,
+approval-gated script execution, and execution polling using the documented
+VSA X v3 REST API. It uses Basic authentication with an API token ID and
+secret. Script requests validate the mapped tenant device and documented
+input-variable IDs before any write, and execution scope is persisted locally
+for tenant-safe polling.
 
 Required settings:
 
@@ -358,10 +361,14 @@ WAIT_ALLOW_HTTP_PROBING=true
 Every request requires a WAIT client ID mapped to a positive Kaseya
 organization ID. Device rows are filtered again after retrieval. Notification
 reads are made only for devices already returned in that tenant scope and are
-capped by the configured page size. The credentials and organization ID never
-come from smart-action payloads. Script catalog, preview, execution, and
-execution lookup return an explicit unavailable result rather than pretending
-that VSA X remediation is supported. See the [VSA X REST API reference](https://api.vsax.net/).
+capped by the configured page size. Script IDs and device IDs are validated
+before use; script arguments are numeric documented input-variable IDs and
+bounded strings, and script details are fetched to reject unknown variables.
+Execution requires `WAIT_ALLOW_WRITE_ACTIONS=true` plus the existing completed
+technician approval. Execution IDs are stored with their script, device, and
+client scope before polling; unknown execution IDs are rejected. Credentials
+and organization IDs never come from smart-action payloads. See the
+[VSA X REST API reference](https://api.vsax.net/).
 
 ## ConnectWise ScreenConnect
 

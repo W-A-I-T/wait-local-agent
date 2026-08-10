@@ -116,8 +116,10 @@ requester-role rules.
 - White-label branding configuration.
 - Broader N-central remediation and additional RMM connectors beyond the
   bounded inventory/direct-task vendor surfaces already shipped.
-- Kaseya VSA read-only device/notification connector is now in the public core;
-  VSA script/remediation parity remains future work.
+- Kaseya VSA device/notification inventory plus approval-gated script
+  catalog/detail, execution, and locally scoped execution polling are now in
+  the public core; broader remediation and webhook callbacks remain future
+  work.
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.
 

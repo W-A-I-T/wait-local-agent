@@ -16,12 +16,14 @@ from wait_local_agent.kaseya import (
     _safe_attribute,
     _safe_base_url,
     _safe_endpoint,
+    _variable_id,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.store import Store
 
 
 def _adapter(settings, handler, **overrides) -> KaseyaRmmAdapter:
+    store = overrides.pop("store", None)
     values = {
         "allow_http_probing": True,
         "kaseya_rmm_base_url": "https://vsa.example.test/api/v3",
@@ -30,7 +32,11 @@ def _adapter(settings, handler, **overrides) -> KaseyaRmmAdapter:
         "kaseya_rmm_organization_map_json": json.dumps({"acme": 101}),
         **overrides,
     }
-    return KaseyaRmmAdapter(replace(settings, **values), transport=httpx.MockTransport(handler))
+    return KaseyaRmmAdapter(
+        replace(settings, **values),
+        store=store,
+        transport=httpx.MockTransport(handler),
+    )
 
 
 def test_kaseya_calls_are_blocked_by_default(settings) -> None:
@@ -109,9 +115,7 @@ def test_kaseya_inventory_and_notifications_are_organization_scoped(settings) ->
     devices = adapter.list_devices("acme")
     alerts = adapter.list_alerts("acme")
 
-    assert [device.device_id for device in devices] == [
-        "11111111-2222-3333-4444-555555555555"
-    ]
+    assert [device.device_id for device in devices] == ["11111111-2222-3333-4444-555555555555"]
     assert [alert.alert_id for alert in alerts] == ["2733"]
     assert alerts[0].device_id == devices[0].device_id
     assert all(request.headers["authorization"].startswith("Basic ") for request in seen)
@@ -139,17 +143,219 @@ def test_kaseya_alert_reads_are_bounded(settings) -> None:
     assert len(_adapter(settings, handler, kaseya_rmm_page_size=1).list_alerts("acme")) == 1
 
 
-def test_kaseya_script_operations_are_explicitly_unavailable(settings) -> None:
-    adapter = _adapter(settings, lambda request: httpx.Response(200, json={"Data": []}))
+def test_kaseya_script_catalog_preview_execution_and_polling(settings) -> None:
+    seen: list[httpx.Request] = []
 
-    with pytest.raises(KaseyaRmmError, match="script catalog"):
-        adapter.list_scripts("acme")
-    with pytest.raises(KaseyaRmmError, match="script execution"):
-        adapter.preview_script("script", "device", {}, client_id="acme")
-    with pytest.raises(KaseyaRmmError, match="script execution"):
-        adapter.execute_script("script", "device", {}, client_id="acme")
-    with pytest.raises(KaseyaRmmError, match="execution lookup"):
-        adapter.get_execution("execution-1", client_id="acme")
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        if request.url.path.endswith("/automation/scripts"):
+            return httpx.Response(
+                200,
+                json={
+                    "Data": [
+                        {"Id": "script-1", "Name": "Collect logs", "Description": "Bounded"},
+                        {"Name": "Missing ID"},
+                    ]
+                },
+            )
+        if request.url.path.endswith("/automation/scripts/script-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "Data": {
+                        "Id": "script-1",
+                        "Name": "Collect logs",
+                        "InputVariables": [{"Id": 7, "Name": "days", "VariableType": "Number"}],
+                    }
+                },
+            )
+        if request.url.path.endswith("/automation/scripts/script-1/run"):
+            assert request.method == "POST"
+            assert json.loads(request.content) == {
+                "DeviceIdentifier": "device-1",
+                "Variables": [{"Id": 7, "Value": "7"}],
+            }
+            return httpx.Response(200, json={"Data": {"ExecutionId": "exec-1"}})
+        if request.url.path.endswith("/automation/scripts/script-1/device/device-1/executions/exec-1"):
+            return httpx.Response(200, json={"Data": {"Id": "exec-1", "State": "Successful"}})
+        raise AssertionError(request.url)
+
+    store = Store(settings.data_path)
+    adapter = _adapter(
+        replace(settings, allow_write_actions=True),
+        handler,
+        store=store,
+    )
+
+    scripts = adapter.list_scripts("acme")
+    assert scripts[0].script_id == "script-1"
+    assert len(scripts) == 1
+    preview = adapter.preview_script("script-1", "device-1", {"7": "7"}, client_id="acme")
+    assert preview.status == "preview"
+    execution = adapter.execute_script("script-1", "device-1", {"7": "7"}, client_id="acme")
+    assert execution.status == "queued"
+    assert execution.execution_id == "exec-1"
+    tracked = adapter.get_execution("exec-1", client_id="acme")
+    assert tracked.status == "succeeded"
+    assert tracked.script_id == "script-1"
+    assert tracked.device_id == "device-1"
+    assert all("token-secret" not in str(request) for request in seen)
+
+
+def test_kaseya_script_execution_requires_write_flag(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        if request.url.path.endswith("/automation/scripts/script-1"):
+            return httpx.Response(
+                200,
+                json={"Data": {"Id": "script-1", "InputVariables": []}},
+            )
+        raise AssertionError(request.url)
+
+    result = _adapter(
+        settings,
+        handler,
+    ).execute_script("script-1", "device-1", {}, client_id="acme")
+    assert result.status == "blocked"
+    assert "WAIT_ALLOW_WRITE_ACTIONS" in result.message
+
+
+@pytest.mark.parametrize("arguments", [{"days": "7"}, {"8": "7"}])
+def test_kaseya_rejects_non_numeric_or_unknown_script_variables(settings, arguments) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        return httpx.Response(
+            200,
+            json={"Data": {"Id": "script-1", "InputVariables": [{"Id": 7}]}},
+        )
+
+    with pytest.raises(KaseyaRmmError, match="variable"):
+        _adapter(settings, handler).preview_script("script-1", "device-1", arguments, client_id="acme")
+
+
+def test_kaseya_rejects_out_of_scope_devices_and_malformed_script_details(settings) -> None:
+    def device_only(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+        )
+
+    with pytest.raises(KaseyaRmmError, match="outside the tenant scope"):
+        _adapter(settings, device_only).preview_script("script-1", "device-2", {}, client_id="acme")
+
+    def wrong_script(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return device_only(request)
+        return httpx.Response(200, json={"Data": {"Id": "other-script", "InputVariables": []}})
+
+    with pytest.raises(KaseyaRmmError, match="script was not found"):
+        _adapter(settings, wrong_script).preview_script("script-1", "device-1", {}, client_id="acme")
+
+    def missing_variables(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return device_only(request)
+        return httpx.Response(200, json={"Data": {"Id": "script-1"}})
+
+    with pytest.raises(KaseyaRmmError, match="malformed"):
+        _adapter(settings, missing_variables).preview_script("script-1", "device-1", {}, client_id="acme")
+
+
+def test_kaseya_rejects_argument_bounds_and_malformed_execution_responses(settings) -> None:
+    def valid_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        if request.url.path.endswith("/automation/scripts/script-1"):
+            return httpx.Response(200, json={"Data": {"Id": "script-1", "InputVariables": []}})
+        return httpx.Response(200, json={"Data": {}})
+
+    with pytest.raises(KaseyaRmmError, match="exceed 20"):
+        _adapter(settings, valid_handler).preview_script(
+            "script-1", "device-1", {str(index): "v" for index in range(21)}, client_id="acme"
+        )
+    with pytest.raises(KaseyaRmmError, match="at most 500"):
+        _adapter(settings, valid_handler).preview_script("script-1", "device-1", {"1": "x" * 501}, client_id="acme")
+
+    def malformed_run(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        if request.url.path.endswith("/automation/scripts/script-1"):
+            return httpx.Response(200, json={"Data": {"Id": "script-1", "InputVariables": []}})
+        return httpx.Response(200, json={"Data": {}})
+
+    with pytest.raises(KaseyaRmmError, match="response was malformed"):
+        _adapter(
+            replace(settings, allow_write_actions=True),
+            malformed_run,
+            store=Store(settings.data_path),
+        ).execute_script("script-1", "device-1", {}, client_id="acme")
+
+
+def test_kaseya_execution_scope_and_provider_states_are_safe(settings) -> None:
+    adapter = _adapter(settings, lambda request: httpx.Response(200, json={"Data": {}}))
+    with pytest.raises(KaseyaRmmError, match="local execution scope"):
+        adapter.get_execution("exec-1", client_id="acme")
+
+    store = Store(settings.data_path)
+    store.record_rmm_execution_scope("exec-1", "kaseya-vsa-x", "script-1", "device-1", "acme")
+
+    def response_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        if request.url.path.endswith("/executions/exec-1"):
+            return httpx.Response(200, json={"Data": {"Id": "other", "State": "Running"}})
+        raise AssertionError(request.url)
+
+    with pytest.raises(KaseyaRmmError, match="outside the requested scope"):
+        _adapter(settings, response_handler, store=store).get_execution("exec-1", client_id="acme")
+
+    def running_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        return httpx.Response(200, json={"Data": {"Id": "exec-1", "State": "Running"}})
+
+    running = _adapter(settings, running_handler, store=store).get_execution("exec-1", client_id="acme")
+    assert running.status == "queued"
+
+    def unknown_state_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        return httpx.Response(200, json={"Data": {"Id": "exec-1", "State": "Unknown"}})
+
+    with pytest.raises(KaseyaRmmError, match="malformed"):
+        _adapter(settings, unknown_state_handler, store=store).get_execution("exec-1", client_id="acme")
+
+
+def test_kaseya_variable_id_upper_bound_is_rejected() -> None:
+    with pytest.raises(KaseyaRmmError, match="32-bit"):
+        _variable_id(str(2_147_483_648))
 
 
 @pytest.mark.parametrize(
@@ -185,9 +391,13 @@ def test_kaseya_http_errors_and_unsafe_urls_are_sanitized(settings) -> None:
         ).list_devices("acme")
 
     with pytest.raises(KaseyaRmmError, match=r"HTTP\(S\)"):
-        _adapter(settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="ftp://vsa.test").list_devices("acme")
+        _adapter(settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="ftp://vsa.test").list_devices(
+            "acme"
+        )
     with pytest.raises(KaseyaRmmError, match="query data"):
-        _adapter(settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="https://vsa.test/api?secret=bad").list_devices("acme")
+        _adapter(
+            settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="https://vsa.test/api?secret=bad"
+        ).list_devices("acme")
     with pytest.raises(KaseyaRmmError, match="unsafe characters"):
         _safe_endpoint("devices/device id")
     with pytest.raises(KaseyaRmmError, match="invalid"):

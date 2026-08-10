@@ -309,7 +309,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                         "metadata plus approval-gated direct tasks and status lookup."
                         if ncentral_configured
                         else (
-                            "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
+                            "Kaseya VSA X is configured for tenant-scoped device and notification "
+                            "inventory plus approval-gated script actions."
                             if kaseya_rmm_configured
                             else (
                                 "ScreenConnect is configured for tenant-scoped session/device "
