@@ -52,6 +52,16 @@ def test_technician_chat_supports_help_without_invoking_a_tool() -> None:
     assert "approved script" in command.reply
 
 
+def test_technician_chat_supports_explicit_bounded_plan_preview() -> None:
+    command = parse_technician_message("plan triage, search documentation, and suggest a fix for TCK-1001")
+
+    assert command.mode == "plan"
+    assert command.action_id is None
+    assert command.payload == {"ticket_id": "TCK-1001"}
+    assert command.instruction == "triage, search documentation, and suggest a fix for TCK-1001"
+    assert "plan preview" in command.reply
+
+
 @pytest.mark.parametrize(
     "message",
     [

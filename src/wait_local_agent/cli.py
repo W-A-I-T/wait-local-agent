@@ -650,7 +650,7 @@ def technician_chat(
             is None
         ):
             raise typer.BadParameter("ticket not found in client scope")
-    if command.action_id is None:
+    if command.mode == "help":
         if session is not None:
             if store is None:
                 raise RuntimeError("technician chat store was not initialized")
@@ -666,6 +666,66 @@ def technician_chat(
             typer.echo(f"session_id={session.id}")
         typer.echo(command.reply)
         return
+    if command.mode == "plan":
+        if not isinstance(resolved_ticket_id, str):  # pragma: no cover - parser guarantees a plan ticket ID
+            raise typer.BadParameter("include a ticket ID such as TCK-1001")
+        if settings is None:
+            settings = load_settings()
+            store = Store(settings.data_path)
+        if store is None:  # pragma: no cover - store is initialized above when needed
+            raise RuntimeError("technician chat store was not initialized")
+        service = SmartActionService(store, settings)
+        planner = AgentService(store, settings, service)
+        try:
+            plan = planner.plan(
+                command.instruction or message,
+                entity_id=resolved_ticket_id,
+                client_id=client_id,
+            )
+        except ValueError as exc:
+            plan_payload: dict[str, object] = {
+                "instruction": command.instruction or message,
+                "entity_id": resolved_ticket_id,
+                "client_id": client_id,
+                "status": "blocked",
+                "steps": [],
+                "blocked_reason": redact_text(str(exc)),
+            }
+            plan_status = "blocked"
+            plan_message = f"The plan is blocked: {redact_text(str(exc))}"
+        else:
+            plan_payload = asdict(plan)
+            plan_status = plan.status
+            plan_message = (
+                "I prepared a bounded plan preview. Review the selected tools and approvals "
+                "before creating or running an agent."
+                if plan.status == "preview"
+                else f"The plan is blocked: {plan.blocked_reason}"
+            )
+        if session is not None:
+            store.add_technician_chat_message(
+                session.id,
+                role="assistant",
+                message=plan_message,
+                status=plan_status,
+                ticket_id=resolved_ticket_id,
+                client_id=persisted_client_id,
+                principal_id="cli",
+            )
+            typer.echo(f"session_id={session.id}")
+        typer.echo(
+            json.dumps(
+                {
+                    "status": plan_status,
+                    "message": plan_message,
+                    "plan": redact_value(plan_payload),
+                },
+                sort_keys=True,
+            )
+        )
+        return
+    if command.action_id is None:
+        raise typer.BadParameter("technician request did not select an approved action")
     if command.action_id in {"rmm-script-preview", "rmm-script-execute"} and not client_id:
         raise typer.BadParameter("RMM script requests require --client-id for tenant scoping")
     if settings is None:

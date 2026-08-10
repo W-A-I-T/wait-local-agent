@@ -187,13 +187,16 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Agent run responses and persisted run state
   include a redacted operational final result with the last tool's status,
   output, evidence, and error detail; hidden reasoning is not persisted.
-- Technician-only bounded chat commands reuse the smart-action catalog. Persisted
+- Technician-only bounded chat commands reuse the smart-action catalog. Explicit
+  `plan ... TCK-*` requests also reuse the reviewed `/agents/plan` planner and
+  return a preview only; they never execute steps or create an enabled agent.
+  Persisted
   tenant- and principal-scoped chat sessions support bounded follow-up context,
   redacted operational history, API routes, CLI session options, and a dedicated
   React `/technician-chat` screen for creating, selecting, messaging, and closing
   sessions. Explicit
   script/device requests can prepare an RMM preview or approval-gated execution
-  through the existing RMM action; free-form planning, external Teams
+  through the existing RMM action; unrestricted planning, external Teams
   conversation delivery, and an end-user conversational agent are not shipped.
 - Optional end-user support can create and track requester-scoped local tickets,
   send isolated requester follow-up messages, and request technician escalation

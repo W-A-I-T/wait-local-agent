@@ -65,6 +65,72 @@ def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) 
     assert '"status": "success"' in result.output
 
 
+def test_technician_chat_command_previews_bounded_plan(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    result = CliRunner().invoke(
+        app,
+        ["technician-chat", "plan triage and suggest a fix for TCK-1001"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "preview"' in result.output
+    assert '"tool_id": "ticket-triage"' in result.output
+    assert '"tool_id": "suggest-resolution"' in result.output
+    assert '"enabled": false' in result.output
+
+
+def test_technician_chat_command_persists_plan_preview(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-1001', 'Acme', 'MFA reset', 'Sign-in blocked', 'high', 'open', 'acme')
+            """
+        )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "technician-chat",
+            "plan triage for TCK-1001",
+            "--new-session",
+            "--client-id",
+            "acme",
+            "--ticket-id",
+            "TCK-1001",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "session_id=" in result.output
+    assert '"status": "preview"' in result.output
+
+
+def test_technician_chat_plan_reports_planner_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_plan(*_args, **_kwargs):
+        raise ValueError("planner unavailable")
+
+    monkeypatch.setattr(AgentService, "plan", fail_plan)
+    result = CliRunner().invoke(
+        app,
+        ["technician-chat", "plan triage for TCK-1001"],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "blocked"' in result.output
+    assert "planner unavailable" in result.output
+
+
 def test_technician_chat_command_persists_bounded_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
 
