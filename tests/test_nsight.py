@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import cast
 
 import httpx
 import pytest
@@ -210,6 +211,9 @@ def test_nsight_failing_check_parser_skips_invalid_provider_rows(settings) -> No
 def test_nsight_patch_device_id_validation(value, message) -> None:
     with pytest.raises(NSightRmmError, match=message):
         _device_numeric_id(value)
+
+    with pytest.raises(NSightRmmError, match="mapped server or workstation"):
+        _device_numeric_id(cast(str, None))
 
 
 def test_nsight_patch_integer_helpers() -> None:
