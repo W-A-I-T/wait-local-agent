@@ -18,6 +18,7 @@ from wait_local_agent.nsight import (
     _backup_session_records,
     _check_records,
     _device_numeric_id,
+    _monitoring_detail_records,
     _optional_flag,
     _optional_integer,
     _optional_number,
@@ -168,6 +169,30 @@ ASSET_DETAILS_XML = """
     <install_date>2026-08-10</install_date><type>All</type><deleted>0</deleted><modified>0</modified></item>
     <item><softwareid>bad</softwareid><name>ignored</name></item></software>
 </result>
+"""
+MONITORING_DETAILS_XML = """
+<result status="OK"><server>
+  <id>49324</id><name>SRV-01</name><description>Primary server</description>
+  <username>DOMAIN\\admin</username><guid>guid-1</guid><os>Windows Server</os>
+  <agent>Agent v8.2.6</agent><lastresponse>2026-08-10 16:54:35</lastresponse>
+  <lastboot>2026-08-02 09:12:56</lastboot>
+  <checks><check><checkid>2089484</checkid><dsc_247>2</dsc_247>
+    <description>Windows Service Check</description><checkstatus>testok</checkstatus>
+    <extra>Status RUNNING</extra><datetime>2026-08-10 17:54:34</datetime>
+    <consecutive_fails>0</consecutive_fails><emailalerts>1</emailalerts><smsalerts>0</smsalerts>
+    <emailrecoveryalerts>1</emailrecoveryalerts><smsrecoveryalerts>0</smsrecoveryalerts>
+    <servertime>2026-08-10 18:00:00</servertime></check>
+    <check><checkid>bad</checkid></check></checks>
+  <outages><outage><id>103725102</id><checkid>2089484</checkid><descriptorid>1002</descriptorid>
+    <checkstatusicon>testerror</checkstatusicon><description>Backup outage</description>
+    <isclosed>0</isclosed><startdate>2026-08-10 09:35:04</startdate></outage>
+    <outage><id>bad</id></outage></outages>
+  <notes><note><noteid>117575</noteid><created>2026-08-10 11:38:14</created>
+    <description>Server note</description><devicename>SRV-01</devicename>
+    <note>Maintenance complete</note><public_note>Maintenance complete</public_note></note>
+    <note><noteid>bad</noteid></note></notes>
+  <takecontrol>1</takecontrol><patch>1</patch><mav>0</mav><mob>0</mob><systray>1</systray><mavbreck>0</mavbreck>
+</server></result>
 """
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
@@ -643,6 +668,40 @@ def test_nsight_asset_details_rechecks_device_scope(settings) -> None:
     assert _asset_detail_records(ElementTree.fromstring(ASSET_DETAILS_XML)) == asset
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_asset_details("server:999", client_id="acme")
+
+
+def test_nsight_monitoring_details_rechecks_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_device_monitoring_details":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=MONITORING_DETAILS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    monitoring = adapter.list_monitoring_details("server:49324", client_id="acme")
+
+    assert cast(dict[str, object], monitoring["device"])["type"] == "server"
+    assert cast(list[dict[str, object]], monitoring["checks"])[0]["check_id"] == 2089484
+    assert cast(list[dict[str, object]], monitoring["outages"])[0]["isclosed"] is False
+    assert cast(list[dict[str, object]], monitoring["notes"])[0]["note_id"] == 117575
+    assert cast(dict[str, bool], monitoring["features"]) == {
+        "takecontrol": True,
+        "patch": True,
+        "mav": False,
+        "mob": False,
+        "systray": True,
+        "mavbreck": False,
+    }
+    assert _monitoring_detail_records(ElementTree.fromstring(MONITORING_DETAILS_XML)) == monitoring
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_monitoring_details("server:999", client_id="acme")
 
 
 def test_nsight_inventory_and_performance_parsers_enforce_bounds() -> None:

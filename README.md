@@ -979,7 +979,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented per-device
-check inventory, performance history, asset details, failing checks, outages, managed-antivirus threats, Backup & Recovery sessions, and
+check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus threats, Backup & Recovery sessions, and
 backup-check history. It uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -1002,6 +1002,8 @@ latest status records for one mapped device. The `nsight-performance-history`
 action exposes bounded performance and bandwidth history for one mapped device.
 The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
+`nsight-monitoring-details` action exposes bounded documented device metadata,
+checks, outages, notes, and monitoring feature flags for one mapped device. The
 `nsight-patch-lookup`
 action exposes bounded patch inventory for one mapped server or workstation
 after a local device-scope recheck. The `nsight-patch-approve` action previews
@@ -1032,7 +1034,9 @@ service after the same recheck and never changes check configuration. The
 `list_performance_history` service with the provider's bounded default history
 window and never changes monitoring configuration. The `nsight-asset-details`
 action uses the documented `list_device_asset_details` service, excludes the
-provider product key, and never changes asset data. See
+provider product key, and never changes asset data. The
+`nsight-monitoring-details` action uses the documented
+`list_device_monitoring_details` service and never changes monitoring data. See
 N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
@@ -1044,6 +1048,7 @@ and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
+and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),

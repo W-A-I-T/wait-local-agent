@@ -20,6 +20,7 @@ from wait_local_agent.smart_actions import (
     NSightBackupHistoryAction,
     NSightBackupSessionsAction,
     NSightCheckInventoryAction,
+    NSightMonitoringDetailsAction,
     NSightOutageLookupAction,
     NSightPatchApproveAction,
     NSightPatchLookupAction,
@@ -104,6 +105,16 @@ class _NSightProvider(_Provider):
             "details": {"os": "Linux"},
             "hardware": [{"hardware_id": 123456, "name": "Ethernet Adapter"}],
             "software": [{"software_id": 654321, "name": "Agent"}],
+        }
+
+    def list_monitoring_details(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "device": {"id": 49324, "type": "server"},
+            "checks": [{"check_id": 2089484}],
+            "outages": [{"id": 103725102}],
+            "notes": [{"note_id": 117575, "note": "Maintenance complete"}],
+            "features": {"patch": True},
         }
 
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
@@ -193,6 +204,16 @@ class _FailingAssetDetailsNSightProvider(_NSightProvider):
 class _MalformedAssetDetailsNSightProvider(_NSightProvider):
     def list_asset_details(self, device_id, *, client_id=None):
         return {"details": {}, "hardware": "invalid", "software": []}
+
+
+class _FailingMonitoringDetailsNSightProvider(_NSightProvider):
+    def list_monitoring_details(self, device_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedMonitoringDetailsNSightProvider(_NSightProvider):
+    def list_monitoring_details(self, device_id, *, client_id=None):
+        return {"device": {}, "checks": ["invalid"], "outages": [], "notes": [], "features": {}}
 
 
 class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
@@ -387,6 +408,30 @@ def test_nsight_asset_details_lookup_is_read_only_and_bounded(settings) -> None:
         {"device_id": "server:49324"},
     )
     assert malformed.error_detail == "N-sight returned malformed asset details"
+
+
+def test_nsight_monitoring_details_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightMonitoringDetailsAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["source"] == "n-sight"
+    assert result.output["checks"] == [{"check_id": 2089484}]
+    assert result.evidence[0]["type"] == "rmm_monitoring_device"
+    wrong = NSightMonitoringDetailsAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight monitoring details requires the N-sight RMM adapter"
+    failed = NSightMonitoringDetailsAction().run(
+        _context(settings, _FailingMonitoringDetailsNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert failed.error_detail == "N-sight monitoring details are unavailable"
+    malformed = NSightMonitoringDetailsAction().run(
+        _context(settings, _MalformedMonitoringDetailsNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert malformed.error_detail == "N-sight returned malformed monitoring details"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

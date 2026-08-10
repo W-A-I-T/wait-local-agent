@@ -3784,6 +3784,116 @@ class NSightAssetDetailsAction:
         )
 
 
+class NSightMonitoringDetailsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-monitoring-details",
+        title="N-sight monitoring details",
+        description=(
+            "Read bounded documented device monitoring details, checks, outages, "
+            "notes, and feature flags for one mapped N-sight device."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={
+            "device": "object",
+            "checks": "array",
+            "outages": "array",
+            "notes": "array",
+            "features": "object",
+            "source": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=7,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_details = getattr(provider, "list_monitoring_details", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_details):
+            return _failed("N-sight monitoring details requires the N-sight RMM adapter")
+        try:
+            details = list_details(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight monitoring details are unavailable")
+        if not isinstance(details, dict):
+            return _failed("N-sight returned malformed monitoring details")
+        device = details.get("device")
+        checks = details.get("checks")
+        outages = details.get("outages")
+        notes = details.get("notes")
+        features = details.get("features")
+        if (
+            not isinstance(device, dict)
+            or not isinstance(checks, list)
+            or not isinstance(outages, list)
+            or not isinstance(notes, list)
+            or not isinstance(features, dict)
+            or any(not isinstance(item, dict) for item in checks[:100])
+            or any(not isinstance(item, dict) for item in outages[:100])
+            or any(not isinstance(item, dict) for item in notes[:100])
+        ):
+            return _failed("N-sight returned malformed monitoring details")
+        output = cast(
+            dict[str, object],
+            redact_value(
+                {
+                    "device": device,
+                    "checks": checks[:100],
+                    "outages": outages[:100],
+                    "notes": notes[:100],
+                    "features": features,
+                }
+            ),
+        )
+        output["source"] = provider.adapter_id
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {"type": "rmm_monitoring_device", "device_id": device_id.strip(), "source": provider.adapter_id},
+                *[
+                    {
+                        "type": "rmm_monitoring_check",
+                        "device_id": device_id.strip(),
+                        "check_id": check.get("check_id"),
+                        "source": provider.adapter_id,
+                    }
+                    for check in checks[:100]
+                ],
+                *[
+                    {
+                        "type": "rmm_monitoring_outage",
+                        "device_id": device_id.strip(),
+                        "outage_id": outage.get("id"),
+                        "source": provider.adapter_id,
+                    }
+                    for outage in outages[:100]
+                ],
+                *[
+                    {
+                        "type": "rmm_monitoring_note",
+                        "device_id": device_id.strip(),
+                        "note_id": note.get("note_id"),
+                        "source": provider.adapter_id,
+                    }
+                    for note in notes[:100]
+                ],
+            ],
+        )
+
+
 class NSightAntivirusThreatsAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-threats",
@@ -7050,6 +7160,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightCheckInventoryAction(),
         NSightPerformanceHistoryAction(),
         NSightAssetDetailsAction(),
+        NSightMonitoringDetailsAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),

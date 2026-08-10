@@ -2,8 +2,8 @@
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
-performance-history, asset-details, failing-check, outage, antivirus-threat,
-backup-session, and bounded patch services here. A local
+    performance-history, asset-details, failing-check, outage, antivirus-threat,
+    monitoring-details, backup-session, and bounded patch services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
@@ -41,6 +41,7 @@ MAX_CHECKS = 100
 MAX_PERFORMANCE_RECORDS = 100
 MAX_PERFORMANCE_POINTS = 100
 MAX_ASSET_ITEMS = 100
+MAX_MONITORING_RECORDS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
@@ -188,6 +189,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _asset_detail_records(root)
+
+    def list_monitoring_details(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Read bounded documented monitoring details for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_device_monitoring_details",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _monitoring_detail_records(root)
 
     def list_patches(
         self,
@@ -872,6 +892,152 @@ def _asset_detail_records(root: Any) -> dict[str, object]:
                 }
             )
     return {"details": details, "hardware": hardware, "software": software}
+
+
+_MONITORING_DEVICE_FIELDS = (
+    "name",
+    "description",
+    "username",
+    "guid",
+    "os",
+    "agent",
+    "lastresponse",
+    "lastboot",
+)
+_MONITORING_CHECK_TEXT_FIELDS = (
+    "description",
+    "checkstatus",
+    "extra",
+    "datetime",
+    "servertime",
+)
+_MONITORING_CHECK_INTEGER_FIELDS = ("dsc_247", "consecutive_fails")
+_MONITORING_CHECK_FLAG_FIELDS = (
+    "emailalerts",
+    "smsalerts",
+    "emailrecoveryalerts",
+    "smsrecoveryalerts",
+)
+_MONITORING_OUTAGE_TEXT_FIELDS = (
+    "clearcheck",
+    "checkstatusicon",
+    "frequencyicon",
+    "typeicon",
+    "description",
+    "duration",
+    "psaticketstatus",
+    "startdate",
+    "enddate",
+    "failreason",
+)
+_MONITORING_OUTAGE_INTEGER_FIELDS = (
+    "checkid",
+    "descriptorid",
+    "psaticketstatusid",
+)
+_MONITORING_OUTAGE_FLAG_FIELDS = ("isclosed",)
+_MONITORING_NOTE_TEXT_FIELDS = (
+    "created",
+    "description",
+    "devicename",
+    "checkdescriptorid",
+    "checkdescription",
+    "note",
+    "public_note",
+)
+
+
+def _monitoring_detail_records(root: Any) -> dict[str, object]:
+    device_node: Any | None = None
+    device_type = ""
+    for candidate in ("server", "workstation"):
+        node = root.find(candidate)
+        if node is not None:
+            device_node = node
+            device_type = candidate
+            break
+    if device_node is None:
+        return {"device": {}, "checks": [], "outages": [], "notes": [], "features": {}}
+
+    device: dict[str, object] = {"type": device_type}
+    device_id = _positive_id(_text(device_node, "id"))
+    if device_id is not None:
+        device["id"] = device_id
+    for field in _MONITORING_DEVICE_FIELDS:
+        raw = _text(device_node, field)
+        if raw:
+            device[field] = _bounded_text(raw)
+
+    checks: list[dict[str, object]] = []
+    checks_container = device_node.find("checks")
+    if checks_container is not None:
+        for check in checks_container.findall("check")[:MAX_MONITORING_RECORDS]:
+            check_id = _positive_id(_text(check, "checkid"))
+            if check_id is None:
+                continue
+            record: dict[str, object] = {"check_id": check_id}
+            for field in _MONITORING_CHECK_INTEGER_FIELDS:
+                value = _optional_integer(_text(check, field))
+                if value is not None:
+                    record[field] = value
+            for field in _MONITORING_CHECK_FLAG_FIELDS:
+                value = _optional_flag(_text(check, field))
+                if value is not None:
+                    record[field] = value
+            for field in _MONITORING_CHECK_TEXT_FIELDS:
+                raw = _text(check, field)
+                if raw:
+                    record[field] = _bounded_text(raw)
+            checks.append(record)
+
+    outages: list[dict[str, object]] = []
+    outages_container = device_node.find("outages")
+    if outages_container is not None:
+        for outage in outages_container.findall("outage")[:MAX_MONITORING_RECORDS]:
+            outage_id = _positive_id(_text(outage, "id"))
+            if outage_id is None:
+                continue
+            record = {"id": outage_id}
+            for field in _MONITORING_OUTAGE_INTEGER_FIELDS:
+                value = _optional_integer(_text(outage, field))
+                if value is not None:
+                    record[field] = value
+            for field in _MONITORING_OUTAGE_FLAG_FIELDS:
+                value = _optional_flag(_text(outage, field))
+                if value is not None:
+                    record[field] = value
+            for field in _MONITORING_OUTAGE_TEXT_FIELDS:
+                raw = _text(outage, field)
+                if raw:
+                    record[field] = _bounded_text(raw)
+            outages.append(record)
+
+    notes: list[dict[str, object]] = []
+    notes_container = device_node.find("notes")
+    if notes_container is not None:
+        for note in notes_container.findall("note")[:MAX_MONITORING_RECORDS]:
+            note_id = _positive_id(_text(note, "noteid"))
+            if note_id is None:
+                continue
+            record = {"note_id": note_id}
+            for field in _MONITORING_NOTE_TEXT_FIELDS:
+                raw = _text(note, field)
+                if raw:
+                    record[field] = _bounded_text(raw)
+            notes.append(record)
+
+    features: dict[str, bool] = {}
+    for field in ("takecontrol", "patch", "mav", "mob", "systray", "mavbreck"):
+        value = _optional_flag(_text(device_node, field))
+        if value is not None:
+            features[field] = value
+    return {
+        "device": device,
+        "checks": checks,
+        "outages": outages,
+        "notes": notes,
+        "features": features,
+    }
 
 
 def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
