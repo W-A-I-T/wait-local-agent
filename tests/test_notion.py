@@ -197,6 +197,12 @@ def test_notion_data_source_query_rejects_scope_and_configuration(settings) -> N
     ).query_data_source(DATA_SOURCE_ID, client_id="acme")
     assert blocked.result.status == "blocked"
 
+    provider_failure = NotionClient(
+        _configured_data_source(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(401, json={})),
+    ).query_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert provider_failure.result.status == "failed"
+
     missing = NotionClient(
         replace(settings, allow_http_probing=True, notion_api_token="")
     ).query_data_source(DATA_SOURCE_ID, client_id="acme")
@@ -311,6 +317,8 @@ def test_notion_helpers_fail_closed() -> None:
     assert _safe_cursor(" cursor ") == "cursor"
     with pytest.raises(NotionReadError):
         _safe_cursor(" ")
+    with pytest.raises(NotionReadError):
+        _safe_cursor("bad\ncursor")
     with pytest.raises(NotionReadError):
         _safe_query("x\nunsafe")
     with pytest.raises(NotionReadError):
