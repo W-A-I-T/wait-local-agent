@@ -16,6 +16,7 @@ from wait_local_agent.rmm import (
 from wait_local_agent.smart_actions import (
     ActionContext,
     NSightAntivirusThreatsAction,
+    NSightAssetDetailsAction,
     NSightBackupHistoryAction,
     NSightBackupSessionsAction,
     NSightCheckInventoryAction,
@@ -97,6 +98,14 @@ class _NSightProvider(_Provider):
             }
         ]
 
+    def list_asset_details(self, device_id, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "details": {"os": "Linux"},
+            "hardware": [{"hardware_id": 123456, "name": "Ethernet Adapter"}],
+            "software": [{"software_id": 654321, "name": "Agent"}],
+        }
+
     def approve_patches(self, device_id, patch_ids, *, client_id=None):
         assert client_id == "acme"
         return {
@@ -174,6 +183,16 @@ class _FailingPerformanceHistoryNSightProvider(_NSightProvider):
 class _MalformedPerformanceHistoryNSightProvider(_NSightProvider):
     def list_performance_history(self, device_id, *, client_id=None):
         return {"category": "cpu_load"}
+
+
+class _FailingAssetDetailsNSightProvider(_NSightProvider):
+    def list_asset_details(self, device_id, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedAssetDetailsNSightProvider(_NSightProvider):
+    def list_asset_details(self, device_id, *, client_id=None):
+        return {"details": {}, "hardware": "invalid", "software": []}
 
 
 class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
@@ -345,6 +364,29 @@ def test_nsight_performance_history_lookup_is_read_only_and_bounded(settings) ->
         {"device_id": "server:49324"},
     )
     assert malformed.error_detail == "N-sight returned malformed performance history data"
+
+
+def test_nsight_asset_details_lookup_is_read_only_and_bounded(settings) -> None:
+    result = NSightAssetDetailsAction().run(
+        _context(settings, _NSightProvider()), {"device_id": "server:49324"}
+    )
+    assert result.status == "success"
+    assert result.output["source"] == "n-sight"
+    assert result.output["hardware"] == [{"hardware_id": 123456, "name": "Ethernet Adapter"}]
+    wrong = NSightAssetDetailsAction().run(
+        _context(settings, _Provider()), {"device_id": "server:49324"}
+    )
+    assert wrong.error_detail == "N-sight asset details requires the N-sight RMM adapter"
+    failed = NSightAssetDetailsAction().run(
+        _context(settings, _FailingAssetDetailsNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert failed.error_detail == "N-sight asset details are unavailable"
+    malformed = NSightAssetDetailsAction().run(
+        _context(settings, _MalformedAssetDetailsNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert malformed.error_detail == "N-sight returned malformed asset details"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

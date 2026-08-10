@@ -2,8 +2,8 @@
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
-performance-history, failing-check, outage, antivirus-threat, backup-session,
-and bounded patch services here. A local
+performance-history, asset-details, failing-check, outage, antivirus-threat,
+backup-session, and bounded patch services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
@@ -40,6 +40,7 @@ MAX_ALERTS = 100
 MAX_CHECKS = 100
 MAX_PERFORMANCE_RECORDS = 100
 MAX_PERFORMANCE_POINTS = 100
+MAX_ASSET_ITEMS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
@@ -168,6 +169,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _performance_history_records(root)[:MAX_PERFORMANCE_RECORDS]
+
+    def list_asset_details(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Read documented asset details and bounded hardware/software inventory."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_device_asset_details",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _asset_detail_records(root)
 
     def list_patches(
         self,
@@ -777,6 +797,81 @@ def _performance_data_records(history: Any) -> list[dict[str, object]]:
         if values:
             records.append(values)
     return records
+
+
+_ASSET_DETAIL_FIELDS = (
+    "client",
+    "chassistype",
+    "ip",
+    "mac1",
+    "mac2",
+    "mac3",
+    "user",
+    "manufacturer",
+    "model",
+    "os",
+    "osinstalldate",
+    "serialnumber",
+    "role",
+    "servicepack",
+    "ram",
+    "scantime",
+)
+_ASSET_INTEGER_FIELDS = {"chassistype", "role", "servicepack", "ram"}
+
+
+def _asset_detail_records(root: Any) -> dict[str, object]:
+    details: dict[str, object] = {}
+    for field in _ASSET_DETAIL_FIELDS:
+        raw = _text(root, field)
+        if not raw:
+            continue
+        if field in _ASSET_INTEGER_FIELDS:
+            value = _optional_metric_integer(raw)
+            if value is not None:
+                details[field] = value
+        else:
+            details[field] = _bounded_text(raw)
+
+    hardware: list[dict[str, object]] = []
+    hardware_container = root.find("hardware")
+    if hardware_container is not None:
+        for item in hardware_container.findall("item")[:MAX_ASSET_ITEMS]:
+            hardware_id = _positive_id(_text(item, "hardwareid"))
+            if hardware_id is None:
+                continue
+            hardware.append(
+                {
+                    "hardware_id": hardware_id,
+                    "name": _bounded_text(_text(item, "name")),
+                    "type": _optional_integer(_text(item, "type")),
+                    "manufacturer": _bounded_text(_text(item, "manufacturer")),
+                    "details": _bounded_text(_text(item, "details")),
+                    "status": _bounded_text(_text(item, "status")),
+                    "deleted": _optional_flag(_text(item, "deleted")),
+                    "modified": _optional_flag(_text(item, "modified")),
+                }
+            )
+
+    software: list[dict[str, object]] = []
+    software_container = root.find("software")
+    if software_container is not None:
+        for item in software_container.findall("item")[:MAX_ASSET_ITEMS]:
+            software_id = _positive_id(_text(item, "softwareid"))
+            if software_id is None:
+                continue
+            software.append(
+                {
+                    "software_id": software_id,
+                    "name": _bounded_text(_text(item, "name")),
+                    "version": _bounded_text(_text(item, "version")),
+                    "install_date": _bounded_text(_text(item, "install_date")),
+                    "type": _bounded_text(_text(item, "type")),
+                    "deleted": _optional_flag(_text(item, "deleted")),
+                    "modified": _optional_flag(_text(item, "modified")),
+                }
+            )
+    return {"details": details, "hardware": hardware, "software": software}
 
 
 def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:

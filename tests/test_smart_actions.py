@@ -1067,6 +1067,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "notion-documentation-search",
         "notion-page-comment",
         "nsight-antivirus-threats",
+        "nsight-asset-details",
         "nsight-backup-history",
         "nsight-backup-sessions",
         "nsight-check-inventory",

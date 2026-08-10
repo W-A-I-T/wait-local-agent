@@ -3696,6 +3696,94 @@ class NSightPerformanceHistoryAction:
         )
 
 
+class NSightAssetDetailsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-asset-details",
+        title="N-sight asset details",
+        description=(
+            "Read bounded documented asset details plus hardware and software "
+            "inventory for one mapped N-sight device."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={
+            "details": "object",
+            "hardware": "array",
+            "software": "array",
+            "source": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=6,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_details = getattr(provider, "list_asset_details", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_details):
+            return _failed("N-sight asset details requires the N-sight RMM adapter")
+        try:
+            asset = list_details(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight asset details are unavailable")
+        if not isinstance(asset, dict):
+            return _failed("N-sight returned malformed asset details")
+        details = asset.get("details")
+        hardware = asset.get("hardware")
+        software = asset.get("software")
+        if not isinstance(details, dict) or not isinstance(hardware, list) or not isinstance(software, list):
+            return _failed("N-sight returned malformed asset details")
+        if any(not isinstance(item, dict) for item in [*hardware[:100], *software[:100]]):
+            return _failed("N-sight returned malformed asset details")
+        output = cast(
+            dict[str, object],
+            redact_value(
+                {
+                    "details": details,
+                    "hardware": hardware[:100],
+                    "software": software[:100],
+                }
+            ),
+        )
+        output["source"] = provider.adapter_id
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {"type": "rmm_asset", "device_id": device_id.strip(), "source": provider.adapter_id},
+                *[
+                    {
+                        "type": "rmm_hardware",
+                        "device_id": device_id.strip(),
+                        "hardware_id": item.get("hardware_id"),
+                        "source": provider.adapter_id,
+                    }
+                    for item in hardware[:100]
+                ],
+                *[
+                    {
+                        "type": "rmm_software",
+                        "device_id": device_id.strip(),
+                        "software_id": item.get("software_id"),
+                        "source": provider.adapter_id,
+                    }
+                    for item in software[:100]
+                ],
+            ],
+        )
+
+
 class NSightAntivirusThreatsAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-threats",
@@ -6961,6 +7049,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightBackupHistoryAction(),
         NSightCheckInventoryAction(),
         NSightPerformanceHistoryAction(),
+        NSightAssetDetailsAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),

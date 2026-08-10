@@ -13,6 +13,7 @@ from wait_local_agent.nsight import (
     NSightRmmAdapter,
     NSightRmmError,
     _api_url,
+    _asset_detail_records,
     _backup_history_records,
     _backup_session_records,
     _check_records,
@@ -152,6 +153,20 @@ PERFORMANCE_HISTORY_XML = """
     <average_usage>40</average_usage><history><data><total_average>2</total_average></data></history>
   </interface></network_usage>
   <memory_usage><check_id>106</check_id><available_min>10</available_min></memory_usage>
+</result>
+"""
+ASSET_DETAILS_XML = """
+<result status="OK">
+  <client>DOMAIN\\foo.user</client><chassistype>8</chassistype><ip>192.0.2.10</ip>
+  <mac1>01:23:45:67:89:AA</mac1><user>FOO-LAPTOP</user><manufacturer>LENOVO</manufacturer>
+  <model>0657KFG</model><os>Linux</os><role>0</role><ram>2684354560</ram>
+  <productkey>SECRET-KEY</productkey>
+  <hardware><item><hardwareid>123456</hardwareid><name>Ethernet Adapter</name><type>1</type>
+    <manufacturer>Example</manufacturer><details>AdapterType=Ethernet</details><deleted>0</deleted><modified>1</modified></item>
+    <item><hardwareid>bad</hardwareid><name>ignored</name></item></hardware>
+  <software><item><softwareid>654321</softwareid><name>Agent</name><version>1.2</version>
+    <install_date>2026-08-10</install_date><type>All</type><deleted>0</deleted><modified>0</modified></item>
+    <item><softwareid>bad</softwareid><name>ignored</name></item></software>
 </result>
 """
 EDGE_FAILING_CHECKS_XML = """
@@ -580,6 +595,54 @@ def test_nsight_performance_history_rechecks_device_scope(settings) -> None:
     assert _performance_history_records(ElementTree.fromstring(PERFORMANCE_HISTORY_XML)) == records
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_performance_history("server:999", client_id="acme")
+
+
+def test_nsight_asset_details_rechecks_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_device_asset_details":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=ASSET_DETAILS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    asset = adapter.list_asset_details("server:49324", client_id="acme")
+
+    assert asset["details"] == {
+        "client": "DOMAIN\\foo.user",
+        "chassistype": 8,
+        "ip": "192.0.2.10",
+        "mac1": "01:23:45:67:89:AA",
+        "user": "FOO-LAPTOP",
+        "manufacturer": "LENOVO",
+        "model": "0657KFG",
+        "os": "Linux",
+        "role": 0,
+        "ram": 2684354560,
+    }
+    assert asset["hardware"] == [
+        {
+            "hardware_id": 123456,
+            "name": "Ethernet Adapter",
+            "type": 1,
+            "manufacturer": "Example",
+            "details": "AdapterType=Ethernet",
+            "status": "",
+            "deleted": False,
+            "modified": True,
+        }
+    ]
+    assert cast(list[dict[str, object]], asset["software"])[0]["software_id"] == 654321
+    assert "productkey" not in cast(dict[str, object], asset["details"])
+    assert _asset_detail_records(ElementTree.fromstring(ASSET_DETAILS_XML)) == asset
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_asset_details("server:999", client_id="acme")
 
 
 def test_nsight_inventory_and_performance_parsers_enforce_bounds() -> None:
