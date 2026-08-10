@@ -114,6 +114,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "nsight-patch-approve",
         "nsight-patch-reprocess",
         "nsight-patch-policy",
+        "nsight-run-task-now",
         "rmm-script-catalog",
         "rmm-script-preview",
         "rmm-script-execute",
@@ -2187,6 +2188,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "nsight-performance-history",
         "nsight-patch-approve",
         "nsight-patch-policy",
+        "nsight-run-task-now",
     } <= tool_ids
     assert (
         next(

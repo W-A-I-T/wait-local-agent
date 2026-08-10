@@ -1004,6 +1004,9 @@ The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
 `nsight-monitoring-details` action exposes bounded documented device metadata,
 checks, outages, notes, and monitoring feature flags for one mapped device. The
+`nsight-run-task-now` action previews and, after technician approval and the
+write flag, invokes one documented automated task after re-reading its check
+ID from the mapped device. The
 `nsight-patch-lookup`
 action exposes bounded patch inventory for one mapped server or workstation
 after a local device-scope recheck. The `nsight-patch-approve` action previews
@@ -1011,9 +1014,10 @@ and, after technician approval and the write flag, calls the documented patch
 approval service only for patches present on that mapped device. Each request is limited to
 mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
 records per bounded read surface. The API key remains in settings or the encrypted vault and is never
-accepted in action payloads or included in errors/audit records. Script
-discovery, preview, execution, and polling return an explicit unavailable
-result because no documented contract is claimed for those operations. The
+accepted in action payloads or included in errors/audit records. Generic script
+discovery, arbitrary script arguments, and execution polling remain explicitly
+unavailable; the documented automated-task action is limited to the mapped
+check ID and returns the provider's bounded start delay. The
 `nsight-patch-reprocess` action uses the same approval, write-flag, inventory
 recheck, tenant scope, and bounded patch-ID controls for N-sight's documented
 patch reprocessing service. See
@@ -1054,7 +1058,8 @@ and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),
 [patch ignore](https://developer.n-able.com/n-sight/docs/ignore-patch),
 [patch inherit](https://developer.n-able.com/n-sight/docs/inherit-patch), and
-[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch).
+[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch), and
+[run task now](https://developer.n-able.com/n-sight/docs/run-task-now).
 
 ### TimeZest
 

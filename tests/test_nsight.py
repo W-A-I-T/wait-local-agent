@@ -124,6 +124,10 @@ CHECKS_XML = """
   <dsc_247>1</dsc_247><consecutive_fails>0</consecutive_fails>
 </check><check><checkid>bad</checkid><description>ignored</description></check></items></result>
 """
+AUTOMATED_TASK_CHECKS_XML = CHECKS_XML.replace(
+    "<check_type>1012</check_type>", "<check_type>1023</check_type>"
+)
+TASK_RUN_NOW_XML = '<result status="OK"><message time="15">15 minutes</message></result>'
 PERFORMANCE_HISTORY_XML = """
 <result status="OK">
   <bandwidth><host>
@@ -328,6 +332,7 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
         }
     ]
 
+
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_patches("server:999", client_id="acme")
 
@@ -380,6 +385,92 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
 
     with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
         adapter.apply_patch_policy("server:49324", ["681806"], "ignore", client_id="acme")
+
+
+def test_nsight_run_task_now_rechecks_device_and_uses_documented_service(settings) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        seen.append(service or "")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(
+                200,
+                text=SERVERS_XML if request.url.params.get("siteid") == "10" else EMPTY_XML,
+            )
+        if service == "list_workstations":
+            return httpx.Response(
+                200,
+                text=WORKSTATIONS_XML
+                if request.url.params.get("siteid") == "10"
+                else EMPTY_XML,
+            )
+        if service == "list_checks":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=AUTOMATED_TASK_CHECKS_XML)
+        if service == "task_run_now":
+            assert request.url.params.get("checkid") == "1304847"
+            return httpx.Response(200, text=TASK_RUN_NOW_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler, allow_write_actions=True)
+    operation = adapter.run_task_now("server:49324", 1304847, client_id="acme")
+
+    assert operation == {
+        "status": "accepted",
+        "device_id": "server:49324",
+        "check_id": 1304847,
+        "minutes_until_run": 15,
+        "message": "15 minutes",
+    }
+    assert seen[:2] == ["list_sites", "list_servers"]
+    assert "list_checks" in seen
+    assert seen[-1] == "task_run_now"
+
+
+def test_nsight_run_task_now_blocks_without_write_flag(settings) -> None:
+    adapter = _adapter(
+        settings,
+        lambda request: pytest.fail("blocked call must not reach transport"),
+    )
+
+    with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        adapter.run_task_now("server:49324", 1304847, client_id="acme")
+
+
+@pytest.mark.parametrize(
+    ("checks_xml", "task_xml", "message"),
+    [
+        (CHECKS_XML, TASK_RUN_NOW_XML, "not a documented automated task"),
+        (
+            AUTOMATED_TASK_CHECKS_XML,
+            '<result status="OK"><message>15 minutes</message></result>',
+            "malformed automated-task response",
+        ),
+    ],
+)
+def test_nsight_run_task_now_rejects_unsafe_provider_results(
+    settings, checks_xml, task_xml, message
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_checks":
+            return httpx.Response(200, text=checks_xml)
+        if service == "task_run_now":
+            return httpx.Response(200, text=task_xml)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler, allow_write_actions=True)
+    with pytest.raises(NSightRmmError, match=message):
+        adapter.run_task_now("server:49324", 1304847, client_id="acme")
 
 
 def test_nsight_antivirus_threats_recheck_device_scope(settings) -> None:

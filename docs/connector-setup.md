@@ -259,8 +259,11 @@ latest status records. `nsight-performance-history` returns bounded documented
 performance and bandwidth history. `nsight-asset-details` returns bounded
 documented asset metadata plus hardware/software rows and excludes the
 provider product key. `nsight-monitoring-details` returns bounded documented
-device metadata, checks, outages, notes, and monitoring feature flags; script
-catalog, preview, execution, and polling return explicit unavailable results.
+device metadata, checks, outages, notes, and monitoring feature flags.
+`nsight-run-task-now` previews and, after technician approval, invokes one
+documented automated task whose check ID is re-read from the mapped device;
+generic script discovery, arbitrary script arguments, execution polling, and
+other automated-task mutations remain unavailable.
 
 Required settings:
 
@@ -296,7 +299,8 @@ and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),
 [patch ignore](https://developer.n-able.com/n-sight/docs/ignore-patch),
 [patch inherit](https://developer.n-able.com/n-sight/docs/inherit-patch), and
-[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch).
+[patch retry](https://developer.n-able.com/n-sight/docs/retry-patch), and
+[run task now](https://developer.n-able.com/n-sight/docs/run-task-now).
 
 ## TimeZest
 

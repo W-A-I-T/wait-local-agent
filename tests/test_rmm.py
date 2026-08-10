@@ -27,6 +27,7 @@ from wait_local_agent.smart_actions import (
     NSightPatchPolicyAction,
     NSightPatchReprocessAction,
     NSightPerformanceHistoryAction,
+    NSightRunTaskNowAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
     RmmScriptExecuteAction,
@@ -86,7 +87,24 @@ class _NSightProvider(_Provider):
 
     def list_checks(self, device_id, *, client_id=None):
         assert client_id == "acme"
-        return [{"check_id": 1304847, "description": "Web Page Check", "device_id": device_id}]
+        return [
+            {
+                "check_id": 1304847,
+                "check_type": 1023,
+                "description": "Automated Task",
+                "device_id": device_id,
+            }
+        ]
+
+    def run_task_now(self, device_id, check_id, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "status": "accepted",
+            "device_id": device_id,
+            "check_id": check_id,
+            "minutes_until_run": 15,
+            "message": "15 minutes",
+        }
 
     def list_performance_history(self, device_id, *, client_id=None):
         assert client_id == "acme"
@@ -544,6 +562,45 @@ def test_nsight_patch_policy_is_allowlisted_and_approval_gated(settings) -> None
     )
     assert invalid.status == "failed"
     assert "do_nothing" in invalid.error_detail
+
+
+def test_nsight_automated_task_is_approval_gated_and_scoped(settings) -> None:
+    payload: dict[str, object] = {"device_id": "server:49324", "check_id": "1304847"}
+    provider = _NSightProvider()
+    preview = NSightRunTaskNowAction().run(_context(settings, provider), payload)
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    blocked = NSightRunTaskNowAction().run(
+        _context(settings, provider), {**payload, "_approval_completed": True}
+    )
+    assert blocked.error_detail == (
+        "N-sight task execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+    )
+    approved = NSightRunTaskNowAction().run(
+        _context(replace(settings, allow_write_actions=True), provider),
+        {**payload, "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["status"] == "accepted"
+    assert approved.output["minutes_until_run"] == 15
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"device_id": "server:49324", "check_id": ""}, "check_id"),
+        ({"device_id": "server:49324", "check_id": "-1"}, "positive integer"),
+        ({"device_id": "server:49324", "check_id": 1304847}, "positive integer string"),
+        (
+            {"device_id": "server:49324", "check_id": "1304847", "extra": True},
+            "unsupported fields",
+        ),
+    ],
+)
+def test_nsight_automated_task_rejects_invalid_payloads(settings, payload, message) -> None:
+    result = NSightRunTaskNowAction().run(_context(settings, _NSightProvider()), payload)
+    assert result.status == "failed"
+    assert message in result.error_detail
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
