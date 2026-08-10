@@ -65,6 +65,16 @@ class _NSightProvider(_Provider):
         }
 
 
+class _FailingNSightProvider(_NSightProvider):
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        raise RuntimeError("provider failure")
+
+
+class _MalformedNSightProvider(_NSightProvider):
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        return []
+
+
 def _context(settings, provider=None):
     return ActionContext(
         store=Store(settings.data_path),
@@ -124,6 +134,36 @@ def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> Non
     )
     assert approved.status == "success"
     assert approved.output["status"] == "accepted"
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"unexpected": True}, "unsupported fields"),
+        ({"device_id": "", "patch_ids": ["681806"]}, "device_id"),
+        ({"device_id": "server:49324", "patch_ids": []}, "between 1 and 20"),
+        ({"device_id": "server:49324", "patch_ids": [681806]}, "only strings"),
+        ({"device_id": "server:49324", "patch_ids": ["0"]}, "positive integers"),
+    ],
+)
+def test_nsight_patch_approval_rejects_invalid_payloads(settings, payload, message) -> None:
+    result = NSightPatchApproveAction().run(
+        _context(settings, _NSightProvider()), payload
+    )
+    assert result.status == "failed"
+    assert message in result.error_detail
+
+
+def test_nsight_patch_approval_handles_provider_boundaries(settings) -> None:
+    payload = {"device_id": "server:49324", "patch_ids": ["681806"], "_approval_completed": True}
+    wrong_adapter = NSightPatchApproveAction().run(_context(settings, _Provider()), payload)
+    assert wrong_adapter.error_detail == "N-sight patch approval requires the N-sight RMM adapter"
+
+    enabled = replace(settings, allow_write_actions=True)
+    failed = NSightPatchApproveAction().run(_context(enabled, _FailingNSightProvider()), payload)
+    assert failed.error_detail == "N-sight patch approval failed"
+    malformed = NSightPatchApproveAction().run(_context(enabled, _MalformedNSightProvider()), payload)
+    assert malformed.error_detail == "N-sight returned malformed patch approval data"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:
