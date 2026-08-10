@@ -245,7 +245,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ## N-able N-sight
 
 The N-sight adapter implements bounded, tenant-scoped device and per-device
-check, performance-history, and asset-details inventory, provider-reported failing-check alerts, mapped-device outage, Backup & Recovery
+check, performance-history, asset-details, and monitoring-details inventory, provider-reported failing-check alerts, mapped-device outage, Backup & Recovery
 session and 60-day backup-check history, patch inventory, and documented
 managed-antivirus threat records
 through the documented XML Data Extraction API. It reads mapped sites, servers,
@@ -258,7 +258,8 @@ mapped-device patch recheck. The read-only `nsight-backup-sessions` and
 latest status records. `nsight-performance-history` returns bounded documented
 performance and bandwidth history. `nsight-asset-details` returns bounded
 documented asset metadata plus hardware/software rows and excludes the
-provider product key; script
+provider product key. `nsight-monitoring-details` returns bounded documented
+device metadata, checks, outages, notes, and monitoring feature flags; script
 catalog, preview, execution, and polling return explicit unavailable results.
 
 Required settings:
@@ -289,6 +290,7 @@ and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
+and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),
