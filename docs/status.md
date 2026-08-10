@@ -65,10 +65,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   retrieval; write operations remain unavailable.
 - Confluence read-only space-scoped page body retrieval and content search
   through the common guarded HTTP boundary; write operations remain unavailable.
-- Notion read-only mapped-page title search, bounded page-markdown retrieval,
-  mapped data-source schema retrieval, and mapped data-source row queries
-  through the common guarded HTTP boundary; comments and write operations
-  remain unavailable.
+- Notion mapped-page title search, bounded page-markdown retrieval, mapped
+  data-source schema retrieval, and mapped data-source row queries through the
+  common guarded HTTP boundary; page comments are a separate approval-gated,
+  write-opt-in action and broader writes remain unavailable.
 - SharePoint read-only site and drive-item metadata plus tenant-scoped Graph
   drive search across a site or folder hierarchy, and explicitly requested
   text-document content retrieval bounded to 20,000 characters; binary/office
@@ -115,9 +115,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   provider acceptance rather than completion.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
-- Notion read-only mapped-page title search, page-markdown retrieval,
-  data-source schema retrieval, and mapped data-source row queries through the
-  common guarded HTTP boundary; comments and writes remain unavailable.
+- Notion mapped-page title search, page-markdown retrieval, data-source schema
+  retrieval, and mapped data-source row queries through the common guarded HTTP
+  boundary; page comments use a separate approval-gated, write-opt-in action
+  and broader writes remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph, plus
   bounded site/folder search and supported text-file retrieval; write
   operations and binary/office extraction remain unavailable.
@@ -355,7 +356,8 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Not ready yet
 
-- Live RMM, Hudu, IT Glue, Confluence, Notion, or SharePoint write synchronization;
+- Live RMM, Hudu, IT Glue, Confluence, broader Notion page/property
+  synchronization, or SharePoint write synchronization;
   Microsoft Graph broader-resource reads and M365 writes other than approved
   user creation, disable/offboarding, password reset, explicit
   authentication-method removal, group membership, direct license changes,
@@ -395,7 +397,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Hudu read-only | Built, including bounded article content search |
 | IT Glue read-only | Built, including bounded organization document-content search and document-detail section retrieval |
 | Confluence read-only | Built, including bounded page content search |
-| Notion read-only | Built, including mapped-page title search, bounded page-markdown retrieval, mapped data-source schema retrieval, and mapped data-source row queries |
+| Notion bounded surface | Built, including mapped-page title search, bounded page-markdown retrieval, mapped data-source schema/row reads, and approval-gated page comments; broader writes remain future |
 | Local/self-hosted | Built |
 | Open-source inspectable | Built |
 | Air-gap compatible default path | Built |
@@ -405,7 +407,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
-| Notion connector | Read-only mapped-page search, bounded markdown retrieval, data-source schema retrieval, and data-source row query built |
+| Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
 | RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, Kaseya VSA X read-only inventory/notification, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, provider-native ScreenConnect discovery/polling, and remediation remain future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |

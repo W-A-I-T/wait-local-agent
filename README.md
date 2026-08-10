@@ -589,12 +589,13 @@ explicit client-to-data-source map enables bounded first-page row queries via
 Notion's documented data-source query endpoint; the query body is fixed to a
 bounded read and supports cursor continuation. Data-source metadata retrieval
 returns only the mapped data-source ID and bounded property-name/type schema
-from the documented retrieve endpoint. The adapter is read-only:
-comments, page updates, and other writes are not exposed. Requests use the
-configured bearer token and `Notion-Version` header, and remain gated by
-`WAIT_ALLOW_HTTP_PROBING` ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [retrieve a data source](https://developers.notion.com/reference/retrieve-a-data-source), [query a data source](https://developers.notion.com/reference/query-a-data-source)).
-The Agents catalog exposes these reads as
-`notion-documentation-search` and `notion-data-source-query`.
+from the documented retrieve endpoint. Page comments are the only Notion write
+surface: `notion-page-comment` previews a bounded Markdown comment locally and
+creates it only after the existing approval flow resumes it. The approved
+provider call uses Notion's documented `POST /v1/comments` contract; live
+network access requires `WAIT_ALLOW_HTTP_PROBING=true` and writes also require
+`WAIT_ALLOW_WRITE_ACTIONS=true`. Requests use the configured bearer token and
+`Notion-Version` header ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [retrieve a data source](https://developers.notion.com/reference/retrieve-a-data-source), [query a data source](https://developers.notion.com/reference/query-a-data-source), [create a comment](https://developers.notion.com/reference/create-a-comment), [capabilities](https://developers.notion.com/reference/capabilities)). Broader page updates, property writes, and other comments APIs remain unavailable. The action is exposed through the generic smart-action API/CLI/Agents catalog and the Connectors dashboard approval form.
 
 ### SharePoint
 

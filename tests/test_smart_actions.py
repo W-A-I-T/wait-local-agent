@@ -76,6 +76,7 @@ from wait_local_agent.smart_actions import (
     M365SessionRevocationAction,
     M365UserOffboardingAction,
     M365UserOnboardingAction,
+    NotionPageCommentAction,
     RecurringServiceReviewAction,
     RmmDeviceLookupAction,
     SecurityAlertAssessmentAction,
@@ -1064,6 +1065,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-user-onboarding",
         "notion-data-source-query",
         "notion-documentation-search",
+        "notion-page-comment",
         "recurring-service-review",
         "rmm-alert-lookup",
         "rmm-device-lookup",
@@ -1278,6 +1280,101 @@ def test_syncro_ticket_comments_are_tenant_scoped_and_fail_closed(settings) -> N
     assert foreign.status == "failed"
     assert invalid_limit.status == "failed"
     assert malformed.status == "failed"
+
+
+def test_notion_page_comments_are_previewed_approval_gated_and_scoped(settings) -> None:
+    store = Store(settings.data_path)
+
+    class FakeNotionComments:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def preview_page_comment(self, page_id: str, markdown: str, *, client_id: str):
+            return SimpleNamespace(
+                page_id=page_id,
+                status="preview",
+                message="ready for approval",
+                comment_id="",
+            )
+
+        def create_page_comment(self, page_id: str, markdown: str, *, client_id: str):
+            self.calls.append((page_id, markdown, client_id))
+            return SimpleNamespace(
+                page_id=page_id,
+                status="created",
+                message="accepted",
+                comment_id="33333333-4444-5555-6666-777777777777",
+            )
+
+    provider = FakeNotionComments()
+    context = _action_context(store, settings, client_id="acme")
+    payload: dict[str, object] = {
+        "page_id": "11111111-2222-3333-4444-555555555555",
+        "client_id": "acme",
+        "markdown": "Reviewed **locally**.",
+    }
+
+    draft = NotionPageCommentAction().run(replace(context, notion_client=provider), payload)
+    blocked_write = NotionPageCommentAction().run(
+        replace(context, notion_client=provider), {**payload, "_approval_completed": True}
+    )
+    assert draft.status == "success"
+    assert draft.output["approval_required"] is True
+    assert blocked_write.status == "failed"
+    assert provider.calls == []
+
+    approved = NotionPageCommentAction().run(
+        replace(context, settings=replace(settings, allow_write_actions=True), notion_client=provider),
+        {**payload, "_approval_completed": True},
+    )
+    foreign = NotionPageCommentAction().run(
+        replace(context, notion_client=provider), {**payload, "client_id": "other"}
+    )
+
+    assert approved.status == "success"
+    assert approved.output["comment_id"] == "33333333-4444-5555-6666-777777777777"
+    assert provider.calls == [(payload["page_id"], payload["markdown"], "acme")]
+    assert foreign.status == "failed"
+
+
+def test_notion_page_comment_action_rejects_bad_payload_and_provider_edges(settings) -> None:
+    store = Store(settings.data_path)
+    context = _action_context(store, settings, client_id="acme")
+    action = NotionPageCommentAction()
+    valid: dict[str, object] = {
+        "page_id": "11111111-2222-3333-4444-555555555555",
+        "client_id": "acme",
+        "markdown": "comment",
+    }
+
+    for payload in (
+        {**valid, "page_id": ""},
+        {**valid, "client_id": ""},
+        {**valid, "markdown": ""},
+    ):
+        assert action.run(context, payload).status == "failed"
+
+    class RaisingProvider:
+        def preview_page_comment(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+        def create_page_comment(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+    raising = action.run(replace(context, notion_client=RaisingProvider()), valid)
+    assert raising.status == "failed"
+    assert raising.error_detail == "Notion page comment operation failed"
+
+    class FailedProvider:
+        def preview_page_comment(self, *args, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", comment_id="")
+
+        def create_page_comment(self, *args, **kwargs):
+            return SimpleNamespace(status="failed", message="provider rejected", comment_id="")
+
+    failed = action.run(replace(context, notion_client=FailedProvider()), valid)
+    assert failed.status == "failed"
+    assert failed.error_detail == "provider rejected"
 
 
 def test_syncro_ticket_writes_are_approval_gated_and_tenant_scoped(settings) -> None:

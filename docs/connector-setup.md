@@ -413,15 +413,19 @@ WAIT_NOTION_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The adapter is read-only and requires an explicit local client-to-page UUID
-map. An optional data-source map enables bounded row queries. Search uses
+The adapter requires an explicit local client-to-page UUID map. An optional
+data-source map enables bounded row queries. Search uses
 Notion's documented title-oriented `POST /v1/search` contract,
 filters results to the mapped page IDs, and returns a bounded cursor. Page reads
 retrieve metadata and bounded markdown through the documented page and page
 markdown endpoints. Data-source metadata reads return only mapped property
 names and types. Data-source queries use a fixed bounded body and return page
-metadata plus a continuation cursor. Comments, page updates, and other writes
-are intentionally unavailable ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [retrieve a data source](https://developers.notion.com/reference/retrieve-a-data-source), [query a data source](https://developers.notion.com/reference/query-a-data-source)).
+metadata plus a continuation cursor. The `notion-page-comment` smart action
+previews one bounded Markdown page comment locally and requires technician
+approval before calling Notion's documented `POST /v1/comments` endpoint.
+The approved write additionally requires `WAIT_ALLOW_WRITE_ACTIONS=true`;
+all live requests require `WAIT_ALLOW_HTTP_PROBING=true`. Page updates,
+property writes, and other comments APIs remain unavailable ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [retrieve a data source](https://developers.notion.com/reference/retrieve-a-data-source), [query a data source](https://developers.notion.com/reference/query-a-data-source), [create a comment](https://developers.notion.com/reference/create-a-comment), [capabilities](https://developers.notion.com/reference/capabilities)).
 
 ### Validate and read
 
@@ -440,6 +444,12 @@ The API mirrors these commands under `/connectors/notion/health`,
 `/connectors/notion/data-sources/{data-source-id}/pages`. Live requests remain
 blocked unless `WAIT_ALLOW_HTTP_PROBING=true`; the API token is kept in
 settings/vault and is never accepted in request payloads.
+
+The generic smart-action endpoint exposes the approval-gated comment flow at
+`POST /smart-actions/notion-page-comment/invoke`. The equivalent CLI command is
+`wait-local-agent smart-actions invoke notion-page-comment --payload
+'{"page_id":"<page-id>","client_id":"acme","markdown":"Reviewed locally"}'`;
+the Agents catalog and Connectors dashboard use the same action contract.
 
 ## SharePoint
 
