@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Literal, cast
 
 from wait_local_agent.models import ConnectorReadResult
@@ -102,3 +103,46 @@ def test_notion_data_source_action_is_scoped_and_bounded(settings) -> None:
     )
     assert cross_tenant.status == "failed"
     assert "outside the tenant scope" in cross_tenant.error_detail
+
+
+def test_notion_data_source_action_rejects_bad_inputs_and_provider_edges(settings) -> None:
+    context = _context(settings, FakeNotionClient())
+    action = NotionDataSourceQueryAction()
+    for payload in (
+        {"data_source_id": "", "client_id": "acme"},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": ""},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme", "limit": 0},
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme", "start_cursor": 1},
+    ):
+        assert action.run(context, cast(dict[str, object], payload)).status == "failed"
+
+    class RaisingClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+    assert action.run(
+        _context(settings, RaisingClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    ).error_detail == "Notion data-source query failed"
+
+    class MalformedClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            return SimpleNamespace(
+                result=ConnectorReadResult("ready", "ok"), items="not-a-list"
+            )
+
+    assert action.run(
+        _context(settings, MalformedClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    ).error_detail == "Notion returned malformed data-source rows"
+
+    class FailedClient(FakeNotionClient):
+        def query_data_source(self, *args, **kwargs):
+            return NotionReadResponse(ConnectorReadResult("failed", "secret=hidden"), [])
+
+    failed = action.run(
+        _context(settings, FailedClient()),
+        {"data_source_id": DATA_SOURCE_ID, "client_id": "acme"},
+    )
+    assert failed.status == "failed"
+    assert failed.error_detail == "secret=[redacted]"
