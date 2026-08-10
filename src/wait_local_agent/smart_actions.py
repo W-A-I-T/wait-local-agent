@@ -3712,6 +3712,78 @@ class NSightCheckInventoryAction:
         )
 
 
+class NSightCheckConfigAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-check-config",
+        title="N-sight check configuration",
+        description=(
+            "Read one mapped N-sight check's documented configuration, including "
+            "script or automated-task metadata when the provider returns it."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id", "check_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "check_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 10},
+            },
+        },
+        output_schema={
+            "device_id": "string",
+            "check_id": "integer",
+            "check_type": "integer|null",
+            "description": "string",
+            "configuration": "object",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        check_id = payload.get("check_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        if (
+            not isinstance(check_id, str)
+            or not check_id.isdigit()
+            or not (1 <= int(check_id) <= 2_147_483_647)
+        ):
+            return _failed("check_id must be a positive integer string")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        get_check_config = getattr(provider, "get_check_config", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(get_check_config):
+            return _failed("N-sight check configuration requires the N-sight RMM adapter")
+        try:
+            configuration = get_check_config(
+                device_id.strip(),
+                int(check_id),
+                client_id=context.client_id,
+            )
+        except Exception:
+            return _failed("N-sight check configuration is unavailable")
+        if not isinstance(configuration, dict):
+            return _failed("N-sight returned malformed check configuration data")
+        output = cast(dict[str, object], redact_value(configuration))
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "rmm_check_configuration",
+                    "operation": "list_check_config",
+                    "device_id": device_id.strip(),
+                    "check_id": int(check_id),
+                    "source": provider.adapter_id,
+                }
+            ],
+        )
+
+
 class NSightPerformanceHistoryAction:
     manifest = SmartActionManifest(
         action_id="nsight-performance-history",
@@ -7337,6 +7409,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightBackupSessionsAction(),
         NSightBackupHistoryAction(),
         NSightCheckInventoryAction(),
+        NSightCheckConfigAction(),
         NSightPerformanceHistoryAction(),
         NSightAssetDetailsAction(),
         NSightMonitoringDetailsAction(),

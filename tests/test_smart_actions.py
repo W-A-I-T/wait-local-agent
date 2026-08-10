@@ -1070,6 +1070,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "nsight-asset-details",
         "nsight-backup-history",
         "nsight-backup-sessions",
+        "nsight-check-config",
         "nsight-check-inventory",
         "nsight-monitoring-details",
         "nsight-outage-lookup",

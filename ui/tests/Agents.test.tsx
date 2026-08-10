@@ -86,6 +86,15 @@ describe("Agents", () => {
             access_mode: "write"
           },
           {
+            id: "nsight-check-config",
+            name: "N-sight check configuration",
+            description: "Read one mapped check configuration.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
             id: "scalepad-compliance-health",
             name: "ScalePad compliance health",
             description: "Read one mapped compliance-health snapshot.",
@@ -229,6 +238,25 @@ describe("Agents", () => {
       ([input, init]) => String(input) === "/agents" && init?.method === "POST"
     );
     expect(String(request?.[1]?.body)).toContain("nsight-run-task-now");
+    expect(String(request?.[1]?.body)).toContain("1304847");
+  });
+
+  it("exposes the mapped N-sight check-configuration input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const config = await screen.findByRole("checkbox", { name: /N-sight check configuration/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Inspect check" } });
+    fireEvent.click(config);
+    fireEvent.change(screen.getByLabelText("N-sight check configuration input JSON"), {
+      target: { value: JSON.stringify({ device_id: "server:49324", check_id: "1304847" }) }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("nsight-check-config");
     expect(String(request?.[1]?.body)).toContain("1304847");
   });
 
