@@ -979,7 +979,12 @@ Communication previews are available through the `communication-draft` smart
 action. `communication-send` creates an approval request and delivers only
 after approval. Supported channels are `ticket_note`, `email`, `teams`,
 `slack`, and `sms`; external channels use the configured SMTP/webhook adapters
-and remain blocked unless both write and outbound-call flags are enabled.
+and remain blocked unless both write and outbound-call flags are enabled. A
+successful delivery returns an opaque local `receipt_id`, UTC `accepted_at`,
+and adapter status; webhook deliveries also report the HTTP status code. The
+receipt is stored in the redacted smart-action run output and is available from
+`GET /smart-actions/runs` or `wait-local-agent smart-actions runs`. Provider
+response bodies and credentials are never returned or persisted.
 
 ## Updates
 

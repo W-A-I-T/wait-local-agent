@@ -482,6 +482,10 @@ class CommunicationSendAction:
             "delivery_mode": "string",
             "sendable": "boolean",
             "message": "string",
+            "receipt_id": "string",
+            "accepted_at": "string",
+            "provider_status": "string",
+            "provider_status_code": "integer|null",
         },
         requires_approval=True,
         estimated_minutes_saved=2,
@@ -534,8 +538,15 @@ class CommunicationSendAction:
                     "sendable": True,
                     "message": "local ticket note created",
                     "note_id": note.id,
+                    "receipt_id": f"ticket-note:{note.id}",
+                    "accepted_at": note.created_at,
+                    "provider_status": "persisted_local_note",
+                    "provider_status_code": None,
                 },
-                evidence=[{"type": "ticket_note", "ticket_id": message.ticket_id}],
+                evidence=[
+                    {"type": "ticket_note", "ticket_id": message.ticket_id},
+                    {"type": "communication_receipt", "receipt_id": f"ticket-note:{note.id}"},
+                ],
             )
         sender = context.communication_sender
         if sender is None:
@@ -546,10 +557,15 @@ class CommunicationSendAction:
             return _failed(redact_text(str(exc)))
         except Exception:
             return _failed("communication delivery failed")
+        if not delivery.receipt_id or not delivery.accepted_at:
+            return _failed("communication delivery did not return a receipt")
         return ActionResult(
             status="success",
             output=asdict(delivery),
-            evidence=[{"type": "communication_delivery", "channel": message.channel}],
+            evidence=[
+                {"type": "communication_delivery", "channel": message.channel},
+                {"type": "communication_receipt", "receipt_id": delivery.receipt_id},
+            ],
         )
 
 

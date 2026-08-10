@@ -5,10 +5,12 @@ from __future__ import annotations
 import smtplib
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 
@@ -47,6 +49,10 @@ class CommunicationDelivery:
     delivery_mode: Literal["local", "sent"]
     sendable: bool
     message: str
+    receipt_id: str = ""
+    accepted_at: str = ""
+    provider_status: str = "accepted"
+    provider_status_code: int | None = None
 
 
 class CommunicationProvider(Protocol):
@@ -182,6 +188,10 @@ class _WebhookAdapter:
             delivery_mode="sent",
             sendable=True,
             message=f"{message.channel} delivery accepted by configured endpoint",
+            receipt_id=_local_receipt_id(f"webhook-{message.channel}"),
+            accepted_at=_utc_timestamp(),
+            provider_status="accepted",
+            provider_status_code=response.status_code,
         )
 
 
@@ -228,6 +238,9 @@ class _EmailAdapter:
             delivery_mode="sent",
             sendable=True,
             message="email delivery accepted by configured SMTP server",
+            receipt_id=_local_receipt_id("smtp-email"),
+            accepted_at=_utc_timestamp(),
+            provider_status="accepted_by_smtp",
         )
 
 
@@ -312,6 +325,15 @@ def _safe_email_address(value: str) -> str:
     if name or not address or "@" not in address or address.count("@") != 1:
         raise CommunicationDeliveryError("email recipient is invalid")
     return address
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _local_receipt_id(adapter_id: str) -> str:
+    """Return an opaque local receipt; providers do not expose a shared ID contract."""
+    return f"{adapter_id}:{uuid4().hex}"
 
 
 __all__ = [
