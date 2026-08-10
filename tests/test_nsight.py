@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from xml.etree import ElementTree
 
 import httpx
@@ -32,6 +32,7 @@ from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.smart_actions import (
     ActionContext,
     NSightAntivirusScansAction,
+    NSightAntivirusScanStartAction,
     NSightCheckConfigAction,
     SmartActionService,
 )
@@ -111,6 +112,7 @@ MAV_SCANS_XML = """
   <scan><type></type><status>ignored</status><start>2026-08-10</start></scan>
 </result>
 """
+MAV_SCAN_START_XML = '<result status="OK"><msg>scan accepted</msg></result>'
 OUTAGES_XML = """
 <result status="OK"><outage>
   <reason>CHECK_FAILURE</reason><state>OPEN</state>
@@ -757,6 +759,34 @@ def test_nsight_antivirus_scans_recheck_device_and_expose_documented_details(set
         adapter.list_antivirus_scans("server:999", client_id="acme")
 
 
+def test_nsight_antivirus_scan_start_rechecks_device_and_uses_documented_service(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "mav_scan_start":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=MAV_SCAN_START_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler, allow_write_actions=True)
+    operation = adapter.start_antivirus_scan("server:49324", client_id="acme")
+    assert operation == {
+        "status": "accepted",
+        "device_id": "server:49324",
+        "message": "scan accepted",
+    }
+
+    with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        _adapter(settings, handler).start_antivirus_scan("server:49324", client_id="acme")
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.start_antivirus_scan("server:999", client_id="acme")
+
+
 def test_nsight_antivirus_scan_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
     action = NSightAntivirusScansAction()
     store = Store(settings.data_path)
@@ -781,6 +811,62 @@ def test_nsight_antivirus_scan_action_rejects_invalid_and_unavailable_inputs(set
         list_antivirus_scans=lambda device_id, **kwargs: {},
     )
     assert run(malformed, {"device_id": "server:1"}).status == "failed"
+
+
+def test_nsight_antivirus_scan_start_action_previews_and_requires_write_gate(settings) -> None:
+    action = NSightAntivirusScanStartAction()
+    store = Store(settings.data_path)
+
+    class Provider:
+        adapter_id = "n-sight"
+
+        def start_antivirus_scan(self, device_id, *, client_id):
+            return {
+                "status": "accepted",
+                "device_id": device_id,
+                "message": "accepted",
+            }
+
+    provider = Provider()
+    preview = action.run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        ),
+        {"device_id": "server:1"},
+    )
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    assert preview.output["approved"] is False
+
+    approved = action.run(
+        ActionContext(
+            store=store,
+            settings=replace(settings, allow_write_actions=True),
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        ),
+        {"device_id": "server:1", "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["approved"] is True
+    assert approved.evidence[0]["operation"] == "mav_scan_start"
+
+    assert action.run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        ),
+        {"device_id": "server:1", "unexpected": True},
+    ).status == "failed"
+    assert action.run(
+        ActionContext(store=store, settings=settings, actor="technician", rmm_provider=SimpleNamespace()),
+        {"device_id": "server:1"},
+    ).status == "failed"
 
 
 def test_nsight_outage_lookup_rechecks_device_scope(settings) -> None:

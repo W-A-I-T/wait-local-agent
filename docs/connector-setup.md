@@ -276,6 +276,15 @@ The read-only `nsight-antivirus-scans` action exposes documented Managed
 Antivirus scan history through the same generic API, CLI, and Agents definition
 editor paths. It accepts only a mapped device and an optional boolean to
 include bounded threat summaries.
+The approval-gated `nsight-antivirus-scan-start` action starts one documented
+Managed Antivirus scan only after technician approval, the write flag, and the
+same mapped-device recheck. Caller payloads cannot choose a provider engine or
+send credentials or customer IDs.
+It is reachable through the generic
+`GET /smart-actions/nsight-antivirus-scan-start` and
+`POST /smart-actions/nsight-antivirus-scan-start/invoke` API paths, the
+`smart-actions invoke nsight-antivirus-scan-start` CLI command, and the Agents
+definition editor.
 
 Required settings:
 
@@ -304,6 +313,7 @@ and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
+and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

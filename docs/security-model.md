@@ -78,6 +78,11 @@ The read-only `nsight-antivirus-scans` operation uses the documented
 summaries and optional threat details are bounded and redacted before entering
 action output or audit data; no scan-start or antivirus mutation service is
 exposed.
+The `nsight-antivirus-scan-start` operation is a separate high-risk action. It
+requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, rechecks
+mapped-device membership before calling the documented `mav_scan_start`
+service, and accepts no caller-supplied provider engine, credentials, or
+customer identifier.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
