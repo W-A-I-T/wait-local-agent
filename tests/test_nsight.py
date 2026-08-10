@@ -36,6 +36,21 @@ WORKSTATIONS_XML = """
   </workstation>
 </items></result>
 """
+FAILING_CHECKS_XML = """
+<result status="OK"><items>
+  <client><clientid>123</clientid><name>Acme</name><site><siteid>10</siteid><name>HQ</name>
+    <workstations><workstation><id>38549</id><name>WS-01</name>
+      <failed_checks><check><checkid>77</checkid><check_type>1013</check_type>
+        <description>Windows Service Check - Spooler</description>
+        <formatted_output>Status: STOPPED</formatted_output><checkstatus>testerror</checkstatus>
+      </check></failed_checks>
+    </workstation></workstations>
+    <servers><server><id>49324</id><name>SRV-01</name>
+      <offline><description>offline - maintenance mode</description></offline>
+    </server></servers>
+  </site></client>
+</items></result>
+"""
 EMPTY_XML = "<result status=\"OK\"><items /></result>"
 
 
@@ -75,6 +90,10 @@ def test_nsight_inventory_uses_documented_xml_services_and_tenant_map(settings) 
                 if request.url.params.get("siteid") == "10"
                 else EMPTY_XML,
             )
+        if service == "list_failing_checks":
+            assert request.url.params.get("clientid") == "123"
+            assert request.url.params.get("check_type") == "checks"
+            return httpx.Response(200, text=FAILING_CHECKS_XML)
         raise AssertionError(f"unexpected service {service}")
 
     adapter = _adapter(settings, handler)
@@ -84,10 +103,18 @@ def test_nsight_inventory_uses_documented_xml_services_and_tenant_map(settings) 
     assert {device.device_id for device in devices} == {"server:49324", "workstation:38549"}
     assert devices[0].attributes["site_id"] == 10
     assert devices[0].attributes["serial"] == "SN-1"
-    assert len(alerts) == 1
-    assert alerts[0].device_id == "server:49324"
-    assert alerts[0].severity == "high"
-    assert len(seen) == 10
+    assert {alert.device_id for alert in alerts} == {"server:49324", "workstation:38549"}
+    assert any("Spooler" in alert.title for alert in alerts)
+    assert any(alert.alert_id == "server:49324:offline" for alert in alerts)
+    assert all(alert.severity == "high" for alert in alerts)
+    assert len(seen) == 6
+
+
+def test_nsight_failing_checks_recheck_returned_client_scope(settings) -> None:
+    mismatched = FAILING_CHECKS_XML.replace("<clientid>123</clientid>", "<clientid>999</clientid>")
+    adapter = _adapter(settings, lambda request: httpx.Response(200, text=mismatched))
+
+    assert adapter.list_alerts("acme") == []
 
 
 def test_nsight_bounds_invalid_rows_and_device_count(settings) -> None:

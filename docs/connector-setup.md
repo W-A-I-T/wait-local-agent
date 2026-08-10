@@ -244,12 +244,12 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 ## N-able N-sight
 
-The N-sight adapter implements bounded, tenant-scoped device and health
-inventory through the documented XML Data Extraction API. It reads mapped
-sites, servers, and workstations through the shared RMM contract and derives
-bounded alerts from the returned online/status fields. It is read-only in this
-slice; script catalog, preview, execution, and polling return explicit
-unavailable results.
+The N-sight adapter implements bounded, tenant-scoped device inventory and
+provider-reported failing-check alerts through the documented XML Data
+Extraction API. It reads mapped sites, servers, and workstations and rechecks
+the returned client ID before returning records through the shared RMM
+contract. It is read-only in this slice; script catalog, preview, execution,
+and polling return explicit unavailable results.
 
 Required settings:
 
@@ -262,13 +262,14 @@ WAIT_ALLOW_HTTP_PROBING=true
 
 `WAIT_NSIGHT_CLIENT_MAP_JSON` maps each WAIT client ID to exactly one positive
 N-sight client ID. The adapter then scopes requests to that mapped client and
-its returned sites, caps the response at 25 sites and 100 devices, and keeps
-the API key inside settings/vault. Credentials and provider IDs never come
+its returned sites, caps the response at 25 sites, 100 devices, and 100 alerts,
+and keeps the API key inside settings/vault. Credentials and provider IDs never come
 from smart-action payloads, errors, or audit records. See N-able's [N-sight API
 getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
-[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations).
+[workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
+and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks).
 
 ## TimeZest
 
