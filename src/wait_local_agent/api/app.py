@@ -150,7 +150,7 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
-from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
+from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -2809,6 +2809,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = syncro_client.get_ticket(ticket_id)
         return _syncro_response("tickets.get", response)
 
+    @app.get("/connectors/syncro/tickets/{ticket_id}/comments")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def syncro_ticket_comments(
+        ticket_id: str,
+        request: Request,
+        _: ViewerAccess,
+        page: int = 1,
+        per_page: int = 10,
+    ) -> dict[str, object]:
+        response = syncro_client.list_ticket_comments(
+            ticket_id,
+            page=page,
+            per_page=per_page,
+        )
+        return _syncro_comments_response("tickets.comments", response)
+
     @app.get("/connectors/syncro/customers")
     @limiter.limit(active_settings.rate_limit_connector)
     def syncro_customers(
@@ -4302,6 +4318,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "result": asdict(response.result),
             "items": response.items,
+        }
+
+    def _syncro_comments_response(
+        read_type: str, response: SyncroCommentsResponse
+    ) -> dict[str, object]:
+        _audit_syncro_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
+            "meta": cast(dict[str, object], redact_value(response.meta)),
         }
 
     def _servicenow_response(

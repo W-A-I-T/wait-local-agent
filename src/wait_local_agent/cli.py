@@ -1636,6 +1636,27 @@ def syncro_ticket(ticket_id: str) -> None:
     _print_syncro_response("tickets.get", _syncro_client().get_ticket(ticket_id))
 
 
+@connectors_app.command("syncro-ticket-comments")
+def syncro_ticket_comments(ticket_id: str, page: int = 1, per_page: int = 10) -> None:
+    response = _syncro_client().list_ticket_comments(
+        ticket_id,
+        page=page,
+        per_page=per_page,
+    )
+    _audit_syncro_cli_read("tickets.comments", response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(item) for item in response.items],
+                "meta": redact_value(response.meta),
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
 @connectors_app.command("syncro-customers")
 def syncro_customers(
     page: int = 1,

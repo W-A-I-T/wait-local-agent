@@ -199,8 +199,8 @@ credentials, prompts, and hidden reasoning are not added to execution metadata.
 
 Hudu is read-only in the public repo.
 
-The Syncro lookup tool is read-only, while `syncro-ticket-add-note` is the
-single explicitly allowlisted Syncro write. Both require an existing local
+The Syncro lookup and bounded ticket-comment-history tools are read-only, while
+`syncro-ticket-add-note` is the single explicitly allowlisted Syncro write. Both require an existing local
 ticket in the caller's tenant scope. The write requires
 `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, and a
 completed approval request before calling the documented comment endpoint.

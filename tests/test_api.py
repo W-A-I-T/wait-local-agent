@@ -71,7 +71,7 @@ from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
 from wait_local_agent.store import Store
-from wait_local_agent.syncro import SyncroReadResponse
+from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.vault import SecretVault
 
 
@@ -3210,6 +3210,13 @@ def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
                 [{"id": ticket_id, "subject": "Printer offline"}],
             )
 
+        def list_ticket_comments(self, ticket_id, **kwargs):
+            return SyncroCommentsResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "comment-1", "ticket_id": ticket_id, "body": "Reviewed"}],
+                {"page": kwargs["page"], "per_page": kwargs["per_page"], "total_pages": 1},
+            )
+
         def list_customers(self, **kwargs):
             return SyncroReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1),
@@ -3231,6 +3238,9 @@ def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
         params={"page": 2, "query": "printer", "customer_id": "7", "status": "Open"},
     )
     ticket = client.get("/connectors/syncro/tickets/42")
+    comments = client.get(
+        "/connectors/syncro/tickets/42/comments", params={"page": 2, "per_page": 5}
+    )
     customers = client.get("/connectors/syncro/customers", params={"query": "Contoso"})
     customer = client.get("/connectors/syncro/customers/7")
     connectors = client.get("/connectors")
@@ -3240,6 +3250,8 @@ def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
     assert health.json()["status"] == "ready"
     assert tickets.json()["items"][0]["id"] == "42"
     assert ticket.json()["items"][0]["id"] == "42"
+    assert comments.json()["items"][0]["body"] == "Reviewed"
+    assert comments.json()["meta"] == {"page": 2, "per_page": 5, "total_pages": 1}
     assert customers.json()["items"][0]["name"] == "Contoso"
     assert customer.json()["items"][0]["id"] == "7"
     assert any(connector["id"] == "syncro" for connector in connectors.json())

@@ -76,9 +76,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - ConnectWise PSA ticket and company inventory plus approval-gated, allowlisted
   ticket status, assignment, and field updates through the common guarded HTTP
   boundary.
-- Syncro ticket and customer inventory plus the approval-gated documented
-  ticket-comment action through the common guarded HTTP boundary; broader
-  writes remain unavailable.
+- Syncro ticket and customer inventory plus documented paginated ticket-comment
+  history and the approval-gated documented ticket-comment action through the
+  common guarded HTTP boundary; broader writes remain unavailable.
 - ServiceNow incident and company inventory through the common guarded HTTP
   boundary, plus approval-gated work-note and state updates through the shared
   smart-action runtime; broader incident fields remain unavailable.
@@ -399,7 +399,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Air-gap compatible default path | Built |
 | IT Glue connector | Read-only core surface plus bounded content search built |
 | ConnectWise PSA connector | Bounded read surface plus approval-gated status, assignment, and allowlisted ticket-field writes built |
-| Syncro connector | Bounded ticket/customer reads plus approval-gated documented ticket comments built; broader writes remain future |
+| Syncro connector | Bounded ticket/customer reads, documented paginated ticket-comment history, and approval-gated documented ticket comments built; broader writes remain future |
 | Autotask connector | Ticket/company reads plus approval-gated ticket-note, time-entry, status, resolution, and assignment updates built; broader writes remain future |
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
