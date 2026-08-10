@@ -1015,6 +1015,12 @@ The read-only `nsight-antivirus-quarantine` action reads documented Managed
 Antivirus quarantine records for one mapped device through the same generic
 API, CLI, and Agents definition editor paths. It exposes bounded status, event,
 threat, trace-count, and engine fields and never releases or removes an item.
+The approval-gated `nsight-antivirus-quarantine-release` and
+`nsight-antivirus-quarantine-remove` actions use only IDs returned by the
+mapped-device quarantine read, require technician approval and
+`WAIT_ALLOW_WRITE_ACTIONS=true`, and are reachable through the generic API,
+CLI, and Agents definition editor paths. Release and remove are separate
+actions so the destructive boundary remains explicit.
 The approval-gated `nsight-antivirus-scan-start` action starts one documented
 Managed Antivirus scan for a mapped device only after technician approval and
 `WAIT_ALLOW_WRITE_ACTIONS=true`; it sends no scan type, engine, credential, or
@@ -1065,8 +1071,10 @@ service only after the same mapped-device recheck and write controls. The
 service under the same controls. The
 `nsight-antivirus-quarantine` action uses the documented
 `mav_quarantine_list` service with a fixed provider engine version, rechecks
-the mapped device, and bounds/redacts quarantine records; release and removal
-remain unavailable. The
+the mapped device, and bounds/redacts quarantine records. The separate
+approval-gated `nsight-antivirus-quarantine-release` and
+`nsight-antivirus-quarantine-remove` actions recheck returned quarantine IDs
+before calling the documented release/remove services. The
 `nsight-outage-lookup` action exposes open and
 recent outage records from the documented `list_outages` service after the same
 mapped-device recheck. The `nsight-backup-sessions` action uses the documented
@@ -1096,6 +1104,8 @@ and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-man
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),
+and [Managed Antivirus quarantine release](https://developer.n-able.com/n-sight/docs/quarantine-release),
+and [Managed Antivirus quarantine remove](https://developer.n-able.com/n-sight/docs/quarantine-remove),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
 and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),

@@ -4159,6 +4159,131 @@ class NSightAntivirusQuarantineAction:
         )
 
 
+class NSightAntivirusQuarantineMutationAction:
+    def __init__(
+        self,
+        *,
+        action_id: str,
+        title: str,
+        operation: str,
+        provider_method: str,
+        description: str,
+    ) -> None:
+        self.operation = operation
+        self.provider_method = provider_method
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=description,
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["device_id", "guids"],
+                "properties": {
+                    "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "guids": {"type": "array", "minItems": 1, "maxItems": 20},
+                },
+            },
+            output_schema={
+                "status": "string",
+                "operation": "string",
+                "device_id": "string",
+                "guids": "array",
+                "message": "string",
+                "approval_required": "boolean",
+                "approved": "boolean",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=5,
+            risk_level="high",
+            required_role="technician",
+            access_mode="write",
+        )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"device_id", "guids", "_approval_completed"}:
+            return _failed(
+                f"N-sight antivirus quarantine {self.operation} payload contains unsupported fields"
+            )
+        device_id = payload.get("device_id")
+        guids = payload.get("guids")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        if not isinstance(guids, list) or not guids or len(guids) > 20:
+            return _failed("guids must contain between 1 and 20 quarantine IDs")
+        if any(not isinstance(guid, str) or not guid.strip() or len(guid.strip()) > 200 for guid in guids):
+            return _failed("guids must contain non-empty strings of at most 200 characters")
+        normalized_guids: list[str] = []
+        for guid in guids:
+            clean_guid = guid.strip()
+            if clean_guid not in normalized_guids:
+                normalized_guids.append(clean_guid)
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        operation_fn = getattr(provider, self.provider_method, None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(operation_fn):
+            return _failed(
+                f"N-sight antivirus quarantine {self.operation} requires the N-sight RMM adapter"
+            )
+        clean_device_id = device_id.strip()
+        if not bool(payload.get("_approval_completed")):
+            return ActionResult(
+                status="success",
+                output={
+                    "status": "preview",
+                    "operation": self.operation,
+                    "device_id": clean_device_id,
+                    "guids": normalized_guids,
+                    "message": (
+                        "Technician approval is required before changing antivirus quarantine."
+                    ),
+                    "approval_required": True,
+                    "approved": False,
+                },
+                evidence=[
+                    {
+                        "type": "rmm_antivirus_quarantine",
+                        "operation": self.operation,
+                        "device_id": clean_device_id,
+                        "guids": normalized_guids,
+                    }
+                ],
+            )
+        if not context.settings.allow_write_actions:
+            return _failed(
+                f"N-sight antivirus quarantine {self.operation} is blocked until "
+                "WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        try:
+            operation_result = operation_fn(
+                clean_device_id,
+                normalized_guids,
+                client_id=context.client_id,
+            )
+        except Exception:
+            return _failed(f"N-sight antivirus quarantine {self.operation} failed")
+        if not isinstance(operation_result, dict):
+            return _failed(
+                f"N-sight returned malformed antivirus quarantine {self.operation} data"
+            )
+        output = cast(dict[str, object], redact_value(operation_result))
+        output["approval_required"] = False
+        output["approved"] = True
+        accepted = output.get("status") == "accepted"
+        return ActionResult(
+            status="success" if accepted else "failed",
+            output=output,
+            evidence=[
+                {
+                    "type": "rmm_antivirus_quarantine",
+                    "operation": self.operation,
+                    "device_id": clean_device_id,
+                    "guids": normalized_guids,
+                }
+            ],
+            error_detail="" if accepted else f"N-sight antivirus quarantine {self.operation} failed",
+        )
+
+
 class NSightAntivirusScansAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-scans",
@@ -7708,6 +7833,26 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmDeviceLookupAction(),
         RmmAlertLookupAction(),
         NSightAntivirusQuarantineAction(),
+        NSightAntivirusQuarantineMutationAction(
+            action_id="nsight-antivirus-quarantine-release",
+            title="Release N-sight antivirus quarantine",
+            operation="release",
+            provider_method="release_antivirus_quarantine",
+            description=(
+                "Preview and, after technician approval, release selected mapped "
+                "N-sight antivirus quarantine items."
+            ),
+        ),
+        NSightAntivirusQuarantineMutationAction(
+            action_id="nsight-antivirus-quarantine-remove",
+            title="Remove N-sight antivirus quarantine",
+            operation="remove",
+            provider_method="remove_antivirus_quarantine",
+            description=(
+                "Preview and, after technician approval, permanently remove selected "
+                "mapped N-sight antivirus quarantine items."
+            ),
+        ),
         NSightAntivirusThreatsAction(),
         NSightAntivirusScansAction(),
         NSightAntivirusScanCancelAction(),

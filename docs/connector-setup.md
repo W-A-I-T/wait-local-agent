@@ -280,6 +280,11 @@ The read-only `nsight-antivirus-quarantine` action exposes documented Managed
 Antivirus quarantine records through the same generic API, CLI, and Agents
 paths. It accepts only a mapped device, rechecks scope, and never releases or
 removes an item.
+The separate `nsight-antivirus-quarantine-release` and
+`nsight-antivirus-quarantine-remove` actions accept only quarantine IDs
+returned for the mapped device, require technician approval and the global
+write flag, and call the documented release/remove services through the same
+generic API, CLI, and Agents paths.
 The approval-gated `nsight-antivirus-scan-start` action starts one documented
 Managed Antivirus scan only after technician approval, the write flag, and the
 same mapped-device recheck. Caller payloads cannot choose a provider engine or
@@ -325,6 +330,8 @@ and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-man
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),
+and [Managed Antivirus quarantine release](https://developer.n-able.com/n-sight/docs/quarantine-release),
+and [Managed Antivirus quarantine remove](https://developer.n-able.com/n-sight/docs/quarantine-remove),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

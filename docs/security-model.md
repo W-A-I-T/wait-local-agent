@@ -81,7 +81,10 @@ summaries and optional threat details are bounded and redacted before entering
 The read-only `nsight-antivirus-quarantine` operation uses the documented
 `mav_quarantine_list` service only after rechecking the mapped device. Quarantine
 IDs, status, event, threat, trace-count, and engine fields are bounded and
-redacted; release and removal are not exposed.
+redacted. The separate release and remove operations require technician
+approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, re-read the mapped device's
+quarantine IDs, accept at most 20 IDs, and never accept an ID absent from the
+provider result; provider failures remain explicit.
 The `nsight-antivirus-scan-start` operation is a separate high-risk action. It
 requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, rechecks
 mapped-device membership before calling the documented `mav_scan_start`
