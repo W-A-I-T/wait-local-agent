@@ -1066,6 +1066,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "notion-data-source-query",
         "notion-documentation-search",
         "notion-page-comment",
+        "nsight-patch-lookup",
         "recurring-service-review",
         "rmm-alert-lookup",
         "rmm-device-lookup",

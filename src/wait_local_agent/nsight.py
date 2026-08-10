@@ -34,6 +34,7 @@ from wait_local_agent.rmm import (
 MAX_SITES = 25
 MAX_DEVICES = 100
 MAX_ALERTS = 100
+MAX_PATCHES = 100
 MAX_TEXT_LENGTH = 500
 
 
@@ -110,6 +111,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _failing_check_alerts(root, provider_client_id)[:MAX_ALERTS]
+
+    def list_patches(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented patch inventory only after a mapped-device recheck."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "patch_list_all",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _patch_records(root)[:MAX_PATCHES]
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
         del client_id
@@ -316,6 +336,61 @@ def _failing_check_alerts(root: Any, provider_client_id: int) -> list[RmmAlert]:
                             )
                         )
     return alerts
+
+
+def _patch_records(root: Any) -> list[dict[str, object]]:
+    patches: list[dict[str, object]] = []
+    for patch in root.iter("patch"):
+        patch_id = _positive_id(_text(patch, "patchid"))
+        if patch_id is None:
+            continue
+        patches.append(
+            {
+                "patch_id": patch_id,
+                "policy": _optional_integer(_text(patch, "policy")),
+                "status": _optional_integer(_text(patch, "status")),
+                "status_label": _bounded_text(_text(patch, "statusLabel")),
+                "title": _bounded_text(_text(patch, "patchTitle")),
+                "product": _bounded_text(_text(patch, "product")),
+                "severity": _optional_integer(_text(patch, "severity")),
+                "severity_label": _bounded_text(_text(patch, "severityLabel")),
+                "release_date": _bounded_text(_text(patch, "releaseDateText")),
+                "install_date": _bounded_text(_text(patch, "installDateText")),
+                "deployable": _optional_flag(_text(patch, "deployable")),
+                "uninstallable": _optional_flag(_text(patch, "uninstallable")),
+            }
+        )
+    return patches
+
+
+def _device_numeric_id(value: str) -> int:
+    if not isinstance(value, str):
+        raise NSightRmmError("N-sight patch reads require a mapped server or workstation ID")
+    category, separator, raw_id = value.strip().partition(":")
+    if category not in {"server", "workstation"} or not separator:
+        raise NSightRmmError("N-sight patch reads require a mapped server or workstation ID")
+    device_id = _positive_id(raw_id)
+    if device_id is None:
+        raise NSightRmmError("N-sight device ID must be a positive integer")
+    return device_id
+
+
+def _optional_integer(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if 0 <= parsed <= 2_147_483_647 else None
+
+
+def _optional_flag(value: str) -> bool | None:
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    return None
 
 
 def _positive_id(value: str) -> int | None:

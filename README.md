@@ -988,7 +988,9 @@ WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The shared `rmm-device-lookup` and `rmm-alert-lookup` actions expose the mapped
-inventory and provider-reported failing checks. Each request is limited to
+inventory and provider-reported failing checks. The `nsight-patch-lookup`
+action exposes bounded patch inventory for one mapped server or workstation
+after a local device-scope recheck. Each request is limited to
 mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
 alerts. The API key remains in settings or the encrypted vault and is never
 accepted in action payloads or included in errors/audit records. Script
@@ -998,7 +1000,8 @@ read API. See N-able's [API getting started guide](https://developer.n-able.com/
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
-and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks).
+and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
+and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device).
 
 ### TimeZest
 

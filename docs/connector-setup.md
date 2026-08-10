@@ -244,12 +244,12 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 ## N-able N-sight
 
-The N-sight adapter implements bounded, tenant-scoped device inventory and
-provider-reported failing-check alerts through the documented XML Data
-Extraction API. It reads mapped sites, servers, and workstations and rechecks
-the returned client ID before returning records through the shared RMM
-contract. It is read-only in this slice; script catalog, preview, execution,
-and polling return explicit unavailable results.
+The N-sight adapter implements bounded, tenant-scoped device inventory,
+provider-reported failing-check alerts, and mapped-device patch inventory
+through the documented XML Data Extraction API. It reads mapped sites, servers,
+and workstations and rechecks the returned client and device before returning
+records through the shared RMM contract. It is read-only in this slice; script
+catalog, preview, execution, and polling return explicit unavailable results.
 
 Required settings:
 
@@ -269,7 +269,8 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
-and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks).
+and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
+and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device).
 
 ## TimeZest
 

@@ -102,10 +102,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   approval-gated direct-task submission and locally scoped execution-status
   lookup. Script upload, arbitrary task identifiers, and provider credentials in
   action payloads remain unavailable.
-- N-able N-sight tenant-scoped site, server, and workstation inventory plus
-  documented failing-check alerts through the XML Data Extraction API and an
-  explicit client map. Script catalog, preview, execution, and polling remain
-  explicitly unavailable because no write contract is assumed.
+- N-able N-sight tenant-scoped site, server, and workstation inventory,
+  documented failing-check alerts, and mapped-device patch inventory through
+  the XML Data Extraction API and an explicit client map. Script catalog,
+  preview, execution, and polling remain explicitly unavailable because no
+  write contract is assumed.
 - TimeZest tenant-mapped scheduling-request reads and an approval-gated
   documented create action through the documented API, with fixed company
   scoping, bounded status/appointment metadata, local associated-company
@@ -428,7 +429,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | Confluence connector | Read-only core surface built |
 | Notion connector | Mapped-page search, bounded markdown/schema/row reads, and approval-gated page comments built; broader writes remain future |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, N-sight read-only device and documented failing-check inventory, Kaseya VSA X inventory/notification plus approval-gated script catalog/detail/execution/polling, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, N-sight writes, provider-native ScreenConnect discovery/polling, and broader remediation remain future |
+| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, N-sight read-only device, documented failing-check, and mapped-device patch inventory, Kaseya VSA X inventory/notification plus approval-gated script catalog/detail/execution/polling, and ScreenConnect session/device, approval-gated session note/message, plus optional local-command adapters built; broader vendor coverage, N-sight writes, provider-native ScreenConnect discovery/polling, and broader remediation remain future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built with JSON, Markdown, and PDF export; provider-backed lifecycle enrichment remains future work |

@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import cast
 
 import httpx
 import pytest
 
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records
-from wait_local_agent.nsight import NSightRmmAdapter, NSightRmmError, _api_url
+from wait_local_agent.nsight import (
+    NSightRmmAdapter,
+    NSightRmmError,
+    _api_url,
+    _device_numeric_id,
+    _optional_flag,
+    _optional_integer,
+)
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.store import Store
 
@@ -50,6 +58,26 @@ FAILING_CHECKS_XML = """
     </server></servers>
   </site></client>
 </items></result>
+"""
+PATCHES_XML = """
+<patches><patch>
+  <patchid>681806</patchid><policy>4</policy><status>8</status>
+  <statusLabel>Installed</statusLabel><patchTitle>Adobe Reader Security Update</patchTitle>
+  <product>Adobe Reader</product><severity>3</severity><severityLabel>Moderate</severityLabel>
+  <patchUrl>https://patches.example.test/public</patchUrl>
+  <releaseDateText>31-Jul-2024</releaseDateText><installDateText>31-Jul-2024 00:00</installDateText>
+  <deployable>1</deployable><uninstallable>1</uninstallable>
+</patch><patch><patchid>bad</patchid></patch></patches>
+"""
+EDGE_FAILING_CHECKS_XML = """
+<result status="OK"><items><client><clientid>123</clientid>
+  <site><siteid>10</siteid><name>HQ</name>
+    <servers><server><id>not-an-id</id></server></servers>
+    <workstations><workstation><id>38549</id><failed_checks>
+      <check><checkid>not-an-id</checkid></check>
+    </failed_checks></workstation></workstations>
+  </site><site><siteid>11</siteid><name>Branch</name></site>
+</client></items></result>
 """
 EMPTY_XML = "<result status=\"OK\"><items /></result>"
 
@@ -115,6 +143,87 @@ def test_nsight_failing_checks_recheck_returned_client_scope(settings) -> None:
     adapter = _adapter(settings, lambda request: httpx.Response(200, text=mismatched))
 
     assert adapter.list_alerts("acme") == []
+
+
+def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(
+                200,
+                text=SERVERS_XML if request.url.params.get("siteid") == "10" else EMPTY_XML,
+            )
+        if service == "list_workstations":
+            return httpx.Response(
+                200,
+                text=WORKSTATIONS_XML
+                if request.url.params.get("siteid") == "10"
+                else EMPTY_XML,
+            )
+        if service == "patch_list_all":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=PATCHES_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    patches = adapter.list_patches("server:49324", client_id="acme")
+
+    assert patches == [
+        {
+            "patch_id": 681806,
+            "policy": 4,
+            "status": 8,
+            "status_label": "Installed",
+            "title": "Adobe Reader Security Update",
+            "product": "Adobe Reader",
+            "severity": 3,
+            "severity_label": "Moderate",
+            "release_date": "31-Jul-2024",
+            "install_date": "31-Jul-2024 00:00",
+            "deployable": True,
+            "uninstallable": True,
+        }
+    ]
+
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_patches("server:999", client_id="acme")
+
+
+def test_nsight_failing_check_parser_skips_invalid_provider_rows(settings) -> None:
+    adapter = _adapter(
+        settings,
+        lambda request: httpx.Response(200, text=EDGE_FAILING_CHECKS_XML),
+    )
+
+    assert adapter.list_alerts("acme") == []
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("bad", "mapped server or workstation"),
+        ("server:bad", "positive integer"),
+        ("server:0", "positive integer"),
+    ],
+)
+def test_nsight_patch_device_id_validation(value, message) -> None:
+    with pytest.raises(NSightRmmError, match=message):
+        _device_numeric_id(value)
+
+    with pytest.raises(NSightRmmError, match="mapped server or workstation"):
+        _device_numeric_id(cast(str, None))
+
+
+def test_nsight_patch_integer_helpers() -> None:
+    assert _optional_integer("") is None
+    assert _optional_integer("invalid") is None
+    assert _optional_integer(str(2_147_483_648)) is None
+    assert _optional_integer("8") == 8
+    assert _optional_flag("") is None
+    assert _optional_flag("0") is False
+    assert _optional_flag("1") is True
 
 
 def test_nsight_bounds_invalid_rows_and_device_count(settings) -> None:

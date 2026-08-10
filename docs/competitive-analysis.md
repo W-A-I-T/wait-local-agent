@@ -72,7 +72,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state/assignment/resolution-metadata updates | Broader write operations | Incremental |
 | NinjaOne RMM | ✓ | ✓ bounded devices, alerts, scripts, previews, and approved execution | Broader remediation parity | Incremental |
 | Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
-| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device inventory and documented failing-check alerts | Broader N-sight writes, task management, and remediation | Incremental |
+| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device inventory, documented failing-check alerts, and mapped-device patch reads | Broader N-sight writes, task management, and remediation | Incremental |
 | TimeZest | ✓ | ✓ tenant-mapped scheduling-request status/metadata plus approval-gated documented create | Reschedule, cancel, and broader marketplace workflows | Incremental |
 | ScalePad | ✓ | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Incremental |
 | Kaseya | ✓ | ✓ bounded VSA X device/notification reads plus approval-gated script operations | Broader remediation and webhook parity | Incremental |
