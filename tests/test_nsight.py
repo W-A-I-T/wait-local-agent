@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import cast
 from xml.etree import ElementTree
 
@@ -28,7 +29,7 @@ from wait_local_agent.nsight import (
     _xml_config_value,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.smart_actions import ActionContext, NSightCheckConfigAction, SmartActionService
 from wait_local_agent.store import Store
 
 CLIENT_XML = """
@@ -506,10 +507,30 @@ def test_nsight_check_config_rejects_out_of_scope_and_malformed_results(settings
         raise AssertionError(f"unexpected service {service}")
 
     adapter = _adapter(settings, handler)
+    with pytest.raises(NSightRmmError, match="positive integer"):
+        adapter.get_check_config("server:49324", 0, client_id="acme")
     with pytest.raises(NSightRmmError, match="outside the mapped device scope"):
         adapter.get_check_config("server:49324", 999999, client_id="acme")
     with pytest.raises(NSightRmmError, match="malformed check configuration"):
         adapter.get_check_config("server:49324", 1304847, client_id="acme")
+
+    def malformed_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("service") == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if request.url.params.get("service") == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if request.url.params.get("service") == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if request.url.params.get("service") == "list_checks":
+            return httpx.Response(200, text=CHECKS_XML)
+        return httpx.Response(
+            200,
+            text='<result status="OK"><check_config>text</check_config></result>',
+        )
+
+    malformed_adapter = _adapter(settings, malformed_handler)
+    with pytest.raises(NSightRmmError, match="malformed check configuration"):
+        malformed_adapter.get_check_config("server:49324", 1304847, client_id="acme")
 
 
 def test_nsight_xml_config_value_is_bounded() -> None:
@@ -518,6 +539,57 @@ def test_nsight_xml_config_value_is_bounded() -> None:
         "</six></five></four></three></two></one></check_config>"
     )
     assert _xml_config_value(element, depth=0)["one"]["two"]["three"]["four"]["five"]["six"]["seven"] == "[truncated]"  # type: ignore[index]
+    leaf = ElementTree.fromstring('<leaf key="value">text</leaf>')
+    assert _xml_config_value(leaf, depth=0) == {
+        "@attributes": {"key": "value"},
+        "value": "text",
+    }
+
+
+def test_nsight_check_config_action_rejects_invalid_and_unavailable_providers(settings) -> None:
+    store = Store(settings.data_path)
+    action = NSightCheckConfigAction()
+
+    def invoke(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    assert invoke(SimpleNamespace(adapter_id="n-sight"), {}).status == "failed"
+    assert (
+        invoke(
+            SimpleNamespace(adapter_id="n-sight"),
+            {"device_id": "server:1", "check_id": "0"},
+        ).status
+        == "failed"
+    )
+    assert (
+        invoke(
+            SimpleNamespace(
+                adapter_id="other",
+                get_check_config=lambda *args, **kwargs: {},
+            ),
+            {"device_id": "server:1", "check_id": "1"},
+        ).status
+        == "failed"
+    )
+
+    class FailingProvider:
+        adapter_id = "n-sight"
+
+        def get_check_config(self, *args, **kwargs):
+            raise RuntimeError("provider failure")
+
+    class MalformedProvider:
+        adapter_id = "n-sight"
+
+        def get_check_config(self, *args, **kwargs):
+            return []
+
+    payload = {"device_id": "server:1", "check_id": "1"}
+    assert invoke(FailingProvider(), payload).status == "failed"
+    assert invoke(MalformedProvider(), payload).status == "failed"
 
 
 def test_nsight_run_task_now_blocks_without_write_flag(settings) -> None:
