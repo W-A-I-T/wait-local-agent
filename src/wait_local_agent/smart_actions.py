@@ -4147,6 +4147,96 @@ class NSightAntivirusProductsAction:
         )
 
 
+class NSightAntivirusDefinitionsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-definitions",
+        title="N-sight antivirus definition history",
+        description=(
+            "Read bounded recent definition versions and release dates for one "
+            "supported N-sight antivirus product."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["product_id"],
+            "properties": {
+                "product_id": {"type": "string", "minLength": 1, "maxLength": 500},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+        },
+        output_schema={
+            "definitions": "array",
+            "count": "integer",
+            "product_id": "string",
+            "source": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=3,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"product_id", "max_results"}:
+            return _failed("N-sight antivirus definition lookup contains unsupported fields")
+        product_id = payload.get("product_id")
+        max_results = payload.get("max_results", 20)
+        if (
+            not isinstance(product_id, str)
+            or not product_id.strip()
+            or len(product_id.strip()) > 500
+        ):
+            return _failed(
+                "product_id must be a non-empty string of at most 500 characters"
+            )
+        if (
+            isinstance(max_results, bool)
+            or not isinstance(max_results, int)
+            or not 1 <= max_results <= 20
+        ):
+            return _failed("max_results must be an integer between 1 and 20")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_definitions = getattr(provider, "list_antivirus_definitions", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_definitions):
+            return _failed(
+                "N-sight antivirus definition lookup requires the N-sight RMM adapter"
+            )
+        clean_product_id = product_id.strip()
+        try:
+            definitions = list_definitions(
+                clean_product_id,
+                max_results=max_results,
+                client_id=context.client_id,
+            )
+        except Exception:
+            return _failed("N-sight antivirus definitions are unavailable")
+        if not isinstance(definitions, list) or any(
+            not isinstance(definition, dict) for definition in definitions
+        ):
+            return _failed("N-sight returned malformed antivirus definition data")
+        output_definitions = [
+            cast(dict[str, object], redact_value(definition))
+            for definition in definitions[:20]
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "definitions": output_definitions,
+                "count": len(output_definitions),
+                "product_id": clean_product_id,
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_antivirus_definition",
+                    "product_id": clean_product_id,
+                    "source": provider.adapter_id,
+                }
+            ],
+        )
+
+
 class NSightAntivirusQuarantineAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-quarantine",
@@ -7904,6 +7994,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ),
         NSightAntivirusThreatsAction(),
         NSightAntivirusProductsAction(),
+        NSightAntivirusDefinitionsAction(),
         NSightAntivirusScansAction(),
         NSightAntivirusScanCancelAction(),
         NSightAntivirusScanStartAction(),

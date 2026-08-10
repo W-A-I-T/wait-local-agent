@@ -113,6 +113,15 @@ describe("Agents", () => {
             access_mode: "read"
           },
           {
+            id: "nsight-antivirus-definitions",
+            name: "N-sight antivirus definition history",
+            description: "Read antivirus definition history.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
             id: "nsight-antivirus-scan-start",
             name: "Start N-sight antivirus scan",
             description: "Start a mapped antivirus scan after approval.",
@@ -358,6 +367,25 @@ describe("Agents", () => {
       ([input, init]) => String(input) === "/agents" && init?.method === "POST"
     );
     expect(String(request?.[1]?.body)).toContain("nsight-antivirus-products");
+  });
+
+  it("exposes the N-sight antivirus definition input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const definitions = await screen.findByRole("checkbox", { name: /N-sight antivirus definition history/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Review antivirus definitions" } });
+    fireEvent.click(definitions);
+    fireEvent.change(screen.getByLabelText("N-sight antivirus definition history input JSON"), {
+      target: { value: JSON.stringify({ product_id: "bitdefender", max_results: 10 }) }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("nsight-antivirus-definitions");
+    expect(String(request?.[1]?.body)).toContain("bitdefender");
   });
 
   it("exposes the approval-gated N-sight antivirus scan-start input", async () => {

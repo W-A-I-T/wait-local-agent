@@ -280,6 +280,10 @@ The read-only `nsight-antivirus-products` action exposes the documented
 supported-antivirus product catalog through the same generic API, CLI, and
 Agents definition editor paths. It accepts no input fields, requires the
 tenant-scoped N-sight mapping, and returns only bounded product IDs and names.
+The read-only `nsight-antivirus-definitions` action exposes recent definition
+versions and release dates for one product from that catalog. It accepts a
+bounded product ID and optional 1-20 result count, rechecks the product in
+tenant scope, and uses the documented `list_av_definitions` service.
 The read-only `nsight-antivirus-quarantine` action exposes documented Managed
 Antivirus quarantine records through the same generic API, CLI, and Agents
 paths. It accepts only a mapped device, rechecks scope, and never releases or

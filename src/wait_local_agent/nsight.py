@@ -5,7 +5,7 @@ documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
     monitoring-details, backup-session, bounded patch, check-configuration,
     antivirus-scan, antivirus-scan-start, antivirus-scan-cancel,
-    antivirus-quarantine, antivirus-product, and automated-task
+    antivirus-quarantine, antivirus-product, antivirus-definition, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -50,6 +50,7 @@ MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
 MAX_ANTIVIRUS_PRODUCTS = 100
+MAX_ANTIVIRUS_DEFINITIONS = 20
 MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
 MAX_BACKUP_CHECKS = 25
@@ -154,6 +155,42 @@ class NSightRmmAdapter(RmmInventoryProvider):
 
         root = self._request("list_supported_av_products", {}, client_id=client_id)
         return _antivirus_product_records(root)[:MAX_ANTIVIRUS_PRODUCTS]
+
+    def list_antivirus_definitions(
+        self,
+        product_id: str,
+        *,
+        max_results: int = MAX_ANTIVIRUS_DEFINITIONS,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read recent definitions only for a supported mapped antivirus product."""
+
+        if (
+            not isinstance(product_id, str)
+            or not product_id.strip()
+            or len(product_id.strip()) > MAX_TEXT_LENGTH
+        ):
+            raise NSightRmmError(
+                "N-sight antivirus product ID must be a non-empty string of at most 500 characters"
+            )
+        if (
+            isinstance(max_results, bool)
+            or not isinstance(max_results, int)
+            or not 1 <= max_results <= MAX_ANTIVIRUS_DEFINITIONS
+        ):
+            raise NSightRmmError("N-sight antivirus definitions require 1 to 20 results")
+        clean_product_id = product_id.strip()
+        products = self.list_supported_antivirus_products(client_id=client_id)
+        if not any(product.get("id") == clean_product_id for product in products):
+            raise NSightRmmError(
+                "N-sight antivirus product is not in the supported product catalog"
+            )
+        root = self._request(
+            "list_av_definitions",
+            {"product": clean_product_id, "max_results": str(max_results)},
+            client_id=client_id,
+        )
+        return _antivirus_definition_records(root)[:max_results]
 
     def list_checks(
         self,
@@ -1402,6 +1439,22 @@ def _antivirus_product_records(root: Any) -> list[dict[str, object]]:
         if len(products) >= MAX_ANTIVIRUS_PRODUCTS:
             return products
     return products
+
+
+def _antivirus_definition_records(root: Any) -> list[dict[str, object]]:
+    definitions: list[dict[str, object]] = []
+    for definition in root.iter("definition"):
+        product_id = _bounded_text(_text(definition, "product"))
+        version = _bounded_text(_text(definition, "version"))
+        released = _bounded_text(_text(definition, "date"))
+        if not product_id or not version or not released:
+            continue
+        definitions.append(
+            {"product": product_id, "version": version, "date": released}
+        )
+        if len(definitions) >= MAX_ANTIVIRUS_DEFINITIONS:
+            return definitions
+    return definitions
 
 
 def _antivirus_quarantine_records(root: Any) -> list[dict[str, object]]:
