@@ -151,10 +151,14 @@ export type EventDelivery = {
   entity_type: string;
   entity_id: string;
   status: string;
+  error_detail?: string;
+  matched_agent_count?: number;
   retry_count: number;
   max_retries: number;
   retry_delay_seconds: number;
   next_retry_at?: string | null;
+  received_at?: string;
+  processed_at?: string;
   client_id?: string | null;
 };
 

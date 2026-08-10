@@ -10,7 +10,7 @@ visible here instead of being presented as a completed UI feature.
 
 | Route | Primary surface | API family | Evidence |
 | --- | --- | --- | --- |
-| `/` | Overview and onboarding | `/auth`, `/connectors`, `/workflow-runs`, `/event-history` | Browser render and dashboard smoke |
+| `/` | Overview and onboarding, event-delivery history and bounded retry | `/auth`, `/connectors`, `/workflow-runs`, `/event-history`, `/automation/event-deliveries*` | Browser render and dashboard smoke; failed deliveries expose a role-aware retry control and never show event payload secrets |
 | `/connectors` | Connector readiness and Hudu readout | `/connectors/*` | Browser navigation and connector status render |
 | `/tickets` | Ticket lookup, summary, approval draft, local end-user conversation review, support reply, and manually prepared HaloPSA message-sync approval | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render; sync requires explicit client mapping and remote ownership verification |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
@@ -42,7 +42,7 @@ unverifiable product claim.
 | Capability | Current interface | UI status | Safety boundary |
 | --- | --- | --- | --- |
 | Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence; M365 onboarding/offboarding/password-reset/authentication-method-removal are admin-only, approval-gated, and never persist credentials |
-| Event ingestion and delivery retry | `/automation/*`, API | No standalone screen; retry policy is intentionally API-only | Authenticated event types, idempotency, tenant checks, persisted `max_retries` 0-10, persisted `retry_delay_seconds` 1-3600, and bounded automatic retries |
+| Event ingestion and delivery retry | `/automation/*`, Overview | Overview lists tenant-scoped delivery status and exposes manual retry for failed deliveries within the retry budget; event ingestion remains an API/webhook surface | Authenticated event types, idempotency, tenant checks, persisted `max_retries` 0-10, persisted `retry_delay_seconds` 1-3600, bounded automatic retries, and technician/admin-only manual retry |
 | Technician chat, plan previews, notifications, and persisted sessions | `/technician/chat*`, `/technician-chat`, `/smart-actions/communication-send/invoke`, CLI | Dedicated technician screen supports session create/select/send/close, bounded plan previews, and Teams/Slack notification approval preparation; explicit `plan ... TCK-*` requests reuse the reviewed planner, while the CLI and API remain available | Technician role, tenant/principal scope, bounded parser and history; notification requests reuse the audited communication action and remain approval-gated before configured delivery |
 | End-user local ticket support | `/end-user/config`, `/end-user/tickets*`, `/tickets/{ticket_id}/end-user-messages`, `/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts`, `/end-user` | Dedicated end-user surface supports token save, scoped branding load, ticket creation, status lookup, requester/support messages, and technician escalation; the Tickets screen supports operator conversation review, local support replies, and manual HaloPSA approval-draft preparation; it is separate from the operator shell | Separate end-user token, fixed requester and tenant scope, technician/admin-only operator actions, isolated end-user message store, explicit local-to-remote client mapping, remote ticket ownership verification, approval-gated non-hidden HaloPSA note, bounded display-only branding, end-user-safe responses, and no technician/admin tools in the end-user surface |
 | Ticket lifecycle history and historical resolution metrics | `/tickets/{ticket_id}/status-history`, `/analytics/summary`, CLI analytics summary | Analytics metric on dashboard; history remains an API/CLI detail surface | Uses only explicit local/imported transitions; existing snapshots are not treated as historical evidence |
@@ -53,7 +53,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 21 files, 79 tests passed.
+- UI tests: 21 files, 84 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
