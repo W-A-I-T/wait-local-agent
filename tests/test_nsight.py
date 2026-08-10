@@ -13,6 +13,7 @@ from wait_local_agent.nsight import (
     NSightRmmAdapter,
     NSightRmmError,
     _api_url,
+    _backup_session_records,
     _device_numeric_id,
     _optional_flag,
     _optional_integer,
@@ -90,6 +91,17 @@ OUTAGES_XML = """
   <check_description>Backup Check</check_description><check_status>FAILING</check_status>
   <check_frequency>DAILY</check_frequency><cause>Backup status cannot be determined</cause>
 </outage><outage><reason></reason><state>CLOSED</state><outage_id>bad</outage_id></outage></result>
+"""
+BACKUP_SESSIONS_XML = """
+<result status="OK"><session>
+  <session_id>12345</session_id><type>BACKUP</type><storage_account_id>139</storage_account_id>
+  <plugin>FILE_SYSTEM</plugin><start>2026-08-10 00:06:57</start><end>2026-08-10 00:07:23</end>
+  <selection_size>132579334528</selection_size><selection_item_count>22</selection_item_count>
+  <size_change>843776</size_change><item_count_change>2</item_count_change>
+  <removed_item_count>0</removed_item_count><processed_size>132579334528</processed_size>
+  <processed_item_count>22</processed_item_count><transferred_size>955045456</transferred_size>
+  <error_count>0</error_count><status>COMPLETED</status>
+</session><session><session_id>bad</session_id><status>FAILED</status></session></result>
 """
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
@@ -360,6 +372,47 @@ def test_nsight_outage_parser_skips_malformed_rows() -> None:
             "cause": "Backup status cannot be determined",
         }
     ]
+
+
+def test_nsight_backup_sessions_recheck_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_mob_sessions":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=BACKUP_SESSIONS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    sessions = adapter.list_backup_sessions("server:49324", client_id="acme")
+    assert sessions == [
+        {
+            "session_id": 12345,
+            "type": "BACKUP",
+            "storage_account_id": 139,
+            "plugin": "FILE_SYSTEM",
+            "start": "2026-08-10 00:06:57",
+            "end": "2026-08-10 00:07:23",
+            "selection_size": 132579334528,
+            "selection_item_count": 22,
+            "size_change": 843776,
+            "item_count_change": 2,
+            "removed_item_count": 0,
+            "processed_size": 132579334528,
+            "processed_item_count": 22,
+            "transferred_size": 955045456,
+            "error_count": 0,
+            "status": "COMPLETED",
+        }
+    ]
+    assert _backup_session_records(ElementTree.fromstring(BACKUP_SESSIONS_XML)) == sessions
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_backup_sessions("server:999", client_id="acme")
 
 
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])

@@ -2,9 +2,9 @@
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, failing-check, outage,
-antivirus-threat, and bounded patch services here. A local
+antivirus-threat, backup-session, and bounded patch services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
-outage, and patch records are filtered to that mapping before
+outage, backup-session, and patch records are filtered to that mapping before
 entering the shared RMM contract.
 The provider's API key is required by the documented query contract but is
 never accepted in action payloads, returned in errors, or persisted in audit
@@ -39,7 +39,9 @@ MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
 MAX_OUTAGES = 100
+MAX_BACKUP_SESSIONS = 100
 MAX_TEXT_LENGTH = 500
+MAX_METRIC_INTEGER = 9_223_372_036_854_775_807
 PATCH_POLICY_SERVICES = {
     "do_nothing": "patch_do_nothing",
     "ignore": "patch_ignore",
@@ -178,6 +180,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _outage_records(root)[:MAX_OUTAGES]
+
+    def list_backup_sessions(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented Backup & Recovery sessions for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_mob_sessions",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _backup_session_records(root)[:MAX_BACKUP_SESSIONS]
 
     def approve_patches(
         self,
@@ -577,6 +598,45 @@ def _outage_records(root: Any) -> list[dict[str, object]]:
     return outages
 
 
+def _backup_session_records(root: Any) -> list[dict[str, object]]:
+    sessions: list[dict[str, object]] = []
+    for session in root.iter("session"):
+        session_id = _positive_id(_text(session, "session_id"))
+        if session_id is None:
+            continue
+        sessions.append(
+            {
+                "session_id": session_id,
+                "type": _bounded_text(_text(session, "type")),
+                "storage_account_id": _positive_id(_text(session, "storage_account_id")),
+                "plugin": _bounded_text(_text(session, "plugin")),
+                "start": _bounded_text(_text(session, "start")),
+                "end": _bounded_text(_text(session, "end")),
+                "selection_size": _optional_metric_integer(_text(session, "selection_size")),
+                "selection_item_count": _optional_metric_integer(
+                    _text(session, "selection_item_count")
+                ),
+                "size_change": _optional_metric_integer(_text(session, "size_change")),
+                "item_count_change": _optional_metric_integer(
+                    _text(session, "item_count_change")
+                ),
+                "removed_item_count": _optional_metric_integer(
+                    _text(session, "removed_item_count")
+                ),
+                "processed_size": _optional_metric_integer(_text(session, "processed_size")),
+                "processed_item_count": _optional_metric_integer(
+                    _text(session, "processed_item_count")
+                ),
+                "transferred_size": _optional_metric_integer(
+                    _text(session, "transferred_size")
+                ),
+                "error_count": _optional_metric_integer(_text(session, "error_count")),
+                "status": _bounded_text(_text(session, "status")),
+            }
+        )
+    return sessions
+
+
 def _device_numeric_id(value: str) -> int:
     if not isinstance(value, str):
         raise NSightRmmError("N-sight patch reads require a mapped server or workstation ID")
@@ -612,6 +672,16 @@ def _optional_integer(value: str) -> int | None:
     except ValueError:
         return None
     return parsed if 0 <= parsed <= 2_147_483_647 else None
+
+
+def _optional_metric_integer(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if 0 <= parsed <= MAX_METRIC_INTEGER else None
 
 
 def _optional_flag(value: str) -> bool | None:

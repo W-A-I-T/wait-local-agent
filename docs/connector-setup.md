@@ -245,14 +245,15 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ## N-able N-sight
 
 The N-sight adapter implements bounded, tenant-scoped device inventory,
-provider-reported failing-check alerts, mapped-device outage and patch
-inventory, and documented managed-antivirus threat records
+provider-reported failing-check alerts, mapped-device outage and Backup & Recovery
+session history and patch inventory, and documented managed-antivirus threat records
 through the documented XML Data Extraction API. It reads mapped sites, servers,
 and workstations and rechecks the returned client and device before returning
 records through the shared RMM contract. Patch approval is a separate
 technician-approved write action that requires the global write flag and a
-mapped-device patch recheck; script catalog, preview, execution, and polling
-return explicit unavailable results.
+mapped-device patch recheck. The read-only `nsight-backup-sessions` action
+returns bounded session history; script catalog, preview, execution, and
+polling return explicit unavailable results.
 
 Required settings:
 
@@ -277,6 +278,7 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
 and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
+and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),

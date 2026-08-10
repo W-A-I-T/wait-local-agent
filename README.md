@@ -53,7 +53,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device, failing-check,
-  outage, and antivirus-threat inventory, mapped patch reads, and approval-gated
+  outage, antivirus-threat, and Backup & Recovery session inventory, mapped patch reads, and approval-gated
   patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
   exposes separately mapped Core client inventory, ControlMap risk summaries,
@@ -978,7 +978,8 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented failing
-checks, outages, and managed-antivirus threats. It uses an explicit local
+checks, outages, managed-antivirus threats, and Backup & Recovery sessions. It
+uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
 
@@ -992,13 +993,15 @@ WAIT_ALLOW_HTTP_PROBING=true
 The shared `rmm-device-lookup` and `rmm-alert-lookup` actions expose the mapped
 inventory and provider-reported failing checks. The `nsight-outage-lookup`
 action exposes bounded open and recent outages for one mapped device. The
+`nsight-backup-sessions` action exposes bounded Backup & Recovery session
+history for one mapped device. The
 `nsight-patch-lookup`
 action exposes bounded patch inventory for one mapped server or workstation
 after a local device-scope recheck. The `nsight-patch-approve` action previews
 and, after technician approval and the write flag, calls the documented patch
 approval service only for patches present on that mapped device. Each request is limited to
 mapped sites, and the adapter caps results at 25 sites, 100 devices, and 100
-alerts. The API key remains in settings or the encrypted vault and is never
+records per bounded read surface. The API key remains in settings or the encrypted vault and is never
 accepted in action payloads or included in errors/audit records. Script
 discovery, preview, execution, and polling return an explicit unavailable
 result because no documented contract is claimed for those operations. The
@@ -1012,13 +1015,16 @@ explicit allowlist with the same controls. The read-only
 records after the same mapped-device recheck; it never starts or changes an
 antivirus scan. The read-only `nsight-outage-lookup` action exposes open and
 recent outage records from the documented `list_outages` service after the same
-mapped-device recheck. See
+mapped-device recheck. The `nsight-backup-sessions` action uses the documented
+`list_mob_sessions` service after the same recheck and never starts or changes a
+backup job. See
 N-able's [API getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers),
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
 and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
+and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-backup-recovery-sessions),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),

@@ -3694,6 +3694,68 @@ class NSightOutageLookupAction:
         )
 
 
+class NSightBackupSessionsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-backup-sessions",
+        title="N-sight backup session lookup",
+        description=(
+            "Read bounded Backup & Recovery session history for one mapped "
+            "N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"sessions": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_sessions = getattr(provider, "list_backup_sessions", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_sessions):
+            return _failed("N-sight backup lookup requires the N-sight RMM adapter")
+        try:
+            sessions = list_sessions(device_id.strip(), client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight backup sessions are unavailable")
+        if not isinstance(sessions, list) or any(
+            not isinstance(session, dict) for session in sessions
+        ):
+            return _failed("N-sight returned malformed backup session data")
+        output_sessions = [
+            cast(dict[str, object], redact_value(session)) for session in sessions[:100]
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "sessions": output_sessions,
+                "count": len(output_sessions),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_backup_session",
+                    "device_id": device_id.strip(),
+                    "source": provider.adapter_id,
+                    "session_id": session.get("session_id"),
+                }
+                for session in output_sessions
+            ],
+        )
+
+
 class NSightPatchApproveAction:
     manifest = SmartActionManifest(
         action_id="nsight-patch-approve",
@@ -6705,6 +6767,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmAlertLookupAction(),
         NSightAntivirusThreatsAction(),
         NSightOutageLookupAction(),
+        NSightBackupSessionsAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),
         NSightPatchReprocessAction(),
