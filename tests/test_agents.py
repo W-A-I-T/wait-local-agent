@@ -106,6 +106,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "nsight-backup-history",
         "nsight-backup-sessions",
         "nsight-check-inventory",
+        "nsight-performance-history",
         "nsight-outage-lookup",
         "nsight-patch-lookup",
         "nsight-patch-approve",
@@ -2179,6 +2180,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "scalepad-assessment-lookup",
         "nsight-patch-lookup",
         "nsight-check-inventory",
+        "nsight-performance-history",
         "nsight-patch-approve",
         "nsight-patch-policy",
     } <= tool_ids

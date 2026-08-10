@@ -19,8 +19,10 @@ from wait_local_agent.nsight import (
     _device_numeric_id,
     _optional_flag,
     _optional_integer,
+    _optional_number,
     _outage_records,
     _patch_id_list,
+    _performance_history_records,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.store import Store
@@ -119,6 +121,38 @@ CHECKS_XML = """
   <email>1</email><sms>0</sms><checkid>1304847</checkid><check_type>1012</check_type>
   <dsc_247>1</dsc_247><consecutive_fails>0</consecutive_fails>
 </check><check><checkid>bad</checkid><description>ignored</description></check></items></result>
+"""
+PERFORMANCE_HISTORY_XML = """
+<result status="OK">
+  <bandwidth><host>
+    <name>WAN Check</name><host>example.com</host><check_id>101</check_id>
+    <receive>2000</receive><transmit>2000</transmit><history>
+      <data><start>2026-08-10 10:00:00</start><end>2026-08-10 10:14:59</end>
+        <receive>125.5</receive><transmit>50</transmit><ignored>secret</ignored></data>
+    </history>
+  </host></bandwidth>
+  <cpu_load><check_id>102</check_id><average_load>70</average_load><history>
+    <data><start>2026-08-10 10:00:00</start><end>2026-08-10 10:59:59</end>
+      <cpu><cpu_id>1</cpu_id><load_average>0.5</load_average><load_max>2</load_max></cpu>
+      <cpu><cpu_id>2</cpu_id><load_average>0.4</load_average><load_max>2</load_max></cpu>
+      <cpu><cpu_id>3</cpu_id><load_average>0.3</load_average><load_max>2</load_max></cpu>
+      <cpu><cpu_id>4</cpu_id><load_average>0.2</load_average><load_max>2</load_max></cpu>
+      <cpu><cpu_id>5</cpu_id><load_average>0.1</load_average><load_max>2</load_max></cpu>
+      <cpu><cpu_id>bad</cpu_id><load_average>bad</load_average><load_max>bad</load_max></cpu>
+    </data>
+  </history></cpu_load>
+  <disk_load><disk>C:</disk><check_id>103</check_id><read_queue_length>2</read_queue_length>
+    <history><data><start>2026-08-10</start><disk_time_average>0.5</disk_time_average>
+      <read_queue_average></read_queue_average></data></history>
+  </disk_load>
+  <cpu_queue><check_id>104</check_id><average_length>2</average_length>
+    <history><data><queue_average>0.1</queue_average><queue_max>1</queue_max></data></history>
+  </cpu_queue>
+  <network_usage><interface><adapter>Ethernet</adapter><check_id>105</check_id>
+    <average_usage>40</average_usage><history><data><total_average>2</total_average></data></history>
+  </interface></network_usage>
+  <memory_usage><check_id>106</check_id><available_min>10</available_min></memory_usage>
+</result>
 """
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
@@ -497,6 +531,78 @@ def test_nsight_check_inventory_rechecks_device_scope(settings) -> None:
     assert _check_records(ElementTree.fromstring(CHECKS_XML)) == checks
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_checks("server:999", client_id="acme")
+
+
+def test_nsight_performance_history_rechecks_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_performance_history":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=PERFORMANCE_HISTORY_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    records = adapter.list_performance_history("server:49324", client_id="acme")
+
+    assert records[0] == {
+        "category": "bandwidth",
+        "check_id": 101,
+        "target": {"name": "WAN Check", "host": "example.com"},
+        "thresholds": {"receive": 2000, "transmit": 2000},
+        "history": [
+            {
+                "start": "2026-08-10 10:00:00",
+                "end": "2026-08-10 10:14:59",
+                "receive": 125.5,
+                "transmit": 50,
+            }
+        ],
+    }
+    cpu_load = next(record for record in records if record["category"] == "cpu_load")
+    assert cpu_load["history"] == [
+        {
+            "start": "2026-08-10 10:00:00",
+            "end": "2026-08-10 10:59:59",
+            "cpus": [
+                {"cpu_id": 1, "load_average": 0.5, "load_max": 2},
+                {"cpu_id": 2, "load_average": 0.4, "load_max": 2},
+                {"cpu_id": 3, "load_average": 0.3, "load_max": 2},
+                {"cpu_id": 4, "load_average": 0.2, "load_max": 2},
+            ],
+        }
+    ]
+    assert _performance_history_records(ElementTree.fromstring(PERFORMANCE_HISTORY_XML)) == records
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_performance_history("server:999", client_id="acme")
+
+
+def test_nsight_inventory_and_performance_parsers_enforce_bounds() -> None:
+    checks = ElementTree.fromstring(
+        "<result><items>"
+        + "".join(f"<check><checkid>{index}</checkid></check>" for index in range(1, 105))
+        + "</items></result>"
+    )
+    performance = ElementTree.fromstring(
+        "<result><bandwidth>"
+        + "".join(
+            f"<host><check_id>{index}</check_id><history><data><receive>1</receive></data></history></host>"
+            for index in range(1, 105)
+        )
+        + "</bandwidth></result>"
+    )
+
+    assert len(_check_records(checks)) == 100
+    assert len(_performance_history_records(performance)) == 100
+    assert _optional_number("") is None
+    assert _optional_number("not-a-number") is None
+    assert _optional_number("nan") is None
+    assert _optional_number("1e100") is None
 
 
 def test_backup_history_parser_enforces_documented_bounds() -> None:
