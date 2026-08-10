@@ -10,6 +10,10 @@ from wait_local_agent.connectors import list_connector_statuses, list_secret_rec
 from wait_local_agent.kaseya import (
     KaseyaRmmAdapter,
     KaseyaRmmError,
+    _int_value,
+    _path_segment,
+    _rows,
+    _safe_attribute,
     _safe_base_url,
     _safe_endpoint,
 )
@@ -115,6 +119,26 @@ def test_kaseya_inventory_and_notifications_are_organization_scoped(settings) ->
     assert all("token-secret" not in str(request) for request in seen)
 
 
+def test_kaseya_alert_reads_are_bounded(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/devices"):
+            return httpx.Response(
+                200,
+                json={"Data": [{"Identifier": "device-1", "OrganizationId": 101}]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "Data": [
+                    {"Id": 1, "Message": "one"},
+                    {"Id": 2, "Message": "two"},
+                ]
+            },
+        )
+
+    assert len(_adapter(settings, handler, kaseya_rmm_page_size=1).list_alerts("acme")) == 1
+
+
 def test_kaseya_script_operations_are_explicitly_unavailable(settings) -> None:
     adapter = _adapter(settings, lambda request: httpx.Response(200, json={"Data": []}))
 
@@ -122,6 +146,10 @@ def test_kaseya_script_operations_are_explicitly_unavailable(settings) -> None:
         adapter.list_scripts("acme")
     with pytest.raises(KaseyaRmmError, match="script execution"):
         adapter.preview_script("script", "device", {}, client_id="acme")
+    with pytest.raises(KaseyaRmmError, match="script execution"):
+        adapter.execute_script("script", "device", {}, client_id="acme")
+    with pytest.raises(KaseyaRmmError, match="execution lookup"):
+        adapter.get_execution("execution-1", client_id="acme")
 
 
 @pytest.mark.parametrize(
@@ -145,6 +173,16 @@ def test_kaseya_http_errors_and_unsafe_urls_are_sanitized(settings) -> None:
     with pytest.raises(KaseyaRmmError, match="unauthorized") as error:
         adapter.list_devices("acme")
     assert "token-secret" not in str(error.value)
+    with pytest.raises(KaseyaRmmError, match="HTTP 500"):
+        _adapter(
+            settings,
+            lambda request: httpx.Response(500, text="secret"),
+        ).list_devices("acme")
+    with pytest.raises(KaseyaRmmError, match="request failed$"):
+        _adapter(
+            settings,
+            lambda request: (_ for _ in ()).throw(httpx.ReadError("broken")),
+        ).list_devices("acme")
 
     with pytest.raises(KaseyaRmmError, match=r"HTTP\(S\)"):
         _adapter(settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="ftp://vsa.test").list_devices("acme")
@@ -152,5 +190,67 @@ def test_kaseya_http_errors_and_unsafe_urls_are_sanitized(settings) -> None:
         _adapter(settings, lambda request: httpx.Response(200), kaseya_rmm_base_url="https://vsa.test/api?secret=bad").list_devices("acme")
     with pytest.raises(KaseyaRmmError, match="unsafe characters"):
         _safe_endpoint("devices/device id")
+    with pytest.raises(KaseyaRmmError, match="invalid"):
+        _safe_endpoint("")
     with pytest.raises(KaseyaRmmError, match=r"HTTP\(S\)"):
         _safe_base_url("file:///tmp/vsa")
+    assert _rows("not-a-response") == []
+    assert _rows({"Data": "not-a-list"}) == []
+    assert _int_value({}) is None
+    assert _int_value("not-an-int") is None
+    with pytest.raises(KaseyaRmmError, match="invalid"):
+        _path_segment("device id")
+    assert _safe_attribute(["not", "scalar"]) is None
+
+
+def test_kaseya_missing_credentials_malformed_response_and_transport_failures(settings) -> None:
+    missing_base = replace(
+        settings,
+        allow_http_probing=True,
+        kaseya_rmm_token_id="token-id",
+        kaseya_rmm_token_secret="token-secret",
+        kaseya_rmm_organization_map_json='{"acme":101}',
+    )
+    with pytest.raises(KaseyaRmmError, match="WAIT_KASEYA_RMM_BASE_URL"):
+        KaseyaRmmAdapter(missing_base).list_devices("acme")
+    missing_token = replace(
+        settings,
+        allow_http_probing=True,
+        kaseya_rmm_base_url="https://vsa.example.test/api/v3",
+        kaseya_rmm_organization_map_json='{"acme":101}',
+    )
+    with pytest.raises(KaseyaRmmError, match="TOKEN_ID"):
+        KaseyaRmmAdapter(missing_token).list_devices("acme")
+
+    malformed = _adapter(
+        settings,
+        lambda request: httpx.Response(200, text="not-json"),
+    )
+    with pytest.raises(KaseyaRmmError, match="malformed JSON"):
+        malformed.list_devices("acme")
+    timeout = _adapter(
+        settings,
+        lambda request: (_ for _ in ()).throw(httpx.TimeoutException("offline")),
+    )
+    with pytest.raises(KaseyaRmmError, match="before receiving"):
+        timeout.list_devices("acme")
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ("not-json", "is malformed"),
+        ("[]", "must be an object"),
+        ('{"acme":true}', "mapping is missing"),
+        ('{"acme":"not-an-int"}', "IDs must be integers"),
+        ('{"acme":0}', "must be positive"),
+    ],
+)
+def test_kaseya_rejects_invalid_organization_maps(settings, mapping, message) -> None:
+    adapter = _adapter(
+        settings,
+        lambda request: httpx.Response(200, json={"Data": []}),
+        kaseya_rmm_organization_map_json=mapping,
+    )
+    with pytest.raises(KaseyaRmmError, match=message):
+        adapter.list_devices("acme")
