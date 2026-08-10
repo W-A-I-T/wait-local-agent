@@ -2827,16 +2827,6 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         headers=_auth("tech-token"),
         json={"message": "plan triage and suggest a fix for TCK-ACME"},
     )
-    blocked_plan = client.post(
-        "/technician/chat",
-        headers=_auth("tech-token"),
-        json={"message": "plan invent a new unsupported operation for TCK-ACME"},
-    )
-    missing_ticket_plan = client.post(
-        "/technician/chat",
-        headers=_auth("tech-token"),
-        json={"message": "plan triage TCK-NOT-FOUND"},
-    )
     cross_tenant = client.post(
         "/technician/chat",
         headers=_auth("tech-token"),
@@ -2866,10 +2856,6 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
         "suggest-resolution",
     ]
     assert plan.json()["plan"]["definition"]["enabled"] is False
-    assert blocked_plan.status_code == 200
-    assert blocked_plan.json()["status"] == "blocked"
-    assert missing_ticket_plan.status_code == 200
-    assert missing_ticket_plan.json()["status"] == "blocked"
     assert cross_tenant.status_code == 200
     assert cross_tenant.json()["result"]["status"] == "failed"
     assert "TCK-BETA" not in cross_tenant.text
@@ -2877,7 +2863,7 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
     assert unsupported.status_code == 422
 
 
-def test_technician_chat_plan_preview_persists_session_history(settings) -> None:
+def test_technician_chat_plan_blocked_results_are_explicit(settings) -> None:
     from wait_local_agent.agents import AgentService
     from wait_local_agent.smart_actions import SmartActionService
 
@@ -2889,32 +2875,32 @@ def test_technician_chat_plan_preview_persists_session_history(settings) -> None
             values ('TCK-PLAN', 'Acme', 'MFA reset', 'Sign-in blocked', 'high', 'open', 'acme')
             """
         )
-    session = store.create_technician_chat_session(
-        client_id="acme",
-        principal_id="tech",
-        ticket_id="TCK-PLAN",
-    )
     smart_actions = SmartActionService(store, settings)
-    plan = app_module._invoke_technician_chat_message(
+    planner = AgentService(store, settings, smart_actions)
+
+    no_match = app_module._invoke_technician_chat_message(
         store,
         smart_actions,
-        AgentService(store, settings, smart_actions),
-        "plan triage for TCK-PLAN",
+        planner,
+        "plan invent a new unsupported operation for TCK-PLAN",
         ticket_id="TCK-PLAN",
         actor="tech",
         client_id="acme",
-        session_id=session.id,
-        principal_id="tech",
+    )
+    missing_ticket = app_module._invoke_technician_chat_message(
+        store,
+        smart_actions,
+        planner,
+        "plan triage TCK-NOT-FOUND",
+        ticket_id="TCK-NOT-FOUND",
+        actor="tech",
+        client_id="acme",
     )
 
-    assert plan["status"] == "preview"
-    assert plan["session_id"] == session.id
-    messages = store.list_technician_chat_messages(
-        session.id,
-        client_id="acme",
-        principal_id="tech",
-    )
-    assert messages[-1].status == "preview"
+    assert no_match["status"] == "blocked"
+    assert missing_ticket["status"] == "blocked"
+    missing_plan = cast(dict[str, object], missing_ticket["plan"])
+    assert "not found" in str(missing_plan["blocked_reason"])
 
 
 def test_legacy_approval_rows_are_redacted_in_api_views(settings) -> None:
