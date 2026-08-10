@@ -4719,6 +4719,7 @@ dependencies = [
     { name = "httpx" },
     { name = "msgraph-sdk" },
     { name = "pypdf" },
+    { name = "reportlab" },
     { name = "slowapi" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
@@ -4734,7 +4735,6 @@ dev = [
     { name = "pip-audit" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "reportlab" },
     { name = "ruff" },
 ]
 docling = [
@@ -4782,7 +4782,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0,<6.0" },
     { name = "qdrant-client", marker = "extra == 'knowledge'", specifier = ">=1.12,<2" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.12,<2" },
-    { name = "reportlab", marker = "extra == 'dev'", specifier = ">=4.2,<5.0" },
+    { name = "reportlab", specifier = ">=4.2,<5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1.0" },
     { name = "slowapi", specifier = ">=0.1.10,<0.2" },
     { name = "typer", specifier = ">=0.12,<1.0" },

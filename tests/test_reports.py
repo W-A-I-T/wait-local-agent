@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 from typer.testing import CliRunner
 
 from wait_local_agent.api.app import create_app
@@ -27,6 +29,7 @@ from wait_local_agent.reports.renderers import (
     redact_value,
     render_json,
     render_markdown,
+    render_pdf,
     render_report,
 )
 from wait_local_agent.reports.schemas import REPORT_JSON_SCHEMA, validate_report_payload
@@ -244,16 +247,18 @@ def test_markdown_render_contains_headers_and_recommendations() -> None:
     assert "## Metadata" in rendered
 
 
-def test_render_report_dispatch_and_pdf_rejection() -> None:
+def test_render_report_dispatch_and_pdf_contains_report_content() -> None:
     report = GeneratedReport.new(ReportType.AUDIT_EXPORT, "Audit", _sections())
 
-    assert render_report(report, ReportFormat.JSON).startswith("{")
-    assert render_report(report, ReportFormat.MARKDOWN).startswith("# Audit")
-    try:
-        render_report(report, ReportFormat.PDF)
-        raise AssertionError("pdf rendering should not be available yet")
-    except ValueError as exc:
-        assert "pdf" in str(exc)
+    json_export = render_report(report, ReportFormat.JSON)
+    markdown_export = render_report(report, ReportFormat.MARKDOWN)
+    assert isinstance(json_export, str) and json_export.startswith("{")
+    assert isinstance(markdown_export, str) and markdown_export.startswith("# Audit")
+    pdf = render_pdf(report)
+    assert pdf.startswith(b"%PDF-")
+    assert "Audit" in "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages)
+    dispatched_pdf = render_report(report, ReportFormat.PDF)
+    assert isinstance(dispatched_pdf, bytes) and dispatched_pdf.startswith(b"%PDF-")
 
 
 def test_renders_never_include_secret_values() -> None:
@@ -274,8 +279,9 @@ def test_renders_never_include_secret_values() -> None:
 
     as_json = render_json(report)
     as_markdown = render_markdown(report)
+    as_pdf = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(render_pdf(report))).pages)
 
-    for rendered in (as_json, as_markdown):
+    for rendered in (as_json, as_markdown, as_pdf):
         assert secret_value not in rendered
         assert REDACTED in rendered
     assert "keep-me" in as_json
@@ -336,7 +342,7 @@ def test_export_writes_audit_event_and_missing_report_raises(settings) -> None:
     rendered = service.export_report(report.id, ReportFormat.MARKDOWN)
     events = service.store.list_audit_events()
 
-    assert rendered.startswith("# Audit Snapshot")
+    assert isinstance(rendered, str) and rendered.startswith("# Audit Snapshot")
     assert any(event.event_type == "report.exported" for event in events)
     try:
         service.export_report("missing-id", ReportFormat.JSON)
@@ -360,6 +366,7 @@ def test_api_report_list_detail_and_export(settings) -> None:
     exported_md = client.get(
         f"/reports/{report.id}/export", params={"export_format": "markdown"}
     )
+    exported_pdf = client.get(f"/reports/{report.id}/export", params={"export_format": "pdf"})
     missing = client.get("/reports/nope")
     missing_export = client.get("/reports/nope/export")
 
@@ -375,6 +382,10 @@ def test_api_report_list_detail_and_export(settings) -> None:
     assert exported_md.status_code == 200
     assert exported_md.headers["content-type"].startswith("text/markdown")
     assert exported_md.text.startswith("# API Report")
+    assert exported_pdf.status_code == 200
+    assert exported_pdf.headers["content-type"].startswith("application/pdf")
+    assert exported_pdf.headers["content-disposition"].endswith(f'wait-report-{report.id}.pdf"')
+    assert exported_pdf.content.startswith(b"%PDF-")
     assert missing.status_code == 404
     assert missing_export.status_code == 404
 
@@ -396,6 +407,7 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     report = service.create_report(ReportType.QBR, "CLI Report", _sections(), client_id="acme")
     runner = CliRunner()
     output_path = tmp_path / "exports" / "report.md"
+    pdf_output_path = tmp_path / "exports" / "report.pdf"
 
     listing = runner.invoke(app, ["reports", "list"])
     filtered = runner.invoke(app, ["reports", "list", "--report-type", "qbr"])
@@ -417,6 +429,11 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     inline = runner.invoke(app, ["reports", "export", report.id])
     bad_format = runner.invoke(app, ["reports", "export", report.id, "--export-format", "nope"])
     missing_export = runner.invoke(app, ["reports", "export", "missing-id"])
+    pdf_exported = runner.invoke(
+        app,
+        ["reports", "export", report.id, "--export-format", "pdf", "--output", str(pdf_output_path)],
+    )
+    pdf_inline = runner.invoke(app, ["reports", "export", report.id, "--export-format", "pdf"])
 
     assert listing.exit_code == 0
     assert report.id in listing.output
@@ -433,6 +450,10 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     assert '"report_type": "qbr"' in inline.output
     assert bad_format.exit_code == 1
     assert missing_export.exit_code == 1
+    assert pdf_exported.exit_code == 0
+    assert pdf_output_path.read_bytes().startswith(b"%PDF-")
+    assert pdf_inline.exit_code == 1
+    assert "requires --output" in pdf_inline.output
 
 
 def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:

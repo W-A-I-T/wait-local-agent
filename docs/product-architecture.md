@@ -136,7 +136,7 @@ Includes:
 - Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
 - Microsoft 365 / Entra ID read-only (users, groups, MFA status, licenses, applications)
 - Scheduled workflow triggers (APScheduler — daily/weekly inactive-ticket follow-up, etc.)
-- Bounded per-client QBR report generator (JSON/Markdown ticket counts, explicit resolution evidence, automation estimates); provider-backed PDF remains a future extension
+- Bounded per-client QBR report generator (JSON/Markdown/PDF ticket counts, explicit resolution evidence, automation estimates); provider-backed lifecycle enrichment remains a future extension
 - Automation opportunity report (pattern analysis → "you could automate X")
 - Time-saved / ROI dashboard based on labeled local estimates; measured/provider-backed ROI remains a future extension
 - Client/tenant boundary enforcement (`client_id` isolation on all queries)

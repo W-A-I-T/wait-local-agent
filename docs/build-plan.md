@@ -217,9 +217,9 @@ Add `slowapi` to `pyproject.toml`. Add `@limiter.limit("100/minute")` to all rou
 
 Historical note: the original Phase 3 plan placed the richer IT Glue and QBR
 implementation in `W-A-I-T/wait-local-agent-packs` (private). The current
-public core now provides a bounded deterministic JSON/Markdown QBR and
-automation-opportunity report from local evidence. Provider-backed lifecycle
-enrichment, measured ROI, and PDF export remain separate future capabilities.
+public core now provides bounded deterministic JSON/Markdown/PDF QBR and
+automation-opportunity reports from local evidence. Provider-backed lifecycle
+enrichment and measured ROI remain separate future capabilities.
 
 ### Task 3.1 — IT Glue Connector (private repo: packs/msp/itglue.py)
 
@@ -293,7 +293,7 @@ Create `scripts/install.sh`:
 
 Create `scripts/upgrade.sh`: pulls latest image + restart + runs migrations.
 
-**Exit criteria**: MSP can install via `install.sh`, connect HaloPSA + IT Glue, ingest runbooks, triage tickets, schedule weekly follow-up, export QBR PDF for a client.
+**Exit criteria**: MSP can install via `install.sh`, connect HaloPSA + IT Glue, ingest runbooks, triage tickets, schedule weekly follow-up, and export a local QBR PDF for a client.
 
 **Not yet**: ConnectWise, Autotask, M365, RMM, Founder Pack.
 

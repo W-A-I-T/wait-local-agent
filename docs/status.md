@@ -390,7 +390,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, and Kaseya VSA X read-only inventory/notification adapters built; broader vendor coverage and remediation future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
-| QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built; provider-backed lifecycle enrichment and PDF export remain future work |
+| QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built with JSON, Markdown, and PDF export; provider-backed lifecycle enrichment remains future work |
 | Founder public API/CLI contract | Built in open core; proprietary implementation remains private |
 | LP evidence bundle export | Public contract built; proprietary founder implementation remains private |
 

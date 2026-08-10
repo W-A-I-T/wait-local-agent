@@ -77,7 +77,7 @@ class ReportService:
         export_format: ReportFormat,
         *,
         client_id: str | None = None,
-    ) -> str:
+    ) -> str | bytes:
         report = self.get_report(report_id, client_id=client_id)
         if report is None:
             raise KeyError(report_id)

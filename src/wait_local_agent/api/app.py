@@ -2229,7 +2229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def report_export(
         report_id: str,
         context: ViewerAccess,
-        export_format: Literal["json", "markdown"] = "json",
+        export_format: Literal["json", "markdown", "pdf"] = "json",
     ) -> Response:
         try:
             rendered = report_service.export_report(
@@ -2239,8 +2239,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="report not found") from exc
-        media_type = "application/json" if export_format == "json" else "text/markdown"
-        extension = "json" if export_format == "json" else "md"
+        media_type = {"json": "application/json", "markdown": "text/markdown", "pdf": "application/pdf"}[export_format]
+        extension = {"json": "json", "markdown": "md", "pdf": "pdf"}[export_format]
         return Response(
             rendered,
             media_type=media_type,

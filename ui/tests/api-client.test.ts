@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiRequestError, apiFetch } from "../src/api/client";
+import { ApiRequestError, apiFetch, apiFetchBlob } from "../src/api/client";
 
 describe("apiFetch", () => {
   it("uses plain language for transport failures while retaining technical detail", async () => {
@@ -22,6 +22,15 @@ describe("apiFetch", () => {
       status: 429
     } satisfies Partial<ApiRequestError>);
 
+    vi.unstubAllGlobals();
+  });
+
+  it("returns binary report exports without parsing them as text", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(new Uint8Array([37, 80, 68, 70])))));
+
+    const blob = await apiFetchBlob("/reports/report-1/export?export_format=pdf");
+
+    expect(blob.size).toBe(4);
     vi.unstubAllGlobals();
   });
 });

@@ -2813,7 +2813,7 @@ def show_report(
 @reports_app.command("export")
 def export_report(
     report_id: str,
-    export_format: Annotated[str, typer.Option(help="json or markdown.")] = "json",
+    export_format: Annotated[str, typer.Option(help="json, markdown, or pdf.")] = "json",
     output: Annotated[Path | None, typer.Option(help="Write to this file path.")] = None,
     token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
 ) -> None:
@@ -2832,11 +2832,17 @@ def export_report(
     except KeyError as exc:
         typer.echo(f"report {report_id} not found")
         raise typer.Exit(code=1) from exc
+    if output is None and isinstance(rendered, bytes):
+        typer.echo("PDF export requires --output because binary data cannot be printed as text.")
+        raise typer.Exit(code=1)
     if output is None:
         typer.echo(rendered)
         return
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(rendered, encoding="utf-8")
+    if isinstance(rendered, bytes):
+        output.write_bytes(rendered)
+    else:
+        output.write_text(rendered, encoding="utf-8")
     typer.echo(f"exported={output}")
 
 
@@ -3532,11 +3538,17 @@ def _export_collector_report(
         raise typer.BadParameter(str(exc)) from exc
     except KeyError as exc:
         raise typer.BadParameter("collector run not found") from exc
+    if output is None and isinstance(rendered, bytes):
+        typer.echo("PDF export requires --output because binary data cannot be printed as text.")
+        raise typer.Exit(code=1)
     if output is None:
         typer.echo(rendered)
         return
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(rendered, encoding="utf-8")
+    if isinstance(rendered, bytes):
+        output.write_bytes(rendered)
+    else:
+        output.write_text(rendered, encoding="utf-8")
     typer.echo(f"exported={output} report_id={created.id} run_id={run_id}")
 
 
