@@ -103,6 +103,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "rmm-device-lookup",
         "rmm-alert-lookup",
         "nsight-antivirus-threats",
+        "nsight-outage-lookup",
         "nsight-patch-lookup",
         "nsight-patch-approve",
         "nsight-patch-reprocess",

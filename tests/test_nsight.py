@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from typing import cast
+from xml.etree import ElementTree
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from wait_local_agent.nsight import (
     _device_numeric_id,
     _optional_flag,
     _optional_integer,
+    _outage_records,
     _patch_id_list,
 )
 from wait_local_agent.rmm import rmm_provider_from_settings
@@ -79,6 +81,15 @@ MAV_THREATS_XML = """
   <last_scan_type>Quick</last_scan_type><last_trace_count>2</last_trace_count>
   <engine>Bitdefender</engine>
 </threat><threat><name></name><category>ignored</category></threat></result>
+"""
+OUTAGES_XML = """
+<result status="OK"><outage>
+  <reason>CHECK_FAILURE</reason><state>OPEN</state>
+  <utc_start>2026-08-10 09:35:04</utc_start><outage_id>103725102</outage_id>
+  <check_id>12231188</check_id><check_type>1002</check_type>
+  <check_description>Backup Check</check_description><check_status>FAILING</check_status>
+  <check_frequency>DAILY</check_frequency><cause>Backup status cannot be determined</cause>
+</outage><outage><reason></reason><state>CLOSED</state><outage_id>bad</outage_id></outage></result>
 """
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
@@ -296,6 +307,59 @@ def test_nsight_antivirus_threats_recheck_device_scope(settings) -> None:
     ]
     with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
         adapter.list_antivirus_threats("server:999", client_id="acme")
+
+
+def test_nsight_outage_lookup_rechecks_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_outages":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=OUTAGES_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    outages = adapter.list_outages("server:49324", client_id="acme")
+    assert outages == [
+        {
+            "outage_id": 103725102,
+            "reason": "CHECK_FAILURE",
+            "state": "OPEN",
+            "utc_start": "2026-08-10 09:35:04",
+            "utc_end": "",
+            "check_id": 12231188,
+            "check_type": 1002,
+            "check_description": "Backup Check",
+            "check_status": "FAILING",
+            "check_frequency": "DAILY",
+            "cause": "Backup status cannot be determined",
+        }
+    ]
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_outages("server:999", client_id="acme")
+
+
+def test_nsight_outage_parser_skips_malformed_rows() -> None:
+    assert _outage_records(ElementTree.fromstring(OUTAGES_XML)) == [
+        {
+            "outage_id": 103725102,
+            "reason": "CHECK_FAILURE",
+            "state": "OPEN",
+            "utc_start": "2026-08-10 09:35:04",
+            "utc_end": "",
+            "check_id": 12231188,
+            "check_type": 1002,
+            "check_description": "Backup Check",
+            "check_status": "FAILING",
+            "check_frequency": "DAILY",
+            "cause": "Backup status cannot be determined",
+        }
+    ]
 
 
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])
