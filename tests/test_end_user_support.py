@@ -26,6 +26,7 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         end_user_brand_logo_data_uri="data:image/png;base64,AA==",
         end_user_brand_accent_color="#123456",
         end_user_brand_surface_color="#abcdef",
+        client_id="acme",
         tech_token="tech-token",
     )
     client = TestClient(create_app(enabled))
@@ -282,6 +283,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
         end_user_token="end-user-token",
         end_user_client_id="acme",
         end_user_user_id="user-1",
+        client_id="acme",
         tech_token="tech-token",
         viewer_token="viewer-token",
     )
