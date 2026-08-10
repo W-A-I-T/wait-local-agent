@@ -245,8 +245,8 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 ## N-able N-sight
 
 The N-sight adapter implements bounded, tenant-scoped device inventory,
-provider-reported failing-check alerts, mapped-device patch inventory, and
-documented managed-antivirus threat records
+provider-reported failing-check alerts, mapped-device outage and patch
+inventory, and documented managed-antivirus threat records
 through the documented XML Data Extraction API. It reads mapped sites, servers,
 and workstations and rechecks the returned client and device before returning
 records through the shared RMM contract. Patch approval is a separate
@@ -265,16 +265,18 @@ WAIT_ALLOW_HTTP_PROBING=true
 
 `WAIT_NSIGHT_CLIENT_MAP_JSON` maps each WAIT client ID to exactly one positive
 N-sight client ID. The adapter then scopes requests to that mapped client and
-its returned sites, caps the response at 25 sites, 100 devices, and 100 alerts,
+its returned sites, caps the response at 25 sites, 100 devices, and 100 records
+per bounded read surface,
 and keeps the API key inside settings/vault. Credentials and provider IDs never come
-from smart-action payloads, errors, or audit records. The documented patch
-approval, patch reprocessing, and allowlisted patch-policy services are separate
-technician-approved actions. See N-able's [N-sight API
+from smart-action payloads, errors, or audit records. Outage reads are
+read-only; patch approval, patch reprocessing, and allowlisted patch-policy
+services are separate technician-approved actions. See N-able's [N-sight API
 getting started guide](https://developer.n-able.com/n-sight/docs/getting-started-with-the-n-sight-api),
 [site listing](https://developer.n-able.com/n-sight/docs/listing-sites),
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
+and [outage listing](https://developer.n-able.com/n-sight/docs/list-outages),
 and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
 and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch),
 and [patch reprocessing](https://developer.n-able.com/n-sight/docs/reprocess-patch),

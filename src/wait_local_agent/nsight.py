@@ -1,9 +1,10 @@
 """Bounded N-able N-sight RMM Data Extraction API adapter.
 
 N-sight exposes a documented XML Data Extraction API. WAIT uses only the
-documented client, site, server, workstation, failing-check, and bounded patch
-services here. A local WAIT-client-to-N-sight-client map is mandatory; returned
-site, device, alert, and patch records are filtered to that mapping before
+documented client, site, server, workstation, failing-check, outage,
+antivirus-threat, and bounded patch services here. A local
+WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
+outage, and patch records are filtered to that mapping before
 entering the shared RMM contract.
 The provider's API key is required by the documented query contract but is
 never accepted in action payloads, returned in errors, or persisted in audit
@@ -37,6 +38,7 @@ MAX_ALERTS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
+MAX_OUTAGES = 100
 MAX_TEXT_LENGTH = 500
 PATCH_POLICY_SERVICES = {
     "do_nothing": "patch_do_nothing",
@@ -157,6 +159,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _antivirus_threat_records(root)[:MAX_ANTIVIRUS_THREATS]
+
+    def list_outages(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented open/recent outages for one mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_outages",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _outage_records(root)[:MAX_OUTAGES]
 
     def approve_patches(
         self,
@@ -528,6 +549,32 @@ def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return threats
+
+
+def _outage_records(root: Any) -> list[dict[str, object]]:
+    outages: list[dict[str, object]] = []
+    for outage in root.iter("outage"):
+        outage_id = _positive_id(_text(outage, "outage_id"))
+        reason = _bounded_text(_text(outage, "reason"))
+        state = _bounded_text(_text(outage, "state"))
+        if outage_id is None or not reason or not state:
+            continue
+        outages.append(
+            {
+                "outage_id": outage_id,
+                "reason": reason,
+                "state": state,
+                "utc_start": _bounded_text(_text(outage, "utc_start")),
+                "utc_end": _bounded_text(_text(outage, "utc_end")),
+                "check_id": _optional_integer(_text(outage, "check_id")),
+                "check_type": _optional_integer(_text(outage, "check_type")),
+                "check_description": _bounded_text(_text(outage, "check_description")),
+                "check_status": _bounded_text(_text(outage, "check_status")),
+                "check_frequency": _bounded_text(_text(outage, "check_frequency")),
+                "cause": _bounded_text(_text(outage, "cause")),
+            }
+        )
+    return outages
 
 
 def _device_numeric_id(value: str) -> int:
