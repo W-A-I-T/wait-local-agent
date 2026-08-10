@@ -4750,6 +4750,100 @@ class NotionDataSourceQueryAction:
         )
 
 
+class NotionPageCommentAction:
+    manifest = SmartActionManifest(
+        action_id="notion-page-comment",
+        title="Add Notion page comment",
+        description=(
+            "Preview and, after approval, add one bounded Markdown comment to a "
+            "tenant-mapped Notion page."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["page_id", "client_id", "markdown"],
+            "properties": {
+                "page_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "markdown": {"type": "string", "minLength": 1, "maxLength": 10000},
+            },
+        },
+        output_schema={
+            "page_id": "string",
+            "client_id": "string",
+            "status": "string",
+            "proposed_markdown": "string",
+            "comment_id": "string",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=3,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        page_id = payload.get("page_id")
+        client_id = payload.get("client_id")
+        markdown = payload.get("markdown")
+        if not isinstance(page_id, str) or not page_id.strip() or len(page_id.strip()) > 80:
+            return _failed("page_id must be a non-empty string of at most 80 characters")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        if not isinstance(markdown, str) or not markdown.strip() or len(markdown.strip()) > 10000:
+            return _failed("markdown must be non-empty text of at most 10,000 characters")
+        provider = context.notion_client or NotionClient(context.settings)
+        approved = bool(payload.get("_approval_completed"))
+        if approved and not context.settings.allow_write_actions:
+            return _failed("Notion page comments are blocked until WAIT_ALLOW_WRITE_ACTIONS=true")
+        try:
+            operation = (
+                provider.create_page_comment(
+                    page_id.strip(), markdown, client_id=scoped_client_id
+                )
+                if approved
+                else provider.preview_page_comment(
+                    page_id.strip(), markdown, client_id=scoped_client_id
+                )
+            )
+        except Exception:
+            return _failed("Notion page comment operation failed")
+        operation_status = str(getattr(operation, "status", "failed"))
+        message = redact_text(str(getattr(operation, "message", "Notion comment failed")))
+        output: dict[str, object] = {
+            "page_id": page_id.strip(),
+            "client_id": scoped_client_id,
+            "status": operation_status,
+            "message": message,
+            "proposed_markdown": markdown.strip(),
+            "approval_required": not approved,
+            "approved": approved,
+        }
+        comment_id = str(getattr(operation, "comment_id", ""))
+        if comment_id:
+            output["comment_id"] = comment_id
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_mutation",
+                "connector": "notion",
+                "operation": "comments.create",
+                "page_id": page_id.strip(),
+                "client_id": scoped_client_id,
+            }
+        ]
+        if operation_status != ("created" if approved else "preview"):
+            return ActionResult(
+                status="failed",
+                output=output,
+                evidence=evidence,
+                error_detail=message,
+            )
+        return ActionResult(status="success", output=output, evidence=evidence)
+
+
 class SharePointDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="sharepoint-documentation-search",
@@ -5676,6 +5770,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ConfluenceDocumentationSearchAction(),
         NotionDocumentationSearchAction(),
         NotionDataSourceQueryAction(),
+        NotionPageCommentAction(),
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),

@@ -51,6 +51,9 @@ describe("Connectors screen", () => {
       if (path === "/smart-actions/screenconnect-session-note/invoke") {
         return json({ status: "pending_approval", approval_id: 17, output: { message: "note ready" } });
       }
+      if (path === "/smart-actions/notion-page-comment/invoke") {
+        return json({ status: "pending_approval", approval_id: 23, output: { message: "comment ready" } });
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -108,5 +111,34 @@ describe("Connectors screen", () => {
 
     expect(await screen.findByText("Enter a client ID and mapped ScreenConnect session UUID.")).toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/smart-actions/screenconnect-session-note/invoke"))).toBe(false);
+  });
+
+  it("prepares a Notion page comment through the approval API", async () => {
+    render(<Connectors />);
+
+    fireEvent.change(screen.getByLabelText("Notion client ID"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
+    fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Reviewed **locally**." } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare comment approval" }));
+
+    expect(await screen.findByText("Approval request 23 created. Review it in Approvals before commenting.")).toBeInTheDocument();
+    const request = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/smart-actions/notion-page-comment/invoke");
+    expect(request).toBeDefined();
+    expect(JSON.parse(String(request?.[1] && typeof request[1] === "object" && "body" in request[1] ? request[1].body : ""))).toEqual({
+      client_id: "acme",
+      payload: { page_id: "11111111-2222-3333-4444-555555555555", client_id: "acme", markdown: "Reviewed **locally**." }
+    });
+  });
+
+  it("rejects an invalid Notion page UUID before making a request", async () => {
+    render(<Connectors />);
+
+    fireEvent.change(screen.getByLabelText("Notion client ID"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "not-a-page" } });
+    fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Do not send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare comment approval" }));
+
+    expect(await screen.findByText("Enter a client ID and mapped Notion page UUID.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/smart-actions/notion-page-comment/invoke"))).toBe(false);
   });
 });

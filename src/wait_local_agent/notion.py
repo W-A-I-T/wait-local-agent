@@ -1,9 +1,9 @@
-"""Bounded, read-only Notion documentation adapter.
+"""Bounded Notion documentation adapter.
 
 The adapter uses Notion's documented search and page-markdown endpoints. A
 local client-to-page map is required so a shared Notion integration cannot
-return another WAIT tenant's pages. No page, database, comment, or property
-mutation is exposed.
+return another WAIT tenant's pages. Page comments are the only write exposed;
+they are previewed locally and executed only after the shared approval gate.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ MAX_PAGE_MARKDOWN_LENGTH = 40_000
 MAX_MAPPED_PAGES = 100
 MAX_MAPPED_DATA_SOURCES = 50
 MAX_CURSOR_LENGTH = 4096
+MAX_COMMENT_MARKDOWN_LENGTH = 10_000
 DEFAULT_NOTION_VERSION = "2026-03-11"
 
 
@@ -43,6 +44,16 @@ class NotionPage:
 class NotionDataSource:
     id: str
     properties: dict[str, str]
+
+
+@dataclass(frozen=True)
+class NotionCommentOperation:
+    """A bounded page-comment preview or provider acceptance result."""
+
+    page_id: str
+    status: str
+    message: str
+    comment_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,9 +108,19 @@ class NotionClientProtocol(Protocol):
     ) -> NotionReadResponse:
         ...
 
+    def preview_page_comment(
+        self, page_id: str, markdown: str, *, client_id: str
+    ) -> NotionCommentOperation:
+        ...
+
+    def create_page_comment(
+        self, page_id: str, markdown: str, *, client_id: str
+    ) -> NotionCommentOperation:
+        ...
+
 
 class NotionClient:
-    """Read-only Notion API client with explicit local tenant page mapping."""
+    """Bounded Notion API client with explicit local tenant page mapping."""
 
     def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
@@ -276,6 +297,59 @@ class NotionClient:
             _next_cursor(response),
         )
 
+    def preview_page_comment(
+        self, page_id: str, markdown: str, *, client_id: str
+    ) -> NotionCommentOperation:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return NotionCommentOperation("", "failed", blocked.message)
+        missing = self._not_configured_result()
+        if missing is not None:
+            return NotionCommentOperation("", "failed", missing.message)
+        try:
+            safe_id = _safe_uuid(page_id)
+            scoped_ids = self._mapped_page_ids(client_id)
+            if safe_id not in scoped_ids:
+                raise NotionReadError("Notion page is outside the tenant scope")
+            _safe_comment_markdown(markdown)
+        except NotionReadError as exc:
+            return NotionCommentOperation("", "failed", exc.message)
+        return NotionCommentOperation(
+            safe_id,
+            "preview",
+            "Notion page comment is ready for approval.",
+        )
+
+    def create_page_comment(
+        self, page_id: str, markdown: str, *, client_id: str
+    ) -> NotionCommentOperation:
+        preview = self.preview_page_comment(page_id, markdown, client_id=client_id)
+        if preview.status != "preview":
+            return preview
+        response = self._request(
+            "POST",
+            "comments",
+            body={
+                "parent": {"page_id": preview.page_id},
+                "markdown": _safe_comment_markdown(markdown),
+            },
+        )
+        if isinstance(response, NotionReadResponse):
+            return NotionCommentOperation(preview.page_id, "failed", response.result.message)
+        comment_id = _comment_id(response)
+        if comment_id is None:
+            return NotionCommentOperation(
+                preview.page_id,
+                "failed",
+                "Notion comment response was malformed",
+            )
+        return NotionCommentOperation(
+            preview.page_id,
+            "created",
+            "Notion accepted the page comment.",
+            comment_id,
+        )
+
     def _request(
         self,
         method: str,
@@ -436,6 +510,25 @@ def _safe_query(value: str) -> str:
     return value.strip()
 
 
+def _safe_comment_markdown(value: object) -> str:
+    if not isinstance(value, str):
+        raise NotionReadError("Notion comment must be text")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_COMMENT_MARKDOWN_LENGTH
+        or any(
+            ord(character) < 32 and character not in {"\n", "\r", "\t"}
+            for character in normalized
+        )
+    ):
+        raise NotionReadError(
+            "Notion comment must be non-empty text of at most "
+            f"{MAX_COMMENT_MARKDOWN_LENGTH} characters"
+        )
+    return normalized
+
+
 def _mapped_uuid_ids(
     raw_json: str,
     client_id: str,
@@ -484,6 +577,18 @@ def _payload_rows(payload: object) -> list[Mapping[str, Any]]:
         return []
     rows = payload.get("results")
     return [row for row in rows if isinstance(row, Mapping)] if isinstance(rows, list) else []
+
+
+def _comment_id(payload: object) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get("id")
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError:
+        return None
 
 
 def _next_cursor(payload: object) -> str:
@@ -609,6 +714,7 @@ def _http_error_message(status_code: int, endpoint: str) -> str:
 
 __all__ = [
     "NotionClient",
+    "NotionCommentOperation",
     "NotionDataSource",
     "NotionDataSourceResponse",
     "NotionPage",

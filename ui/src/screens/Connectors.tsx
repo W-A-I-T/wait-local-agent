@@ -39,6 +39,8 @@ type ScreenConnectActionResponse = {
   output?: { message?: string };
 };
 
+type NotionCommentActionResponse = ScreenConnectActionResponse;
+
 export function Connectors() {
   const { connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
@@ -59,6 +61,11 @@ export function Connectors() {
   const [screenConnectMessage, setScreenConnectMessage] = useState("");
   const [screenConnectActionStatus, setScreenConnectActionStatus] = useState<HealthState | null>(null);
   const [screenConnectActionLoading, setScreenConnectActionLoading] = useState(false);
+  const [notionClientId, setNotionClientId] = useState("");
+  const [notionPageId, setNotionPageId] = useState("");
+  const [notionComment, setNotionComment] = useState("");
+  const [notionCommentStatus, setNotionCommentStatus] = useState<HealthState | null>(null);
+  const [notionCommentLoading, setNotionCommentLoading] = useState(false);
 
   const refreshConnectivity = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -181,6 +188,41 @@ export function Connectors() {
     }
   };
 
+  const prepareNotionComment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const clientId = notionClientId.trim();
+    const pageId = notionPageId.trim();
+    const markdown = notionComment.trim();
+    const pageUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!clientId || clientId.length > 120 || !pageUuid.test(pageId)) {
+      setNotionCommentStatus({ status: "failed", message: "Enter a client ID and mapped Notion page UUID." });
+      return;
+    }
+    if (!markdown || markdown.length > 10000) {
+      setNotionCommentStatus({ status: "failed", message: "Enter a Markdown comment of at most 10,000 characters." });
+      return;
+    }
+    setNotionCommentLoading(true);
+    setNotionCommentStatus(null);
+    try {
+      const response = await apiFetch<NotionCommentActionResponse>("/smart-actions/notion-page-comment/invoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, payload: { page_id: pageId, client_id: clientId, markdown } })
+      });
+      setNotionCommentStatus({
+        status: response.status,
+        message: response.approval_id
+          ? `Approval request ${response.approval_id} created. Review it in Approvals before commenting.`
+          : response.output?.message || response.error_detail || "Notion comment action completed."
+      });
+    } catch (error) {
+      setNotionCommentStatus({ status: "failed", message: error instanceof Error ? error.message : "Notion comment could not be prepared." });
+    } finally {
+      setNotionCommentLoading(false);
+    }
+  };
+
   const rows = connectors.length > 0 ? connectors : [
     { id: "halopsa", name: "HaloPSA", status: "loading", message: "Waiting for connector status" },
     { id: "hudu", name: "Hudu", status: "loading", message: "Waiting for connector status" }
@@ -289,6 +331,23 @@ export function Connectors() {
           <button type="submit" disabled={screenConnectActionLoading || !canWrite}>Prepare message approval</button>
         </form>
         {screenConnectActionStatus ? <p className={`screen-note ${screenConnectActionStatus.status === "failed" ? "danger" : ""}`} role="status">{screenConnectActionStatus.message}</p> : null}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Notion page comments</h2>
+          <span>approval required</span>
+        </div>
+        <p className="screen-note">Prepare a bounded Markdown comment for one locally mapped Notion page. The provider call happens only after technician approval.</p>
+        <form className="draft-form" onSubmit={(event) => void prepareNotionComment(event)}>
+          <div className="grid">
+            <label>Client ID<input aria-label="Notion client ID" value={notionClientId} onChange={(event) => setNotionClientId(event.target.value)} placeholder="acme" /></label>
+            <label>Page UUID<input aria-label="Notion page UUID" value={notionPageId} onChange={(event) => setNotionPageId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
+          </div>
+          <label>Markdown comment<textarea aria-label="Notion Markdown comment" rows={3} maxLength={10000} value={notionComment} onChange={(event) => setNotionComment(event.target.value)} placeholder="Add a bounded review comment" /></label>
+          <button type="submit" disabled={notionCommentLoading || !canWrite}>{notionCommentLoading ? "Preparing…" : "Prepare comment approval"}</button>
+        </form>
+        {notionCommentStatus ? <p className={`screen-note ${notionCommentStatus.status === "failed" ? "danger" : ""}`} role="status">{notionCommentStatus.message}</p> : null}
       </section>
 
       <section className="panel">

@@ -10,20 +10,24 @@ import pytest
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records
 from wait_local_agent.notion import (
     DEFAULT_NOTION_VERSION,
+    MAX_COMMENT_MARKDOWN_LENGTH,
     MAX_PAGE_MARKDOWN_LENGTH,
     NotionClient,
+    NotionCommentOperation,
     NotionDataSource,
     NotionPage,
     NotionReadError,
     NotionReadResponse,
     _api_base_url,
     _bounded_page_size,
+    _comment_id,
     _markdown_value,
     _next_cursor,
     _normalize_data_source,
     _normalize_page,
     _normalize_search_page,
     _payload_rows,
+    _safe_comment_markdown,
     _safe_cursor,
     _safe_endpoint,
     _safe_query,
@@ -155,6 +159,79 @@ def test_notion_search_and_markdown_reads_use_documented_contract(settings) -> N
         )
     ]
     assert len(requests) == 3
+
+
+def test_notion_page_comment_preview_and_create_use_documented_contract(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/v1/comments"
+        assert json.loads(request.content) == {
+            "parent": {"page_id": PAGE_ID},
+            "markdown": "Reviewed **locally**.",
+        }
+        return httpx.Response(
+            200,
+            json={"object": "comment", "id": "33333333-4444-5555-6666-777777777777"},
+        )
+
+    client = NotionClient(_configured(settings), transport=httpx.MockTransport(handler))
+    preview = client.preview_page_comment(
+        PAGE_ID, "Reviewed **locally**.", client_id="acme"
+    )
+    created = client.create_page_comment(
+        PAGE_ID, "Reviewed **locally**.", client_id="acme"
+    )
+
+    assert preview == NotionCommentOperation(
+        PAGE_ID,
+        "preview",
+        "Notion page comment is ready for approval.",
+    )
+    assert created == NotionCommentOperation(
+        PAGE_ID,
+        "created",
+        "Notion accepted the page comment.",
+        "33333333-4444-5555-6666-777777777777",
+    )
+    assert len(requests) == 1
+
+
+def test_notion_page_comment_is_scoped_bounded_and_fail_closed(settings) -> None:
+    client = NotionClient(
+        _configured(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    )
+    outside = client.preview_page_comment(
+        OTHER_PAGE_ID, "not allowed", client_id="acme"
+    )
+    invalid = client.preview_page_comment(PAGE_ID, "\x00", client_id="acme")
+    blocked = NotionClient(_configured(settings, allow_http_probing=False)).preview_page_comment(
+        PAGE_ID, "blocked", client_id="acme"
+    )
+    malformed = NotionClient(
+        _configured(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"id": "bad"})),
+    ).create_page_comment(PAGE_ID, "comment", client_id="acme")
+
+    assert outside.status == "failed"
+    assert "outside the tenant scope" in outside.message
+    assert invalid.status == "failed"
+    assert "non-empty text" in invalid.message
+    assert blocked.status == "failed"
+    assert "blocked" in blocked.message
+    assert malformed.status == "failed"
+    assert "malformed" in malformed.message
+
+
+def test_notion_comment_helpers_validate_bounds() -> None:
+    assert _safe_comment_markdown(" comment ") == "comment"
+    assert _comment_id({"id": "33333333-4444-5555-6666-777777777777"}) == "33333333-4444-5555-6666-777777777777"
+    assert _comment_id({"id": "bad"}) is None
+    with pytest.raises(NotionReadError):
+        _safe_comment_markdown("x" * (MAX_COMMENT_MARKDOWN_LENGTH + 1))
 
 
 def test_notion_data_source_query_is_mapped_bounded_and_read_only(settings) -> None:

@@ -123,6 +123,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "confluence-documentation-search",
         "notion-documentation-search",
         "notion-data-source-query",
+        "notion-page-comment",
         "syncro-ticket-lookup",
         "syncro-ticket-comments",
         "syncro-ticket-add-note",
