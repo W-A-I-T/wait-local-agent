@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from email.message import EmailMessage
 from pathlib import Path
@@ -194,6 +195,10 @@ def test_configured_webhook_delivery_requires_flags_and_never_returns_body(setti
     assert preview.sendable is False
     assert delivery.delivery_mode == "sent"
     assert delivery.sendable is True
+    assert delivery.receipt_id.startswith("webhook-slack:")
+    assert delivery.accepted_at.endswith("+00:00")
+    assert delivery.provider_status == "accepted"
+    assert delivery.provider_status_code == 202
     assert "do-not-expose" not in delivery.message
     assert calls == [
         {
@@ -233,10 +238,20 @@ def test_approved_communication_send_creates_local_ticket_note(settings) -> None
         approver_role=Role.TECHNICIAN,
     )
     notes = store.list_ticket_notes("TCK-1001", client_id="acme")
+    runs = store.list_smart_action_runs(client_id="acme")
 
     assert approved.status == "approved"
     assert len(notes) == 1
     assert notes[0].body == "Technician has been notified."
+    assert len(runs) == 1
+    delivery = json.loads(runs[0].output_json)
+    assert delivery["receipt_id"] == f"ticket-note:{notes[0].id}"
+    assert delivery["accepted_at"] == notes[0].created_at
+    assert delivery["provider_status"] == "persisted_local_note"
+    assert {item["type"] for item in json.loads(runs[0].evidence_json)} >= {
+        "ticket_note",
+        "communication_receipt",
+    }
 
 
 def test_communication_delivery_rejects_unsafe_endpoint_and_missing_ticket(settings) -> None:
@@ -458,6 +473,10 @@ def test_email_delivery_uses_tls_auth_and_redacted_result(settings) -> None:
         )
     )
     assert delivery.adapter_id == "smtp-email"
+    assert delivery.receipt_id.startswith("smtp-email:")
+    assert delivery.accepted_at.endswith("+00:00")
+    assert delivery.provider_status == "accepted_by_smtp"
+    assert delivery.provider_status_code is None
     assert smtp.started_tls is True
     assert smtp.logged_in is True
     assert smtp.messages[0]["To"] == "user@example.test"
@@ -564,6 +583,9 @@ class _SuccessfulSender:
             delivery_mode="sent",
             sendable=True,
             message="sent",
+            receipt_id="fake:receipt-1",
+            accepted_at="2026-08-09T00:00:00+00:00",
+            provider_status="accepted",
         )
 
 

@@ -115,7 +115,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - Preview-first communication for local ticket notes, email, Teams, Slack, and
   SMS through the common smart-action contract. Approved local notes are
   tenant-scoped; external delivery supports configured SMTP/webhook adapters
-  only when both write and outbound-call flags are enabled.
+  only when both write and outbound-call flags are enabled. Successful sends
+  return and persist an opaque local receipt ID, UTC acceptance time, and
+  bounded adapter status; webhook status codes are retained without provider
+  response bodies. Receipts are available through smart-action run API/CLI
+  views; there is no dedicated communication-history screen.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, approver identity capture, and a bounded 24-hour expiry that terminates linked pending work and blocks late execution.
 - Agent definitions can shorten approval deadlines with a bounded policy and can
   require additional approval for selected enabled tools. They can also add a

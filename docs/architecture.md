@@ -62,7 +62,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   requests. Delivery requires a smart-action approval plus both
   `WAIT_ALLOW_WRITE_ACTIONS=true` and `WAIT_ALLOW_HTTP_PROBING=true`; email
   uses configured SMTP and the other external channels use bounded webhook
-  adapters. Provider response bodies are never returned or persisted.
+  adapters. Successful delivery returns an opaque local receipt ID, UTC
+  acceptance timestamp, and bounded adapter status (including the webhook HTTP
+  status code when available). Smart-action run output persists that receipt
+  through the existing redacted audit boundary; provider response bodies and
+  credentials are never returned or persisted.
 
 ## Workflow and Scheduler
 
