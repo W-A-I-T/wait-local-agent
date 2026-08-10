@@ -73,6 +73,21 @@ export type TechnicianChatResponse = {
   message: string;
   action_id?: string;
   session_id?: string;
+  plan?: {
+    status: string;
+    blocked_reason?: string;
+    steps: Array<{
+      index: number;
+      tool_id: string;
+      name: string;
+      reason: string;
+      risk_level: string;
+      required_role: string;
+      approval_required: boolean;
+      access_mode: string;
+    }>;
+    definition?: Record<string, unknown>;
+  };
   result?: {
     status: string;
     output?: Record<string, unknown>;

@@ -12,6 +12,7 @@ export function TechnicianChat() {
   const [ticketId, setTicketId] = useState("");
   const [draft, setDraft] = useState("");
   const [message, setMessage] = useState("");
+  const [plan, setPlan] = useState<TechnicianChatResponse["plan"] | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
@@ -61,6 +62,7 @@ export function TechnicianChat() {
     setBusy("create");
     setError("");
     setMessage("");
+    setPlan(null);
     try {
       const session = await apiFetch<TechnicianChatSession>("/technician/chat/sessions", {
         method: "POST",
@@ -86,6 +88,7 @@ export function TechnicianChat() {
     setBusy("send");
     setError("");
     setMessage("");
+    setPlan(null);
     try {
       const response = await apiFetch<TechnicianChatResponse>(
         `/technician/chat/sessions/${encodeURIComponent(activeSession.id)}/messages`,
@@ -97,6 +100,7 @@ export function TechnicianChat() {
       );
       setDraft("");
       setMessage(response.message || `Request completed with status ${response.status}.`);
+      setPlan(response.plan ?? null);
       await openSession(activeSession.id);
       await refreshSessions();
     } catch (requestError) {
@@ -129,10 +133,11 @@ export function TechnicianChat() {
 
   return (
     <div className="screen-stack technician-chat-screen">
-      <section className="panel">
+        <section className="panel">
         <div className="panel-heading"><div><h2>Technician Chat</h2><p className="screen-note">Use the same bounded smart-action catalog as the API and CLI. Requests are parsed, tenant-scoped, audited, and approval-gated where required.</p></div><MessageSquare size={22} aria-hidden="true" /></div>
         {message ? <div className="notice" role="status"><CheckCircle2 size={17} aria-hidden="true" />{message}</div> : null}
         {error ? <div className="notice danger" role="alert"><XCircle size={17} aria-hidden="true" />{error}</div> : null}
+        {plan ? <div className="technician-plan" role="status"><strong>Bounded plan preview · {plan.status}</strong>{plan.blocked_reason ? <p>{plan.blocked_reason}</p> : null}{plan.steps.length ? <ol>{plan.steps.map((step) => <li key={`${step.index}-${step.tool_id}`}><strong>{step.name}</strong><span>{step.reason} · {step.approval_required ? "approval required" : "read-only or deterministic"}</span></li>)}</ol> : <p>No approved steps were selected.</p>}</div> : null}
         <form className="draft-form" onSubmit={(event) => void createSession(event)}>
           <div className="grid">
             <label>Client id (optional for a scoped technician token)<input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="acme" /></label>
@@ -153,7 +158,7 @@ export function TechnicianChat() {
           {activeSession ? <>
             <div className="panel-heading"><div><h3>{activeSession.id}</h3><span>{activeSession.client_id}{activeSession.ticket_id ? ` · ${activeSession.ticket_id}` : ""}</span></div><button className="icon-button" type="button" disabled={busy !== null || loadingSession !== null || activeSession.status === "closed"} onClick={() => void closeSession()}>{busy === "close" ? "Closing…" : "Close session"}</button></div>
             <div className="technician-messages" aria-live="polite">{activeSession.messages.length === 0 ? <p>No messages yet. Ask for help, triage, or a bounded ticket action.</p> : activeSession.messages.map((item) => <article key={item.id} className={`technician-message ${item.role}`}><strong>{item.role === "user" ? "You" : "WAIT"}</strong><p>{item.message}</p><small>{item.status}{item.action_id ? ` · ${item.action_id}` : ""}</small></article>)}</div>
-            <form className="technician-composer" onSubmit={(event) => void sendMessage(event)}><label className="sr-only" htmlFor="technician-message">Message</label><textarea id="technician-message" required maxLength={2000} rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} disabled={busy !== null || loadingSession !== null || activeSession.status === "closed"} placeholder="Triage TCK-1001, search documentation, or type help" /><button type="submit" disabled={busy !== null || loadingSession !== null || !draft.trim() || activeSession.status === "closed"}><Send size={17} aria-hidden="true" />{busy === "send" ? "Sending…" : "Send"}</button></form>
+            <form className="technician-composer" onSubmit={(event) => void sendMessage(event)}><label className="sr-only" htmlFor="technician-message">Message</label><textarea id="technician-message" required maxLength={2000} rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} disabled={busy !== null || loadingSession !== null || activeSession.status === "closed"} placeholder="Triage TCK-1001, plan a fix for TCK-1001, or type help" /><button type="submit" disabled={busy !== null || loadingSession !== null || !draft.trim() || activeSession.status === "closed"}><Send size={17} aria-hidden="true" />{busy === "send" ? "Sending…" : "Send"}</button></form>
           </> : <div className="empty-state"><MessageSquare size={28} aria-hidden="true" /><h3>Select or start a session</h3><p>Every message stays within the existing technician session scope.</p></div>}
         </section>
       </div>

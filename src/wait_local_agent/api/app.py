@@ -1538,6 +1538,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _invoke_technician_chat_message(
                 store,
                 smart_action_service,
+                agent_service,
                 payload.message,
                 ticket_id=payload.ticket_id,
                 actor=context.approver_id or "api",
@@ -1630,6 +1631,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _invoke_technician_chat_message(
                 store,
                 smart_action_service,
+                agent_service,
                 payload.message,
                 ticket_id=payload.ticket_id or session.ticket_id,
                 actor=context.approver_id or "api",
@@ -4613,6 +4615,7 @@ def _technician_chat_session_view(store: Store, session) -> dict[str, object]:
 def _invoke_technician_chat_message(
     store: Store,
     smart_action_service: SmartActionService,
+    agent_service: AgentService,
     message: str,
     *,
     ticket_id: str | None,
@@ -4658,7 +4661,7 @@ def _invoke_technician_chat_message(
             is None
         ):
             raise LookupError(resolved_ticket_id)
-    if command.action_id is None:
+    if command.mode == "help":
         if session_id is not None:
             store.add_technician_chat_message(
                 session_id,
@@ -4677,8 +4680,59 @@ def _invoke_technician_chat_message(
         if session_id is not None:
             response["session_id"] = session_id
         return response
+    if command.mode == "plan":
+        if not resolved_ticket_id:
+            raise TechnicianChatParseError("include a ticket ID such as TCK-1001")
+        try:
+            plan = agent_service.plan(
+                command.instruction or message,
+                entity_id=resolved_ticket_id,
+                client_id=client_id,
+            )
+        except AgentDefinitionError as exc:
+            plan_message = f"The plan is blocked: {redact_text(str(exc))}"
+            plan_payload: dict[str, object] = {
+                "instruction": command.instruction or message,
+                "entity_id": resolved_ticket_id,
+                "client_id": client_id,
+                "status": "blocked",
+                "steps": [],
+                "blocked_reason": redact_text(str(exc)),
+            }
+            plan_status = "blocked"
+        else:
+            plan_payload = asdict(plan)
+            plan_status = plan.status
+            plan_message = (
+                "I prepared a bounded plan preview. Review the selected tools and approvals "
+                "before creating or running an agent."
+                if plan.status == "preview"
+                else f"The plan is blocked: {plan.blocked_reason}"
+            )
+        if session_id is not None:
+            store.add_technician_chat_message(
+                session_id,
+                role="assistant",
+                message=plan_message,
+                status=plan_status,
+                ticket_id=resolved_ticket_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+        response = {
+            "status": plan_status,
+            "message": plan_message,
+            "plan": redact_value(plan_payload),
+            "supported": True,
+        }
+        if session_id is not None:
+            response["session_id"] = session_id
+        return response
+    action_id = command.action_id
+    if not action_id:
+        raise TechnicianChatParseError("technician request did not select an approved action")
     result = smart_action_service.invoke(
-        command.action_id,
+        action_id,
         command.payload,
         actor,
         client_id=client_id,
@@ -4688,7 +4742,7 @@ def _invoke_technician_chat_message(
             session_id,
             role="assistant",
             message=command.reply,
-            action_id=command.action_id,
+            action_id=action_id,
             status=result.status,
             ticket_id=resolved_ticket_id,
             client_id=client_id,
@@ -4697,7 +4751,7 @@ def _invoke_technician_chat_message(
     response = {
         "status": result.status,
         "message": command.reply,
-        "action_id": command.action_id,
+        "action_id": action_id,
         "result": asdict(result),
     }
     if session_id is not None:
