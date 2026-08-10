@@ -1358,11 +1358,15 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "client_id": "acme",
             "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
-    Store(secure_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
     client = TestClient(create_app(secure_settings))
 
     run = client.post(
