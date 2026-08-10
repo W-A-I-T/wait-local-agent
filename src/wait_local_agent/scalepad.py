@@ -1,10 +1,11 @@
-"""Bounded, read-only ScalePad Core and ControlMap adapter.
+"""Bounded, read-only ScalePad Core, ControlMap, and Lifecycle adapter.
 
-ScalePad's documented Core API exposes client inventory and its ControlMap API
-exposes partner-wide risk summaries with an API key and cursor pagination. WAIT
-uses fixed, local mappings for each provider identifier and an exact provider
-filter; returned records are checked against those mappings before they leave
-the connector boundary. The Core client ID and ControlMap tenant ID are kept as
+ScalePad's documented Core API exposes client inventory, its ControlMap API
+exposes partner-wide risk summaries, and its Lifecycle Manager API exposes
+client goals with an API key and cursor pagination. WAIT uses fixed, local
+mappings for each provider identifier and an exact provider filter; returned
+records are checked against those mappings before they leave the connector
+boundary. Core client, ControlMap tenant, and Lifecycle client IDs are kept as
 separate mappings because the public documentation does not establish that
 they are interchangeable. No ScalePad writes are exposed here.
 """
@@ -27,6 +28,8 @@ DEFAULT_PAGE_SIZE = 1
 MAX_PAGE_SIZE = 1
 RISK_SUMMARY_PAGE_SIZE = 20
 MAX_RISK_SUMMARY_ROWS = 20
+GOALS_PAGE_SIZE = 20
+MAX_GOAL_ROWS = 20
 MAX_CLIENT_ID_LENGTH = 120
 MAX_PROVIDER_ID_LENGTH = 200
 MAX_TEXT_LENGTH = 500
@@ -34,6 +37,8 @@ MAX_ENDPOINT_LENGTH = 240
 MAX_RISK_SUMMARY_DEPTH = 4
 MAX_RISK_SUMMARY_FIELDS = 64
 MAX_RISK_SUMMARY_LIST_ITEMS = 20
+MAX_GOAL_TITLE_LENGTH = 200
+_GOAL_STATUSES = frozenset({"AtRisk", "Complete", "OffTrack", "OnHold", "OnTrack"})
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,14 @@ class ScalePadRiskSummaryResponse:
     total_count: int | None = None
 
 
+@dataclass(frozen=True)
+class ScalePadGoalResponse:
+    result: ConnectorReadResult
+    items: list[dict[str, object]]
+    next_cursor: str = ""
+    total_count: int | None = None
+
+
 class ScalePadReadError(Exception):
     """Safe, operator-facing ScalePad adapter error."""
 
@@ -80,6 +93,16 @@ class ScalePadReadProvider(Protocol):
     def get_risk_summary(self, *, client_id: str) -> ScalePadRiskSummaryResponse:
         ...
 
+    def get_goals(
+        self,
+        *,
+        client_id: str,
+        status: str | None = None,
+        title: str | None = None,
+        cursor: str | None = None,
+    ) -> ScalePadGoalResponse:
+        ...
+
 
 class ScalePadClient:
     """Normalize the documented ScalePad Core client-list contract."""
@@ -92,18 +115,35 @@ class ScalePadClient:
         blocked = self._blocked_result()
         if blocked is not None:
             return blocked
-        missing = self._not_configured_result()
+        missing = self._not_configured_base_result()
         if missing is not None:
             return missing
-        try:
-            mapping = json.loads(self.settings.scalepad_client_map_json or "{}")
-            if not isinstance(mapping, Mapping) or not mapping:
-                raise ScalePadReadError(
-                    "WAIT_SCALEPAD_CLIENT_MAP_JSON must contain at least one client mapping."
-                )
-            self._client_mapping(str(next(iter(mapping))))
-        except ScalePadReadError as exc:
-            return ConnectorReadResult("failed", exc.message)
+        configured_surfaces = (
+            (self.settings.scalepad_client_map_json, self._client_mapping),
+            (self.settings.scalepad_risk_tenant_map_json, self._risk_tenant_mapping),
+            (
+                self.settings.scalepad_lifecycle_client_map_json,
+                self._lifecycle_client_mapping,
+            ),
+        )
+        errors: list[str] = []
+        for raw_mapping, mapping_validator in configured_surfaces:
+            if not raw_mapping:
+                continue
+            try:
+                mapping = json.loads(raw_mapping)
+                if not isinstance(mapping, Mapping) or not mapping:
+                    raise ScalePadReadError("ScalePad mapping must contain at least one client mapping.")
+                mapping_validator(str(next(iter(mapping))))
+            except ScalePadReadError as exc:
+                errors.append(exc.message)
+        if not any(raw_mapping for raw_mapping, _ in configured_surfaces):
+            return ConnectorReadResult(
+                "not_configured",
+                "ScalePad credentials are incomplete: configure at least one client mapping.",
+            )
+        if errors and len(errors) == sum(bool(raw_mapping) for raw_mapping, _ in configured_surfaces):
+            return ConnectorReadResult("failed", errors[0])
         return ConnectorReadResult("ready", "ScalePad read prerequisites are ready.")
 
     def get_client(self, *, client_id: str) -> ScalePadClientResponse:
@@ -118,6 +158,7 @@ class ScalePadClient:
             payload = self._get(
                 "core/v1/clients",
                 params={"filter[id]": f"eq:{provider_id}", "page_size": str(DEFAULT_PAGE_SIZE)},
+                configuration="client",
             )
         except ScalePadReadError as exc:
             return ScalePadClientResponse(ConnectorReadResult("failed", exc.message), [])
@@ -160,6 +201,7 @@ class ScalePadClient:
                     "filter[client.tenant_id]": f"eq:{tenant_id}",
                     "page_size": str(RISK_SUMMARY_PAGE_SIZE),
                 },
+                configuration="risk",
             )
         except ScalePadReadError as exc:
             return ScalePadRiskSummaryResponse(ConnectorReadResult("failed", exc.message), [])
@@ -186,12 +228,81 @@ class ScalePadClient:
             _optional_nonnegative_int(payload.get("total_count")),
         )
 
-    def _get(self, endpoint: str, *, params: Mapping[str, str] | None = None) -> object:
+    def get_goals(
+        self,
+        *,
+        client_id: str,
+        status: str | None = None,
+        title: str | None = None,
+        cursor: str | None = None,
+    ) -> ScalePadGoalResponse:
+        """Read one explicitly mapped client's Lifecycle Manager goals page."""
+
+        blocked = self._blocked_goal_response()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_goal_response()
+        if missing is not None:
+            return missing
+        try:
+            provider_id = self._lifecycle_client_mapping(client_id)
+            params: dict[str, str] = {
+                "filter[client.id]": f"eq:{provider_id}",
+                "page_size": str(GOALS_PAGE_SIZE),
+            }
+            if status is not None:
+                params["filter[status]"] = f"eq:{_goal_status(status)}"
+            if title is not None:
+                params["filter[title]"] = f"cont:{_goal_title(title)}"
+            if cursor is not None:
+                params["cursor"] = _required_cursor(cursor)
+            payload = self._get(
+                "lifecycle-manager/v1/goals",
+                params=params,
+                configuration="lifecycle",
+            )
+        except ScalePadReadError as exc:
+            return ScalePadGoalResponse(ConnectorReadResult("failed", exc.message), [])
+        if not isinstance(payload, Mapping):
+            return ScalePadGoalResponse(
+                ConnectorReadResult("failed", "ScalePad returned a malformed response object."),
+                [],
+            )
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            return ScalePadGoalResponse(
+                ConnectorReadResult("failed", "ScalePad returned malformed goal data."),
+                [],
+            )
+        items: list[dict[str, object]] = []
+        for row in rows[:MAX_GOAL_ROWS]:
+            normalized = _normalize_goal(row, provider_id)
+            if normalized is not None:
+                items.append(normalized)
+        return ScalePadGoalResponse(
+            ConnectorReadResult("ready", "ScalePad goal read succeeded.", len(items)),
+            items,
+            _optional_cursor(payload.get("next_cursor")),
+            _optional_nonnegative_int(payload.get("total_count")),
+        )
+
+    def _get(
+        self,
+        endpoint: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        configuration: str = "client",
+    ) -> object:
         if not self.settings.allow_http_probing:
             raise ScalePadReadError(
                 "ScalePad live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
             )
-        missing = self._not_configured_result()
+        if configuration == "risk":
+            missing = self._not_configured_risk_result()
+        elif configuration == "lifecycle":
+            missing = self._not_configured_lifecycle_result()
+        else:
+            missing = self._not_configured_result()
         if missing is not None:
             raise ScalePadReadError(missing.message)
         url = _endpoint_url(self.settings.scalepad_base_url, endpoint)
@@ -261,6 +372,29 @@ class ScalePadClient:
             )
         return _bounded_provider_id(raw_tenant_id)
 
+    def _lifecycle_client_mapping(self, client_id: str) -> str:
+        safe_client_id = _safe_client_id(client_id)
+        try:
+            mapping = json.loads(self.settings.scalepad_lifecycle_client_map_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON is malformed."
+            ) from exc
+        if not isinstance(mapping, Mapping):
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON must be an object."
+            )
+        if safe_client_id not in mapping:
+            raise ScalePadReadError(
+                "ScalePad Lifecycle client mapping is outside the tenant scope."
+            )
+        raw_provider_id = mapping[safe_client_id]
+        if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
+            raise ScalePadReadError(
+                "ScalePad Lifecycle client mapping must use non-empty strings."
+            )
+        return _bounded_provider_id(raw_provider_id)
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
@@ -276,6 +410,22 @@ class ScalePadClient:
                 "WAIT_SCALEPAD_BASE_URL": self.settings.scalepad_base_url,
                 "WAIT_SCALEPAD_API_KEY": self.settings.scalepad_api_key,
                 "WAIT_SCALEPAD_CLIENT_MAP_JSON": self.settings.scalepad_client_map_json,
+            }.items()
+            if not value
+        ]
+        if not missing:
+            return None
+        return ConnectorReadResult(
+            "not_configured",
+            f"ScalePad credentials are incomplete: {', '.join(missing)}.",
+        )
+
+    def _not_configured_base_result(self) -> ConnectorReadResult | None:
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SCALEPAD_BASE_URL": self.settings.scalepad_base_url,
+                "WAIT_SCALEPAD_API_KEY": self.settings.scalepad_api_key,
             }.items()
             if not value
         ]
@@ -303,6 +453,25 @@ class ScalePadClient:
             f"ScalePad risk-summary credentials are incomplete: {', '.join(missing)}.",
         )
 
+    def _not_configured_lifecycle_result(self) -> ConnectorReadResult | None:
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SCALEPAD_BASE_URL": self.settings.scalepad_base_url,
+                "WAIT_SCALEPAD_API_KEY": self.settings.scalepad_api_key,
+                "WAIT_SCALEPAD_LIFECYCLE_CLIENT_MAP_JSON": (
+                    self.settings.scalepad_lifecycle_client_map_json
+                ),
+            }.items()
+            if not value
+        ]
+        if not missing:
+            return None
+        return ConnectorReadResult(
+            "not_configured",
+            f"ScalePad Lifecycle credentials are incomplete: {', '.join(missing)}.",
+        )
+
     def _blocked_response(self) -> ScalePadClientResponse | None:
         result = self._blocked_result()
         return ScalePadClientResponse(result, []) if result is not None else None
@@ -318,6 +487,14 @@ class ScalePadClient:
     def _not_configured_risk_response(self) -> ScalePadRiskSummaryResponse | None:
         result = self._not_configured_risk_result()
         return ScalePadRiskSummaryResponse(result, []) if result is not None else None
+
+    def _blocked_goal_response(self) -> ScalePadGoalResponse | None:
+        result = self._blocked_result()
+        return ScalePadGoalResponse(result, []) if result is not None else None
+
+    def _not_configured_goal_response(self) -> ScalePadGoalResponse | None:
+        result = self._not_configured_lifecycle_result()
+        return ScalePadGoalResponse(result, []) if result is not None else None
 
 
 def _normalize_client(row: object, provider_id: str) -> ScalePadClientRecord | None:
@@ -347,6 +524,22 @@ def _normalize_risk_summary(row: object, tenant_id: str) -> dict[str, object] | 
         return None
     returned_tenant_id = _optional_provider_id(client.get("tenant_id"))
     if returned_tenant_id != tenant_id:
+        return None
+    bounded = _bound_risk_value(row, depth=0)
+    if not isinstance(bounded, dict):
+        return None
+    redacted = redact_value(bounded)
+    return redacted if isinstance(redacted, dict) else None
+
+
+def _normalize_goal(row: object, provider_id: str) -> dict[str, object] | None:
+    if not isinstance(row, Mapping):
+        return None
+    client = row.get("client")
+    if not isinstance(client, Mapping):
+        return None
+    returned_provider_id = _optional_provider_id(client.get("id"))
+    if returned_provider_id != provider_id:
         return None
     bounded = _bound_risk_value(row, depth=0)
     if not isinstance(bounded, dict):
@@ -394,6 +587,31 @@ def _optional_cursor(value: object) -> str:
     return value
 
 
+def _required_cursor(value: str) -> str:
+    cursor = _optional_cursor(value)
+    if not cursor:
+        raise ScalePadReadError("ScalePad cursor must be a bounded Base64 string.")
+    return cursor
+
+
+def _goal_status(value: str) -> str:
+    normalized = value.strip()
+    if normalized not in _GOAL_STATUSES:
+        raise ScalePadReadError(
+            "ScalePad goal status must be one of AtRisk, Complete, OffTrack, OnHold, or OnTrack."
+        )
+    return normalized
+
+
+def _goal_title(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not normalized or len(normalized) > MAX_GOAL_TITLE_LENGTH:
+        raise ScalePadReadError(
+            "ScalePad goal title must be non-empty and at most 200 characters."
+        )
+    return normalized
+
+
 def _bound_risk_value(value: object, *, depth: int) -> object:
     if depth > MAX_RISK_SUMMARY_DEPTH:
         return "[truncated]"
@@ -424,7 +642,11 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         raise ScalePadReadError("ScalePad base URL must be an HTTPS URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ScalePadReadError("ScalePad base URL must not contain credentials or query data.")
-    if endpoint not in {"core/v1/clients", "controlmap/v1/clients/risks-summary"}:
+    if endpoint not in {
+        "core/v1/clients",
+        "controlmap/v1/clients/risks-summary",
+        "lifecycle-manager/v1/goals",
+    }:
         raise ScalePadReadError("ScalePad endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"
 
@@ -448,6 +670,7 @@ __all__ = [
     "ScalePadClientRecord",
     "ScalePadClientResponse",
     "ScalePadRiskSummaryResponse",
+    "ScalePadGoalResponse",
     "ScalePadReadError",
     "ScalePadReadProvider",
 ]

@@ -178,10 +178,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   approval-aware smart-action runtime with an explicit mapped company,
   allow-write flag, and read/write provider key; reschedule and cancel
   mutations are not inferred.
-  The ScalePad adapter maps WAIT clients to explicit Core client IDs and a
-  separate optional ControlMap tenant-ID map, uses the documented filters,
-  rechecks returned provider scope, and exposes bounded redacted client or risk
-  summary records. Core IDs and ControlMap tenant IDs are never inferred to be
+  The ScalePad adapter maps WAIT clients to explicit Core client IDs, a
+  separate optional ControlMap tenant-ID map, and a separate Lifecycle Manager
+  client-ID map, uses the documented filters, rechecks returned provider scope,
+  and exposes bounded redacted client, risk-summary, or goal records. Core,
+  ControlMap, and Lifecycle Manager IDs are never inferred to be
   interchangeable. Writes and other unscoped reads are not inferred.
   The Kaseya VSA X adapter uses the documented Basic-auth v3 API, an explicit
   client-to-organization map, organization-scoped device and
