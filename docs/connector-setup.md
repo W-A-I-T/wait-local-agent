@@ -272,9 +272,10 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 
 ## TimeZest
 
-The TimeZest adapter exposes a bounded, read-only scheduling-request inventory
-through the documented API. It supports the shared smart-action, planner,
-tool-catalog, API, CLI, and Agents UI surfaces.
+The TimeZest adapter exposes a bounded scheduling-request inventory and one
+approval-gated create mutation through the documented API. Both capabilities
+use the shared smart-action, planner, tool-catalog, API, CLI, and Agents UI
+surfaces.
 
 Required settings:
 
@@ -283,6 +284,8 @@ WAIT_TIMEZEST_BASE_URL=https://api.timezest.com
 WAIT_TIMEZEST_API_KEY=
 WAIT_TIMEZEST_CLIENT_MAP_JSON={"acme":{"connectwise_psa_company_id":209116}}
 WAIT_ALLOW_HTTP_PROBING=true
+# Required only when an approved create is actually executed.
+WAIT_ALLOW_WRITE_ACTIONS=true
 ```
 
 `WAIT_TIMEZEST_CLIENT_MAP_JSON` maps each WAIT client to exactly one documented
@@ -290,9 +293,14 @@ Autotask or ConnectWise PSA company ID. WAIT builds the equality filter locally,
 rechecks the returned associated company before exposing a request, and keeps
 the API key out of payloads, results, errors, and audit records. One provider
 page is read at a time, capped at TimeZest's documented 20-item page size.
-Returned data is limited to scheduling-request status and bounded appointment
-metadata; scheduling URLs, end-user email addresses, and provider payloads are
-not exposed. Creating, rescheduling, and cancelling requests are not claimed.
+Reads return only bounded scheduling-request status and appointment metadata;
+URLs and end-user email addresses are not exposed by the read action. The
+`timezest-scheduling-request-create` action accepts only documented appointment
+type, trigger mode, resource, date/time, and end-user fields, automatically
+associates the mapped company, persists an approval draft, and sends the POST
+only after approval. The approved result includes the bounded scheduling
+request ID and scheduling URL. Rescheduling and cancellation remain
+unavailable because no documented API mutation is claimed for them.
 See TimeZest's [authentication guide](https://developer.timezest.com/authentication/),
 [scheduling-request API](https://developer.timezest.com/scheduling_requests/),
 [pagination guide](https://developer.timezest.com/pagination/), and

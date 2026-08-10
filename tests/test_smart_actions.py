@@ -1096,6 +1096,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-sla-assessment",
         "ticket-summary",
         "ticket-triage",
+        "timezest-scheduling-request-create",
         "timezest-scheduling-request-lookup",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"

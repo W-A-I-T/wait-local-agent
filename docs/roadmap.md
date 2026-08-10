@@ -15,8 +15,8 @@ retries, HaloPSA and ConnectWise governed writes, bounded NinjaOne/Datto/RMM
 and Microsoft 365 actions, local technician and end-user support surfaces,
 client-scoped QBR/automation reports, provider usage/cost estimates, and
 admin-triggered documented model-list health checks, tenant-mapped TimeZest
-scheduling-request reads, and separately mapped ScalePad Core client and
-ControlMap risk-summary reads.
+scheduling-request reads plus approval-gated documented create, and separately
+mapped ScalePad Core client and ControlMap risk-summary reads.
 Remaining gaps include
 broader provider write parity, native channel adapters, live end-user PSA
 synchronization, provider-backed lifecycle evidence, Kaseya remediation, and

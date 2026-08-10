@@ -106,10 +106,12 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   derived health alerts through the documented XML Data Extraction API and an
   explicit client map. Script catalog, preview, execution, and polling remain
   explicitly unavailable because no write contract is assumed.
-- TimeZest tenant-mapped scheduling-request reads through the documented API,
-  with fixed company scoping, bounded status/appointment metadata, and local
-  associated-company rechecking. Scheduling-request creation, rescheduling,
-  and cancellation remain unavailable.
+- TimeZest tenant-mapped scheduling-request reads and an approval-gated
+  documented create action through the documented API, with fixed company
+  scoping, bounded status/appointment metadata, local associated-company
+  rechecking, explicit HTTP/write flags, and read/write-key enforcement.
+  Rescheduling and cancellation remain unavailable because no documented
+  mutation contract is claimed.
 - ScalePad tenant-mapped Core client inventory and separately mapped ControlMap
   risk-summary reads through the documented APIs, with exact provider filters,
   returned-scope rechecking, bounded redacted records, and explicit regional

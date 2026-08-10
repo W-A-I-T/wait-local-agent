@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import Any, cast
 
 import httpx
 import pytest
 
 from wait_local_agent.connectors import list_connector_statuses, list_secret_records, validate_connector_credentials
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.timezest import (
@@ -20,6 +22,8 @@ from wait_local_agent.timezest import (
     _normalize_request,
     _optional_int,
     _safe_client_id,
+    _safe_scheduling_url,
+    _validate_create_fields,
 )
 
 REQUESTS_JSON = {
@@ -55,6 +59,23 @@ REQUESTS_JSON = {
     ],
 }
 
+CREATE_JSON = {
+    "object": "scheduling_request",
+    "id": "sreq_created",
+    "appointment_type_id": "apty_remote",
+    "duration_mins": 60,
+    "earliest_date": "2025-05-01",
+    "earliest_time": "10:00:00",
+    "latest_date": "2025-05-31",
+    "latest_time": "16:30:00",
+    "status": "new",
+    "scheduling_url": "https://example.timezest.com/schedule/created",
+    "associated_entities": [{"type": "connectwise_psa/company", "id": 209116}],
+    "resources": [{"type": "agent", "id": "agnt_1", "name": "Samantha Jones"}],
+    "created_at": 1691585916,
+    "updated_at": 1691585916,
+}
+
 
 def _client(settings, handler, **overrides) -> TimeZestClient:
     values = {
@@ -68,6 +89,10 @@ def _client(settings, handler, **overrides) -> TimeZestClient:
     values.update(overrides)
     active = replace(settings, **values)
     return TimeZestClient(active, transport=httpx.MockTransport(handler))
+
+
+def _write_client(settings, handler, **overrides) -> TimeZestClient:
+    return _client(settings, handler, allow_write_actions=True, **overrides)
 
 
 def test_timezest_reads_are_filtered_and_bounded_by_documented_company_scope(settings) -> None:
@@ -113,6 +138,262 @@ def test_timezest_health_and_smart_action_are_reachable(settings) -> None:
     assert result.output["has_more"] is True
     assert result.evidence[0]["operation"] == "scheduling_requests.list"
     assert "timezest-scheduling-request-lookup" in {item.action_id for item in service.list()}
+
+
+def test_timezest_create_posts_only_documented_scoped_fields(settings) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/v1/scheduling_requests"
+        assert request.headers["authorization"] == "Bearer timezest-secret-token"
+        assert request.read()
+        assert json.loads(request.content) == {
+            "appointment_type_id": "apty_remote",
+            "trigger_mode": "pod",
+            "associated_entities": [{"type": "connectwise_psa/company", "id": 209116}],
+            "resource_ids": ["agnt_1", "team_1"],
+            "duration_mins": 60,
+            "earliest_date": "2025-05-01",
+            "earliest_time": "10:00:00",
+            "latest_date": "2025-05-31",
+            "latest_time": "16:30:00",
+            "end_user_name": "Rodney Smith",
+            "end_user_email": "rodney@example.test",
+            "end_user_company": "Acme",
+        }
+        return httpx.Response(201, json=CREATE_JSON)
+
+    response = _write_client(settings, handler).create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1", "team_1"],
+        duration_mins=60,
+        earliest_date="2025-05-01",
+        earliest_time="10:00:00",
+        latest_date="2025-05-31",
+        latest_time="16:30:00",
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+        end_user_company="Acme",
+    )
+
+    assert response.result.status == "ready"
+    assert response.request["id"] == "sreq_created"
+    assert cast(str, response.request["scheduling_url"]).startswith("https://")
+    assert len(seen) == 1
+
+
+def test_timezest_create_requires_write_and_http_gates(settings) -> None:
+    read_only = _client(settings, lambda request: httpx.Response(201, json=CREATE_JSON))
+    assert read_only.write_health().status == "blocked"
+    assert read_only.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+    ).result.status == "blocked"
+
+    offline = _write_client(
+        settings,
+        lambda request: httpx.Response(201, json=CREATE_JSON),
+        allow_http_probing=False,
+    )
+    assert offline.write_health().status == "blocked"
+
+
+def test_timezest_create_is_approval_gated_and_executes_once_after_approval(settings) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(201, json=CREATE_JSON)
+
+    client = _write_client(settings, handler)
+    service = SmartActionService(Store(client.settings.data_path), client.settings, timezest_client=client)
+    payload: dict[str, object] = {
+        "client_id": "acme",
+        "appointment_type_id": "apty_remote",
+        "trigger_mode": "generate_url",
+        "resource_ids": ["agnt_1"],
+        "end_user_name": "Rodney Smith",
+        "end_user_email": "rodney@example.test",
+    }
+
+    pending = service.invoke(
+        "timezest-scheduling-request-create",
+        payload,
+        "requester",
+        client_id="acme",
+    )
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    assert calls == []
+
+    approval = service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    assert approval.status == "approved"
+    runs = service.store.list_smart_action_runs(client_id="acme")
+    assert runs[-1].status == "success"
+    assert len(calls) == 1
+    assert "sreq_created" in runs[-1].output_json
+
+
+@pytest.mark.parametrize(
+    ("status_code", "message"),
+    [(401, "unauthorized"), (403, "unauthorized"), (429, "rate limited"), (500, "HTTP 500")],
+)
+def test_timezest_create_preserves_provider_failures(settings, status_code, message) -> None:
+    client = _write_client(
+        settings,
+        lambda request: httpx.Response(status_code, text="timezest-secret-token"),
+    )
+    response = client.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+    )
+    assert response.result.status == "failed"
+    assert message in response.result.message
+    assert "timezest-secret-token" not in response.result.message
+
+
+def test_timezest_create_rejects_malformed_provider_payloads_and_write_helpers(settings, monkeypatch) -> None:
+    invalid_object = _write_client(
+        settings,
+        lambda request: httpx.Response(201, json={"object": "wrong", "id": "sreq_created"}),
+    )
+    assert invalid_object.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+    ).result.status == "failed"
+
+    malformed = _write_client(
+        settings,
+        lambda request: httpx.Response(201, json=CREATE_JSON),
+    )
+    monkeypatch.setattr(malformed, "_post", lambda endpoint, json_body: [])
+    assert malformed.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+    ).result.status == "failed"
+
+    monkeypatch.setattr(malformed, "_post", lambda endpoint, json_body: {"object": "scheduling_request"})
+    assert malformed.create_scheduling_request(
+        client_id="acme",
+        appointment_type_id="apty_remote",
+        trigger_mode="pod",
+        resource_ids=["agnt_1"],
+        end_user_name="Rodney Smith",
+        end_user_email="rodney@example.test",
+    ).result.status == "failed"
+
+    with pytest.raises(TimeZestReadError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        _client(settings, lambda request: httpx.Response(200, json={}))._post(
+            "v1/scheduling_requests", json_body={}
+        )
+    with pytest.raises(TimeZestReadError, match="HTTP method"):
+        malformed._request("DELETE", "v1/scheduling_requests")
+
+
+def test_timezest_write_health_rejects_invalid_write_maps(settings) -> None:
+    for mapping, message in (
+        ("", "incomplete"),
+        ("{}", "at least one client mapping"),
+        ("[]", "at least one client mapping"),
+        ('{"acme": {}}', "one supported company ID"),
+    ):
+        client = _write_client(settings, lambda request: httpx.Response(200, json={}), timezest_client_map_json=mapping)
+        result = client.write_health()
+        assert result.status == "failed" or result.status == "not_configured"
+        assert message in result.message
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"trigger_mode": "invalid"}, "trigger_mode"),
+        ({"resource_ids": "agnt_1"}, "resource_ids must be a non-empty array"),
+        ({"resource_ids": []}, "between 1 and"),
+        ({"resource_ids": ["agnt_1", "agnt_1"]}, "duplicates"),
+        ({"duration_mins": True}, "duration_mins"),
+        ({"earliest_date": "2025-1-1"}, "earliest_date"),
+        ({"earliest_date": "2025-01-01", "latest_date": "2024-12-31"}, "after"),
+        ({"earliest_time": "10:00"}, "earliest_time"),
+        ({"end_user_email": "not-an-email"}, "end_user_email"),
+        ({"end_user_name": ""}, "end_user_name"),
+    ],
+)
+def test_timezest_create_validates_documented_fields(settings, overrides, message) -> None:
+    values: dict[str, Any] = {
+        "appointment_type_id": "apty_remote",
+        "trigger_mode": "pod",
+        "resource_ids": ["agnt_1"],
+        "duration_mins": None,
+        "earliest_date": None,
+        "earliest_time": None,
+        "latest_date": None,
+        "latest_time": None,
+        "end_user_name": "Rodney Smith",
+        "end_user_email": "rodney@example.test",
+        "end_user_company": None,
+    }
+    values.update(overrides)
+    with pytest.raises(TimeZestReadError, match=message):
+        _validate_create_fields(**values)
+
+
+def test_timezest_create_validates_date_time_shape_and_safe_urls() -> None:
+    with pytest.raises(TimeZestReadError, match="YYYY-MM-DD"):
+        _validate_create_fields(
+            appointment_type_id="apty_remote",
+            trigger_mode="pod",
+            resource_ids=["agnt_1"],
+            duration_mins=None,
+            earliest_date="20250101",
+            earliest_time=None,
+            latest_date=None,
+            latest_time=None,
+            end_user_name="Rodney Smith",
+            end_user_email="rodney@example.test",
+            end_user_company=None,
+        )
+    with pytest.raises(TimeZestReadError, match="HH:MM:SS"):
+        _validate_create_fields(
+            appointment_type_id="apty_remote",
+            trigger_mode="pod",
+            resource_ids=["agnt_1"],
+            duration_mins=None,
+            earliest_date=None,
+            earliest_time="100000",
+            latest_date=None,
+            latest_time=None,
+            end_user_name="Rodney Smith",
+            end_user_email="rodney@example.test",
+            end_user_company=None,
+        )
+    assert _safe_scheduling_url("https://example.timezest.com/schedule/ok")
+    for value in (None, "", "http://example.test/x", "https://user:pass@example.test/x", "x" * 2_001):
+        assert _safe_scheduling_url(value) == ""
 
 
 def test_timezest_connector_status_validation_and_secrets(settings) -> None:

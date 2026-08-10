@@ -173,8 +173,11 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   alerts, and exposes no inferred script or write path.
   The TimeZest adapter maps WAIT clients to one explicit Autotask or ConnectWise
   PSA company ID, uses the documented scheduling-request list filter, rechecks
-  returned associated entities, and exposes only bounded read status and
-  appointment metadata. Scheduling mutations are not inferred.
+  returned associated entities, and exposes bounded read status and appointment
+  metadata. The documented create endpoint is exposed separately through the
+  approval-aware smart-action runtime with an explicit mapped company,
+  allow-write flag, and read/write provider key; reschedule and cancel
+  mutations are not inferred.
   The ScalePad adapter maps WAIT clients to explicit Core client IDs and a
   separate optional ControlMap tenant-ID map, uses the documented filters,
   rechecks returned provider scope, and exposes bounded redacted client or risk
