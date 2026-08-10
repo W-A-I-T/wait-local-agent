@@ -1778,6 +1778,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="end-user ticket not found")
         return _end_user_message_view(message)
 
+    @app.get("/tickets/{ticket_id}/end-user-messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def ticket_end_user_messages(
+        ticket_id: str,
+        request: Request,
+        context: ViewerAccess,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if scoped_client_id is None and context.role >= Role.ADMIN:
+            ticket = store.get_ticket(ticket_id)
+            scoped_client_id = ticket.client_id if ticket is not None else None
+        if scoped_client_id is None:
+            return []
+        return [
+            _operator_end_user_message_view(message)
+            for message in store.list_end_user_messages_for_operator(
+                ticket_id, client_id=scoped_client_id
+            )
+        ]
+
+    @app.post("/tickets/{ticket_id}/end-user-messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def add_ticket_end_user_message(
+        ticket_id: str,
+        payload: EndUserMessageRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if scoped_client_id is None and context.role >= Role.ADMIN:
+            ticket = store.get_ticket(ticket_id)
+            scoped_client_id = ticket.client_id if ticket is not None else None
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="technician has no tenant scope")
+        message = store.create_support_end_user_message(
+            ticket_id,
+            client_id=scoped_client_id,
+            author_id=context.approver_id or "local-technician",
+            body=payload.body,
+        )
+        if message is None:
+            raise HTTPException(status_code=404, detail="end-user ticket not found")
+        return _operator_end_user_message_view(message)
+
     @app.post("/end-user/tickets/{ticket_id}/escalate")
     @limiter.limit(active_settings.rate_limit_connector)
     def end_user_escalate_ticket(
@@ -4612,6 +4656,17 @@ def _end_user_message_view(message) -> dict[str, object]:
     return {
         "id": message.id,
         "ticket_id": message.ticket_id,
+        "body": redact_text(message.body),
+        "role": "support" if message.author_role == "support" else "requester",
+        "created_at": message.created_at,
+    }
+
+
+def _operator_end_user_message_view(message) -> dict[str, object]:
+    return {
+        "id": message.id,
+        "ticket_id": message.ticket_id,
+        "role": "support" if message.author_role == "support" else "requester",
         "body": redact_text(message.body),
         "created_at": message.created_at,
     }

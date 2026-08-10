@@ -3,7 +3,7 @@ import { Send } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { defaultFieldText, useDashboard } from "../app/DashboardContext";
 import { parseFields } from "../lib/fields";
-import type { TicketSummaryResponse } from "../api/types";
+import type { EndUserMessage, TicketSummaryResponse } from "../api/types";
 
 export function Tickets() {
   const {
@@ -24,6 +24,11 @@ export function Tickets() {
   const [summaryError, setSummaryError] = useState("");
   const [approvalStatus, setApprovalStatus] = useState("pending");
   const [approvalComment, setApprovalComment] = useState("");
+  const [endUserMessages, setEndUserMessages] = useState<EndUserMessage[]>([]);
+  const [endUserReply, setEndUserReply] = useState("");
+  const [endUserMessageError, setEndUserMessageError] = useState("");
+  const [endUserMessageStatus, setEndUserMessageStatus] = useState("");
+  const [endUserMessageBusy, setEndUserMessageBusy] = useState(false);
   const targetTicketId = manualTicketId.trim() || selectedTicketId;
 
   function resolveTicketId(): string {
@@ -74,6 +79,46 @@ export function Tickets() {
       setSummaryError("Triage update sent.");
     } catch (error) {
       setSummaryError(error instanceof Error ? error.message : "Unable to post triage.");
+    }
+  }
+
+  async function loadEndUserMessages() {
+    const ticketId = summaryTicketId || resolveTicketId();
+    if (!ticketId) {
+      setEndUserMessageError("Choose a ticket id first.");
+      return;
+    }
+    setEndUserMessageError("");
+    setEndUserMessageStatus("");
+    try {
+      setEndUserMessages(await apiFetch<EndUserMessage[]>(`/tickets/${encodeURIComponent(ticketId)}/end-user-messages`));
+    } catch (error) {
+      setEndUserMessageError(error instanceof Error ? error.message : "Unable to load the customer conversation.");
+    }
+  }
+
+  async function sendEndUserReply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const ticketId = summaryTicketId || resolveTicketId();
+    if (!ticketId || !endUserReply.trim() || !canWrite) {
+      return;
+    }
+    setEndUserMessageBusy(true);
+    setEndUserMessageError("");
+    setEndUserMessageStatus("");
+    try {
+      const created = await apiFetch<EndUserMessage>(`/tickets/${encodeURIComponent(ticketId)}/end-user-messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: endUserReply.trim() })
+      });
+      setEndUserMessages((current) => [...current, created]);
+      setEndUserReply("");
+      setEndUserMessageStatus("Reply added to the local customer conversation.");
+    } catch (error) {
+      setEndUserMessageError(error instanceof Error ? error.message : "Unable to add the customer reply.");
+    } finally {
+      setEndUserMessageBusy(false);
     }
   }
 
@@ -174,7 +219,7 @@ export function Tickets() {
           </label>
         </div>
         {summaryError ? <p className="screen-note">{summaryError}</p> : null}
-        {ticketSummary ? (
+      {ticketSummary ? (
           <div className="table-list">
             <article className="approval-card">
               <strong>Classification: {ticketSummary.classification}</strong>
@@ -183,6 +228,33 @@ export function Tickets() {
             </article>
           </div>
         ) : null}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Customer conversation</h2>
+          <span>{endUserMessages.length ? `${endUserMessages.length} messages` : "local end-user thread"}</span>
+        </div>
+        <div className="draft-form">
+          <label>
+            Ticket id
+            <input value={summaryTicketId} onChange={(event) => setSummaryTicketId(event.target.value)} placeholder={resolveTicketId() || "EUS-..."} />
+          </label>
+          <div className="row-actions">
+            <button type="button" onClick={() => void loadEndUserMessages()} disabled={!summaryTicketId && !resolveTicketId()}>Load conversation</button>
+          </div>
+        </div>
+        {endUserMessageStatus ? <div className="notice" role="status">{endUserMessageStatus}</div> : null}
+        {endUserMessageError ? <div className="notice danger" role="alert">{endUserMessageError}</div> : null}
+        {endUserMessages.length ? <div className="end-user-messages operator-messages">{endUserMessages.map((item) => <p key={item.id}><strong>{item.role === "support" ? "Support" : "Requester"}</strong><span>{item.body}</span></p>)}</div> : <p className="screen-note">Load a local end-user thread to review requester messages. Internal ticket notes are separate.</p>}
+        <form className="draft-form" onSubmit={(event) => void sendEndUserReply(event)}>
+          <label>
+            Reply to requester
+            <textarea required maxLength={10000} rows={3} value={endUserReply} onChange={(event) => setEndUserReply(event.target.value)} placeholder="Write a response for the local end-user portal" />
+          </label>
+          <button type="submit" disabled={!canWrite || endUserMessageBusy || !endUserReply.trim()}>{endUserMessageBusy ? "Sending…" : "Add support reply"}</button>
+        </form>
+        {!canWrite ? <p className="screen-note">A technician or administrator role is required to add a support reply.</p> : null}
       </section>
     </div>
   );

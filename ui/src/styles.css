@@ -140,8 +140,17 @@ a {
   background: #f7faf8;
   border-radius: 8px;
   color: #40504b;
+  display: grid;
+  gap: 4px;
   margin: 0;
   padding: 10px;
+}
+
+.end-user-messages p strong {
+  color: #60706a;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .end-user-messages > span {

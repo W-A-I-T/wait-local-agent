@@ -298,8 +298,10 @@ Behavior:
   `WAIT_END_USER_USER_ID`, and `WAIT_END_USER_SUPPORT_ENABLED=true`.
 - When that mode is enabled, open `/end-user` for the separate client support
   surface. It supports local request creation, requester-scoped status lookup,
-  isolated follow-up messages, and technician escalation without exposing the
-  operator dashboard.
+  isolated requester/support messages, and technician escalation without
+  exposing the operator dashboard. Technicians can review and add local
+  support replies from the Tickets screen; this is local conversation state,
+  not live PSA synchronization or outbound delivery.
 - The end-user surface can use local, tenant-scoped display branding through
   `WAIT_END_USER_BRAND_NAME`, `WAIT_END_USER_BRAND_TAGLINE`, and optional local
   `WAIT_END_USER_BRAND_LOGO_DATA_URI`, `WAIT_END_USER_BRAND_ACCENT_COLOR`, and

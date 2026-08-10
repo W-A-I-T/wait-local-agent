@@ -12,7 +12,7 @@ visible here instead of being presented as a completed UI feature.
 | --- | --- | --- | --- |
 | `/` | Overview and onboarding | `/auth`, `/connectors`, `/workflow-runs`, `/event-history` | Browser render and dashboard smoke |
 | `/connectors` | Connector readiness and Hudu readout | `/connectors/*` | Browser navigation and connector status render |
-| `/tickets` | Ticket lookup, summary, approval draft | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render |
+| `/tickets` | Ticket lookup, summary, approval draft, local end-user conversation review and support reply | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
 | `/analytics` | Filtered operational metrics and operator-priced model usage estimates | `/analytics/summary` | Existing UI tests; browser route render |
 | `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; local Chromium smoke verified render and visible ServiceNow and Autotask note/time-entry/status/resolution/assignment approval tools against a fresh local database |
@@ -44,7 +44,7 @@ unverifiable product claim.
 | Smart-action catalog and direct invocation | API, CLI, Agents tool catalog | No standalone screen; tools are selectable in Agents | Role, tenant scope, approval metadata, redacted output; SLA/stale tools require explicit thresholds and timestamp evidence; M365 onboarding/offboarding/password-reset/authentication-method-removal are admin-only, approval-gated, and never persist credentials |
 | Event ingestion and delivery retry | `/automation/*`, API | No standalone screen; retry policy is intentionally API-only | Authenticated event types, idempotency, tenant checks, persisted `max_retries` 0-10, persisted `retry_delay_seconds` 1-3600, and bounded automatic retries |
 | Technician chat, plan previews, and persisted sessions | `/technician/chat*`, `/technician-chat`, CLI | Dedicated technician screen supports session create/select/send/close and renders bounded plan previews; explicit `plan ... TCK-*` requests reuse the reviewed planner, while the CLI and API remain available | Technician role, tenant/principal scope, bounded parser and history; plan previews are non-executing and reuse the audited smart-action catalog |
-| End-user local ticket support | `/end-user/config`, `/end-user/tickets*`, `/end-user` | Dedicated end-user surface supports token save, scoped branding load, ticket creation, status lookup, requester-only follow-up messages, and technician escalation; it is separate from the operator shell | Separate end-user token, fixed requester and tenant scope, isolated end-user message store, bounded display-only branding, end-user-safe responses, and no technician/admin tools |
+| End-user local ticket support | `/end-user/config`, `/end-user/tickets*`, `/tickets/{ticket_id}/end-user-messages`, `/end-user` | Dedicated end-user surface supports token save, scoped branding load, ticket creation, status lookup, requester/support messages, and technician escalation; the Tickets screen supports operator conversation review and local support replies; it is separate from the operator shell | Separate end-user token, fixed requester and tenant scope, technician/admin-only operator reply route, isolated end-user message store, bounded display-only branding, end-user-safe responses, and no technician/admin tools in the end-user surface |
 | Ticket lifecycle history and historical resolution metrics | `/tickets/{ticket_id}/status-history`, `/analytics/summary`, CLI analytics summary | Analytics metric on dashboard; history remains an API/CLI detail surface | Uses only explicit local/imported transitions; existing snapshots are not treated as historical evidence |
 | Syncro, ServiceNow, Autotask, IT Glue, Confluence, SharePoint, M365, and RMM provider detail routes | API, CLI, Agents tool catalog | No provider-specific dashboard screen; IT Glue and SharePoint content-search tools are selectable in `/agents` | Read-only or approval-gated provider contracts; IT Glue and SharePoint searches are tenant/site scoped, capped at 50 results, redacted, and blocked when live probing is disabled; ServiceNow work-note/state/assignment/resolution-metadata and Autotask ticket-note/status/resolution tools are approval-gated; disabled live calls remain reported as blocked |
 | Founder Pack implementation | Public `/founder/*` contract | Founder screen reports pack boundary | Stable `501`/unconfigured responses; no fake scan result |
@@ -52,7 +52,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 20 files, 78 tests passed.
+- UI tests: 21 files, 79 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation

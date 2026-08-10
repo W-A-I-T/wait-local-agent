@@ -47,6 +47,7 @@ export type EndUserBranding = {
 export type EndUserMessage = {
   id: number;
   ticket_id: string;
+  role: "requester" | "support";
   body: string;
   created_at: string;
 };

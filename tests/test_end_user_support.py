@@ -26,6 +26,7 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         end_user_brand_logo_data_uri="data:image/png;base64,AA==",
         end_user_brand_accent_color="#123456",
         end_user_brand_surface_color="#abcdef",
+        client_id="acme",
         tech_token="tech-token",
     )
     client = TestClient(create_app(enabled))
@@ -57,6 +58,19 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         headers=_auth("tech-token"),
         json={"subject": "not allowed", "body": "not allowed"},
     )
+    conversation = client.get(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("tech-token"),
+    )
+    support_reply = client.post(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("tech-token"),
+        json={"body": "A technician is reviewing this request."},
+    )
+    refreshed_messages = client.get(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+    )
 
     assert created.status_code == 200
     assert branding.status_code == 200
@@ -80,6 +94,14 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
     assert escalated.status_code == 200
     assert escalated.json()["status"] == "escalated"
     assert technician.status_code == 403
+    assert conversation.status_code == 200
+    assert [item["role"] for item in conversation.json()] == ["requester"]
+    assert support_reply.status_code == 200
+    assert support_reply.json()["role"] == "support"
+    assert [item["body"] for item in refreshed_messages.json()] == [
+        "Please call me after 3pm",
+        "A technician is reviewing this request.",
+    ]
     stored = Store(enabled.data_path).get_ticket(ticket_id, client_id="acme")
     assert stored is not None
     assert stored.requester_id == "user-1"
@@ -253,6 +275,74 @@ def test_end_user_messages_do_not_expose_internal_ticket_notes(settings) -> None
     assert [item["body"] for item in response.json()] == ["Customer follow-up"]
 
 
+def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(settings) -> None:
+    enabled = replace(
+        settings,
+        demo_mode=False,
+        end_user_support_enabled=True,
+        end_user_token="end-user-token",
+        end_user_client_id="acme",
+        end_user_user_id="user-1",
+        client_id="acme",
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+    )
+    client = TestClient(create_app(enabled))
+    created = client.post(
+        "/end-user/tickets",
+        headers=_auth("end-user-token"),
+        json={"subject": "Laptop issue", "body": "Laptop will not connect"},
+    )
+    ticket_id = created.json()["ticket_id"]
+
+    requester_message = client.post(
+        f"/end-user/tickets/{ticket_id}/messages",
+        headers=_auth("end-user-token"),
+        json={"body": "Here is an additional detail for the technician."},
+    )
+
+    viewer_reply = client.post(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("viewer-token"),
+        json={"body": "Viewer must not reply"},
+    )
+    wrong_ticket = client.get(
+        "/tickets/EUS-missing/end-user-messages",
+        headers=_auth("tech-token"),
+    )
+    missing_reply = client.post(
+        "/tickets/EUS-missing/end-user-messages",
+        headers=_auth("tech-token"),
+        json={"body": "No ticket"},
+    )
+    operator_messages = client.get(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("viewer-token"),
+    )
+    admin_messages = client.get(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("admin-token"),
+    )
+    admin_reply = client.post(
+        f"/tickets/{ticket_id}/end-user-messages",
+        headers=_auth("admin-token"),
+        json={"body": "Administrator reply"},
+    )
+
+    assert viewer_reply.status_code == 403
+    assert requester_message.status_code == 200
+    assert missing_reply.status_code == 404
+    assert wrong_ticket.status_code == 200
+    assert wrong_ticket.json() == []
+    assert operator_messages.status_code == 200
+    assert [item["role"] for item in operator_messages.json()] == ["requester"]
+    assert admin_messages.status_code == 200
+    assert [item["role"] for item in admin_messages.json()] == ["requester"]
+    assert admin_reply.status_code == 200
+    assert admin_reply.json()["role"] == "support"
+
+
 def test_end_user_store_rejects_unscoped_creation_and_missing_owned_ticket(settings) -> None:
     store = Store(settings.data_path)
 
@@ -324,3 +414,19 @@ def test_end_user_store_rejects_invalid_messages_and_missing_tickets(settings) -
     assert store.list_end_user_messages(
         "EUS-missing", client_id="", requester_id="user-1"
     ) == []
+
+    with pytest.raises(ValueError, match="client scope"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="", author_id="tech", body="body"
+        )
+    with pytest.raises(ValueError, match="author identity"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="acme", author_id=" ", body="body"
+        )
+    with pytest.raises(ValueError, match="body"):
+        store.create_support_end_user_message(
+            "EUS-missing", client_id="acme", author_id="tech", body=" "
+        )
+    assert store.create_support_end_user_message(
+        "EUS-missing", client_id="acme", author_id="tech", body="body"
+    ) is None

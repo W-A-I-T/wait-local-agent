@@ -153,10 +153,18 @@ class Store:
                     ticket_id text not null,
                     client_id text not null,
                     requester_id text not null,
+                    author_role text not null default 'requester',
+                    author_id text not null default '',
                     body text not null,
                     created_at text not null
                 )
                 """
+            )
+            self._ensure_column(
+                connection, "end_user_messages", "author_role", "text not null default 'requester'"
+            )
+            self._ensure_column(
+                connection, "end_user_messages", "author_id", "text not null default ''"
             )
             connection.execute(
                 """
@@ -1669,10 +1677,17 @@ class Store:
             cursor = connection.execute(
                 """
                 insert into end_user_messages
-                  (ticket_id, client_id, requester_id, body, created_at)
-                values (?, ?, ?, ?, ?)
+                  (ticket_id, client_id, requester_id, author_role, author_id, body, created_at)
+                values (?, ?, ?, 'requester', ?, ?, ?)
                 """,
-                (ticket_id, normalized_client_id, safe_requester_id, safe_body, created_at),
+                (
+                    ticket_id,
+                    normalized_client_id,
+                    safe_requester_id,
+                    safe_requester_id,
+                    safe_body,
+                    created_at,
+                ),
             )
             self._add_audit_event(
                 connection,
@@ -1686,6 +1701,64 @@ class Store:
             ticket_id=ticket_id,
             client_id=normalized_client_id,
             requester_id=safe_requester_id,
+            author_role="requester",
+            author_id=safe_requester_id,
+            body=safe_body,
+            created_at=created_at,
+        )
+
+    def create_support_end_user_message(
+        self,
+        ticket_id: str,
+        *,
+        client_id: str,
+        author_id: str,
+        body: str,
+    ) -> EndUserMessage | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_author_id = _redact_text(author_id.strip())
+        safe_body = _redact_text(body.strip())
+        if not normalized_client_id:
+            raise ValueError("support messages require a client scope")
+        if not safe_author_id:
+            raise ValueError("support messages require an author identity")
+        if not safe_body:
+            raise ValueError("support messages require a body")
+        ticket = self.get_ticket(ticket_id, normalized_client_id)
+        if ticket is None or not ticket.requester_id:
+            return None
+        created_at = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into end_user_messages
+                  (ticket_id, client_id, requester_id, author_role, author_id, body, created_at)
+                values (?, ?, ?, 'support', ?, ?, ?)
+                """,
+                (
+                    ticket_id,
+                    normalized_client_id,
+                    _redact_text(ticket.requester_id),
+                    safe_author_id,
+                    safe_body,
+                    created_at,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "end_user.support_message.created",
+                ticket_id,
+                "Support reply added to end-user conversation",
+                client_id=normalized_client_id,
+                approver_id=safe_author_id,
+            )
+        return EndUserMessage(
+            id=cursor.lastrowid,
+            ticket_id=ticket_id,
+            client_id=normalized_client_id,
+            requester_id=_redact_text(ticket.requester_id),
+            author_role="support",
+            author_id=safe_author_id,
             body=safe_body,
             created_at=created_at,
         )
@@ -1712,12 +1785,30 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                select id, ticket_id, client_id, requester_id, body, created_at
+                select id, ticket_id, client_id, requester_id, author_role, author_id, body, created_at
                 from end_user_messages
                 where ticket_id = ? and client_id = ? and requester_id = ?
                 order by id
                 """,
                 (ticket_id, normalized_client_id, safe_requester_id),
+            ).fetchall()
+        return [EndUserMessage(**dict(row)) for row in rows]
+
+    def list_end_user_messages_for_operator(
+        self, ticket_id: str, *, client_id: str
+    ) -> list[EndUserMessage]:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id or self.get_ticket(ticket_id, normalized_client_id) is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, ticket_id, client_id, requester_id, author_role, author_id, body, created_at
+                from end_user_messages
+                where ticket_id = ? and client_id = ?
+                order by id
+                """,
+                (ticket_id, normalized_client_id),
             ).fetchall()
         return [EndUserMessage(**dict(row)) for row in rows]
 
