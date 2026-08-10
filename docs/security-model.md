@@ -76,13 +76,18 @@ redacted before entering action output or audit data.
 The read-only `nsight-antivirus-scans` operation uses the documented
 `list_mav_scans` service only after rechecking the mapped device. Provider scan
 summaries and optional threat details are bounded and redacted before entering
-action output or audit data; no scan-start or antivirus mutation service is
-exposed.
+ action output or audit data; no unapproved antivirus mutation service is
+ exposed.
 The `nsight-antivirus-scan-start` operation is a separate high-risk action. It
 requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, rechecks
 mapped-device membership before calling the documented `mav_scan_start`
 service, and accepts no caller-supplied provider engine, credentials, or
 customer identifier.
+The separate `nsight-antivirus-scan-cancel` operation is also high-risk and
+requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true` before it
+rechecks the mapped device and calls the documented `mav_scan_cancel` service.
+Provider failures, including a request to cancel a scan that is not running,
+remain explicit failures and are not converted to success.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented

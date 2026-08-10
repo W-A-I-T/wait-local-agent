@@ -2704,6 +2704,9 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     antivirus_scan_start_detail = client.get(
         "/smart-actions/nsight-antivirus-scan-start", headers=_auth("tech-token")
     )
+    antivirus_scan_cancel_detail = client.get(
+        "/smart-actions/nsight-antivirus-scan-cancel", headers=_auth("tech-token")
+    )
     preview = client.post(
         "/smart-actions/nsight-run-task-now/invoke",
         headers=_auth("tech-token"),
@@ -2714,6 +2717,11 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     )
     scan_preview = client.post(
         "/smart-actions/nsight-antivirus-scan-start/invoke",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "payload": {"device_id": "server:49324"}},
+    )
+    cancel_preview = client.post(
+        "/smart-actions/nsight-antivirus-scan-cancel/invoke",
         headers=_auth("tech-token"),
         json={"client_id": "acme", "payload": {"device_id": "server:49324"}},
     )
@@ -2731,11 +2739,16 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     assert antivirus_scan_start_detail.status_code == 200
     assert antivirus_scan_start_detail.json()["requires_approval"] is True
     assert antivirus_scan_start_detail.json()["access_mode"] == "write"
+    assert antivirus_scan_cancel_detail.status_code == 200
+    assert antivirus_scan_cancel_detail.json()["requires_approval"] is True
+    assert antivirus_scan_cancel_detail.json()["access_mode"] == "write"
     assert preview.status_code == 200
     assert preview.json()["status"] == "pending_approval"
     assert preview.json()["output"]["check_id"] == 1304847
     assert scan_preview.status_code == 200
     assert scan_preview.json()["status"] == "pending_approval"
+    assert cancel_preview.status_code == 200
+    assert cancel_preview.json()["status"] == "pending_approval"
 
 
 def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:

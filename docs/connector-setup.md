@@ -285,6 +285,11 @@ It is reachable through the generic
 `POST /smart-actions/nsight-antivirus-scan-start/invoke` API paths, the
 `smart-actions invoke nsight-antivirus-scan-start` CLI command, and the Agents
 definition editor.
+The approval-gated `nsight-antivirus-scan-cancel` action uses the documented
+`mav_scan_cancel` service with the same mapped-device, approval, and write-flag
+controls. It is reachable through `GET`/`POST .../smart-actions/nsight-antivirus-scan-cancel`
+and the generic CLI and Agents paths; a provider response such as “scan is not
+running” remains an explicit failed action.
 
 Required settings:
 
@@ -314,6 +319,7 @@ and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
+and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),

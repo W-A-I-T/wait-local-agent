@@ -4252,6 +4252,94 @@ class NSightAntivirusScanStartAction:
         )
 
 
+class NSightAntivirusScanCancelAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-scan-cancel",
+        title="Cancel N-sight antivirus scan",
+        description=(
+            "Preview and, after technician approval, cancel one running "
+            "managed-antivirus scan on a mapped N-sight device."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={
+            "status": "string",
+            "device_id": "string",
+            "message": "string",
+            "approval_required": "boolean",
+            "approved": "boolean",
+        },
+        requires_approval=True,
+        estimated_minutes_saved=4,
+        risk_level="high",
+        required_role="technician",
+        access_mode="write",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"device_id", "_approval_completed"}:
+            return _failed("N-sight antivirus scan cancellation payload contains unsupported fields")
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        cancel_scan = getattr(provider, "cancel_antivirus_scan", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(cancel_scan):
+            return _failed("N-sight antivirus scan cancellation requires the N-sight RMM adapter")
+        clean_device_id = device_id.strip()
+        if not bool(payload.get("_approval_completed")):
+            return ActionResult(
+                status="success",
+                output={
+                    "status": "preview",
+                    "device_id": clean_device_id,
+                    "message": "Technician approval is required before cancelling the scan.",
+                    "approval_required": True,
+                    "approved": False,
+                },
+                evidence=[
+                    {
+                        "type": "rmm_antivirus_scan",
+                        "operation": "mav_scan_cancel",
+                        "device_id": clean_device_id,
+                    }
+                ],
+            )
+        if not context.settings.allow_write_actions:
+            return _failed(
+                "N-sight antivirus scan cancellation is blocked until "
+                "WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        try:
+            operation = cancel_scan(clean_device_id, client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight antivirus scan cancellation failed")
+        if not isinstance(operation, dict):
+            return _failed("N-sight returned malformed antivirus scan-cancellation data")
+        output = cast(dict[str, object], redact_value(operation))
+        output["approval_required"] = False
+        output["approved"] = True
+        accepted = output.get("status") == "accepted"
+        return ActionResult(
+            status="success" if accepted else "failed",
+            output=output,
+            evidence=[
+                {
+                    "type": "rmm_antivirus_scan",
+                    "operation": "mav_scan_cancel",
+                    "device_id": clean_device_id,
+                }
+            ],
+            error_detail="" if accepted else "N-sight antivirus scan cancellation failed",
+        )
+
+
 class NSightOutageLookupAction:
     manifest = SmartActionManifest(
         action_id="nsight-outage-lookup",
@@ -7560,6 +7648,7 @@ def _build_default_registry() -> SmartActionRegistry:
         RmmAlertLookupAction(),
         NSightAntivirusThreatsAction(),
         NSightAntivirusScansAction(),
+        NSightAntivirusScanCancelAction(),
         NSightAntivirusScanStartAction(),
         NSightOutageLookupAction(),
         NSightBackupSessionsAction(),

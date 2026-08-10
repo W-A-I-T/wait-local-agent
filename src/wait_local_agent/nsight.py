@@ -4,7 +4,7 @@ N-sight exposes a documented XML Data Extraction API. WAIT uses only the
 documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
     monitoring-details, backup-session, bounded patch, check-configuration,
-    antivirus-scan, antivirus-scan-start, and automated-task
+    antivirus-scan, antivirus-scan-start, antivirus-scan-cancel, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -349,6 +349,36 @@ class NSightRmmAdapter(RmmInventoryProvider):
             "device_id": device_id,
             "message": _bounded_text(
                 _text(root, "msg") or "N-sight accepted the antivirus scan request."
+            ),
+        }
+
+    def cancel_antivirus_scan(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Cancel one documented managed-antivirus scan for a mapped device."""
+
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                "N-sight antivirus scan cancellation is blocked until "
+                "WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "mav_scan_cancel",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return {
+            "status": "accepted",
+            "device_id": device_id,
+            "message": _bounded_text(
+                _text(root, "msg") or "N-sight accepted the antivirus scan cancellation."
             ),
         }
 
