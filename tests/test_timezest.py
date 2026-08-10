@@ -260,7 +260,7 @@ def test_timezest_create_action_rejects_invalid_inputs_and_unavailable_provider(
         "end_user_name": "Rodney Smith",
         "end_user_email": "rodney@example.test",
     }
-    invalid_cases = (
+    invalid_cases: tuple[tuple[dict[str, object], str], ...] = (
         ({"unsupported": True}, "unsupported fields"),
         ({"client_id": ""}, "client_id must be"),
         ({"client_id": "other"}, "outside the tenant scope"),
@@ -292,7 +292,7 @@ def test_timezest_create_action_rejects_invalid_inputs_and_unavailable_provider(
             raise AssertionError("provider write must not run when preflight fails")
 
     unavailable = SmartActionService(
-        Store(client.settings.data_path), client.settings, timezest_client=UnavailableProvider()
+        Store(client.settings.data_path), client.settings, timezest_client=cast(Any, UnavailableProvider())
     ).invoke("timezest-scheduling-request-create", base, "tech", client_id="acme")
     assert unavailable.status == "failed"
     assert unavailable.error_detail == "provider unavailable"
@@ -302,7 +302,7 @@ def test_timezest_create_action_rejects_invalid_inputs_and_unavailable_provider(
             raise RuntimeError("provider health failed")
 
     broken_health = SmartActionService(
-        Store(client.settings.data_path), client.settings, timezest_client=BrokenHealthProvider()
+        Store(client.settings.data_path), client.settings, timezest_client=cast(Any, BrokenHealthProvider())
     ).invoke("timezest-scheduling-request-create", base, "tech", client_id="acme")
     assert broken_health.status == "failed"
     assert broken_health.error_detail == "TimeZest write readiness check failed"
@@ -323,7 +323,7 @@ def test_timezest_create_action_rejects_invalid_inputs_and_unavailable_provider(
 
     for provider in (BrokenWriteProvider(), InvalidResponseProvider()):
         provider_service = SmartActionService(
-            Store(client.settings.data_path), client.settings, timezest_client=provider
+            Store(client.settings.data_path), client.settings, timezest_client=cast(Any, provider)
         )
         pending = provider_service.invoke(
             "timezest-scheduling-request-create", base, "requester", client_id="acme"
