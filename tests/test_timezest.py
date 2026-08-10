@@ -16,6 +16,7 @@ from wait_local_agent.store import Store
 from wait_local_agent.timezest import (
     TimeZestClient,
     TimeZestReadError,
+    TimeZestSchedulingCreateResponse,
     TimeZestSchedulingResponse,
     _bounded_limit,
     _endpoint_url,
@@ -246,6 +247,97 @@ def test_timezest_create_is_approval_gated_and_executes_once_after_approval(sett
     assert runs[-1].status == "success"
     assert len(calls) == 1
     assert "sreq_created" in runs[-1].output_json
+
+
+def test_timezest_create_action_rejects_invalid_inputs_and_unavailable_provider(settings) -> None:
+    client = _write_client(settings, lambda request: httpx.Response(201, json=CREATE_JSON))
+    service = SmartActionService(Store(client.settings.data_path), client.settings, timezest_client=client)
+    base: dict[str, object] = {
+        "client_id": "acme",
+        "appointment_type_id": "apty_remote",
+        "trigger_mode": "pod",
+        "resource_ids": ["agnt_1"],
+        "end_user_name": "Rodney Smith",
+        "end_user_email": "rodney@example.test",
+    }
+    invalid_cases = (
+        ({"unsupported": True}, "unsupported fields"),
+        ({"client_id": ""}, "client_id must be"),
+        ({"client_id": "other"}, "outside the tenant scope"),
+        ({"appointment_type_id": ""}, "appointment_type_id"),
+        ({"trigger_mode": "invalid"}, "trigger_mode"),
+        ({"resource_ids": []}, "resource_ids must be"),
+        ({"resource_ids": ["agnt_1", "agnt_1"]}, "duplicates"),
+        ({"end_user_name": ""}, "end_user_name"),
+        ({"end_user_email": "not-an-email"}, "end_user_email"),
+        ({"duration_mins": {}}, "invalid type"),
+        ({"duration_mins": True}, "duration_mins"),
+        ({"end_user_company": ""}, "non-empty string"),
+    )
+    for overrides, message in invalid_cases:
+        result = service.invoke(
+            "timezest-scheduling-request-create",
+            {**base, **overrides},
+            "tech",
+            client_id="acme",
+        )
+        assert result.status == "failed"
+        assert message in result.error_detail
+
+    class UnavailableProvider:
+        def write_health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("failed", "provider unavailable")
+
+        def create_scheduling_request(self, **kwargs: object) -> TimeZestSchedulingCreateResponse:
+            raise AssertionError("provider write must not run when preflight fails")
+
+    unavailable = SmartActionService(
+        Store(client.settings.data_path), client.settings, timezest_client=UnavailableProvider()
+    ).invoke("timezest-scheduling-request-create", base, "tech", client_id="acme")
+    assert unavailable.status == "failed"
+    assert unavailable.error_detail == "provider unavailable"
+
+    class BrokenHealthProvider:
+        def write_health(self) -> ConnectorReadResult:
+            raise RuntimeError("provider health failed")
+
+    broken_health = SmartActionService(
+        Store(client.settings.data_path), client.settings, timezest_client=BrokenHealthProvider()
+    ).invoke("timezest-scheduling-request-create", base, "tech", client_id="acme")
+    assert broken_health.status == "failed"
+    assert broken_health.error_detail == "TimeZest write readiness check failed"
+
+    class BrokenWriteProvider:
+        def write_health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "ready")
+
+        def create_scheduling_request(self, **kwargs: object) -> TimeZestSchedulingCreateResponse:
+            raise RuntimeError("provider write failed")
+
+    class InvalidResponseProvider:
+        def write_health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "ready")
+
+        def create_scheduling_request(self, **kwargs: object) -> TimeZestSchedulingCreateResponse:
+            return TimeZestSchedulingCreateResponse(ConnectorReadResult("ready", "ready"), {})
+
+    for provider in (BrokenWriteProvider(), InvalidResponseProvider()):
+        provider_service = SmartActionService(
+            Store(client.settings.data_path), client.settings, timezest_client=provider
+        )
+        pending = provider_service.invoke(
+            "timezest-scheduling-request-create", base, "requester", client_id="acme"
+        )
+        assert pending.approval_id is not None
+        completed = provider_service.update_approval(
+            pending.approval_id,
+            "approved",
+            approver="approver",
+            approver_role=Role.TECHNICIAN,
+        )
+        assert completed.status == "approved"
+        run = provider_service.store.list_smart_action_runs(client_id="acme")[-1]
+        assert run.status == "failed"
 
 
 @pytest.mark.parametrize(
