@@ -51,8 +51,10 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
-  write paths, and Kaseya VSA X exposes organization-scoped device and
-  notification reads. This is alongside tenant-scoped HaloPSA ticket and Hudu
+  write paths, Kaseya VSA X exposes organization-scoped device and
+  notification reads, and ScreenConnect exposes tenant-scoped session/device
+  reads through its documented RESTful API Manager extension. This is
+  alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
   search), Confluence, and SharePoint (including bounded Graph drive search), and
   ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
