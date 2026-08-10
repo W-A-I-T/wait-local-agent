@@ -74,6 +74,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
 | N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path | Broader task management and remediation | Incremental |
 | Kaseya | ✓ | ✓ bounded VSA X device and device-notification reads | Script execution and broader remediation | Incremental |
+| ScreenConnect | Public RESTful API Manager session reads | ✓ bounded tenant-scoped session/device lookup | Alert lookup, script catalog, command execution, and polling | Incremental |
 | IT Glue | ✓ | ✓ read-only organization/document retrieval | Broader search and write operations | Incremental |
 | M365 / Entra | ✓ | ✓ bounded reads plus approved user, group, license, session, Intune, mailbox-settings, and message mutations | Broader resource and policy coverage | Incremental |
 | Slack / Teams | ✓ | ✓ preview, configured webhook delivery, and local delivery receipts | Native provider features and provider-issued receipt IDs | Incremental |

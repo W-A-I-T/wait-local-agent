@@ -56,6 +56,14 @@ persists the returned execution ID with its tenant/script/device scope before
 status polling. Credentials, script source, and provider IDs are never
 request-supplied.
 
+ScreenConnect calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
+mapped session ID must be an explicit UUID, and requests use only the
+documented RESTful API Manager session-detail operation. The extension ID,
+Origin, base URL, and authentication secret are validated locally; credentials
+and session scope are never accepted in smart-action payloads. Alerts, script
+catalogs, command execution, and command polling remain unavailable.
+
 ## API authentication
 
 Current implementation:
