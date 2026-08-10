@@ -134,7 +134,7 @@ Includes:
 - Autotask PSA connector (read + approval-gated write)
 - NinjaOne RMM connector (read-only device inventory, alerts)
 - Datto RMM connector with tenant-scoped inventory and approval-gated quick jobs
-- N-able N-sight connector with tenant-scoped device, failing-check, and patch inventory plus approval-gated patch approval/reprocessing and allowlisted policy operations
+- N-able N-sight connector with tenant-scoped device, failing-check and managed-antivirus threat reads, patch inventory, plus approval-gated patch approval/reprocessing and allowlisted policy operations
 - TimeZest connector with tenant-mapped scheduling-request inventory and an
   approval-gated documented create action
 - ScalePad connector with tenant-mapped, read-only Core client inventory and
@@ -246,7 +246,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | Notion | Current | ✓ mapped-page title search, markdown, and data-source rows | — | Public core |
 | SharePoint | Phase 4 | ✓ docs | — | MSP Pack |
 | N-able N-central | Phase 4 | ✓ bounded metadata | ✓ approval-gated direct task/status | Public core |
-| N-able N-sight | Phase 4 | ✓ site/server/workstation, documented failing-check, mapped-device patch inventory, and approval-gated patch approval/reprocessing plus allowlisted policy operations | Script parity and broader writes remain unavailable | Public core |
+| N-able N-sight | Phase 4 | ✓ site/server/workstation, documented failing-check and managed-antivirus threat reads, mapped-device patch inventory, and approval-gated patch approval/reprocessing plus allowlisted policy operations | Script parity, antivirus writes/scans, and broader writes remain unavailable | Public core |
 | TimeZest | Phase 5 | ✓ tenant-mapped reads plus approval-gated documented create | Reschedule/cancel and broader marketplace parity | Public core |
 | ScalePad | Phase 5 | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Public core |
 | Kaseya VSA | Phase 5 | ✓ device/notification inventory plus approval-gated script catalog, execution, and polling | Broader remediation and webhook parity | Public core |

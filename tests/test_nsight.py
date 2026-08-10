@@ -72,6 +72,14 @@ PATCHES_XML = """
 """
 PATCH_APPROVAL_XML = '<result status="OK"><msg>approved</msg></result>'
 PATCH_REPROCESS_XML = '<result status="OK"><msg>Reprocessing patches: 681806</msg></result>'
+MAV_THREATS_XML = """
+<result status="OK"><threat>
+  <name>Example.Malware</name><category>Trojan</category>
+  <last_event>2026-08-10T10:00:00Z</last_event><last_status>Quarantined</last_status>
+  <last_scan_type>Quick</last_scan_type><last_trace_count>2</last_trace_count>
+  <engine>Bitdefender</engine>
+</threat><threat><name></name><category>ignored</category></threat></result>
+"""
 EDGE_FAILING_CHECKS_XML = """
 <result status="OK"><items><client><clientid>123</clientid>
   <site><siteid>10</siteid><name>HQ</name>
@@ -176,6 +184,10 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
             assert request.url.params.get("deviceid") == "49324"
             assert request.url.params.get("patchids") == "681806"
             return httpx.Response(200, text=PATCH_REPROCESS_XML)
+        if service == "list_mav_threats":
+            assert request.url.params.get("deviceid") == "49324"
+            assert request.url.params.get("v") == "2"
+            return httpx.Response(200, text=MAV_THREATS_XML)
         if service in {"patch_do_nothing", "patch_ignore", "patch_inherit", "patch_retry"}:
             assert request.url.params.get("deviceid") == "49324"
             assert request.url.params.get("patchids") == "681806"
@@ -254,6 +266,36 @@ def test_nsight_patch_inventory_rechecks_device_and_uses_documented_service(sett
 
     with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
         adapter.apply_patch_policy("server:49324", ["681806"], "ignore", client_id="acme")
+
+
+def test_nsight_antivirus_threats_recheck_device_scope(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_mav_threats":
+            return httpx.Response(200, text=MAV_THREATS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    threats = adapter.list_antivirus_threats("server:49324", client_id="acme")
+    assert threats == [
+        {
+            "name": "Example.Malware",
+            "category": "Trojan",
+            "last_event": "2026-08-10T10:00:00Z",
+            "last_status": "Quarantined",
+            "last_scan_type": "Quick",
+            "last_trace_count": 2,
+            "engine": "Bitdefender",
+        }
+    ]
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_antivirus_threats("server:999", client_id="acme")
 
 
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])

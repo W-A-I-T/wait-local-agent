@@ -36,6 +36,7 @@ MAX_DEVICES = 100
 MAX_ALERTS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
+MAX_ANTIVIRUS_THREATS = 100
 MAX_TEXT_LENGTH = 500
 PATCH_POLICY_SERVICES = {
     "do_nothing": "patch_do_nothing",
@@ -137,6 +138,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _patch_records(root)[:MAX_PATCHES]
+
+    def list_antivirus_threats(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read documented managed-antivirus threats for one mapped device."""
+
+        _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_mav_threats",
+            {"deviceid": str(_device_numeric_id(device_id)), "v": "2"},
+            client_id=client_id,
+        )
+        return _antivirus_threat_records(root)[:MAX_ANTIVIRUS_THREATS]
 
     def approve_patches(
         self,
@@ -487,6 +507,27 @@ def _patch_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return patches
+
+
+def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
+    threats: list[dict[str, object]] = []
+    for threat in root.iter("threat"):
+        name = _bounded_text(_text(threat, "name"))
+        category = _bounded_text(_text(threat, "category"))
+        if not name or not category:
+            continue
+        threats.append(
+            {
+                "name": name,
+                "category": category,
+                "last_event": _bounded_text(_text(threat, "last_event")),
+                "last_status": _bounded_text(_text(threat, "last_status")),
+                "last_scan_type": _bounded_text(_text(threat, "last_scan_type")),
+                "last_trace_count": _optional_integer(_text(threat, "last_trace_count")),
+                "engine": _bounded_text(_text(threat, "engine")),
+            }
+        )
+    return threats
 
 
 def _device_numeric_id(value: str) -> int:
