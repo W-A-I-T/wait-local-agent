@@ -25,7 +25,7 @@ a {
 }
 
 .end-user-shell {
-  background: #f3f5f2;
+  background: var(--end-user-surface, #f3f5f2);
   min-height: 100vh;
   padding: 28px clamp(18px, 5vw, 72px) 64px;
 }
@@ -47,6 +47,17 @@ a {
 .end-user-brand {
   color: #1c2b31;
   gap: 11px;
+}
+
+.end-user-brand > svg {
+  color: var(--end-user-accent, #1f6f55);
+}
+
+.end-user-logo {
+  border-radius: 10px;
+  height: 42px;
+  object-fit: contain;
+  width: 42px;
 }
 
 .end-user-brand strong,
@@ -92,7 +103,7 @@ a {
 }
 
 .eyebrow {
-  color: #1f6f55;
+  color: var(--end-user-accent, #1f6f55);
   font-size: 0.76rem;
   font-weight: 900;
   letter-spacing: 0.12em;

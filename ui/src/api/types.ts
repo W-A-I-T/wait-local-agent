@@ -39,6 +39,9 @@ export type EndUserTicket = {
 export type EndUserBranding = {
   brand_name: string;
   brand_tagline: string;
+  brand_logo_data_uri: string;
+  brand_accent_color: string;
+  brand_surface_color: string;
 };
 
 export type EndUserMessage = {

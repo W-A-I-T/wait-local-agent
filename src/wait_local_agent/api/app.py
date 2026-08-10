@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -365,6 +366,9 @@ class EndUserTicketCreateRequest(BaseModel):
 class EndUserBrandingResponse(BaseModel):
     brand_name: str
     brand_tagline: str
+    brand_logo_data_uri: str
+    brand_accent_color: str
+    brand_surface_color: str
 
 
 class EndUserMessageRequest(BaseModel):
@@ -1680,6 +1684,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             brand_name=_end_user_branding_text(active_settings.end_user_brand_name, "WAIT Support"),
             brand_tagline=_end_user_branding_text(
                 active_settings.end_user_brand_tagline, "Private help desk"
+            ),
+            brand_logo_data_uri=_end_user_brand_logo_data_uri(
+                active_settings.end_user_brand_logo_data_uri
+            ),
+            brand_accent_color=_end_user_brand_color(
+                active_settings.end_user_brand_accent_color, "#1f6f55"
+            ),
+            brand_surface_color=_end_user_brand_color(
+                active_settings.end_user_brand_surface_color, "#f3f5f2"
             ),
         )
 
@@ -4575,6 +4588,24 @@ def _end_user_ticket_view(ticket) -> dict[str, object]:
 def _end_user_branding_text(value: str, fallback: str) -> str:
     cleaned = redact_text(value.strip())[:120].strip()
     return cleaned or fallback
+
+
+_END_USER_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+_END_USER_LOGO_PATTERN = re.compile(
+    r"^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$"
+)
+
+
+def _end_user_brand_color(value: str, fallback: str) -> str:
+    cleaned = value.strip()
+    return cleaned if _END_USER_COLOR_PATTERN.fullmatch(cleaned) else fallback
+
+
+def _end_user_brand_logo_data_uri(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) > 1_000_000 or not _END_USER_LOGO_PATTERN.fullmatch(cleaned):
+        return ""
+    return cleaned
 
 
 def _end_user_message_view(message) -> dict[str, object]:

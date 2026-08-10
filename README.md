@@ -301,8 +301,11 @@ Behavior:
   isolated follow-up messages, and technician escalation without exposing the
   operator dashboard.
 - The end-user surface can use local, tenant-scoped display branding through
-  `WAIT_END_USER_BRAND_NAME` and `WAIT_END_USER_BRAND_TAGLINE`. The authenticated
-  `/end-user/config` response contains only those display strings; it never
+  `WAIT_END_USER_BRAND_NAME`, `WAIT_END_USER_BRAND_TAGLINE`, and optional local
+  `WAIT_END_USER_BRAND_LOGO_DATA_URI`, `WAIT_END_USER_BRAND_ACCENT_COLOR`, and
+  `WAIT_END_USER_BRAND_SURFACE_COLOR`. Logos must be local base64 PNG/JPEG/WebP/GIF
+  data URIs; remote image URLs are rejected. The authenticated
+  `/end-user/config` response contains only those validated display values; it never
   returns client identity, credentials, or operator settings.
 - When `WAIT_DEMO_MODE=true`, requests resolve as local admin for demo use.
 
