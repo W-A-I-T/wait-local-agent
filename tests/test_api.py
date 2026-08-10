@@ -1381,7 +1381,7 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
         headers=_auth("admin-token"),
         json={"status": "approved", "comment": "ready"},
     )
-    approved_runs = client.get("/workflow-runs")
+    approved_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
     second_run = client.post(
         "/workflows/templates/documentation-assisted-response/runs",
         headers=_auth("tech-token"),
@@ -1392,7 +1392,7 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
         headers=_auth("admin-token"),
         json={"status": "rejected", "comment": "needs changes"},
     )
-    rejected_runs = client.get("/workflow-runs")
+    rejected_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
 
     assert approved.status_code == 200
     approved_view = next(item for item in approved_runs.json() if item["id"] == run.json()["id"])
