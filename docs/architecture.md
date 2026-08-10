@@ -171,6 +171,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   The N-able N-sight adapter maps WAIT clients to explicit N-sight client IDs,
   reads documented site/server/workstation XML inventory, derives bounded health
   alerts, and exposes no inferred script or write path.
+  The TimeZest adapter maps WAIT clients to one explicit Autotask or ConnectWise
+  PSA company ID, uses the documented scheduling-request list filter, rechecks
+  returned associated entities, and exposes only bounded read status and
+  appointment metadata. Scheduling mutations are not inferred.
   The Kaseya VSA X adapter uses the documented Basic-auth v3 API, an explicit
   client-to-organization map, and read-only device plus device-notification
   paths; script execution and remediation remain unavailable in this adapter.

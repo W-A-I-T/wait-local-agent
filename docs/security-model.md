@@ -63,6 +63,14 @@ limits reads to the mapped sites and bounded device count. The API key remains
 in settings/vault and is not copied into action payloads, errors, or audit
 records. No script or write operation is inferred from the read-only XML API.
 
+TimeZest calls use the same outbound HTTP gate and require a client ID that
+resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
+Autotask or ConnectWise PSA company ID. The adapter builds the fixed company
+filter locally, rechecks the returned associated company, bounds the response,
+and keeps the bearer key out of action payloads, errors, and audit records.
+Only scheduling-request reads are exposed; create, reschedule, and cancel
+operations are not inferred.
+
 ScreenConnect calls use the same outbound HTTP gate and require a client ID
 that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
 mapped session ID must be an explicit UUID, and requests use only the

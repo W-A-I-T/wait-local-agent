@@ -136,6 +136,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "servicenow-incident-update-resolution",
         "sharepoint-document-content",
         "sharepoint-documentation-search",
+        "timezest-scheduling-request-lookup",
         "dispatch-suggestion",
         "collector-preview",
     }
