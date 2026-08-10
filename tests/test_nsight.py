@@ -770,6 +770,14 @@ def test_nsight_antivirus_quarantine_action_rejects_invalid_and_unavailable_inpu
     )
     assert run(malformed, {"device_id": "server:1"}).status == "failed"
 
+    failing = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_quarantine=lambda device_id, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider unavailable")
+        ),
+    )
+    assert run(failing, {"device_id": "server:1"}).status == "failed"
+
 
 def test_nsight_antivirus_quarantine_mutations_recheck_ids_and_use_documented_services(
     settings,
@@ -882,6 +890,61 @@ def test_nsight_antivirus_quarantine_mutation_actions_preview_and_gate_writes(se
             ActionContext(store=store, settings=settings, actor="technician", rmm_provider=cast(Any, provider)),
             {"device_id": "server:1", "guids": []},
         ).status == "failed"
+
+
+def test_nsight_antivirus_quarantine_mutation_actions_reject_invalid_and_provider_failures(
+    settings,
+) -> None:
+    store = Store(settings.data_path)
+    action = NSightAntivirusQuarantineMutationAction(
+        action_id="test-release-failures",
+        title="release",
+        operation="release",
+        provider_method="release_antivirus_quarantine",
+        description="release",
+    )
+
+    class FailingProvider:
+        adapter_id = "n-sight"
+
+        def release_antivirus_quarantine(self, device_id, guids, *, client_id):
+            raise RuntimeError("provider unavailable")
+
+    class MalformedProvider:
+        adapter_id = "n-sight"
+
+        def release_antivirus_quarantine(self, device_id, guids, *, client_id):
+            return []
+
+    class RejectedProvider:
+        adapter_id = "n-sight"
+
+        def release_antivirus_quarantine(self, device_id, guids, *, client_id):
+            return {"status": "rejected", "message": "provider denied"}
+
+    def run(provider, payload):
+        prepared_payload = dict(payload)
+        prepared_payload.setdefault("_approval_completed", True)
+        return action.run(
+            ActionContext(
+                store=store,
+                settings=replace(settings, allow_write_actions=True),
+                actor="technician",
+                rmm_provider=cast(Any, provider),
+            ),
+            prepared_payload,
+        )
+
+    assert run(FailingProvider(), {"device_id": "server:1", "guids": ["q-1"]}).status == "failed"
+    assert run(MalformedProvider(), {"device_id": "server:1", "guids": ["q-1"]}).status == "failed"
+    rejected = run(RejectedProvider(), {"device_id": "server:1", "guids": [" q-1", "q-1"]})
+    assert rejected.status == "failed"
+    assert rejected.error_detail == "N-sight antivirus quarantine release failed"
+    assert rejected.output["approved"] is True
+    assert run(SimpleNamespace(adapter_id="other"), {"device_id": "server:1", "guids": ["q-1"]}).status == "failed"
+    assert run(FailingProvider(), {"device_id": "", "guids": ["q-1"]}).status == "failed"
+    assert run(FailingProvider(), {"device_id": "server:1", "guids": [""]}).status == "failed"
+    assert run(FailingProvider(), {"device_id": "server:1", "guids": ["q-1"], "unexpected": True}).status == "failed"
 
 
 def test_nsight_antivirus_scans_recheck_device_and_expose_documented_details(settings) -> None:
