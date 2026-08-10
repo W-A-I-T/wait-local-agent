@@ -27,6 +27,7 @@ from wait_local_agent.scalepad import (
     _endpoint_url,
     _normalize_client,
     _normalize_goal,
+    _normalize_risk_summary,
     _optional_cursor,
     _optional_nonnegative_int,
     _optional_provider_id,
@@ -194,6 +195,19 @@ def test_scalepad_goals_require_mapping_and_reject_invalid_filters(settings) -> 
     assert outside.result.status == "failed"
     assert "tenant scope" in outside.result.message
 
+    for mapping, expected in [
+        ("not-json", "malformed"),
+        ("[]", "must be an object"),
+        ('{"acme": 1}', "non-empty strings"),
+    ]:
+        invalid_mapping = _client(
+            settings,
+            lambda request: httpx.Response(200, json=GOALS_JSON),
+            scalepad_lifecycle_client_map_json=mapping,
+        ).get_goals(client_id="acme")
+        assert invalid_mapping.result.status == "failed"
+        assert expected in invalid_mapping.result.message
+
     malformed = _client(
         settings,
         lambda request: httpx.Response(200, json={"data": {}}),
@@ -201,6 +215,14 @@ def test_scalepad_goals_require_mapping_and_reject_invalid_filters(settings) -> 
     ).get_goals(client_id="acme")
     assert malformed.result.status == "failed"
     assert "malformed goal data" in malformed.result.message
+
+    invalid_object = _client(
+        settings,
+        lambda request: httpx.Response(200, json=[]),
+        scalepad_lifecycle_client_map_json=json.dumps({"acme": "sp-lifecycle-client-1"}),
+    ).get_goals(client_id="acme")
+    assert invalid_object.result.status == "failed"
+    assert "malformed response object" in invalid_object.result.message
 
     blocked = _client(
         settings,
@@ -266,6 +288,8 @@ def test_scalepad_risk_summary_requires_separate_mapping_and_handles_malformed_d
     assert _optional_cursor("invalid cursor") == ""
     assert _optional_cursor("x" * 201) == ""
     assert isinstance(_bound_risk_value(object(), depth=0), str)
+    assert _bound_risk_value(["item"], depth=0) == ["item"]
+    assert _bound_risk_value({"\n": "ignored", "ok": "kept"}, depth=0) == {"ok": "kept"}
     assert _bound_risk_value("value", depth=5) == "[truncated]"
 
 
@@ -545,6 +569,16 @@ def test_scalepad_blocks_missing_scope_and_http(settings) -> None:
 
     missing = ScalePadClient(replace(settings, allow_http_probing=True))
     assert missing.health().status == "not_configured"
+    no_maps = replace(
+        settings,
+        allow_http_probing=True,
+        scalepad_base_url="https://api.scalepad.com",
+        scalepad_api_key="scalepad-secret-token",
+        scalepad_client_map_json="",
+        scalepad_risk_tenant_map_json="",
+        scalepad_lifecycle_client_map_json="",
+    )
+    assert ScalePadClient(no_maps).health().status == "not_configured"
     with pytest.raises(ScalePadReadError, match="blocked"):
         blocked._get("core/v1/clients")
     with pytest.raises(ScalePadReadError, match="incomplete"):
@@ -646,6 +680,10 @@ def test_scalepad_unsafe_urls_and_normalizers(settings) -> None:
         _endpoint_url("https://api.scalepad.com\n", "core/v1/clients")
     assert _normalize_client(None, "sp-client-1") is None
     assert _normalize_client({"name": "missing id"}, "sp-client-1") is None
+    assert _normalize_goal(None, "sp-client-1") is None
+    assert _normalize_goal({"title": "missing client"}, "sp-client-1") is None
+    assert _normalize_risk_summary({"client": "missing mapping"}, "sp-tenant-1") is None
+    assert _normalize_goal({"client": "missing mapping"}, "sp-client-1") is None
     assert _optional_nonnegative_int(None) is None
     assert _optional_nonnegative_int("") is None
     assert _optional_nonnegative_int("not-an-int") is None
