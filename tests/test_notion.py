@@ -251,6 +251,22 @@ def test_notion_data_source_metadata_rejects_scope_and_malformed_payload(setting
     assert malformed.result.status == "failed"
     assert "malformed" in malformed.result.message
 
+    blocked = NotionClient(
+        _configured_data_source(settings, allow_http_probing=False)
+    ).get_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert blocked.result.status == "blocked"
+
+    missing = NotionClient(
+        replace(settings, allow_http_probing=True, notion_api_token="")
+    ).get_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert missing.result.status == "not_configured"
+
+    provider_failure = NotionClient(
+        _configured_data_source(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(401, json={})),
+    ).get_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert provider_failure.result.status == "failed"
+
 
 def test_notion_health_uses_a_mapped_page_and_empty_search_query(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -344,6 +360,14 @@ def test_notion_helpers_fail_closed() -> None:
         PAGE_ID, {"Name": "title"}
     )
     assert _normalize_data_source({"id": PAGE_ID, "properties": {"Name": {}}}) is None
+    assert _normalize_data_source(None) is None
+    assert _normalize_data_source({"id": "bad", "properties": {}}) is None
+    assert _normalize_data_source({"id": PAGE_ID, "properties": []}) is None
+    assert _normalize_data_source({"id": PAGE_ID, "properties": {"": {"type": "title"}}}) is None
+    assert _normalize_data_source({"id": PAGE_ID, "properties": {"Name": {"type": ""}}}) is None
+    assert _normalize_data_source(
+        {"id": PAGE_ID, "properties": {f"Name-{index}": {"type": "text"} for index in range(101)}}
+    ) is None
     assert _markdown_value({"markdown": "x" * (MAX_PAGE_MARKDOWN_LENGTH + 1)}) == "x" * MAX_PAGE_MARKDOWN_LENGTH
     assert _markdown_value(None) is None
     assert _markdown_value({"markdown": 1}) is None

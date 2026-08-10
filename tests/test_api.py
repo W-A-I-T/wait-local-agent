@@ -3532,6 +3532,9 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
     client = TestClient(create_app(settings))
 
     missing_scope = client.get("/connectors/notion/pages", params={"query": "MFA"})
+    missing_data_source_scope = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000"
+    )
     health = client.get("/connectors/notion/health")
     pages = client.get(
         "/connectors/notion/pages",
@@ -3553,6 +3556,7 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
     audit = client.get("/audit")
 
     assert missing_scope.status_code == 403
+    assert missing_data_source_scope.status_code == 403
     assert health.status_code == 200
     assert pages.json()["items"][0]["title"] == "MFA"
     assert page.json()["items"][0]["markdown"] == "token=[redacted]"
