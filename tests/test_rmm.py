@@ -139,6 +139,11 @@ class _MalformedBackupHistoryNSightProvider(_NSightProvider):
         return {"checks": ["Backup Check - Example"], "days": "invalid"}
 
 
+class _MalformedChecksBackupHistoryNSightProvider(_NSightProvider):
+    def list_backup_history(self, device_id, *, client_id=None):
+        return {"checks": ["Backup Check - Example", 123], "days": []}
+
+
 def _context(settings, provider=None):
     return ActionContext(
         store=Store(settings.data_path),
@@ -250,6 +255,11 @@ def test_nsight_backup_history_lookup_is_read_only_and_bounded(settings) -> None
         _context(settings, _MalformedBackupHistoryNSightProvider()), {"device_id": "server:49324"}
     )
     assert malformed.error_detail == "N-sight returned malformed backup history data"
+    malformed_checks = NSightBackupHistoryAction().run(
+        _context(settings, _MalformedChecksBackupHistoryNSightProvider()),
+        {"device_id": "server:49324"},
+    )
+    assert malformed_checks.error_detail == "N-sight returned malformed backup history data"
 
 
 def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:

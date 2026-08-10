@@ -450,6 +450,20 @@ def test_nsight_backup_history_rechecks_device_scope(settings) -> None:
         adapter.list_backup_history("server:999", client_id="acme")
 
 
+def test_backup_history_parser_enforces_documented_bounds() -> None:
+    checks = "".join(f"<name>Check {index}</name>" for index in range(30))
+    days = "".join(
+        f"<day><date>2026-08-{(index % 28) + 1:02d}</date><status>PASS</status></day>"
+        for index in range(65)
+    )
+    root = ElementTree.fromstring(f"<result><checks>{checks}</checks><days>{days}</days></result>")
+
+    parsed = _backup_history_records(root)
+
+    assert len(cast(list[str], parsed["checks"])) == 25
+    assert len(cast(list[dict[str, str]], parsed["days"])) == 60
+
+
 @pytest.mark.parametrize("patch_ids", [[], ["bad"], ["0"], ["1"] * 21])
 def test_nsight_patch_approval_validates_patch_ids(settings, patch_ids) -> None:
     adapter = _adapter(settings, lambda request: httpx.Response(200, text=PATCHES_XML), allow_write_actions=True)
