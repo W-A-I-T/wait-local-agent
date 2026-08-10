@@ -311,19 +311,22 @@ Required settings:
 WAIT_SCALEPAD_BASE_URL=https://api.scalepad.com
 WAIT_SCALEPAD_API_KEY=
 WAIT_SCALEPAD_CLIENT_MAP_JSON={"acme":"scalepad-client-id"}
+WAIT_SCALEPAD_RISK_TENANT_MAP_JSON={"acme":"scalepad-tenant-id"}
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 `WAIT_SCALEPAD_CLIENT_MAP_JSON` maps each WAIT client to exactly one ScalePad
-client ID. WAIT sends the documented `x-api-key` header, builds the exact
-`filter[id]=eq:<mapped-id>` query locally, caps the request to one record, and
-rechecks the returned ID before exposing bounded name, lifecycle, contact, and
-hardware-count metadata. API keys stay in settings/vault and never enter
-payloads, errors, or audit records. ScalePad writes, unscoped partner-wide
-reads, risk summaries, and other product APIs remain unavailable. Regional
-ScalePad hosts may be configured explicitly when the tenant's data residency
-requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
+Core client ID. `WAIT_SCALEPAD_RISK_TENANT_MAP_JSON` is a separate explicit map
+for the ControlMap `client.tenant_id` value; do not copy the Core ID into it
+unless the operator has independently verified that mapping. WAIT sends the
+documented `x-api-key` header, fixes both provider filters locally, caps each
+page, rechecks the returned provider scope, and exposes bounded redacted
+records. API keys stay in settings/vault and never enter payloads, errors, or
+audit records. ScalePad writes and other product APIs remain unavailable.
+Regional ScalePad hosts may be configured explicitly when the tenant's data
+residency requires them. See the [ScalePad getting-started guide](https://developer.scalepad.com/docs/getting-started),
 [List Clients reference](https://developer.scalepad.com/reference/list-clients-1),
+[List Clients Risk Summaries reference](https://developer.scalepad.com/reference/03_listclientsrisksummary-1),
 and [regional endpoint guide](https://developer.scalepad.com/docs/regional-endpoints-and-compliance).
 
 ## Kaseya VSA X

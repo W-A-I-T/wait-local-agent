@@ -1,9 +1,12 @@
-"""Bounded, read-only ScalePad Core client adapter.
+"""Bounded, read-only ScalePad Core and ControlMap adapter.
 
-ScalePad's documented Core API exposes client inventory with an API key and
-cursor pagination. WAIT uses a fixed, local WAIT-client-to-ScalePad-client map
-and an exact provider filter; returned records are checked against that map
-before they leave the connector boundary. No ScalePad writes are exposed here.
+ScalePad's documented Core API exposes client inventory and its ControlMap API
+exposes partner-wide risk summaries with an API key and cursor pagination. WAIT
+uses fixed, local mappings for each provider identifier and an exact provider
+filter; returned records are checked against those mappings before they leave
+the connector boundary. The Core client ID and ControlMap tenant ID are kept as
+separate mappings because the public documentation does not establish that
+they are interchangeable. No ScalePad writes are exposed here.
 """
 
 from __future__ import annotations
@@ -18,13 +21,19 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.reports.renderers import redact_value
 
 DEFAULT_PAGE_SIZE = 1
 MAX_PAGE_SIZE = 1
+RISK_SUMMARY_PAGE_SIZE = 20
+MAX_RISK_SUMMARY_ROWS = 20
 MAX_CLIENT_ID_LENGTH = 120
 MAX_PROVIDER_ID_LENGTH = 200
 MAX_TEXT_LENGTH = 500
 MAX_ENDPOINT_LENGTH = 240
+MAX_RISK_SUMMARY_DEPTH = 4
+MAX_RISK_SUMMARY_FIELDS = 64
+MAX_RISK_SUMMARY_LIST_ITEMS = 20
 
 
 @dataclass(frozen=True)
@@ -45,6 +54,14 @@ class ScalePadClientResponse:
     next_cursor: str = ""
 
 
+@dataclass(frozen=True)
+class ScalePadRiskSummaryResponse:
+    result: ConnectorReadResult
+    items: list[dict[str, object]]
+    next_cursor: str = ""
+    total_count: int | None = None
+
+
 class ScalePadReadError(Exception):
     """Safe, operator-facing ScalePad adapter error."""
 
@@ -58,6 +75,9 @@ class ScalePadReadProvider(Protocol):
         ...
 
     def get_client(self, *, client_id: str) -> ScalePadClientResponse:
+        ...
+
+    def get_risk_summary(self, *, client_id: str) -> ScalePadRiskSummaryResponse:
         ...
 
 
@@ -123,6 +143,49 @@ class ScalePadClient:
             next_cursor,
         )
 
+    def get_risk_summary(self, *, client_id: str) -> ScalePadRiskSummaryResponse:
+        """Read one explicitly mapped client's documented risk-summary page."""
+
+        blocked = self._blocked_risk_response()
+        if blocked is not None:
+            return blocked
+        missing = self._not_configured_risk_response()
+        if missing is not None:
+            return missing
+        try:
+            tenant_id = self._risk_tenant_mapping(client_id)
+            payload = self._get(
+                "controlmap/v1/clients/risks-summary",
+                params={
+                    "filter[client.tenant_id]": f"eq:{tenant_id}",
+                    "page_size": str(RISK_SUMMARY_PAGE_SIZE),
+                },
+            )
+        except ScalePadReadError as exc:
+            return ScalePadRiskSummaryResponse(ConnectorReadResult("failed", exc.message), [])
+        if not isinstance(payload, Mapping):
+            return ScalePadRiskSummaryResponse(
+                ConnectorReadResult("failed", "ScalePad returned a malformed response object."),
+                [],
+            )
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            return ScalePadRiskSummaryResponse(
+                ConnectorReadResult("failed", "ScalePad returned malformed risk-summary data."),
+                [],
+            )
+        items: list[dict[str, object]] = []
+        for row in rows[:MAX_RISK_SUMMARY_ROWS]:
+            normalized = _normalize_risk_summary(row, tenant_id)
+            if normalized is not None:
+                items.append(normalized)
+        return ScalePadRiskSummaryResponse(
+            ConnectorReadResult("ready", "ScalePad risk-summary read succeeded.", len(items)),
+            items,
+            _optional_cursor(payload.get("next_cursor")),
+            _optional_nonnegative_int(payload.get("total_count")),
+        )
+
     def _get(self, endpoint: str, *, params: Mapping[str, str] | None = None) -> object:
         if not self.settings.allow_http_probing:
             raise ScalePadReadError(
@@ -175,6 +238,29 @@ class ScalePadClient:
             raise ScalePadReadError("ScalePad client mapping must use non-empty strings.")
         return _bounded_provider_id(raw_provider_id)
 
+    def _risk_tenant_mapping(self, client_id: str) -> str:
+        safe_client_id = _safe_client_id(client_id)
+        try:
+            mapping = json.loads(self.settings.scalepad_risk_tenant_map_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON is malformed."
+            ) from exc
+        if not isinstance(mapping, Mapping):
+            raise ScalePadReadError(
+                "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON must be an object."
+            )
+        if safe_client_id not in mapping:
+            raise ScalePadReadError(
+                "ScalePad risk-summary mapping is outside the tenant scope."
+            )
+        raw_tenant_id = mapping[safe_client_id]
+        if not isinstance(raw_tenant_id, str) or not raw_tenant_id.strip():
+            raise ScalePadReadError(
+                "ScalePad risk-summary mapping must use non-empty strings."
+            )
+        return _bounded_provider_id(raw_tenant_id)
+
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
@@ -200,6 +286,23 @@ class ScalePadClient:
             f"ScalePad credentials are incomplete: {', '.join(missing)}.",
         )
 
+    def _not_configured_risk_result(self) -> ConnectorReadResult | None:
+        missing = [
+            key
+            for key, value in {
+                "WAIT_SCALEPAD_BASE_URL": self.settings.scalepad_base_url,
+                "WAIT_SCALEPAD_API_KEY": self.settings.scalepad_api_key,
+                "WAIT_SCALEPAD_RISK_TENANT_MAP_JSON": self.settings.scalepad_risk_tenant_map_json,
+            }.items()
+            if not value
+        ]
+        if not missing:
+            return None
+        return ConnectorReadResult(
+            "not_configured",
+            f"ScalePad risk-summary credentials are incomplete: {', '.join(missing)}.",
+        )
+
     def _blocked_response(self) -> ScalePadClientResponse | None:
         result = self._blocked_result()
         return ScalePadClientResponse(result, []) if result is not None else None
@@ -207,6 +310,14 @@ class ScalePadClient:
     def _not_configured_response(self) -> ScalePadClientResponse | None:
         result = self._not_configured_result()
         return ScalePadClientResponse(result, []) if result is not None else None
+
+    def _blocked_risk_response(self) -> ScalePadRiskSummaryResponse | None:
+        result = self._blocked_result()
+        return ScalePadRiskSummaryResponse(result, []) if result is not None else None
+
+    def _not_configured_risk_response(self) -> ScalePadRiskSummaryResponse | None:
+        result = self._not_configured_risk_result()
+        return ScalePadRiskSummaryResponse(result, []) if result is not None else None
 
 
 def _normalize_client(row: object, provider_id: str) -> ScalePadClientRecord | None:
@@ -226,6 +337,22 @@ def _normalize_client(row: object, provider_id: str) -> ScalePadClientRecord | N
         record_created_at=_bounded_text(row.get("record_created_at")),
         record_updated_at=_bounded_text(row.get("record_updated_at")),
     )
+
+
+def _normalize_risk_summary(row: object, tenant_id: str) -> dict[str, object] | None:
+    if not isinstance(row, Mapping):
+        return None
+    client = row.get("client")
+    if not isinstance(client, Mapping):
+        return None
+    returned_tenant_id = _optional_provider_id(client.get("tenant_id"))
+    if returned_tenant_id != tenant_id:
+        return None
+    bounded = _bound_risk_value(row, depth=0)
+    if not isinstance(bounded, dict):
+        return None
+    redacted = redact_value(bounded)
+    return redacted if isinstance(redacted, dict) else None
 
 
 def _safe_client_id(value: str) -> str:
@@ -254,6 +381,41 @@ def _optional_provider_id(value: object) -> str:
     return _bounded_provider_id(value)
 
 
+def _optional_cursor(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or len(value) > MAX_PROVIDER_ID_LENGTH:
+        return ""
+    if any(
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+        for character in value
+    ):
+        return ""
+    return value
+
+
+def _bound_risk_value(value: object, *, depth: int) -> object:
+    if depth > MAX_RISK_SUMMARY_DEPTH:
+        return "[truncated]"
+    if isinstance(value, Mapping):
+        bounded: dict[str, object] = {}
+        for raw_key, raw_value in list(value.items())[:MAX_RISK_SUMMARY_FIELDS]:
+            key = _bounded_text(raw_key)
+            if key:
+                bounded[key] = _bound_risk_value(raw_value, depth=depth + 1)
+        return bounded
+    if isinstance(value, list):
+        return [
+            _bound_risk_value(item, depth=depth + 1)
+            for item in value[:MAX_RISK_SUMMARY_LIST_ITEMS]
+        ]
+    if isinstance(value, str):
+        return _bounded_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _bounded_text(value)
+
+
 def _endpoint_url(base_url: str, endpoint: str) -> str:
     if len(base_url) > MAX_ENDPOINT_LENGTH or any(ord(character) < 32 for character in base_url):
         raise ScalePadReadError("ScalePad base URL is invalid.")
@@ -262,7 +424,7 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         raise ScalePadReadError("ScalePad base URL must be an HTTPS URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ScalePadReadError("ScalePad base URL must not contain credentials or query data.")
-    if endpoint != "core/v1/clients":
+    if endpoint not in {"core/v1/clients", "controlmap/v1/clients/risks-summary"}:
         raise ScalePadReadError("ScalePad endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"
 
@@ -285,6 +447,7 @@ __all__ = [
     "ScalePadClient",
     "ScalePadClientRecord",
     "ScalePadClientResponse",
+    "ScalePadRiskSummaryResponse",
     "ScalePadReadError",
     "ScalePadReadProvider",
 ]
