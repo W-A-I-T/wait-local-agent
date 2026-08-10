@@ -248,8 +248,10 @@ The N-sight adapter implements bounded, tenant-scoped device inventory,
 provider-reported failing-check alerts, and mapped-device patch inventory
 through the documented XML Data Extraction API. It reads mapped sites, servers,
 and workstations and rechecks the returned client and device before returning
-records through the shared RMM contract. It is read-only in this slice; script
-catalog, preview, execution, and polling return explicit unavailable results.
+records through the shared RMM contract. Patch approval is a separate
+technician-approved write action that requires the global write flag and a
+mapped-device patch recheck; script catalog, preview, execution, and polling
+return explicit unavailable results.
 
 Required settings:
 
@@ -270,7 +272,8 @@ getting started guide](https://developer.n-able.com/n-sight/docs/getting-started
 [server listing](https://developer.n-able.com/n-sight/docs/listing-servers), and
 [workstation listing](https://developer.n-able.com/n-sight/docs/listing-workstations),
 and [failing-check listing](https://developer.n-able.com/n-sight/docs/listing-failing-checks),
-and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device).
+and [patch listing](https://developer.n-able.com/n-sight/docs/list-all-patches-for-device),
+and [patch approval](https://developer.n-able.com/n-sight/docs/approve-patch).
 
 ## TimeZest
 

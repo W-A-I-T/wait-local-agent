@@ -37,7 +37,7 @@ The MSP AI automation market in 2026 divides into four categories:
 | **MSPbots** | Standalone AI agent | $399–$1,799/mo | ConnectWise, Autotask, HaloPSA | Cloud SaaS | ✗ | ✗ | Bot + approvals | Price; local; open-source |
 | **Mizo** | AI triage entry | <$250/mo entry | ConnectWise, Autotask | Cloud SaaS | ✗ | ✗ | Human reviews all | Full workflow, not just triage |
 | **Rewst** | Rule-based RPA | Not public (high) | Any with REST API | Cloud (hybrid scripting) | Partial | ✗ | Explicit rule-defined | No developer required; deterministic built-in |
-| **WAIT Local Agent** | **Local-first open agent** | **Open core; pack pricing not established in this repo** | HaloPSA, Hudu, ConnectWise, Autotask, ServiceNow, TimeZest scheduling-request reads plus approval-gated create, tenant-mapped ScalePad Core client and ControlMap risk-summary reads, IT Glue, Confluence, Notion, SharePoint, bounded M365, NinjaOne, Datto, N-central, and N-sight inventory/health capabilities | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Approval required for supported writes; reads and analysis are non-mutating** | **Local, inspectable, bounded** |
+| **WAIT Local Agent** | **Local-first open agent** | **Open core; pack pricing not established in this repo** | HaloPSA, Hudu, ConnectWise, Autotask, ServiceNow, TimeZest scheduling-request reads plus approval-gated create, tenant-mapped ScalePad Core client and ControlMap risk-summary reads, IT Glue, Confluence, Notion, SharePoint, bounded M365, NinjaOne, Datto, N-central, and N-sight inventory, failing-check, patch-read, and approval-gated patch-approval capabilities | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Approval required for supported writes; reads and analysis are non-mutating** | **Local, inspectable, bounded** |
 
 ---
 
@@ -72,7 +72,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state/assignment/resolution-metadata updates | Broader write operations | Incremental |
 | NinjaOne RMM | ✓ | ✓ bounded devices, alerts, scripts, previews, and approved execution | Broader remediation parity | Incremental |
 | Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
-| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device inventory, documented failing-check alerts, and mapped-device patch reads | Broader N-sight writes, task management, and remediation | Incremental |
+| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device inventory, documented failing-check alerts, mapped-device patch reads, and approval-gated patch approval | Broader N-sight writes, task management, and remediation | Incremental |
 | TimeZest | ✓ | ✓ tenant-mapped scheduling-request status/metadata plus approval-gated documented create | Reschedule, cancel, and broader marketplace workflows | Incremental |
 | ScalePad | ✓ | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Incremental |
 | Kaseya | ✓ | ✓ bounded VSA X device/notification reads plus approval-gated script operations | Broader remediation and webhook parity | Incremental |

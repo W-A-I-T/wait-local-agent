@@ -15,6 +15,7 @@ from wait_local_agent.rmm import (
 )
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightPatchApproveAction,
     NSightPatchLookupAction,
     RmmAlertLookupAction,
     RmmScriptCatalogAction,
@@ -53,6 +54,15 @@ class _NSightProvider(_Provider):
     def list_patches(self, device_id, *, client_id=None):
         assert client_id == "acme"
         return [{"patch_id": 681806, "status_label": "Installed", "device_id": device_id}]
+
+    def approve_patches(self, device_id, patch_ids, *, client_id=None):
+        assert client_id == "acme"
+        return {
+            "status": "accepted",
+            "message": "approved",
+            "device_id": device_id,
+            "patch_ids": patch_ids,
+        }
 
 
 def _context(settings, provider=None):
@@ -95,6 +105,25 @@ def test_nsight_patch_lookup_uses_mapped_provider_surface(settings) -> None:
     assert NSightPatchLookupAction().run(
         _context(settings, _Provider()), {"device_id": "server:49324"}
     ).error_detail == "N-sight patch lookup requires the N-sight RMM adapter"
+
+
+def test_nsight_patch_approval_previews_and_requires_write_flag(settings) -> None:
+    provider = _NSightProvider()
+    context = _context(settings, provider)
+    payload = {"device_id": "server:49324", "patch_ids": ["681806"]}
+    preview = NSightPatchApproveAction().run(context, payload)
+    assert preview.status == "success"
+    assert preview.output["approval_required"] is True
+    blocked = NSightPatchApproveAction().run(
+        context, {**payload, "_approval_completed": True}
+    )
+    assert blocked.error_detail == "N-sight patch approval is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+    approved = NSightPatchApproveAction().run(
+        _context(replace(settings, allow_write_actions=True), provider),
+        {**payload, "_approval_completed": True},
+    )
+    assert approved.status == "success"
+    assert approved.output["status"] == "accepted"
 
 
 def test_rmm_script_preview_and_approved_execution(settings) -> None:

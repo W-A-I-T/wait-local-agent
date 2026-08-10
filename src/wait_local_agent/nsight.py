@@ -35,6 +35,7 @@ MAX_SITES = 25
 MAX_DEVICES = 100
 MAX_ALERTS = 100
 MAX_PATCHES = 100
+MAX_PATCH_IDS = 20
 MAX_TEXT_LENGTH = 500
 
 
@@ -130,6 +131,44 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _patch_records(root)[:MAX_PATCHES]
+
+    def approve_patches(
+        self,
+        device_id: str,
+        patch_ids: list[str],
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Approve existing patches only after scope and inventory rechecks."""
+
+        if not self.settings.allow_write_actions:
+            raise NSightRmmError(
+                "N-sight patch approval is blocked until WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        normalized_ids = _patch_id_list(patch_ids)
+        available_ids = {
+            str(item["patch_id"])
+            for item in self.list_patches(device_id, client_id=client_id)
+            if isinstance(item.get("patch_id"), int)
+        }
+        if any(patch_id not in available_ids for patch_id in normalized_ids):
+            raise NSightRmmError("N-sight patch approval includes a patch outside the device scope")
+        root = self._request(
+            "patch_approve",
+            {
+                "deviceid": str(_device_numeric_id(device_id)),
+                "patchids": ",".join(normalized_ids),
+            },
+            client_id=client_id,
+        )
+        return {
+            "status": "accepted",
+            "message": _bounded_text(
+                _text(root, "msg") or "N-sight accepted the patch approval request."
+            ),
+            "device_id": device_id,
+            "patch_ids": normalized_ids,
+        }
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
         del client_id
@@ -373,6 +412,21 @@ def _device_numeric_id(value: str) -> int:
     if device_id is None:
         raise NSightRmmError("N-sight device ID must be a positive integer")
     return device_id
+
+
+def _patch_id_list(values: list[str]) -> list[str]:
+    if not isinstance(values, list) or not values or len(values) > MAX_PATCH_IDS:
+        raise NSightRmmError("N-sight patch approval requires 1 to 20 patch IDs")
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise NSightRmmError("N-sight patch IDs must be positive integers")
+        patch_id = _positive_id(value.strip())
+        if patch_id is None:
+            raise NSightRmmError("N-sight patch IDs must be positive integers")
+        if str(patch_id) not in normalized:
+            normalized.append(str(patch_id))
+    return normalized
 
 
 def _optional_integer(value: str) -> int | None:
