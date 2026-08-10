@@ -72,4 +72,28 @@ describe("ScheduledJobs", () => {
     });
     expect(await screen.findByText("Scheduled job created.")).toBeInTheDocument();
   });
+
+  it("offers the backend-supported recurring service review report target", async () => {
+    render(<ScheduledJobs />);
+
+    await screen.findByText("Scheduled Jobs");
+    fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "report" } });
+    fireEvent.change(screen.getByLabelText("Report"), { target: { value: "recurring_service_review" } });
+    fireEvent.change(screen.getByLabelText("Params JSON"), {
+      target: { value: '{"client_id":"acme","period_days":30,"follow_up_after_days":14}' }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(jobs).toHaveBeenCalledWith(
+      "/scheduled-jobs",
+      expect.objectContaining({ method: "POST" })
+    ));
+    const request = jobs.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toEqual({
+      report_type: "recurring_service_review",
+      cron: "0 */6 * * *",
+      timezone: "UTC",
+      params: { client_id: "acme", period_days: 30, follow_up_after_days: 14 }
+    });
+  });
 });

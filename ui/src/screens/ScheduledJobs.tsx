@@ -10,7 +10,7 @@ export function ScheduledJobs() {
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent" | "report">("workflow");
   const [templateId, setTemplateId] = useState("");
-  const [reportType, setReportType] = useState<"qbr" | "automation_opportunity">("qbr");
+  const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
   const [agentId, setAgentId] = useState("");
   const [entityId, setEntityId] = useState("HALO-1");
   const [cron, setCron] = useState("0 */6 * * *");
@@ -134,9 +134,10 @@ export function ScheduledJobs() {
             ) : scheduleKind === "report" ? (
               <label>
                 Report
-                <select value={reportType} onChange={(event) => setReportType(event.target.value as "qbr" | "automation_opportunity")}>
+                <select value={reportType} onChange={(event) => setReportType(event.target.value as "qbr" | "automation_opportunity" | "recurring_service_review")}>
                   <option value="qbr">Quarterly business review</option>
                   <option value="automation_opportunity">Automation opportunities</option>
+                  <option value="recurring_service_review">Recurring service review</option>
                 </select>
               </label>
             ) : (
