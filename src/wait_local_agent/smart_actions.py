@@ -4387,6 +4387,115 @@ class NotionDocumentationSearchAction:
         )
 
 
+class NotionDataSourceQueryAction:
+    manifest = SmartActionManifest(
+        action_id="notion-data-source-query",
+        title="Notion data-source query",
+        description=(
+            "Read a bounded page of rows from a tenant-mapped Notion data source. "
+            "The provider query body is fixed and read-only."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["data_source_id", "client_id"],
+            "properties": {
+                "data_source_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                "start_cursor": {"type": "string", "maxLength": 4096},
+            },
+        },
+        output_schema={
+            "data_source_id": "string",
+            "pages": "array",
+            "count": "integer",
+            "next_cursor": "string",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        data_source_id = payload.get("data_source_id")
+        client_id = payload.get("client_id")
+        if (
+            not isinstance(data_source_id, str)
+            or not data_source_id.strip()
+            or len(data_source_id.strip()) > 80
+        ):
+            return _failed("data_source_id must be a non-empty string of at most 80 characters")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        limit = payload.get("limit", 10)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 20:
+            return _failed("limit must be an integer between 1 and 20")
+        start_cursor = payload.get("start_cursor", "")
+        if not isinstance(start_cursor, str) or len(start_cursor) > 4096:
+            return _failed("start_cursor must be a string of at most 4096 characters")
+        provider = context.notion_client or NotionClient(context.settings)
+        try:
+            response = provider.query_data_source(
+                data_source_id.strip(),
+                client_id=scoped_client_id,
+                page_size=limit,
+                start_cursor=start_cursor,
+            )
+        except Exception:
+            return _failed("Notion data-source query failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Notion read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Notion returned malformed data-source rows")
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "data_source_id": data_source_id.strip(),
+                    "client_id": scoped_client_id,
+                    "connector_status": status,
+                    "pages": [],
+                    "count": 0,
+                    "next_cursor": "",
+                },
+                error_detail=message,
+            )
+        pages = [
+            cast(dict[str, object], redact_value(asdict(item)))
+            for item in items[:limit]
+            if hasattr(item, "__dataclass_fields__")
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "data_source_id": data_source_id.strip(),
+                "client_id": scoped_client_id,
+                "connector_status": status,
+                "pages": pages,
+                "count": len(pages),
+                "next_cursor": str(getattr(response, "next_cursor", "")),
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "notion",
+                    "operation": "data-sources.query",
+                    "data_source_id": data_source_id.strip(),
+                    "client_id": scoped_client_id,
+                }
+            ],
+        )
+
+
 class SharePointDocumentationSearchAction:
     manifest = SmartActionManifest(
         action_id="sharepoint-documentation-search",
@@ -5309,6 +5418,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ItGlueDocumentationSearchAction(),
         ConfluenceDocumentationSearchAction(),
         NotionDocumentationSearchAction(),
+        NotionDataSourceQueryAction(),
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
         M365LiveContextAction(),

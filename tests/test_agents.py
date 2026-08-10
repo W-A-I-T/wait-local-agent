@@ -122,6 +122,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "connectwise-ticket-update-fields",
         "confluence-documentation-search",
         "notion-documentation-search",
+        "notion-data-source-query",
         "syncro-ticket-lookup",
         "syncro-ticket-add-note",
         "servicenow-incident-add-work-note",

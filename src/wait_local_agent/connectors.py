@@ -384,8 +384,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else "Notion is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if notion_status == "blocked"
                 else (
-                    "Set WAIT_NOTION_API_TOKEN and WAIT_NOTION_CLIENT_PAGE_MAP_JSON "
-                    "to enable Notion reads."
+                "Set WAIT_NOTION_API_TOKEN and WAIT_NOTION_CLIENT_PAGE_MAP_JSON "
+                "to enable Notion page reads."
                 )
             ),
             http_probing_enabled=settings.allow_http_probing,
@@ -543,6 +543,11 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
         SecretRecord(
             "WAIT_NOTION_CLIENT_PAGE_MAP_JSON",
             bool(settings.notion_client_page_map_json),
+            "notion",
+        ),
+        SecretRecord(
+            "WAIT_NOTION_CLIENT_DATA_SOURCE_MAP_JSON",
+            bool(settings.notion_client_data_source_map_json),
             "notion",
         ),
         SecretRecord("WAIT_SHAREPOINT_BASE_URL", bool(settings.sharepoint_base_url), "sharepoint"),

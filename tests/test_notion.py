@@ -22,6 +22,7 @@ from wait_local_agent.notion import (
     _normalize_page,
     _normalize_search_page,
     _payload_rows,
+    _safe_cursor,
     _safe_endpoint,
     _safe_query,
     _safe_uuid,
@@ -33,6 +34,8 @@ from wait_local_agent.store import Store
 
 PAGE_ID = "11111111-2222-3333-4444-555555555555"
 OTHER_PAGE_ID = "22222222-3333-4444-5555-666666666666"
+DATA_SOURCE_ID = "66666666-7777-8888-9999-000000000000"
+OTHER_DATA_SOURCE_ID = "77777777-8888-9999-0000-111111111111"
 
 
 def _configured(settings, *, allow_http_probing: bool = True, mapping: str | None = None):
@@ -42,6 +45,13 @@ def _configured(settings, *, allow_http_probing: bool = True, mapping: str | Non
         notion_api_token="notion-secret-token",
         notion_version=DEFAULT_NOTION_VERSION,
         notion_client_page_map_json=mapping or json.dumps({"acme": [PAGE_ID]}),
+    )
+
+
+def _configured_data_source(settings, *, allow_http_probing: bool = True):
+    return replace(
+        _configured(settings, allow_http_probing=allow_http_probing),
+        notion_client_data_source_map_json=json.dumps({"acme": [DATA_SOURCE_ID]}),
     )
 
 
@@ -143,6 +153,54 @@ def test_notion_search_and_markdown_reads_use_documented_contract(settings) -> N
         )
     ]
     assert len(requests) == 3
+
+
+def test_notion_data_source_query_is_mapped_bounded_and_read_only(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == f"/v1/data_sources/{DATA_SOURCE_ID}/query"
+        assert json.loads(request.content) == {"page_size": 2, "start_cursor": "cursor-1"}
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "next_cursor": "cursor-2",
+                "results": [
+                    {"object": "page", "id": PAGE_ID, "properties": {}},
+                    {"object": "page", "id": "not-a-page", "properties": {}},
+                ],
+            },
+        )
+
+    response = NotionClient(
+        _configured_data_source(settings), transport=httpx.MockTransport(handler)
+    ).query_data_source(
+        DATA_SOURCE_ID, client_id="acme", page_size=2, start_cursor="cursor-1"
+    )
+    assert response.result.status == "ready"
+    assert response.next_cursor == "cursor-2"
+    assert [item.id for item in response.items] == [PAGE_ID]
+
+
+def test_notion_data_source_query_rejects_scope_and_configuration(settings) -> None:
+    client = NotionClient(
+        _configured_data_source(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    )
+    outside = client.query_data_source(OTHER_DATA_SOURCE_ID, client_id="acme")
+    assert outside.result.status == "failed"
+    assert "outside the tenant scope" in outside.result.message
+    assert "invalid" in client.query_data_source(DATA_SOURCE_ID, client_id="acme", start_cursor=" ").result.message
+
+    blocked = NotionClient(
+        _configured_data_source(settings, allow_http_probing=False)
+    ).query_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert blocked.result.status == "blocked"
+
+    missing = NotionClient(
+        replace(settings, allow_http_probing=True, notion_api_token="")
+    ).query_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert missing.result.status == "not_configured"
 
 
 def test_notion_health_uses_a_mapped_page_and_empty_search_query(settings) -> None:
@@ -250,6 +308,9 @@ def test_notion_helpers_fail_closed() -> None:
         _safe_endpoint("pages/../secret")
     with pytest.raises(NotionReadError):
         _safe_endpoint("pages/not allowed")
+    assert _safe_cursor(" cursor ") == "cursor"
+    with pytest.raises(NotionReadError):
+        _safe_cursor(" ")
     with pytest.raises(NotionReadError):
         _safe_query("x\nunsafe")
     with pytest.raises(NotionReadError):

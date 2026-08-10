@@ -161,6 +161,7 @@ class Settings:
     notion_version: str = "2026-03-11"
     notion_page_size: int = 25
     notion_client_page_map_json: str = ""
+    notion_client_data_source_map_json: str = ""
     sharepoint_base_url: str = ""
     sharepoint_access_token: str = ""
     sharepoint_page_size: int = 25
@@ -490,6 +491,9 @@ def load_settings() -> Settings:
         notion_version=os.getenv("WAIT_NOTION_VERSION", "2026-03-11").strip(),
         notion_page_size=_int_env("WAIT_NOTION_PAGE_SIZE", 25),
         notion_client_page_map_json=os.getenv("WAIT_NOTION_CLIENT_PAGE_MAP_JSON", ""),
+        notion_client_data_source_map_json=os.getenv(
+            "WAIT_NOTION_CLIENT_DATA_SOURCE_MAP_JSON", ""
+        ),
         sharepoint_base_url=_secret_value(
             "WAIT_SHAREPOINT_BASE_URL",
             os.getenv("WAIT_SHAREPOINT_BASE_URL", ""),

@@ -399,16 +399,19 @@ WAIT_NOTION_BASE_URL=https://api.notion.com
 WAIT_NOTION_API_TOKEN=
 WAIT_NOTION_VERSION=2026-03-11
 WAIT_NOTION_CLIENT_PAGE_MAP_JSON={"acme":["11111111-2222-3333-4444-555555555555"]}
+WAIT_NOTION_CLIENT_DATA_SOURCE_MAP_JSON={"acme":["66666666-7777-8888-9999-000000000000"]}
 WAIT_NOTION_PAGE_SIZE=25
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
 The adapter is read-only and requires an explicit local client-to-page UUID
-map. Search uses Notion's documented title-oriented `POST /v1/search` contract,
+map. An optional data-source map enables bounded row queries. Search uses
+Notion's documented title-oriented `POST /v1/search` contract,
 filters results to the mapped page IDs, and returns a bounded cursor. Page reads
 retrieve metadata and bounded markdown through the documented page and page
-markdown endpoints. Database queries, comments, page updates, and other writes
-are intentionally unavailable ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown)).
+markdown endpoints. Data-source queries use a fixed bounded body and return
+page metadata plus a continuation cursor. Comments, page updates, and other
+writes are intentionally unavailable ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [query a data source](https://developers.notion.com/reference/query-a-data-source)).
 
 ### Validate and read
 
@@ -417,12 +420,14 @@ wait-local-agent connectors validate notion
 wait-local-agent connectors notion-health
 wait-local-agent connectors notion-pages acme --query MFA
 wait-local-agent connectors notion-page <page-id> acme
+wait-local-agent connectors notion-data-source-pages <data-source-id> acme
 ```
 
 The API mirrors these commands under `/connectors/notion/health`,
-`/connectors/notion/pages`, and `/connectors/notion/pages/{page-id}`. Live
-requests remain blocked unless `WAIT_ALLOW_HTTP_PROBING=true`; the API token is
-kept in settings/vault and is never accepted in request payloads.
+`/connectors/notion/pages`, `/connectors/notion/pages/{page-id}`, and
+`/connectors/notion/data-sources/{data-source-id}/pages`. Live requests remain
+blocked unless `WAIT_ALLOW_HTTP_PROBING=true`; the API token is kept in
+settings/vault and is never accepted in request payloads.
 
 ## SharePoint
 
