@@ -73,6 +73,11 @@ device, and it remains technician-approved and write-flag gated. The read-only
 `nsight-check-config` operation uses the documented `list_check_config` service
 only after re-reading the check from that mapped device; its XML is bounded and
 redacted before entering action output or audit data.
+The read-only `nsight-antivirus-scans` operation uses the documented
+`list_mav_scans` service only after rechecking the mapped device. Provider scan
+summaries and optional threat details are bounded and redacted before entering
+action output or audit data; no scan-start or antivirus mutation service is
+exposed.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented

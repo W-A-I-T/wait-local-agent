@@ -980,7 +980,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented per-device
-check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus threats, Backup & Recovery sessions, and
+check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus threats and scan history, Backup & Recovery sessions, and
 backup-check history. It uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -1007,6 +1007,10 @@ action exposes bounded performance and bandwidth history for one mapped device.
 The check-configuration action is available through the generic
 `/smart-actions/nsight-check-config` API, `smart-actions invoke` CLI command,
 and `/agents` definition editor.
+The read-only `nsight-antivirus-scans` action reads documented Managed
+Antivirus scan history for one mapped device, optionally including bounded
+threat summaries, through the same generic API, CLI, and Agents definition
+editor paths.
 The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
 `nsight-monitoring-details` action exposes bounded documented device metadata,
@@ -1034,7 +1038,11 @@ documented `do_nothing`, `ignore`, `inherit`, and `retry` operations through an
 explicit allowlist with the same controls. The read-only
 `nsight-antivirus-threats` action exposes documented managed-antivirus threat
 records after the same mapped-device recheck; it never starts or changes an
-antivirus scan. The read-only `nsight-outage-lookup` action exposes open and
+antivirus scan. The read-only `nsight-antivirus-scans` action uses the
+documented `list_mav_scans` service with a fixed provider engine version,
+rechecks the mapped device, and bounds summary fields and optional threat
+details; it never starts or changes an antivirus scan. The read-only
+`nsight-outage-lookup` action exposes open and
 recent outage records from the documented `list_outages` service after the same
 mapped-device recheck. The `nsight-backup-sessions` action uses the documented
 `list_mob_sessions` service after the same recheck and never starts or changes a
@@ -1059,6 +1067,7 @@ and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
+and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [performance history](https://developer.n-able.com/n-sight/docs/list-performance-history),
 and [device asset details](https://developer.n-able.com/n-sight/docs/listing-device-asset-details),
 and [device monitoring details](https://developer.n-able.com/n-sight/docs/list-device-monitoring-detail),
