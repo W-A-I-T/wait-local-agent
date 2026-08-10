@@ -5,7 +5,7 @@ documented client, site, server, workstation, check-inventory,
     performance-history, asset-details, failing-check, outage, antivirus-threat,
     monitoring-details, backup-session, bounded patch, check-configuration,
     antivirus-scan, antivirus-scan-start, antivirus-scan-cancel,
-    antivirus-quarantine, and automated-task
+    antivirus-quarantine, antivirus-product, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -49,6 +49,7 @@ MAX_MONITORING_RECORDS = 100
 MAX_PATCHES = 100
 MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
+MAX_ANTIVIRUS_PRODUCTS = 100
 MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
 MAX_BACKUP_CHECKS = 25
@@ -143,6 +144,16 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _failing_check_alerts(root, provider_client_id)[:MAX_ALERTS]
+
+    def list_supported_antivirus_products(
+        self,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read the documented supported-antivirus product catalog in tenant scope."""
+
+        root = self._request("list_supported_av_products", {}, client_id=client_id)
+        return _antivirus_product_records(root)[:MAX_ANTIVIRUS_PRODUCTS]
 
     def list_checks(
         self,
@@ -1378,6 +1389,19 @@ def _antivirus_threat_records(root: Any) -> list[dict[str, object]]:
             }
         )
     return threats
+
+
+def _antivirus_product_records(root: Any) -> list[dict[str, object]]:
+    products: list[dict[str, object]] = []
+    for product in root.iter("product"):
+        product_id = _bounded_text(_text(product, "id"))
+        name = _bounded_text(_text(product, "name"))
+        if not product_id or not name:
+            continue
+        products.append({"id": product_id, "name": name})
+        if len(products) >= MAX_ANTIVIRUS_PRODUCTS:
+            return products
+    return products
 
 
 def _antivirus_quarantine_records(root: Any) -> list[dict[str, object]]:

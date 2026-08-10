@@ -4098,6 +4098,55 @@ class NSightAntivirusThreatsAction:
         )
 
 
+class NSightAntivirusProductsAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-products",
+        title="N-sight supported antivirus products",
+        description=(
+            "Read the bounded documented catalog of antivirus products supported "
+            "by the mapped N-sight account."
+        ),
+        kind="deterministic",
+        input_schema={"type": "object", "properties": {}},
+        output_schema={"products": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=2,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if payload:
+            return _failed("N-sight antivirus product lookup does not accept input fields")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_products = getattr(provider, "list_supported_antivirus_products", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_products):
+            return _failed("N-sight antivirus product lookup requires the N-sight RMM adapter")
+        try:
+            products = list_products(client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight supported antivirus products are unavailable")
+        if not isinstance(products, list) or any(
+            not isinstance(product, dict) for product in products
+        ):
+            return _failed("N-sight returned malformed antivirus product data")
+        output_products = [
+            cast(dict[str, object], redact_value(product)) for product in products[:100]
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "products": output_products,
+                "count": len(output_products),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {"type": "rmm_antivirus_product", "source": provider.adapter_id}
+            ],
+        )
+
+
 class NSightAntivirusQuarantineAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-quarantine",
@@ -7854,6 +7903,7 @@ def _build_default_registry() -> SmartActionRegistry:
             ),
         ),
         NSightAntivirusThreatsAction(),
+        NSightAntivirusProductsAction(),
         NSightAntivirusScansAction(),
         NSightAntivirusScanCancelAction(),
         NSightAntivirusScanStartAction(),

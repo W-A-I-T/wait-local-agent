@@ -276,6 +276,10 @@ The read-only `nsight-antivirus-scans` action exposes documented Managed
 Antivirus scan history through the same generic API, CLI, and Agents definition
 editor paths. It accepts only a mapped device and an optional boolean to
 include bounded threat summaries.
+The read-only `nsight-antivirus-products` action exposes the documented
+supported-antivirus product catalog through the same generic API, CLI, and
+Agents definition editor paths. It accepts no input fields, requires the
+tenant-scoped N-sight mapping, and returns only bounded product IDs and names.
 The read-only `nsight-antivirus-quarantine` action exposes documented Managed
 Antivirus quarantine records through the same generic API, CLI, and Agents
 paths. It accepts only a mapped device, rechecks scope, and never releases or

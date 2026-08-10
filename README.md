@@ -980,7 +980,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented per-device
-check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus threats and scan history, Backup & Recovery sessions, and
+check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus product/threat and scan history, Backup & Recovery sessions, and
 backup-check history. It uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -1011,6 +1011,10 @@ The read-only `nsight-antivirus-scans` action reads documented Managed
 Antivirus scan history for one mapped device, optionally including bounded
 threat summaries, through the same generic API, CLI, and Agents definition
 editor paths.
+The read-only `nsight-antivirus-products` action reads the bounded documented
+supported-antivirus product catalog through the same generic API, CLI, and
+Agents definition editor paths. It returns only provider product IDs and
+display names and accepts no caller-supplied fields.
 The read-only `nsight-antivirus-quarantine` action reads documented Managed
 Antivirus quarantine records for one mapped device through the same generic
 API, CLI, and Agents definition editor paths. It exposes bounded status, event,
@@ -1101,6 +1105,7 @@ and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup
 and [check inventory](https://developer.n-able.com/n-sight/docs/list-drive-space-history),
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
+and [supported antivirus products](https://developer.n-able.com/n-sight/docs/list-supported-av-products),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),
