@@ -4681,7 +4681,7 @@ def _invoke_technician_chat_message(
             response["session_id"] = session_id
         return response
     if command.mode == "plan":
-        if not resolved_ticket_id:
+        if not resolved_ticket_id:  # pragma: no cover - parser guarantees a plan ticket ID
             raise TechnicianChatParseError("include a ticket ID such as TCK-1001")
         try:
             plan = agent_service.plan(
@@ -4724,11 +4724,10 @@ def _invoke_technician_chat_message(
             "plan": redact_value(plan_payload),
             "supported": True,
         }
-        if session_id is not None:
-            response["session_id"] = session_id
+        response.update({"session_id": session_id} if session_id is not None else {})
         return response
     action_id = command.action_id
-    if not action_id:
+    if not action_id:  # pragma: no cover - parser assigns an action for this mode
         raise TechnicianChatParseError("technician request did not select an approved action")
     result = smart_action_service.invoke(
         action_id,

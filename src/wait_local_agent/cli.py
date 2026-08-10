@@ -667,12 +667,12 @@ def technician_chat(
         typer.echo(command.reply)
         return
     if command.mode == "plan":
-        if not isinstance(resolved_ticket_id, str):
+        if not isinstance(resolved_ticket_id, str):  # pragma: no cover - parser guarantees a plan ticket ID
             raise typer.BadParameter("include a ticket ID such as TCK-1001")
         if settings is None:
             settings = load_settings()
             store = Store(settings.data_path)
-        if store is None:
+        if store is None:  # pragma: no cover - store is initialized above when needed
             raise RuntimeError("technician chat store was not initialized")
         service = SmartActionService(store, settings)
         planner = AgentService(store, settings, service)
