@@ -213,6 +213,15 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
     ncentral_status: ConnectorStatusValue = "not_configured"
     if ncentral_configured:
         ncentral_status = "configured" if settings.allow_http_probing else "blocked"
+    kaseya_rmm_configured = bool(
+        settings.kaseya_rmm_base_url
+        and settings.kaseya_rmm_token_id
+        and settings.kaseya_rmm_token_secret
+        and settings.kaseya_rmm_organization_map_json
+    )
+    kaseya_rmm_status: ConnectorStatusValue = "not_configured"
+    if kaseya_rmm_configured:
+        kaseya_rmm_status = "configured" if settings.allow_http_probing else "blocked"
     rmm_configured_name = (
         "NinjaOne RMM"
         if ninjaone_configured
@@ -220,6 +229,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         if datto_rmm_configured
         else "N-able N-central"
         if ncentral_configured
+        else "Kaseya VSA X"
+        if kaseya_rmm_configured
         else "RMM"
     )
     rmm_status = (
@@ -228,6 +239,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
         else datto_rmm_status
         if datto_rmm_configured
         else ncentral_status
+        if ncentral_configured
+        else kaseya_rmm_status
     )
     rmm_configuration_message = (
         (
@@ -240,6 +253,8 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 else (
                     "N-able N-central is configured for tenant-scoped device, issue, and task "
                     "metadata plus approval-gated direct tasks and status lookup."
+                    if ncentral_configured
+                    else "Kaseya VSA X is configured for tenant-scoped read-only device and notification inventory."
                 )
             )
         )
@@ -250,12 +265,16 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             else (
                 "Datto RMM is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
                 if datto_rmm_configured
-                else "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                else (
+                    "N-able N-central is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                    if ncentral_configured
+                    else "Kaseya VSA X is configured; live RMM reads require WAIT_ALLOW_HTTP_PROBING."
+                )
             )
         )
         if rmm_status == "blocked"
         else (
-            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, or WAIT_NCENTRAL_* values, including the "
+            "Set WAIT_NINJAONE_*, WAIT_DATTORMM_*, WAIT_NCENTRAL_*, or WAIT_KASEYA_RMM_* values, including the "
             "explicit tenant map, "
             "to enable a vendor RMM adapter."
         )
@@ -543,6 +562,19 @@ def list_secret_records(settings: Settings) -> list[SecretRecord]:
             "ncentral",
         ),
         SecretRecord("WAIT_NCENTRAL_PAGE_SIZE", bool(settings.ncentral_page_size), "ncentral"),
+        SecretRecord("WAIT_KASEYA_RMM_BASE_URL", bool(settings.kaseya_rmm_base_url), "kaseya"),
+        SecretRecord("WAIT_KASEYA_RMM_TOKEN_ID", bool(settings.kaseya_rmm_token_id), "kaseya"),
+        SecretRecord(
+            "WAIT_KASEYA_RMM_TOKEN_SECRET",
+            bool(settings.kaseya_rmm_token_secret),
+            "kaseya",
+        ),
+        SecretRecord(
+            "WAIT_KASEYA_RMM_ORGANIZATION_MAP_JSON",
+            bool(settings.kaseya_rmm_organization_map_json),
+            "kaseya",
+        ),
+        SecretRecord("WAIT_KASEYA_RMM_PAGE_SIZE", bool(settings.kaseya_rmm_page_size), "kaseya"),
     ]
 
 

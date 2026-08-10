@@ -110,6 +110,11 @@ class Settings:
     ncentral_access_token: str = ""
     ncentral_org_unit_map_json: str = ""
     ncentral_page_size: int = 50
+    kaseya_rmm_base_url: str = ""
+    kaseya_rmm_token_id: str = ""
+    kaseya_rmm_token_secret: str = ""
+    kaseya_rmm_organization_map_json: str = ""
+    kaseya_rmm_page_size: int = 50
     client_id: str = ""
     demo_mode: bool = True
     secrets_backend: str = "env"
@@ -325,6 +330,28 @@ def load_settings() -> Settings:
         ),
         ncentral_org_unit_map_json=os.getenv("WAIT_NCENTRAL_ORG_UNIT_MAP_JSON", ""),
         ncentral_page_size=_int_env("WAIT_NCENTRAL_PAGE_SIZE", 50),
+        kaseya_rmm_base_url=_secret_value(
+            "WAIT_KASEYA_RMM_BASE_URL",
+            os.getenv("WAIT_KASEYA_RMM_BASE_URL", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        kaseya_rmm_token_id=_secret_value(
+            "WAIT_KASEYA_RMM_TOKEN_ID",
+            os.getenv("WAIT_KASEYA_RMM_TOKEN_ID", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        kaseya_rmm_token_secret=_secret_value(
+            "WAIT_KASEYA_RMM_TOKEN_SECRET",
+            os.getenv("WAIT_KASEYA_RMM_TOKEN_SECRET", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        kaseya_rmm_organization_map_json=os.getenv(
+            "WAIT_KASEYA_RMM_ORGANIZATION_MAP_JSON", ""
+        ),
+        kaseya_rmm_page_size=_int_env("WAIT_KASEYA_RMM_PAGE_SIZE", 50),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,

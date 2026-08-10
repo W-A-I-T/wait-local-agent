@@ -51,7 +51,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   bounded RMM device/alert/script lookup and script preview over the shared
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
-  write paths. This is alongside tenant-scoped HaloPSA ticket and Hudu
+  write paths, and Kaseya VSA X exposes organization-scoped device and
+  notification reads. This is alongside tenant-scoped HaloPSA ticket and Hudu
   documentation read tools for Hudu, IT Glue (including bounded document-content
   search), Confluence, and SharePoint (including bounded Graph drive search), and
   ticket lookup tools for ConnectWise PSA, Syncro, ServiceNow, and Autotask,
@@ -904,6 +905,27 @@ source, provider credential, or caller-supplied customer ID. See the
 [N-central devices API](https://developer.n-able.com/n-central/reference/listdevices),
 [active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
 and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
+
+### Kaseya VSA X
+
+The bounded Kaseya VSA X adapter uses the documented v3 Basic-auth API and an
+explicit WAIT client-to-organization map:
+
+```text
+WAIT_KASEYA_RMM_BASE_URL=https://your-vsa-host/api/v3
+WAIT_KASEYA_RMM_TOKEN_ID=
+WAIT_KASEYA_RMM_TOKEN_SECRET=
+WAIT_KASEYA_RMM_ORGANIZATION_MAP_JSON={"acme":101}
+WAIT_KASEYA_RMM_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+It provides organization-scoped device inventory and device notifications
+through the shared RMM lookup actions. Script catalogs, execution, and
+remediation are explicitly unavailable until a separate documented contract
+and approval-tested adapter exists. Credentials remain in settings or the
+encrypted vault and never enter action payloads. See the
+[VSA X REST API reference](https://api.vsax.net/).
 
 ## Scheduled Workflows and Tenancy Filters
 

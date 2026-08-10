@@ -16,7 +16,7 @@ and Microsoft 365 actions, local technician and end-user support surfaces,
 client-scoped QBR/automation reports, provider usage/cost estimates, and
 admin-triggered documented model-list health checks. Remaining gaps include
 broader provider write parity, native channel adapters, live end-user PSA
-synchronization, white-label branding, provider-backed lifecycle evidence, and
+synchronization, provider-backed lifecycle evidence, Kaseya remediation, and
 connector-specific approval policy composition beyond explicit ticket and
 requester-role rules.
 
@@ -112,7 +112,8 @@ requester-role rules.
 - White-label branding configuration.
 - Broader N-central remediation and additional RMM connectors beyond the
   bounded inventory/direct-task vendor surfaces already shipped.
-- Kaseya VSA connector (read-only).
+- Kaseya VSA read-only device/notification connector is now in the public core;
+  VSA script/remediation parity remains future work.
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.
 

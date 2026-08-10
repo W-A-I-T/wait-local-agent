@@ -230,6 +230,32 @@ customer IDs, and provider IDs never come from smart-action payloads. See the [N
 [active issues API](https://developer.n-able.com/n-central/docs/active-issues-api),
 and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job-management-apis-overview).
 
+## Kaseya VSA X
+
+The Kaseya adapter implements the shared RMM contract for organization-scoped
+device inventory and device-notification reads using the documented VSA X v3
+REST API. It uses Basic authentication with an API token ID and secret and
+does not expose mutation or script execution paths.
+
+Required settings:
+
+```text
+WAIT_KASEYA_RMM_BASE_URL=https://your-vsa-host/api/v3
+WAIT_KASEYA_RMM_TOKEN_ID=
+WAIT_KASEYA_RMM_TOKEN_SECRET=
+WAIT_KASEYA_RMM_ORGANIZATION_MAP_JSON={"acme":101}
+WAIT_KASEYA_RMM_PAGE_SIZE=50
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+Every request requires a WAIT client ID mapped to a positive Kaseya
+organization ID. Device rows are filtered again after retrieval. Notification
+reads are made only for devices already returned in that tenant scope and are
+capped by the configured page size. The credentials and organization ID never
+come from smart-action payloads. Script catalog, preview, execution, and
+execution lookup return an explicit unavailable result rather than pretending
+that VSA X remediation is supported. See the [VSA X REST API reference](https://api.vsax.net/).
+
 ## Hudu
 
 ### Required settings

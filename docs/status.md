@@ -98,6 +98,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   approval-gated direct-task submission and locally scoped execution-status
   lookup. Script upload, arbitrary task identifiers, and provider credentials in
   action payloads remain unavailable.
+- Kaseya VSA X device and device-notification inventory through the same bounded
+  contract with explicit client-to-organization mapping. Script catalog,
+  execution, and remediation remain unavailable until a documented,
+  approval-tested path exists.
 - Confluence Cloud read-only page listing and detail through the common guarded
   HTTP boundary; write operations remain unavailable.
 - SharePoint read-only site and document metadata through Microsoft Graph, plus
@@ -383,7 +387,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 | ServiceNow connector | Incident/company reads plus approval-gated work-note, state, assignment, and resolution-metadata updates built; resolution metadata and state remain separate actions; broader writes remain future |
 | Confluence connector | Read-only core surface built |
 | SharePoint connector | Read-only metadata and bounded site/folder content-search surface plus bounded text-document retrieval built |
-| RMM connectors | Local, NinjaOne, Datto, and bounded N-central inventory/direct-task adapters built; broader vendor coverage future |
+| RMM connectors | Local, NinjaOne, Datto, bounded N-central inventory/direct-task, and Kaseya VSA X read-only inventory/notification adapters built; broader vendor coverage and remediation future |
 | M365 / Entra | Collected-inventory identity lookup plus bounded live Graph user/group/subscribed-license/per-user-license-detail/mailbox-folder/message-metadata/Intune managed-device lookup and approved user creation/disable-offboarding/password-reset/authentication-method-removal/group membership/direct-license/session-revocation/managed-device-sync/reboot/retirement/remote-lock/mailbox-settings/message-move/read-state/delete changes built; shared smart-action coverage includes the governed M365 mutation catalog and approval-gated onboarding/offboarding/password-reset/authentication-method-removal/license-request workflow templates; broader resources and mutations future |
 | Scheduled / proactive workflows | Built; workflow, agent, and bounded QBR, automation-opportunity, and recurring-service-review client-report targets are available |
 | QBR / ROI reporting | Deterministic client-scoped QBR, automation-opportunity, and recurring-service-review reports built; provider-backed lifecycle enrichment and PDF export remain future work |

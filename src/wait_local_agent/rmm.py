@@ -189,6 +189,14 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.ncentral import NCentralRmmAdapter
 
         return NCentralRmmAdapter(settings, store=store)
+    if (
+        settings.kaseya_rmm_base_url
+        or settings.kaseya_rmm_token_id
+        or settings.kaseya_rmm_token_secret
+    ):
+        from wait_local_agent.kaseya import KaseyaRmmAdapter
+
+        return KaseyaRmmAdapter(settings)
     return LocalCollectorRmmAdapter(store)
 
 
