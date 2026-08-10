@@ -868,6 +868,57 @@ def test_nsight_antivirus_scan_start_action_previews_and_requires_write_gate(set
         {"device_id": "server:1"},
     ).status == "failed"
 
+    assert action.run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        ),
+        {"device_id": "server:1", "_approval_completed": True},
+    ).status == "failed"
+    assert action.run(
+        ActionContext(
+            store=store,
+            settings=replace(settings, allow_write_actions=True),
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        ),
+        {"device_id": ""},
+    ).status == "failed"
+
+    class FailingProvider:
+        adapter_id = "n-sight"
+
+        def start_antivirus_scan(self, device_id, *, client_id):
+            raise RuntimeError("provider failure")
+
+    class MalformedProvider:
+        adapter_id = "n-sight"
+
+        def start_antivirus_scan(self, device_id, *, client_id):
+            return []
+
+    class RejectedProvider:
+        adapter_id = "n-sight"
+
+        def start_antivirus_scan(self, device_id, *, client_id):
+            return {"status": "rejected", "message": "device unavailable"}
+
+    def approved_context(provider) -> ActionContext:
+        return ActionContext(
+            store=store,
+            settings=replace(settings, allow_write_actions=True),
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        )
+    payload = {"device_id": "server:1", "_approval_completed": True}
+    assert action.run(approved_context(FailingProvider()), payload).status == "failed"
+    assert action.run(approved_context(MalformedProvider()), payload).status == "failed"
+    rejected = action.run(approved_context(RejectedProvider()), payload)
+    assert rejected.status == "failed"
+    assert rejected.error_detail == "N-sight antivirus scan start failed"
+
 
 def test_nsight_outage_lookup_rechecks_device_scope(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
