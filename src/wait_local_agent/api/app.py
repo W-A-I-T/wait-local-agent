@@ -119,7 +119,7 @@ from wait_local_agent.models import (
     AgentDefinition,
     WorkflowRun,
 )
-from wait_local_agent.notion import NotionClient, NotionReadResponse
+from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
     ESTIMATED_MINUTES_SAVED_DERIVATION,
@@ -3154,6 +3154,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _notion_response("data-sources.query", response)
 
+    @app.get("/connectors/notion/data-sources/{data_source_id}")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def notion_data_source(
+        data_source_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(
+                status_code=403, detail="Notion data-source reads require a tenant scope"
+            )
+        response = notion_client.get_data_source(data_source_id, client_id=scoped_client_id)
+        return _notion_data_source_response("data-sources.get", response)
+
     @app.get("/connectors/sharepoint/health")
     @limiter.limit(active_settings.rate_limit_connector)
     def sharepoint_health(request: Request, _: ViewerAccess) -> dict[str, object]:
@@ -4359,6 +4375,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result": asdict(response.result),
             "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
             "next_cursor": response.next_cursor,
+        }
+
+    def _notion_data_source_response(
+        read_type: str, response: NotionDataSourceResponse
+    ) -> dict[str, object]:
+        _audit_notion_read(read_type, response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
         }
 
     def _audit_notion_read(read_type: str, status: str, count: int) -> None:

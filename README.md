@@ -578,15 +578,18 @@ wait-local-agent connectors notion-health
 wait-local-agent connectors notion-pages acme --query MFA
 wait-local-agent connectors notion-page <page-id> acme
 wait-local-agent connectors notion-data-source-pages <data-source-id> acme
+wait-local-agent connectors notion-data-source <data-source-id> acme
 ```
 
 The API mirrors these commands under `/connectors/notion/*`. A separate,
 explicit client-to-data-source map enables bounded first-page row queries via
 Notion's documented data-source query endpoint; the query body is fixed to a
-bounded read and supports cursor continuation. The adapter is read-only:
+bounded read and supports cursor continuation. Data-source metadata retrieval
+returns only the mapped data-source ID and bounded property-name/type schema
+from the documented retrieve endpoint. The adapter is read-only:
 comments, page updates, and other writes are not exposed. Requests use the
 configured bearer token and `Notion-Version` header, and remain gated by
-`WAIT_ALLOW_HTTP_PROBING` ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [query a data source](https://developers.notion.com/reference/query-a-data-source)).
+`WAIT_ALLOW_HTTP_PROBING` ([Notion API introduction](https://developers.notion.com/reference/intro), [search](https://developers.notion.com/reference/post-search), [page markdown](https://developers.notion.com/reference/retrieve-page-markdown), [retrieve a data source](https://developers.notion.com/reference/retrieve-a-data-source), [query a data source](https://developers.notion.com/reference/query-a-data-source)).
 The Agents catalog exposes these reads as
 `notion-documentation-search` and `notion-data-source-query`.
 

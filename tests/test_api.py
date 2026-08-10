@@ -66,7 +66,7 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
-from wait_local_agent.notion import NotionPage, NotionReadResponse
+from wait_local_agent.notion import NotionDataSource, NotionDataSourceResponse, NotionPage, NotionReadResponse
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
@@ -3522,6 +3522,12 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
                 "next-cursor",
             )
 
+        def get_data_source(self, data_source_id, *, client_id):
+            return NotionDataSourceResponse(
+                ConnectorReadResult("ready", str(data_source_id), 1),
+                [NotionDataSource(data_source_id, {"Name": "title"})],
+            )
+
     monkeypatch.setattr(app_module, "NotionClient", FakeNotionClient)
     client = TestClient(create_app(settings))
 
@@ -3539,6 +3545,10 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
         "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000/pages",
         params={"client_id": "acme", "page_size": 2, "start_cursor": "cursor"},
     )
+    data_source = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000",
+        params={"client_id": "acme"},
+    )
     connectors = client.get("/connectors")
     audit = client.get("/audit")
 
@@ -3548,6 +3558,8 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
     assert page.json()["items"][0]["markdown"] == "token=[redacted]"
     assert data_source_pages.status_code == 200
     assert data_source_pages.json()["next_cursor"] == "next-cursor"
+    assert data_source.status_code == 200
+    assert data_source.json()["items"][0]["properties"] == {"Name": "title"}
     assert any(connector["id"] == "notion" for connector in connectors.json())
     assert any(event["event_type"] == "notion.read" for event in audit.json())
 

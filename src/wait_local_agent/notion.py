@@ -40,10 +40,22 @@ class NotionPage:
 
 
 @dataclass(frozen=True)
+class NotionDataSource:
+    id: str
+    properties: dict[str, str]
+
+
+@dataclass(frozen=True)
 class NotionReadResponse:
     result: ConnectorReadResult
     items: list[NotionPage]
     next_cursor: str = ""
+
+
+@dataclass(frozen=True)
+class NotionDataSourceResponse:
+    result: ConnectorReadResult
+    items: list[NotionDataSource]
 
 
 class NotionReadError(Exception):
@@ -68,6 +80,11 @@ class NotionClientProtocol(Protocol):
         ...
 
     def get_page(self, page_id: str, *, client_id: str) -> NotionReadResponse:
+        ...
+
+    def get_data_source(
+        self, data_source_id: str, *, client_id: str
+    ) -> NotionDataSourceResponse:
         ...
 
     def query_data_source(
@@ -184,6 +201,37 @@ class NotionClient:
         return NotionReadResponse(
             ConnectorReadResult("ready", "Notion page retrieval succeeded.", 1),
             [hydrated],
+        )
+
+    def get_data_source(
+        self, data_source_id: str, *, client_id: str
+    ) -> NotionDataSourceResponse:
+        blocked = self._blocked_result()
+        if blocked is not None:
+            return NotionDataSourceResponse(blocked, [])
+        missing = self._not_configured_data_source_result()
+        if missing is not None:
+            return NotionDataSourceResponse(missing, [])
+        try:
+            safe_id = _safe_uuid(data_source_id)
+            scoped_ids = self._mapped_data_source_ids(client_id)
+            if safe_id not in scoped_ids:
+                raise NotionReadError("Notion data source is outside the tenant scope")
+        except NotionReadError as exc:
+            return NotionDataSourceResponse(ConnectorReadResult("failed", exc.message), [])
+        payload = self._request(
+            "GET", f"data_sources/{safe_id}", require_page_mapping=False
+        )
+        if isinstance(payload, NotionReadResponse):
+            return NotionDataSourceResponse(payload.result, [])
+        data_source = _normalize_data_source(payload)
+        if data_source is None:
+            return NotionDataSourceResponse(
+                ConnectorReadResult("failed", "Notion data source response was malformed"), []
+            )
+        return NotionDataSourceResponse(
+            ConnectorReadResult("ready", "Notion data source retrieval succeeded.", 1),
+            [data_source],
         )
 
     def query_data_source(
@@ -483,6 +531,35 @@ def _normalize_page(payload: object) -> NotionPage | None:
     )
 
 
+def _normalize_data_source(payload: object) -> NotionDataSource | None:
+    if not isinstance(payload, Mapping):
+        return None
+    data_source_id = payload.get("id")
+    properties = payload.get("properties")
+    if not isinstance(data_source_id, str) or not isinstance(properties, Mapping):
+        return None
+    try:
+        safe_id = str(UUID(data_source_id))
+    except ValueError:
+        return None
+    if len(properties) > 100:
+        return None
+    normalized: dict[str, str] = {}
+    for name, definition in properties.items():
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name.strip()) > 200
+            or not isinstance(definition, Mapping)
+        ):
+            return None
+        property_type = definition.get("type")
+        if not isinstance(property_type, str) or not property_type.strip():
+            return None
+        normalized[name.strip()[:200]] = property_type.strip()[:80]
+    return NotionDataSource(safe_id, normalized)
+
+
 def _markdown_value(payload: object) -> str | None:
     if not isinstance(payload, Mapping):
         return None
@@ -530,4 +607,11 @@ def _http_error_message(status_code: int, endpoint: str) -> str:
     return f"Notion {endpoint} request failed with HTTP {status_code}"
 
 
-__all__ = ["NotionClient", "NotionPage", "NotionReadError", "NotionReadResponse"]
+__all__ = [
+    "NotionClient",
+    "NotionDataSource",
+    "NotionDataSourceResponse",
+    "NotionPage",
+    "NotionReadError",
+    "NotionReadResponse",
+]

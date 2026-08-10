@@ -1928,6 +1928,22 @@ def notion_data_source_pages(
     )
 
 
+@connectors_app.command("notion-data-source")
+def notion_data_source(data_source_id: str, client_id: str) -> None:
+    response = _notion_client().get_data_source(data_source_id, client_id=client_id)
+    _audit_notion_cli_read("data-sources.get", response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [redact_value(asdict(item)) for item in response.items],
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
 @connectors_app.command("sharepoint-health")
 def sharepoint_health() -> None:
     result = _sharepoint_client().health()

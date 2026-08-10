@@ -12,6 +12,7 @@ from wait_local_agent.notion import (
     DEFAULT_NOTION_VERSION,
     MAX_PAGE_MARKDOWN_LENGTH,
     NotionClient,
+    NotionDataSource,
     NotionPage,
     NotionReadError,
     NotionReadResponse,
@@ -19,6 +20,7 @@ from wait_local_agent.notion import (
     _bounded_page_size,
     _markdown_value,
     _next_cursor,
+    _normalize_data_source,
     _normalize_page,
     _normalize_search_page,
     _payload_rows,
@@ -209,6 +211,47 @@ def test_notion_data_source_query_rejects_scope_and_configuration(settings) -> N
     assert missing.result.status == "not_configured"
 
 
+def test_notion_data_source_metadata_is_mapped_and_returns_only_schema_types(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/data_sources/{DATA_SOURCE_ID}"
+        return httpx.Response(
+            200,
+            json={
+                "object": "data_source",
+                "id": DATA_SOURCE_ID,
+                "properties": {
+                    "Name": {"type": "title", "title": {}},
+                    "Status": {"type": "status", "status": {}},
+                },
+            },
+        )
+
+    response = NotionClient(
+        _configured_data_source(settings), transport=httpx.MockTransport(handler)
+    ).get_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert response.result.status == "ready"
+    assert response.items == [NotionDataSource(DATA_SOURCE_ID, {"Name": "title", "Status": "status"})]
+
+
+def test_notion_data_source_metadata_rejects_scope_and_malformed_payload(settings) -> None:
+    outside = NotionClient(
+        _configured_data_source(settings),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    ).get_data_source(OTHER_DATA_SOURCE_ID, client_id="acme")
+    assert outside.result.status == "failed"
+    assert "outside the tenant scope" in outside.result.message
+
+    malformed = NotionClient(
+        _configured_data_source(settings),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"id": DATA_SOURCE_ID, "properties": []})
+        ),
+    ).get_data_source(DATA_SOURCE_ID, client_id="acme")
+    assert malformed.result.status == "failed"
+    assert "malformed" in malformed.result.message
+
+
 def test_notion_health_uses_a_mapped_page_and_empty_search_query(settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/search"
@@ -297,6 +340,10 @@ def test_notion_helpers_fail_closed() -> None:
     assert _normalize_page(None) is None
     assert _normalize_page({"id": 1}) is None
     assert _normalize_page({"id": "bad"}) is None
+    assert _normalize_data_source({"id": PAGE_ID, "properties": {"Name": {"type": "title"}}}) == NotionDataSource(
+        PAGE_ID, {"Name": "title"}
+    )
+    assert _normalize_data_source({"id": PAGE_ID, "properties": {"Name": {}}}) is None
     assert _markdown_value({"markdown": "x" * (MAX_PAGE_MARKDOWN_LENGTH + 1)}) == "x" * MAX_PAGE_MARKDOWN_LENGTH
     assert _markdown_value(None) is None
     assert _markdown_value({"markdown": 1}) is None

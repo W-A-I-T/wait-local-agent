@@ -40,8 +40,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 - Hudu read-only documentation context
 - IT Glue read-only organization-scoped documentation context
 - Confluence Cloud read-only page listing and detail through REST API v2
-- Notion read-only mapped-page search and markdown retrieval through the
-  documented API
+- Notion read-only mapped-page search, markdown retrieval, data-source schema
+  retrieval, and bounded row queries through the documented API
 - SharePoint read-only site and drive-item metadata through Microsoft Graph
 - Microsoft Graph read-only user and group context lookup through the guarded
   HTTP boundary
@@ -116,9 +116,10 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   an explicit local tenant scope, and never accept connector credentials in
   action payloads. Confluence and SharePoint tools return metadata only; they
   do not expose page bodies or file contents. The Notion tool returns only
-  mapped page metadata and bounded markdown. A separate data-source query tool
-  uses an explicit local client-to-data-source map and a fixed bounded read
-  body; comments and writes remain unavailable.
+  mapped page metadata and bounded markdown. A separate data-source metadata
+  read returns only bounded property names/types, while the data-source query
+  tool uses an explicit local client-to-data-source map and a fixed bounded
+  read body; comments and writes remain unavailable.
 - The read-first Microsoft 365 identity tool searches tenant-scoped,
   previously collected `m365-user` inventory. The separate connector surface
   can perform bounded live Graph user, group, subscribed-license, mailbox-folder,
