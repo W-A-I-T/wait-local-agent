@@ -85,6 +85,7 @@ from wait_local_agent.smart_actions import (
     SmartActionService,
     StaleTicketSweepAction,
     SuggestResolutionAction,
+    SyncroTicketCommentsAction,
     SyncroTicketLookupAction,
     SyncroTicketWriteAction,
     TicketEscalationAction,
@@ -306,7 +307,12 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
             get_ticket=lambda ticket_id: SimpleNamespace(
                 result=SimpleNamespace(status="ready", message="ok", count=1),
                 items=[{"id": ticket_id, "subject": "Remote ticket", "customer_id": "acme"}],
-            )
+            ),
+            list_ticket_comments=lambda ticket_id, **kwargs: SimpleNamespace(
+                result=SimpleNamespace(status="ready", message="ok", count=1),
+                items=[{"id": "comment-1", "ticket_id": ticket_id, "body": "Reviewed"}],
+                meta={"page": kwargs["page"], "per_page": kwargs["per_page"], "total_pages": 1},
+            ),
         ),
         servicenow_client=SimpleNamespace(
             get_incident=lambda ticket_id: SimpleNamespace(
@@ -424,6 +430,9 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         connector_context, {"ticket_id": "TCK-1001"}
     )
     syncro = SyncroTicketLookupAction().run(connector_context, {"ticket_id": "TCK-1001"})
+    syncro_comments = SyncroTicketCommentsAction().run(
+        connector_context, {"ticket_id": "TCK-1001", "limit": 1}
+    )
     servicenow = ServiceNowIncidentLookupAction().run(
         connector_context, {"ticket_id": "TCK-1001"}
     )
@@ -503,6 +512,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         == halopsa.status
         == connectwise.status
         == syncro.status
+        == syncro_comments.status
         == servicenow.status
         == autotask.status
         == itglue.status
@@ -535,6 +545,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
     assert halopsa.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert connectwise.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert syncro.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
+    assert syncro_comments.output["comments"][0]["body"] == "Reviewed"  # type: ignore[index]
     assert servicenow.output["ticket"]["sys_id"] == "TCK-1001"  # type: ignore[index]
     assert autotask.output["ticket"]["id"] == "TCK-1001"  # type: ignore[index]
     assert itglue.output["documents"][0]["name"] == "VPN runbook"  # type: ignore[index]
@@ -597,6 +608,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         RmmDeviceLookupAction(),
         HaloPSATicketLookupAction(),
         SyncroTicketLookupAction(),
+        SyncroTicketCommentsAction(),
         ServiceNowIncidentLookupAction(),
         AutotaskTicketLookupAction(),
         ItGlueDocumentationSearchAction(),
@@ -1067,6 +1079,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "stale-ticket-sweep",
         "suggest-resolution",
         "syncro-ticket-add-note",
+        "syncro-ticket-comments",
         "syncro-ticket-lookup",
         "ticket-escalation",
         "ticket-quality",
@@ -1213,6 +1226,53 @@ def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> No
         replace(context, autotask_client=FakeAutotaskWrites(result_status="failed")),
         {"ticket_id": "123", "fields": fields, "_approval_completed": True},
     ).status == "failed"
+
+
+def test_syncro_ticket_comments_are_tenant_scoped_and_fail_closed(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        list_ticket_comments=lambda ticket_id, **kwargs: SimpleNamespace(
+            result=SimpleNamespace(status="ready", message="ok", count=1),
+            items=[{"id": "comment-1", "ticket_id": ticket_id, "body": "Reviewed"}],
+            meta={"page": 1, "per_page": 1, "total_pages": 1},
+        )
+    )
+    context = _action_context(store, settings, client_id="acme")
+    success = SyncroTicketCommentsAction().run(
+        replace(context, syncro_client=provider),
+        {"ticket_id": "TCK-1001", "limit": 1},
+    )
+    assert success.status == "success"
+    assert success.output["count"] == 1
+    assert success.evidence[0]["operation"] == "tickets.comments"
+
+    foreign = SyncroTicketCommentsAction().run(
+        replace(context, client_id="other", syncro_client=provider),
+        {"ticket_id": "TCK-1001"},
+    )
+    invalid_limit = SyncroTicketCommentsAction().run(
+        replace(context, syncro_client=provider),
+        {"ticket_id": "TCK-1001", "limit": 51},
+    )
+    malformed = SyncroTicketCommentsAction().run(
+        replace(
+            context,
+            syncro_client=SimpleNamespace(
+                list_ticket_comments=lambda ticket_id, **kwargs: SimpleNamespace(
+                    result=SimpleNamespace(status="ready", message="ok", count=1),
+                    items="not-a-list",
+                    meta={},
+                )
+            ),
+        ),
+        {"ticket_id": "TCK-1001"},
+    )
+    assert foreign.status == "failed"
+    assert invalid_limit.status == "failed"
+    assert malformed.status == "failed"
 
 
 def test_syncro_ticket_writes_are_approval_gated_and_tenant_scoped(settings) -> None:

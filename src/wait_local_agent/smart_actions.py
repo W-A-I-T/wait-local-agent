@@ -3448,6 +3448,103 @@ class SyncroTicketLookupAction:
         )
 
 
+class SyncroTicketCommentsAction:
+    manifest = SmartActionManifest(
+        action_id="syncro-ticket-comments",
+        title="Syncro ticket comments",
+        description="Read a bounded tenant-scoped Syncro ticket comment history.",
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id"],
+            "properties": {
+                "ticket_id": {"type": "string", "pattern": "^[1-9][0-9]{0,18}$"},
+                "page": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={
+            "ticket_id": "string",
+            "comments": "array",
+            "count": "integer",
+            "meta": "object",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        ticket = _ticket_from_payload(context.store, payload, context.client_id)
+        if ticket is None:
+            return _failed("Syncro ticket comments require a tenant-scoped local ticket")
+        page = payload.get("page", 1)
+        limit = payload.get("limit", 20)
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+            return _failed("page must be a positive integer")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 50:
+            return _failed("limit must be an integer between 1 and 50")
+        from wait_local_agent.syncro import SyncroClient
+
+        provider = cast(
+            SyncroReadProvider,
+            context.syncro_client or SyncroClient(context.settings),
+        )
+        try:
+            response = provider.list_ticket_comments(
+                ticket.id,
+                page=page,
+                per_page=limit,
+            )
+        except Exception:
+            return _failed("Syncro ticket comments lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Syncro ticket comments read failed")))
+        items = getattr(response, "items", [])
+        meta = getattr(response, "meta", {})
+        if not isinstance(items, list) or not isinstance(meta, dict):
+            return _failed("Syncro returned malformed ticket comments")
+        comments = [
+            cast(dict[str, object], redact_value(item))
+            for item in items[:limit]
+            if isinstance(item, dict)
+        ]
+        if status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "ticket_id": ticket.id,
+                    "comments": [],
+                    "count": 0,
+                    "meta": {},
+                    "connector_status": status,
+                },
+                error_detail=message,
+            )
+        return ActionResult(
+            status="success",
+            output={
+                "ticket_id": ticket.id,
+                "comments": comments,
+                "count": len(comments),
+                "meta": redact_value(meta),
+                "connector_status": status,
+            },
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "syncro",
+                    "operation": "tickets.comments",
+                    "ticket_id": ticket.id,
+                }
+            ],
+        )
+
+
 class SyncroTicketWriteAction:
     def __init__(self, *, action_id: str, title: str, action_type: str) -> None:
         self.action_type = action_type
@@ -5362,6 +5459,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ),
         ConnectWiseTicketLookupAction(),
         SyncroTicketLookupAction(),
+        SyncroTicketCommentsAction(),
         SyncroTicketWriteAction(
             action_id="syncro-ticket-add-note",
             title="Syncro add ticket note",

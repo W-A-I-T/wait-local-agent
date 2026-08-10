@@ -22,10 +22,11 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
 - HaloPSA read paths, approval-gated write drafts, and execution history.
 - ConnectWise PSA ticket and company lookup plus an allowlisted,
   approval-gated ticket update path with explicit HTTP probing opt-in.
-- Syncro ticket and customer lookup plus one approval-gated, tenant-scoped
-  ticket-comment action (`syncro-ticket-add-note`) with explicit HTTP probing
-  and write-action opt-ins. The public contract is limited to documented
-  comment fields; broader Syncro mutations remain unavailable.
+- Syncro ticket and customer lookup, bounded ticket-comment history, and one
+  approval-gated, tenant-scoped ticket-comment action (`syncro-ticket-add-note`)
+  with explicit HTTP probing and write-action opt-ins. The public contract is
+  limited to documented comment fields; broader Syncro mutations remain
+  unavailable.
 - ServiceNow incident reads plus approval-gated work-note, state, assignment, and resolution-metadata updates, and
   Autotask ticket reads plus approval-gated ticket-note, status, and resolution actions, are
   available through the same bounded connector and agent-tool surfaces;
@@ -255,6 +256,7 @@ wait-local-agent connectors connectwise-tickets
 wait-local-agent connectors connectwise-companies
 wait-local-agent connectors syncro-health
 wait-local-agent connectors syncro-tickets
+wait-local-agent connectors syncro-ticket-comments <ticket-id>
 wait-local-agent connectors syncro-customers
 wait-local-agent update check
 wait-local-agent packs status
@@ -808,8 +810,11 @@ WAIT_SYNCRO_API_TOKEN=
 ```
 
 Read commands are available through the CLI and `/connectors/syncro/*` API
-routes. The adapter uses bearer authentication, keeps the token out of query
-strings and request payloads, and exposes the governed
+routes. Ticket comment history uses the documented paginated
+`GET /tickets/{id}/comments` endpoint and is exposed at
+`/connectors/syncro/tickets/{ticket-id}/comments` and
+`connectors syncro-ticket-comments`. The adapter uses bearer authentication,
+keeps the token out of query strings and request payloads, and exposes the governed
 `syncro-ticket-add-note` smart action through `/tools` and the existing
 approval workflow. This action uses Syncro's documented
 `POST /tickets/{id}/comment` endpoint and requires an existing local ticket in

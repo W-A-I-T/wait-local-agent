@@ -8,8 +8,11 @@ from wait_local_agent.syncro import (
     SyncroClient,
     SyncroReadError,
     _api_base_url,
+    _comment_meta,
+    _comment_params,
     _http_error_message,
     _list_params,
+    _normalize_comment,
     _normalize_customer,
     _normalize_ticket,
     _payload_rows,
@@ -300,6 +303,140 @@ def test_syncro_reads_normalize_payloads_and_bound_filters(settings) -> None:
     assert customer.items[0]["email"] == "ops@example.test"
     assert health.status == "ready"
     assert len(requests) == 5
+
+
+def test_syncro_ticket_comments_use_documented_paginated_contract(settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/tickets/42/comments"
+        assert request.headers["authorization"] == "Bearer syncro-token"
+        assert dict(request.url.params) == {
+            "page": "2",
+            "per_page": "5",
+            "sort_by": "updated_at",
+            "sort_direction": "DESC",
+            "comment_format": "plaintext",
+            "created_after": "2026-08-01",
+            "created_before": "2026-08-10",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "comments": [
+                    {
+                        "id": 9,
+                        "created_at": "2026-08-02T10:00:00Z",
+                        "updated_at": "2026-08-02T10:01:00Z",
+                        "ticket_id": 42,
+                        "subject": "Internal review",
+                        "body": "Reviewed locally",
+                        "tech": "Taylor",
+                        "hidden": True,
+                        "user_id": 7,
+                        "is_rich_text": False,
+                    },
+                    {"subject": "discarded without an id"},
+                ],
+                "meta": {"total_pages": 3, "page": 2, "per_page": 5},
+            },
+        )
+
+    response = SyncroClient(
+        _settings(settings), transport=httpx.MockTransport(handler)
+    ).list_ticket_comments(
+        "42",
+        page=2,
+        per_page=5,
+        sort_by="updated_at",
+        sort_direction="desc",
+        created_after="2026-08-01",
+        created_before="2026-08-10",
+    )
+
+    assert response.result.status == "ready"
+    assert response.result.count == 1
+    assert response.items[0] == {
+        "id": "9",
+        "ticket_id": "42",
+        "created_at": "2026-08-02T10:00:00Z",
+        "updated_at": "2026-08-02T10:01:00Z",
+        "subject": "Internal review",
+        "body": "Reviewed locally",
+        "tech": "Taylor",
+        "hidden": True,
+        "user_id": 7,
+        "is_rich_text": False,
+    }
+    assert response.meta == {"total_pages": 3, "page": 2, "per_page": 5}
+    assert len(requests) == 1
+
+
+def test_syncro_ticket_comments_fail_closed_and_bound_inputs(settings) -> None:
+    active = _settings(settings)
+    blocked = SyncroClient(
+        replace(active, allow_http_probing=False),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    ).list_ticket_comments("42")
+    missing = SyncroClient(
+        replace(active, syncro_api_token=""),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    ).list_ticket_comments("42")
+    assert blocked.result.status == "blocked"
+    assert missing.result.status == "not_configured"
+
+    invalid = (
+        {"ticket_id": "not-a-number"},
+        {"page": 0},
+        {"per_page": 101},
+        {"sort_by": "created"},
+        {"sort_direction": "sideways"},
+        {"created_after": "bad\nvalue"},
+    )
+    for kwargs in invalid:
+        ticket_id = str(kwargs.pop("ticket_id", "42"))
+        result = SyncroClient(active).list_ticket_comments(ticket_id, **kwargs)
+        assert result.result.status == "failed"
+        assert result.items == []
+        assert result.meta == {}
+
+    unauthorized = SyncroClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(401)),
+    ).list_ticket_comments("42")
+    malformed = SyncroClient(
+        active,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"bad")),
+    ).list_ticket_comments("42")
+    assert "unauthorized" in unauthorized.result.message
+    assert malformed.result.message.endswith("returned malformed JSON.")
+    assert "syncro-token" not in unauthorized.result.message
+
+    assert _comment_params(
+        page=1,
+        per_page=10,
+        sort_by="created_at",
+        sort_direction="ASC",
+        created_after=None,
+        created_before=None,
+    ) == {
+        "page": 1,
+        "per_page": 10,
+        "sort_by": "created_at",
+        "sort_direction": "ASC",
+        "comment_format": "plaintext",
+    }
+    normalized = _normalize_comment({"comment_id": 4, "body": "x" * 32_100})
+    assert normalized is not None and normalized["body"] == "x" * 32_000
+    assert _normalize_comment({}) is None
+    assert _comment_meta({"meta": {"total_pages": 2, "page": 1, "per_page": 10, "bad": -1}}) == {
+        "total_pages": 2,
+        "page": 1,
+        "per_page": 10,
+    }
+    assert _comment_meta({"meta": {"page": True, "per_page": "10"}}) == {}
 
 
 def test_syncro_failures_are_sanitized_and_distinguish_auth(settings) -> None:

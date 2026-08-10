@@ -655,10 +655,12 @@ WAIT_SYNCRO_API_TOKEN=
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-The Syncro adapter is read-only and uses the documented ticket/customer GET
-surfaces with bearer authentication ([official Syncro API docs](https://api-docs.syncromsp.com/)).
+The Syncro adapter uses the documented ticket/customer GET surfaces and
+paginated `GET /tickets/{id}/comments` history surface with bearer
+authentication ([official Syncro API docs](https://api-docs.syncromsp.com/)).
 It keeps credentials in settings/vault, does not place them in URLs or
-payloads, and has no write path.
+payloads, and also exposes the separately governed, approval-gated
+`POST /tickets/{id}/comment` action through the smart-action runtime.
 
 ### Validate and read
 
@@ -667,12 +669,16 @@ wait-local-agent connectors validate syncro
 wait-local-agent connectors syncro-health
 wait-local-agent connectors syncro-tickets
 wait-local-agent connectors syncro-ticket <ticket-id>
+wait-local-agent connectors syncro-ticket-comments <ticket-id>
 wait-local-agent connectors syncro-customers
 wait-local-agent connectors syncro-customer <customer-id>
 ```
 
 The API mirrors these commands under `/connectors/syncro/health`,
-`/connectors/syncro/tickets`, and `/connectors/syncro/customers`.
+`/connectors/syncro/tickets`,
+`/connectors/syncro/tickets/{ticket-id}/comments`, and
+`/connectors/syncro/customers`. Comment history is read-only; comment writes
+remain approval-gated and require both live probing and write-action opt-ins.
 
 ## ServiceNow
 

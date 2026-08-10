@@ -31,6 +31,13 @@ class SyncroReadResponse:
     items: list[dict[str, object]]
 
 
+@dataclass(frozen=True)
+class SyncroCommentsResponse:
+    result: ConnectorReadResult
+    items: list[dict[str, object]]
+    meta: dict[str, int]
+
+
 class SyncroReadProvider(Protocol):
     def health(self) -> ConnectorReadResult:
         ...
@@ -47,6 +54,19 @@ class SyncroReadProvider(Protocol):
         ...
 
     def get_ticket(self, ticket_id: str) -> SyncroReadResponse:
+        ...
+
+    def list_ticket_comments(
+        self,
+        ticket_id: str,
+        *,
+        page: int = 1,
+        per_page: int = 10,
+        sort_by: str = "created_at",
+        sort_direction: str = "ASC",
+        created_after: str | None = None,
+        created_before: str | None = None,
+    ) -> SyncroCommentsResponse:
         ...
 
     def list_customers(
@@ -135,6 +155,49 @@ class SyncroClient:
         except SyncroReadError as exc:
             return SyncroReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_items(f"tickets/{safe_id}", "ticket", _normalize_ticket)
+
+    def list_ticket_comments(
+        self,
+        ticket_id: str,
+        *,
+        page: int = 1,
+        per_page: int = 10,
+        sort_by: str = "created_at",
+        sort_direction: str = "ASC",
+        created_after: str | None = None,
+        created_before: str | None = None,
+    ) -> SyncroCommentsResponse:
+        available = self._unavailable_response()
+        if available is not None:
+            return SyncroCommentsResponse(available.result, [], {})
+        try:
+            safe_id = _safe_id(ticket_id)
+            params = _comment_params(
+                page=page,
+                per_page=per_page,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+                created_after=created_after,
+                created_before=created_before,
+            )
+        except SyncroReadError as exc:
+            return SyncroCommentsResponse(ConnectorReadResult("failed", exc.message), [], {})
+        try:
+            payload = self._get(f"tickets/{safe_id}/comments", params=params)
+        except SyncroReadError as exc:
+            return SyncroCommentsResponse(ConnectorReadResult("failed", exc.message), [], {})
+        items = [
+            item
+            for row in _payload_rows(payload, "comments")
+            if (item := _normalize_comment(row)) is not None
+        ]
+        return SyncroCommentsResponse(
+            ConnectorReadResult(
+                "ready", f"Syncro ticket comments read succeeded from tickets/{safe_id}/comments.", len(items)
+            ),
+            items,
+            _comment_meta(payload),
+        )
 
     def list_customers(
         self,
@@ -450,6 +513,39 @@ def _list_params(page: int, filters: Mapping[str, str | None]) -> dict[str, str 
     return params
 
 
+def _comment_params(
+    *,
+    page: int,
+    per_page: int,
+    sort_by: str,
+    sort_direction: str,
+    created_after: str | None,
+    created_before: str | None,
+) -> dict[str, str | int]:
+    if isinstance(page, bool) or page < 1 or page > MAX_PAGE:
+        raise SyncroReadError(f"Syncro comment page must be between 1 and {MAX_PAGE}.")
+    if isinstance(per_page, bool) or per_page < 1 or per_page > 100:
+        raise SyncroReadError("Syncro comment per_page must be between 1 and 100.")
+    safe_sort_by = _safe_filter(sort_by)
+    if safe_sort_by not in {"created_at", "updated_at"}:
+        raise SyncroReadError("Syncro comment sort_by must be created_at or updated_at.")
+    safe_direction = _safe_filter(sort_direction)
+    if safe_direction is None or safe_direction.upper() not in {"ASC", "DESC"}:
+        raise SyncroReadError("Syncro comment sort_direction must be ASC or DESC.")
+    params: dict[str, str | int] = {
+        "page": page,
+        "per_page": per_page,
+        "sort_by": safe_sort_by,
+        "sort_direction": safe_direction.upper(),
+        "comment_format": "plaintext",
+    }
+    for key, value in {"created_after": created_after, "created_before": created_before}.items():
+        safe_value = _safe_filter(value)
+        if safe_value is not None:
+            params[key] = safe_value
+    return params
+
+
 def _payload_rows(payload: object, collection_key: str) -> list[Mapping[str, object]]:
     if isinstance(payload, list):
         rows = payload
@@ -508,6 +604,37 @@ def _normalize_customer(row: Mapping[str, object]) -> dict[str, object] | None:
     }
 
 
+def _normalize_comment(row: Mapping[str, object]) -> dict[str, object] | None:
+    comment_id = _first_value(row, "id", "comment_id")
+    if comment_id in (None, ""):
+        return None
+    ticket_id = _first_value(row, "ticket_id", "ticketId")
+    return {
+        "id": str(comment_id),
+        "ticket_id": str(ticket_id) if ticket_id not in (None, "") else "",
+        "created_at": _string_value(row, "created_at"),
+        "updated_at": _string_value(row, "updated_at"),
+        "subject": _bounded_string(row.get("subject"), 250),
+        "body": _bounded_string(row.get("body"), 32_000),
+        "tech": _bounded_string(row.get("tech"), 250),
+        "hidden": _bool_value(row.get("hidden")),
+        "user_id": _first_value(row, "user_id", "userId"),
+        "is_rich_text": _bool_value(row.get("is_rich_text")),
+    }
+
+
+def _comment_meta(payload: object) -> dict[str, int]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("meta"), dict):
+        return {}
+    meta = payload["meta"]
+    result: dict[str, int] = {}
+    for key in ("total_pages", "page", "per_page"):
+        value = meta.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            result[key] = value
+    return result
+
+
 def _first_value(row: Mapping[str, object], *keys: str) -> object:
     for key in keys:
         if key in row:
@@ -518,6 +645,12 @@ def _first_value(row: Mapping[str, object], *keys: str) -> object:
 def _string_value(row: Mapping[str, object], *keys: str) -> str:
     value = _first_value(row, *keys)
     return "" if value is None else str(value)
+
+
+def _bounded_string(value: object, maximum: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value[:maximum]
 
 
 def _bool_value(value: object) -> bool:
@@ -593,6 +726,7 @@ def _http_error_message(status_code: int, endpoint: str, *, method: str = "GET")
 
 __all__ = [
     "SyncroClient",
+    "SyncroCommentsResponse",
     "SyncroReadError",
     "SyncroReadProvider",
     "SyncroReadResponse",

@@ -37,7 +37,7 @@ from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
-from wait_local_agent.syncro import SyncroReadResponse
+from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 
 
 def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
@@ -1144,6 +1144,13 @@ def test_syncro_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
                 ConnectorReadResult("ready", "ok", 1), [{"id": ticket_id}]
             )
 
+        def list_ticket_comments(self, ticket_id, **kwargs):
+            return SyncroCommentsResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "comment-1", "ticket_id": ticket_id, "body": "Reviewed"}],
+                {"page": kwargs["page"], "per_page": kwargs["per_page"], "total_pages": 1},
+            )
+
         def list_customers(self, **kwargs):
             return SyncroReadResponse(
                 ConnectorReadResult("ready", str(kwargs), 1), [{"id": "7", "name": "Contoso"}]
@@ -1161,6 +1168,9 @@ def test_syncro_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
     health = runner.invoke(app, ["connectors", "syncro-health"])
     tickets = runner.invoke(app, ["connectors", "syncro-tickets", "--query", "printer"])
     ticket = runner.invoke(app, ["connectors", "syncro-ticket", "42"])
+    comments = runner.invoke(
+        app, ["connectors", "syncro-ticket-comments", "42", "--page", "2", "--per-page", "5"]
+    )
     customers = runner.invoke(app, ["connectors", "syncro-customers"])
     customer = runner.invoke(app, ["connectors", "syncro-customer", "7"])
 
@@ -1168,6 +1178,8 @@ def test_syncro_cli_commands_print_mocked_results(monkeypatch, tmp_path) -> None
     assert "ready count=0 ok" in health.output
     assert tickets.exit_code == 0 and "Printer offline" in tickets.output
     assert ticket.exit_code == 0 and "42" in ticket.output
+    assert comments.exit_code == 0 and '"comment-1"' in comments.output
+    assert '"page": 2' in comments.output and '"per_page": 5' in comments.output
     assert customers.exit_code == 0 and "Contoso" in customers.output
     assert customer.exit_code == 0 and "7" in customer.output
 
