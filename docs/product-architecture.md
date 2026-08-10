@@ -249,7 +249,7 @@ Roles encoded in scoped API tokens: `WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT
 | N-able N-sight | Phase 4 | ✓ site/server/workstation and derived health inventory | Script/write parity remains unavailable | Public core |
 | TimeZest | Phase 5 | ✓ tenant-mapped reads plus approval-gated documented create | Reschedule/cancel and broader marketplace parity | Public core |
 | ScalePad | Phase 5 | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Public core |
-| Kaseya VSA | Phase 5 | ✓ read-only device/notification inventory | Script/remediation parity | Public core |
+| Kaseya VSA | Phase 5 | ✓ device/notification inventory plus approval-gated script catalog, execution, and polling | Broader remediation and webhook parity | Public core |
 | Slack / Teams | Phase 5 | ✓ | ✓ gated | MSP Pack |
 | ServiceNow | Phase 7 | ✓ | ✓ gated | Appliance |
 

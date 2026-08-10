@@ -1072,11 +1072,13 @@ WAIT_KASEYA_RMM_PAGE_SIZE=50
 WAIT_ALLOW_HTTP_PROBING=true
 ```
 
-It provides organization-scoped device inventory and device notifications
-through the shared RMM lookup actions. Script catalogs, execution, and
-remediation are explicitly unavailable until a separate documented contract
-and approval-tested adapter exists. Credentials remain in settings or the
-encrypted vault and never enter action payloads. See the
+It provides organization-scoped device and notification inventory, script
+catalog and preview, approval-gated script execution, and execution-status
+lookup through the shared RMM actions. Every script request validates the
+mapped tenant device and documented input-variable IDs; execution requires
+technician approval, `WAIT_ALLOW_WRITE_ACTIONS=true`, and live HTTP probing.
+Execution scope is persisted locally before status polling. Credentials remain
+in settings or the encrypted vault and never enter action payloads. See the
 [VSA X REST API reference](https://api.vsax.net/).
 
 ### ConnectWise ScreenConnect

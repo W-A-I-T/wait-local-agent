@@ -1,22 +1,24 @@
-"""Bounded Kaseya VSA X v3 read-only adapter for the shared RMM contract.
+"""Bounded Kaseya VSA X v3 adapter for the shared RMM contract.
 
 The public VSA X API documents Basic authentication with an API token ID and
-secret, plus organization-scoped device and device-notification reads. WAIT
-keeps its tenant scope in a local client-to-organization map and exposes no
-Kaseya mutation or script execution path in this adapter.
+secret, organization-scoped device and device-notification reads, and
+approval-compatible automation script operations. WAIT keeps its tenant scope
+in a local client-to-organization map, validates devices and script input
+variables before writes, and persists execution scope for safe polling.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmScript, RmmScriptExecution, RmmScriptPreview
+from wait_local_agent.store import Store
 
 MAX_PAGE_SIZE = 100
 
@@ -26,12 +28,19 @@ class KaseyaRmmError(Exception):
 
 
 class KaseyaRmmAdapter:
-    """Read-only VSA X inventory and device-notification adapter."""
+    """Tenant-scoped VSA X inventory and approval-gated script adapter."""
 
     adapter_id = "kaseya-vsa-x"
 
-    def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        store: Store | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self.settings = settings
+        self.store = store
         self.transport = transport
 
     def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
@@ -98,7 +107,24 @@ class KaseyaRmmAdapter:
 
     def list_scripts(self, client_id: str | None = None) -> list[RmmScript]:
         self._organization_id(client_id)
-        raise KaseyaRmmError("Kaseya VSA X script catalog is not exposed by this bounded adapter")
+        payload = self._get(
+            "automation/scripts",
+            client_id=client_id,
+            params={"$top": self._page_size(), "$skip": 0},
+        )
+        scripts: list[RmmScript] = []
+        for row in _rows(payload):
+            script_id = _first_text(row, "Id")
+            if not script_id:
+                continue
+            scripts.append(
+                RmmScript(
+                    script_id=script_id,
+                    name=_first_text(row, "Name") or script_id,
+                    description=_first_text(row, "Description"),
+                )
+            )
+        return scripts[: self._page_size()]
 
     def preview_script(
         self,
@@ -108,8 +134,21 @@ class KaseyaRmmAdapter:
         *,
         client_id: str | None = None,
     ) -> RmmScriptPreview:
-        self._organization_id(client_id)
-        raise KaseyaRmmError("Kaseya VSA X script execution is not exposed by this adapter")
+        safe_script_id, safe_device_id, safe_arguments = self._validate_script_request(
+            script_id, device_id, arguments, client_id=client_id
+        )
+        return RmmScriptPreview(
+            script_id=safe_script_id,
+            device_id=safe_device_id,
+            arguments=safe_arguments,
+            status="preview",
+            message=(
+                "Kaseya VSA X script and device are validated; execution requires a completed technician approval"
+                if self.settings.allow_write_actions
+                else "Kaseya VSA X script and device are validated; execution is blocked "
+                "until WAIT_ALLOW_WRITE_ACTIONS=true"
+            ),
+        )
 
     def execute_script(
         self,
@@ -119,8 +158,43 @@ class KaseyaRmmAdapter:
         *,
         client_id: str | None = None,
     ) -> RmmScriptExecution:
-        self._organization_id(client_id)
-        raise KaseyaRmmError("Kaseya VSA X script execution is not exposed by this adapter")
+        safe_script_id, safe_device_id, safe_arguments = self._validate_script_request(
+            script_id, device_id, arguments, client_id=client_id
+        )
+        if not self.settings.allow_write_actions:
+            return RmmScriptExecution(
+                script_id=safe_script_id,
+                device_id=safe_device_id,
+                status="blocked",
+                message="Kaseya VSA X script execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true",
+            )
+        payload = self._post(
+            f"automation/scripts/{_path_segment(safe_script_id)}/run",
+            client_id=client_id,
+            payload={
+                "DeviceIdentifier": safe_device_id,
+                "Variables": [{"Id": int(key), "Value": value} for key, value in sorted(safe_arguments.items())],
+            },
+        )
+        data = _data(payload)
+        execution_id = _first_text(data, "ExecutionId")
+        if not execution_id:
+            raise KaseyaRmmError("Kaseya VSA X script response was malformed")
+        if self.store is not None and client_id is not None:
+            self.store.record_rmm_execution_scope(
+                execution_id,
+                self.adapter_id,
+                safe_script_id,
+                safe_device_id,
+                client_id,
+            )
+        return RmmScriptExecution(
+            script_id=safe_script_id,
+            device_id=safe_device_id,
+            status="queued",
+            message="Kaseya VSA X accepted the script execution request",
+            execution_id=execution_id,
+        )
 
     def get_execution(
         self,
@@ -128,8 +202,45 @@ class KaseyaRmmAdapter:
         *,
         client_id: str | None = None,
     ) -> RmmScriptExecution:
+        safe_execution_id = _path_segment(execution_id)
         self._organization_id(client_id)
-        raise KaseyaRmmError("Kaseya VSA X execution lookup is not exposed by this adapter")
+        if self.store is None or client_id is None:
+            raise KaseyaRmmError("Kaseya VSA X execution lookup requires local execution scope")
+        scope = self.store.get_rmm_execution_scope(
+            safe_execution_id,
+            self.adapter_id,
+            client_id,
+        )
+        if scope is None:
+            raise KaseyaRmmError("Kaseya VSA X execution is outside the tenant scope")
+        devices = self.list_devices(client_id)
+        if not any(device.device_id == scope.device_id for device in devices):
+            raise KaseyaRmmError("Kaseya VSA X execution device is outside the tenant scope")
+        payload = self._get(
+            "automation/scripts/"
+            f"{_path_segment(scope.script_id)}/device/{_path_segment(scope.device_id)}/executions/"
+            f"{safe_execution_id}",
+            client_id=client_id,
+            params={},
+        )
+        data = _data(payload)
+        returned_id = _first_text(data, "Id")
+        if returned_id and returned_id != safe_execution_id:
+            raise KaseyaRmmError("Kaseya VSA X execution response was outside the requested scope")
+        status_value = _execution_status(_first_text(data, "State"))
+        if status_value is None:
+            raise KaseyaRmmError("Kaseya VSA X execution response was malformed")
+        return RmmScriptExecution(
+            script_id=scope.script_id,
+            device_id=scope.device_id,
+            status=status_value,
+            message=(
+                "Kaseya VSA X script execution is still running"
+                if status_value == "queued"
+                else f"Kaseya VSA X script execution status: {status_value}"
+            ),
+            execution_id=safe_execution_id,
+        )
 
     def _get(
         self,
@@ -140,6 +251,15 @@ class KaseyaRmmAdapter:
     ) -> object:
         return self._request("GET", endpoint, client_id=client_id, params=params)
 
+    def _post(
+        self,
+        endpoint: str,
+        *,
+        client_id: str | None,
+        payload: dict[str, object],
+    ) -> object:
+        return self._request("POST", endpoint, client_id=client_id, json_body=payload)
+
     def _request(
         self,
         method: str,
@@ -147,16 +267,13 @@ class KaseyaRmmAdapter:
         *,
         client_id: str | None,
         params: dict[str, str | int] | None = None,
+        json_body: dict[str, object] | None = None,
     ) -> object:
         self._organization_id(client_id)
         if not self.settings.allow_http_probing:
-            raise KaseyaRmmError(
-                "Kaseya VSA X live calls are blocked until WAIT_ALLOW_HTTP_PROBING=true"
-            )
+            raise KaseyaRmmError("Kaseya VSA X live calls are blocked until WAIT_ALLOW_HTTP_PROBING=true")
         if not self.settings.kaseya_rmm_base_url:
-            raise KaseyaRmmError(
-                "Kaseya VSA X credentials are incomplete: WAIT_KASEYA_RMM_BASE_URL"
-            )
+            raise KaseyaRmmError("Kaseya VSA X credentials are incomplete: WAIT_KASEYA_RMM_BASE_URL")
         if not self.settings.kaseya_rmm_token_id or not self.settings.kaseya_rmm_token_secret:
             raise KaseyaRmmError(
                 "Kaseya VSA X credentials are incomplete: WAIT_KASEYA_RMM_TOKEN_ID and WAIT_KASEYA_RMM_TOKEN_SECRET"
@@ -174,6 +291,7 @@ class KaseyaRmmAdapter:
                     auth=(self.settings.kaseya_rmm_token_id, self.settings.kaseya_rmm_token_secret),
                     headers={"Accept": "application/json"},
                     params=params,
+                    json=json_body,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise KaseyaRmmError("Kaseya VSA X request failed before receiving a response") from exc
@@ -211,6 +329,50 @@ class KaseyaRmmAdapter:
     def _page_size(self) -> int:
         return min(max(self.settings.kaseya_rmm_page_size, 1), MAX_PAGE_SIZE)
 
+    def _validate_script_request(
+        self,
+        script_id: str,
+        device_id: str,
+        arguments: dict[str, str],
+        *,
+        client_id: str | None,
+    ) -> tuple[str, str, dict[str, str]]:
+        self._organization_id(client_id)
+        safe_script_id = _path_segment(script_id)
+        safe_device_id = _path_segment(device_id)
+        if len(arguments) > 20:
+            raise KaseyaRmmError("Kaseya VSA X script arguments exceed 20 values")
+        safe_arguments: dict[str, str] = {}
+        for key, value in arguments.items():
+            variable_id = _variable_id(key)
+            if not isinstance(value, str) or len(value) > 500:
+                raise KaseyaRmmError("Kaseya VSA X script argument values must be strings of at most 500 characters")
+            safe_arguments[str(variable_id)] = value
+        if not any(device.device_id == safe_device_id for device in self.list_devices(client_id)):
+            raise KaseyaRmmError("Kaseya VSA X device is outside the tenant scope")
+        script = _data(
+            self._get(
+                f"automation/scripts/{_path_segment(safe_script_id)}",
+                client_id=client_id,
+                params={},
+            )
+        )
+        if _first_text(script, "Id") != safe_script_id:
+            raise KaseyaRmmError("Kaseya VSA X script was not found")
+        raw_variables = script.get("InputVariables")
+        if not isinstance(raw_variables, list):
+            raise KaseyaRmmError("Kaseya VSA X script response was malformed")
+        allowed_ids = {
+            variable_id
+            for item in raw_variables
+            if isinstance(item, Mapping)
+            for variable_id in [_int_value(item.get("Id"))]
+            if variable_id is not None and variable_id > 0
+        }
+        if any(int(key) not in allowed_ids for key in safe_arguments):
+            raise KaseyaRmmError("Kaseya VSA X script argument is not an input variable")
+        return safe_script_id, safe_device_id, safe_arguments
+
 
 def _rows(payload: object) -> list[Mapping[str, Any]]:
     if not isinstance(payload, Mapping):
@@ -219,6 +381,13 @@ def _rows(payload: object) -> list[Mapping[str, Any]]:
     if isinstance(value, list):
         return [row for row in value if isinstance(row, Mapping)]
     return []
+
+
+def _data(payload: object) -> Mapping[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    value = payload.get("Data")
+    return value if isinstance(value, Mapping) else {}
 
 
 def _first_text(row: Mapping[str, Any], key: str) -> str:
@@ -268,6 +437,27 @@ def _path_segment(value: str) -> str:
     if not value.strip() or any(character not in allowed for character in value):
         raise KaseyaRmmError("Kaseya VSA X device identifier is invalid")
     return value
+
+
+def _variable_id(value: object) -> int:
+    if not isinstance(value, str) or not value.strip() or not value.strip().isdigit():
+        raise KaseyaRmmError("Kaseya VSA X script argument keys must be positive variable IDs")
+    parsed = int(value.strip())
+    if parsed < 1 or parsed > 2_147_483_647:
+        raise KaseyaRmmError("Kaseya VSA X script variable IDs must be positive 32-bit integers")
+    return parsed
+
+
+def _execution_status(value: str) -> Literal["queued", "succeeded", "failed"] | None:
+    return cast(
+        Literal["queued", "succeeded", "failed"] | None,
+        {
+            "running": "queued",
+            "successful": "succeeded",
+            "failed": "failed",
+            "stopped": "failed",
+        }.get(value.casefold()),
+    )
 
 
 __all__ = ["KaseyaRmmAdapter", "KaseyaRmmError"]

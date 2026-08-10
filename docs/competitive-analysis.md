@@ -75,7 +75,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 | N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device/health inventory | Broader N-sight writes, task management, and remediation | Incremental |
 | TimeZest | ✓ | ✓ tenant-mapped scheduling-request status/metadata plus approval-gated documented create | Reschedule, cancel, and broader marketplace workflows | Incremental |
 | ScalePad | ✓ | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary read | Writes, unscoped reads, and broader product APIs | Incremental |
-| Kaseya | ✓ | ✓ bounded VSA X device and device-notification reads | Script execution and broader remediation | Incremental |
+| Kaseya | ✓ | ✓ bounded VSA X device/notification reads plus approval-gated script operations | Broader remediation and webhook parity | Incremental |
 | ScreenConnect | Public RESTful API Manager session reads and `SendCommandToSession` | ✓ bounded tenant-scoped session/device lookup plus optional local command catalog and approval-gated submission | Provider-native alert lookup, script discovery, and command polling | Incremental |
 | IT Glue | ✓ | ✓ read-only organization/document retrieval | Broader search and write operations | Incremental |
 | Notion | ✓ | ✓ bounded mapped-page title search, page-markdown retrieval, and data-source row query | Comments, writes, provider-native filters, and broader search remain unavailable | Incremental |

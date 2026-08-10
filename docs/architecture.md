@@ -184,8 +184,9 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   summary records. Core IDs and ControlMap tenant IDs are never inferred to be
   interchangeable. Writes and other unscoped reads are not inferred.
   The Kaseya VSA X adapter uses the documented Basic-auth v3 API, an explicit
-  client-to-organization map, and read-only device plus device-notification
-  paths; script execution and remediation remain unavailable in this adapter.
+  client-to-organization map, organization-scoped device and
+  device-notification reads, and approval-gated script catalog/preview,
+  execution, and polling with locally persisted execution scope.
   The ScreenConnect adapter uses the documented RESTful API Manager extension,
   an explicit client-to-session UUID map, and read-only session detail lookup.
   An optional local command catalog supports approval-gated command submission;

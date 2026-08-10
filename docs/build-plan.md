@@ -535,10 +535,11 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 5. White-label branding: `WAIT_PRODUCT_NAME`, `WAIT_BRAND_LOGO_URL`
 6. Broader N-central remediation and additional RMM connectors; the bounded
   N-central inventory/direct-task adapter is already shipped in public core
-7. Kaseya VSA script/remediation parity beyond the public read-only connector
+7. Kaseya VSA broader remediation and webhook parity beyond the bounded,
+   approval-gated script contract
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 
-**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-central, N-sight, and Kaseya read-only adapters pass mock tests.
+**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-central, N-sight, and Kaseya bounded adapters pass mock tests, including Kaseya approval-gated script operations.
 
 ---
 
