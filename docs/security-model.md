@@ -95,6 +95,11 @@ requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true` before it
 rechecks the mapped device and calls the documented `mav_scan_cancel` service.
 Provider failures, including a request to cancel a scan that is not running,
 remain explicit failures and are not converted to success.
+The separate `nsight-antivirus-scan-pause` and
+`nsight-antivirus-scan-resume` operations use the same high-risk approval,
+write-flag, and mapped-device checks before calling the documented
+`mav_scan_pause` and `mav_scan_resume` services. Provider failures remain
+explicit failed results.
 
 TimeZest calls use the same outbound HTTP gate and require a client ID that
 resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented

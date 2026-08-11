@@ -1072,6 +1072,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "nsight-antivirus-quarantine-release",
         "nsight-antivirus-quarantine-remove",
         "nsight-antivirus-scan-cancel",
+        "nsight-antivirus-scan-pause",
+        "nsight-antivirus-scan-resume",
         "nsight-antivirus-scan-start",
         "nsight-antivirus-scans",
         "nsight-antivirus-threats",

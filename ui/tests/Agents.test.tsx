@@ -140,6 +140,24 @@ describe("Agents", () => {
             access_mode: "write"
           },
           {
+            id: "nsight-antivirus-scan-pause",
+            name: "Pause N-sight antivirus scan",
+            description: "Pause a mapped antivirus scan after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
+          },
+          {
+            id: "nsight-antivirus-scan-resume",
+            name: "Resume N-sight antivirus scan",
+            description: "Resume a mapped antivirus scan after approval.",
+            risk_level: "high",
+            required_role: "technician",
+            approval_required: true,
+            access_mode: "write"
+          },
+          {
             id: "nsight-antivirus-quarantine",
             name: "N-sight antivirus quarantine lookup",
             description: "Read mapped antivirus quarantine records.",
@@ -405,6 +423,29 @@ describe("Agents", () => {
     );
     expect(String(request?.[1]?.body)).toContain("nsight-antivirus-scan-start");
     expect(String(request?.[1]?.body)).toContain("server:49324");
+  });
+
+  it("exposes the approval-gated N-sight antivirus scan pause and resume inputs", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    for (const [label, actionId, inputLabel] of [
+      ["Pause N-sight antivirus scan", "nsight-antivirus-scan-pause", "Pause N-sight antivirus scan input JSON"],
+      ["Resume N-sight antivirus scan", "nsight-antivirus-scan-resume", "Resume N-sight antivirus scan input JSON"]
+    ]) {
+      const control = await screen.findByRole("checkbox", { name: new RegExp(label) });
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: label } });
+      fireEvent.click(control);
+      fireEvent.change(screen.getByLabelText(inputLabel), {
+        target: { value: JSON.stringify({ device_id: "server:49324" }) }
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+      await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+      const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+        ([input, init]) => String(input) === "/agents" && init?.method === "POST" && String(init.body).includes(actionId)
+      );
+      expect(String(request?.[1]?.body)).toContain(actionId);
+    }
   });
 
   it("exposes the mapped ScalePad compliance-health input", async () => {
