@@ -2728,6 +2728,9 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     antivirus_definitions_detail = client.get(
         "/smart-actions/nsight-antivirus-definitions", headers=_auth("tech-token")
     )
+    antivirus_update_history_detail = client.get(
+        "/smart-actions/nsight-antivirus-update-history", headers=_auth("tech-token")
+    )
     preview = client.post(
         "/smart-actions/nsight-run-task-now/invoke",
         headers=_auth("tech-token"),
@@ -2752,6 +2755,7 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     assert "nsight-antivirus-scans" in {tool["id"] for tool in tools.json()}
     assert "nsight-antivirus-products" in {tool["id"] for tool in tools.json()}
     assert "nsight-antivirus-definitions" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-update-history" in {tool["id"] for tool in tools.json()}
     assert "nsight-antivirus-scan-pause" in {tool["id"] for tool in tools.json()}
     assert "nsight-antivirus-scan-resume" in {tool["id"] for tool in tools.json()}
     assert detail.status_code == 200
@@ -2765,6 +2769,8 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     assert antivirus_products_detail.json()["access_mode"] == "read"
     assert antivirus_definitions_detail.status_code == 200
     assert antivirus_definitions_detail.json()["access_mode"] == "read"
+    assert antivirus_update_history_detail.status_code == 200
+    assert antivirus_update_history_detail.json()["access_mode"] == "read"
     assert antivirus_scan_start_detail.status_code == 200
     assert antivirus_scan_start_detail.json()["requires_approval"] is True
     assert antivirus_scan_start_detail.json()["access_mode"] == "write"

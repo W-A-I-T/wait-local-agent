@@ -284,6 +284,11 @@ The read-only `nsight-antivirus-definitions` action exposes recent definition
 versions and release dates for one product from that catalog. It accepts a
 bounded product ID and optional 1-20 result count, rechecks the product in
 tenant scope, and uses the documented `list_av_definitions` service.
+The read-only `nsight-antivirus-update-history` action exposes the documented
+60-day update-check history for one mapped device. It uses the
+`list_av_history` service, returns bounded check names and dated statuses, and
+is reachable through `GET`/`POST .../smart-actions/nsight-antivirus-update-history`,
+the generic CLI, and the Agents definition editor.
 The read-only `nsight-antivirus-quarantine` action exposes documented Managed
 Antivirus quarantine records through the same generic API, CLI, and Agents
 paths. It accepts only a mapped device, rechecks scope, and never releases or
@@ -339,6 +344,7 @@ and [Backup & Recovery sessions](https://developer.n-able.com/n-sight/docs/list-
 and [Backup Check history](https://developer.n-able.com/n-sight/docs/list-backup-check-history),
 and [check configuration](https://developer.n-able.com/n-sight/docs/listing-check-configuration),
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
+and [antivirus update-check history](https://developer.n-able.com/n-sight/docs/list-av-update-check-history),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),

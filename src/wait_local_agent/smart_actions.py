@@ -4490,6 +4490,85 @@ class NSightAntivirusScansAction:
         )
 
 
+class NSightAntivirusUpdateHistoryAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-antivirus-update-history",
+        title="N-sight antivirus update-check history",
+        description=(
+            "Read bounded 60-day antivirus update-check history for one mapped "
+            "N-sight server or workstation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={
+            "checks": "array",
+            "days": "array",
+            "count": "integer",
+            "source": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=4,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) != {"device_id"}:
+            return _failed("N-sight antivirus update history payload contains unsupported fields")
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_history = getattr(provider, "list_antivirus_update_history", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_history):
+            return _failed(
+                "N-sight antivirus update history requires the N-sight RMM adapter"
+            )
+        clean_device_id = device_id.strip()
+        try:
+            history = list_history(clean_device_id, client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight antivirus update history is unavailable")
+        if not isinstance(history, dict):
+            return _failed("N-sight returned malformed antivirus update history data")
+        checks = history.get("checks")
+        days = history.get("days")
+        if not isinstance(checks, list) or any(not isinstance(check, str) for check in checks):
+            return _failed("N-sight returned malformed antivirus update-check data")
+        if not isinstance(days, list) or any(
+            not isinstance(day, dict)
+            or not isinstance(day.get("date"), str)
+            or not isinstance(day.get("status"), str)
+            for day in days
+        ):
+            return _failed("N-sight returned malformed antivirus update history data")
+        output_days = [cast(dict[str, object], redact_value(day)) for day in days[:60]]
+        output_checks = [str(redact_value(check)) for check in checks[:25]]
+        return ActionResult(
+            status="success",
+            output={
+                "checks": output_checks,
+                "days": output_days,
+                "count": len(output_days),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_antivirus_update_history",
+                    "device_id": clean_device_id,
+                    "source": provider.adapter_id,
+                }
+            ],
+        )
+
+
 class NSightAntivirusScanStartAction:
     manifest = SmartActionManifest(
         action_id="nsight-antivirus-scan-start",
@@ -8125,6 +8204,7 @@ def _build_default_registry() -> SmartActionRegistry:
             ),
         ),
         NSightAntivirusScanStartAction(),
+        NSightAntivirusUpdateHistoryAction(),
         NSightOutageLookupAction(),
         NSightBackupSessionsAction(),
         NSightBackupHistoryAction(),
