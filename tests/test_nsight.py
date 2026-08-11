@@ -36,6 +36,7 @@ from wait_local_agent.smart_actions import (
     NSightAntivirusQuarantineAction,
     NSightAntivirusQuarantineMutationAction,
     NSightAntivirusScanCancelAction,
+    NSightAntivirusScanControlAction,
     NSightAntivirusScansAction,
     NSightAntivirusScanStartAction,
     NSightCheckConfigAction,
@@ -119,6 +120,8 @@ MAV_SCANS_XML = """
 """
 MAV_SCAN_START_XML = '<result status="OK"><msg>scan accepted</msg></result>'
 MAV_SCAN_CANCEL_XML = '<result status="OK"><msg>scan cancelled</msg></result>'
+MAV_SCAN_PAUSE_XML = '<result status="OK"><msg>scan paused</msg></result>'
+MAV_SCAN_RESUME_XML = '<result status="OK"><msg>scan resumed</msg></result>'
 MAV_PRODUCTS_XML = """
 <products>
   <product><name>Bitdefender</name><id>bitdefender</id></product>
@@ -1204,6 +1207,44 @@ def test_nsight_antivirus_scan_cancel_rechecks_device_and_uses_documented_servic
         adapter.cancel_antivirus_scan("server:999", client_id="acme")
 
 
+def test_nsight_antivirus_scan_pause_resume_recheck_device_and_use_documented_services(
+    settings,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "mav_scan_pause":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=MAV_SCAN_PAUSE_XML)
+        if service == "mav_scan_resume":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=MAV_SCAN_RESUME_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler, allow_write_actions=True)
+    assert adapter.pause_antivirus_scan("server:49324", client_id="acme") == {
+        "status": "accepted",
+        "operation": "pause",
+        "device_id": "server:49324",
+        "message": "scan paused",
+    }
+    assert adapter.resume_antivirus_scan("server:49324", client_id="acme") == {
+        "status": "accepted",
+        "operation": "resume",
+        "device_id": "server:49324",
+        "message": "scan resumed",
+    }
+    with pytest.raises(NSightRmmError, match="WAIT_ALLOW_WRITE_ACTIONS"):
+        _adapter(settings, handler).pause_antivirus_scan("server:49324", client_id="acme")
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.resume_antivirus_scan("server:999", client_id="acme")
+
+
 def test_nsight_antivirus_scan_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
     action = NSightAntivirusScansAction()
     store = Store(settings.data_path)
@@ -1228,6 +1269,105 @@ def test_nsight_antivirus_scan_action_rejects_invalid_and_unavailable_inputs(set
         list_antivirus_scans=lambda device_id, **kwargs: {},
     )
     assert run(malformed, {"device_id": "server:1"}).status == "failed"
+
+
+def test_nsight_antivirus_scan_control_actions_preview_and_gate_writes(settings) -> None:
+    store = Store(settings.data_path)
+
+    class Provider:
+        adapter_id = "n-sight"
+
+        def pause_antivirus_scan(self, device_id, *, client_id):
+            return {"status": "accepted", "operation": "pause", "device_id": device_id, "message": "paused"}
+
+        def resume_antivirus_scan(self, device_id, *, client_id):
+            return {"status": "accepted", "operation": "resume", "device_id": device_id, "message": "resumed"}
+
+    provider = Provider()
+    for operation, method in (("pause", "pause_antivirus_scan"), ("resume", "resume_antivirus_scan")):
+        action = NSightAntivirusScanControlAction(
+            action_id=f"test-scan-{operation}",
+            title=operation,
+            operation=operation,
+            provider_method=method,
+            description=operation,
+        )
+        context = ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            rmm_provider=cast(Any, provider),
+        )
+        preview = action.run(context, {"device_id": "server:1"})
+        assert preview.status == "success"
+        assert preview.output["approval_required"] is True
+        approved = action.run(
+            replace(context, settings=replace(settings, allow_write_actions=True)),
+            {"device_id": "server:1", "_approval_completed": True},
+        )
+        assert approved.status == "success"
+        assert approved.output["approved"] is True
+        assert approved.evidence[0]["operation"] == f"mav_scan_{operation}"
+        assert action.run(
+            context,
+            {"device_id": "server:1", "_approval_completed": True},
+        ).status == "failed"
+
+    assert NSightAntivirusScanControlAction(
+        action_id="test-pause",
+        title="pause",
+        operation="pause",
+        provider_method="pause_antivirus_scan",
+        description="pause",
+    ).run(context, {"device_id": "server:1", "unexpected": True}).status == "failed"
+    pause_action = NSightAntivirusScanControlAction(
+        action_id="test-pause-failures",
+        title="pause",
+        operation="pause",
+        provider_method="pause_antivirus_scan",
+        description="pause",
+    )
+    assert pause_action.run(context, {"device_id": ""}).status == "failed"
+    assert pause_action.run(
+        ActionContext(
+            store=store,
+            settings=settings,
+            actor="technician",
+            rmm_provider=SimpleNamespace(adapter_id="other"),
+        ),
+        {"device_id": "server:1"},
+    ).status == "failed"
+
+    class FailingProvider:
+        adapter_id = "n-sight"
+
+        def pause_antivirus_scan(self, device_id, *, client_id):
+            raise RuntimeError("provider failure")
+
+    class MalformedProvider:
+        adapter_id = "n-sight"
+
+        def pause_antivirus_scan(self, device_id, *, client_id):
+            return []
+
+    class RejectedProvider:
+        adapter_id = "n-sight"
+
+        def pause_antivirus_scan(self, device_id, *, client_id):
+            return {"status": "rejected", "message": "not running"}
+
+    def approved_context(provider) -> ActionContext:
+        return replace(
+            context,
+            settings=replace(settings, allow_write_actions=True),
+            rmm_provider=cast(Any, provider),
+        )
+    payload = {"device_id": "server:1", "_approval_completed": True}
+    assert pause_action.run(approved_context(FailingProvider()), payload).status == "failed"
+    assert pause_action.run(approved_context(MalformedProvider()), payload).status == "failed"
+    rejected = pause_action.run(approved_context(RejectedProvider()), payload)
+    assert rejected.status == "failed"
+    assert rejected.error_detail == "N-sight antivirus scan pause failed"
 
 
 def test_nsight_antivirus_scan_start_action_previews_and_requires_write_gate(settings) -> None:

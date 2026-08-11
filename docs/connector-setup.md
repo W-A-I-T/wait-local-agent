@@ -307,6 +307,10 @@ The approval-gated `nsight-antivirus-scan-cancel` action uses the documented
 controls. It is reachable through `GET`/`POST .../smart-actions/nsight-antivirus-scan-cancel`
 and the generic CLI and Agents paths; a provider response such as “scan is not
 running” remains an explicit failed action.
+The approval-gated `nsight-antivirus-scan-pause` and
+`nsight-antivirus-scan-resume` actions use the documented
+`mav_scan_pause` and `mav_scan_resume` services with the same controls and
+preserve provider failures when the scan cannot be paused or resumed.
 
 Required settings:
 

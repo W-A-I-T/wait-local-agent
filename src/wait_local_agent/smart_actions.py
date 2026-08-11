@@ -4665,6 +4665,113 @@ class NSightAntivirusScanCancelAction:
         )
 
 
+class NSightAntivirusScanControlAction:
+    def __init__(
+        self,
+        *,
+        action_id: str,
+        title: str,
+        operation: str,
+        provider_method: str,
+        description: str,
+    ) -> None:
+        self.operation = operation
+        self.provider_method = provider_method
+        self.manifest = SmartActionManifest(
+            action_id=action_id,
+            title=title,
+            description=description,
+            kind="deterministic",
+            input_schema={
+                "type": "object",
+                "required": ["device_id"],
+                "properties": {
+                    "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                },
+            },
+            output_schema={
+                "status": "string",
+                "operation": "string",
+                "device_id": "string",
+                "message": "string",
+                "approval_required": "boolean",
+                "approved": "boolean",
+            },
+            requires_approval=True,
+            estimated_minutes_saved=4,
+            risk_level="high",
+            required_role="technician",
+            access_mode="write",
+        )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"device_id", "_approval_completed"}:
+            return _failed(
+                f"N-sight antivirus scan {self.operation} payload contains unsupported fields"
+            )
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        operation_fn = getattr(provider, self.provider_method, None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(operation_fn):
+            return _failed(
+                f"N-sight antivirus scan {self.operation} requires the N-sight RMM adapter"
+            )
+        clean_device_id = device_id.strip()
+        if not bool(payload.get("_approval_completed")):
+            gerund = "pausing" if self.operation == "pause" else "resuming"
+            return ActionResult(
+                status="success",
+                output={
+                    "status": "preview",
+                    "operation": self.operation,
+                    "device_id": clean_device_id,
+                    "message": (
+                        f"Technician approval is required before {gerund} the scan."
+                    ),
+                    "approval_required": True,
+                    "approved": False,
+                },
+                evidence=[
+                    {
+                        "type": "rmm_antivirus_scan",
+                        "operation": f"mav_scan_{self.operation}",
+                        "device_id": clean_device_id,
+                    }
+                ],
+            )
+        if not context.settings.allow_write_actions:
+            return _failed(
+                f"N-sight antivirus scan {self.operation} is blocked until "
+                "WAIT_ALLOW_WRITE_ACTIONS=true"
+            )
+        try:
+            operation_result = operation_fn(clean_device_id, client_id=context.client_id)
+        except Exception:
+            return _failed(f"N-sight antivirus scan {self.operation} failed")
+        if not isinstance(operation_result, dict):
+            return _failed(
+                f"N-sight returned malformed antivirus scan-{self.operation} data"
+            )
+        output = cast(dict[str, object], redact_value(operation_result))
+        output["approval_required"] = False
+        output["approved"] = True
+        accepted = output.get("status") == "accepted"
+        return ActionResult(
+            status="success" if accepted else "failed",
+            output=output,
+            evidence=[
+                {
+                    "type": "rmm_antivirus_scan",
+                    "operation": f"mav_scan_{self.operation}",
+                    "device_id": clean_device_id,
+                }
+            ],
+            error_detail="" if accepted else f"N-sight antivirus scan {self.operation} failed",
+        )
+
+
 class NSightOutageLookupAction:
     manifest = SmartActionManifest(
         action_id="nsight-outage-lookup",
@@ -7997,6 +8104,26 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightAntivirusDefinitionsAction(),
         NSightAntivirusScansAction(),
         NSightAntivirusScanCancelAction(),
+        NSightAntivirusScanControlAction(
+            action_id="nsight-antivirus-scan-pause",
+            title="Pause N-sight antivirus scan",
+            operation="pause",
+            provider_method="pause_antivirus_scan",
+            description=(
+                "Preview and, after technician approval, pause one running "
+                "managed-antivirus scan on a mapped N-sight device."
+            ),
+        ),
+        NSightAntivirusScanControlAction(
+            action_id="nsight-antivirus-scan-resume",
+            title="Resume N-sight antivirus scan",
+            operation="resume",
+            provider_method="resume_antivirus_scan",
+            description=(
+                "Preview and, after technician approval, resume one paused "
+                "managed-antivirus scan on a mapped N-sight device."
+            ),
+        ),
         NSightAntivirusScanStartAction(),
         NSightOutageLookupAction(),
         NSightBackupSessionsAction(),

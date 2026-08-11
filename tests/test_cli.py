@@ -1769,6 +1769,8 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     assert "nsight-antivirus-scans" in listed.output
     assert "nsight-antivirus-scan-start" in listed.output
     assert "nsight-antivirus-scan-cancel" in listed.output
+    assert "nsight-antivirus-scan-pause" in listed.output
+    assert "nsight-antivirus-scan-resume" in listed.output
     assert "nsight-antivirus-quarantine" in listed.output
     assert "nsight-antivirus-quarantine-release" in listed.output
     assert "nsight-antivirus-quarantine-remove" in listed.output

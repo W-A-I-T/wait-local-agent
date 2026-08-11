@@ -1043,6 +1043,12 @@ the same approval, write-flag, and scope controls. It is reachable through the
 generic `/smart-actions/nsight-antivirus-scan-cancel` API, CLI, and Agents
 definition editor paths; the provider's documented failure is preserved when
 no scan is running.
+The approval-gated `nsight-antivirus-scan-pause` and
+`nsight-antivirus-scan-resume` actions use the documented `mav_scan_pause` and
+`mav_scan_resume` services with the same mapped-device, approval, and write-flag
+controls. Provider failures such as a scan not being in a pausable or resumable
+state are preserved and the actions are reachable through the generic API, CLI,
+and Agents definition editor paths.
 The `nsight-asset-details` action exposes bounded asset metadata and hardware
 and software inventory for one mapped device. The
 `nsight-monitoring-details` action exposes bounded documented device metadata,
@@ -1077,7 +1083,10 @@ details; it never starts or changes an antivirus scan. The approval-gated
 `nsight-antivirus-scan-start` action uses the documented `mav_scan_start`
 service only after the same mapped-device recheck and write controls. The
 `nsight-antivirus-scan-cancel` action uses the documented `mav_scan_cancel`
-service under the same controls. The
+service under the same controls. The approval-gated
+`nsight-antivirus-scan-pause` and `nsight-antivirus-scan-resume` actions use
+the documented `mav_scan_pause` and `mav_scan_resume` services under the same
+controls and preserve provider failures. The
 `nsight-antivirus-quarantine` action uses the documented
 `mav_quarantine_list` service with a fixed provider engine version, rechecks
 the mapped device, and bounds/redacts quarantine records. The separate
@@ -1114,6 +1123,8 @@ and [supported antivirus products](https://developer.n-able.com/n-sight/docs/lis
 and [antivirus definitions](https://developer.n-able.com/n-sight/docs/list-av-definitions),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
+and [Managed Antivirus scan pause](https://developer.n-able.com/n-sight/docs/pause-scan),
+and [Managed Antivirus scan resume](https://developer.n-able.com/n-sight/docs/resume-scan),
 and [Managed Antivirus quarantine](https://developer.n-able.com/n-sight/docs/managed-antivirus-quarantine-list),
 and [Managed Antivirus quarantine release](https://developer.n-able.com/n-sight/docs/quarantine-release),
 and [Managed Antivirus quarantine remove](https://developer.n-able.com/n-sight/docs/quarantine-remove),
