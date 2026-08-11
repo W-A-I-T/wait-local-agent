@@ -3992,6 +3992,67 @@ class NSightSoftwareInventoryAction:
         )
 
 
+class NSightHardwareInventoryAction:
+    manifest = SmartActionManifest(
+        action_id="nsight-hardware-inventory",
+        title="N-sight hardware inventory",
+        description=(
+            "Read bounded complete hardware inventory for one mapped N-sight "
+            "server or workstation asset."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {
+                "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            },
+        },
+        output_schema={"hardware": "array", "count": "integer", "source": "string"},
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) != {"device_id"}:
+            return _failed("N-sight hardware inventory payload contains unsupported fields")
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
+            return _failed("device_id must be a non-empty string of at most 80 characters")
+        provider = context.rmm_provider or LocalCollectorRmmAdapter(context.store)
+        list_hardware = getattr(provider, "list_hardware", None)
+        if getattr(provider, "adapter_id", "") != "n-sight" or not callable(list_hardware):
+            return _failed("N-sight hardware inventory requires the N-sight RMM adapter")
+        clean_device_id = device_id.strip()
+        try:
+            hardware = list_hardware(clean_device_id, client_id=context.client_id)
+        except Exception:
+            return _failed("N-sight hardware inventory is unavailable")
+        if not isinstance(hardware, list) or any(not isinstance(item, dict) for item in hardware):
+            return _failed("N-sight returned malformed hardware inventory data")
+        output_hardware = [
+            cast(dict[str, object], redact_value(item)) for item in hardware[:100]
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "hardware": output_hardware,
+                "count": len(output_hardware),
+                "source": provider.adapter_id,
+            },
+            evidence=[
+                {
+                    "type": "rmm_hardware_inventory",
+                    "device_id": clean_device_id,
+                    "source": provider.adapter_id,
+                }
+            ],
+        )
+
+
 class NSightMonitoringDetailsAction:
     manifest = SmartActionManifest(
         action_id="nsight-monitoring-details",
@@ -8274,6 +8335,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NSightPerformanceHistoryAction(),
         NSightAssetDetailsAction(),
         NSightSoftwareInventoryAction(),
+        NSightHardwareInventoryAction(),
         NSightMonitoringDetailsAction(),
         NSightPatchLookupAction(),
         NSightPatchApproveAction(),

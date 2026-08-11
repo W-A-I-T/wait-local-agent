@@ -140,6 +140,15 @@ describe("Agents", () => {
             access_mode: "read"
           },
           {
+            id: "nsight-hardware-inventory",
+            name: "N-sight hardware inventory",
+            description: "Read mapped hardware inventory.",
+            risk_level: "low",
+            required_role: "technician",
+            approval_required: false,
+            access_mode: "read"
+          },
+          {
             id: "nsight-antivirus-scan-start",
             name: "Start N-sight antivirus scan",
             description: "Start a mapped antivirus scan after approval.",
@@ -459,6 +468,25 @@ describe("Agents", () => {
       ([input, init]) => String(input) === "/agents" && init?.method === "POST"
     );
     expect(String(request?.[1]?.body)).toContain("nsight-software-inventory");
+    expect(String(request?.[1]?.body)).toContain("server:49324");
+  });
+
+  it("exposes the mapped N-sight hardware inventory input", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const hardware = await screen.findByRole("checkbox", { name: /N-sight hardware inventory/ });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Review hardware inventory" } });
+    fireEvent.click(hardware);
+    fireEvent.change(screen.getByLabelText("N-sight hardware inventory input JSON"), {
+      target: { value: JSON.stringify({ device_id: "server:49324" }) }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain("nsight-hardware-inventory");
     expect(String(request?.[1]?.body)).toContain("server:49324");
   });
 

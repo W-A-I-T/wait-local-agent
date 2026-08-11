@@ -8,7 +8,7 @@ documented client, site, server, workstation, check-inventory,
     antivirus-scan-resume, antivirus-scan-cancel,
     antivirus-update-history,
     antivirus-quarantine, antivirus-product, antivirus-definition, software-inventory,
-    and automated-task
+    hardware-inventory, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
 outage, backup-session, and patch records are filtered to that mapping before
@@ -57,6 +57,7 @@ MAX_ANTIVIRUS_DEFINITIONS = 20
 MAX_ANTIVIRUS_HISTORY_CHECKS = 25
 MAX_ANTIVIRUS_HISTORY_DAYS = 60
 MAX_SOFTWARE_RECORDS = 100
+MAX_HARDWARE_RECORDS = 100
 MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
 MAX_BACKUP_CHECKS = 25
@@ -324,6 +325,31 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _software_inventory_records(root)[:MAX_SOFTWARE_RECORDS]
+
+    def list_hardware(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read the documented complete hardware inventory for one mapped asset."""
+
+        _device_numeric_id(device_id)
+        mapped_device = next(
+            (device for device in self.list_devices(client_id) if device.device_id == device_id),
+            None,
+        )
+        if mapped_device is None:
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        asset_id = mapped_device.attributes.get("asset_id")
+        if not isinstance(asset_id, int) or asset_id <= 0:
+            raise NSightRmmError("N-sight mapped device has no usable asset ID")
+        root = self._request(
+            "list_all_hardware",
+            {"assetid": str(asset_id)},
+            client_id=client_id,
+        )
+        return _hardware_inventory_records(root)[:MAX_HARDWARE_RECORDS]
 
     def list_monitoring_details(
         self,
@@ -1397,6 +1423,28 @@ def _software_inventory_records(root: Any) -> list[dict[str, object]]:
         if len(software) >= MAX_SOFTWARE_RECORDS:
             break
     return software
+
+
+def _hardware_inventory_records(root: Any) -> list[dict[str, object]]:
+    hardware: list[dict[str, object]] = []
+    for item in root.iter("hardware"):
+        hardware_id = _positive_id(_text(item, "hardwareid"))
+        if hardware_id is None:
+            continue
+        record: dict[str, object] = {
+            "hardware_id": hardware_id,
+            "name": _bounded_text(_text(item, "name")),
+            "type": _optional_integer(_text(item, "type")),
+            "manufacturer": _bounded_text(_text(item, "manufacturer")),
+            "details": _bounded_text(_text(item, "details")),
+            "status": _bounded_text(_text(item, "status")),
+            "deleted": _optional_flag(_text(item, "deleted")),
+            "modified": _optional_flag(_text(item, "modified")),
+        }
+        hardware.append({key: value for key, value in record.items() if value not in (None, "")})
+        if len(hardware) >= MAX_HARDWARE_RECORDS:
+            break
+    return hardware
 
 
 _MONITORING_DEVICE_FIELDS = (
