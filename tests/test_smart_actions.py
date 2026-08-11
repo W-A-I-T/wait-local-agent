@@ -1091,6 +1091,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "nsight-patch-reprocess",
         "nsight-performance-history",
         "nsight-run-task-now",
+        "nsight-software-inventory",
         "recurring-service-review",
         "rmm-alert-lookup",
         "rmm-device-lookup",

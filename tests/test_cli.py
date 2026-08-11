@@ -1777,6 +1777,7 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     assert "nsight-antivirus-definitions" in listed.output
     assert "nsight-antivirus-products" in listed.output
     assert "nsight-antivirus-update-history" in listed.output
+    assert "nsight-software-inventory" in listed.output
     assert described.exit_code == 0 and '"action_id": "ticket-triage"' in described.output
     assert invoked.exit_code == 0 and json.loads(invoked.output)["status"] == "success"
     assert script.exit_code == 0 and json.loads(script.output)["action_id"] == "rmm-script-execute"

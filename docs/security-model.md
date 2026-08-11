@@ -83,6 +83,11 @@ The read-only `nsight-antivirus-update-history` operation uses the documented
 are capped at 25 and dated statuses at 60 records, matching the provider's
 documented 60-day window; all values are bounded and redacted before action
 output or audit evidence.
+The read-only `nsight-software-inventory` operation uses the documented
+`list_all_software` service only after rechecking mapped-device membership and
+the asset ID returned by provider inventory. Software IDs, catalog IDs, names,
+versions, and install dates are bounded and redacted before action output or
+audit evidence; no software write or deployment service is exposed.
 The read-only `nsight-antivirus-quarantine` operation uses the documented
 `mav_quarantine_list` service only after rechecking the mapped device. Quarantine
 IDs, status, event, threat, trace-count, and engine fields are bounded and
