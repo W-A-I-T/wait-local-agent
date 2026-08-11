@@ -54,7 +54,7 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and check inventory,
   failing-check, outage, antivirus-threat, antivirus product/definition/update-check
-  history, Backup & Recovery session, and
+  history, software inventory, Backup & Recovery session, and
   backup-check history inventory, mapped patch reads, and approval-gated
   patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
@@ -1025,6 +1025,9 @@ The read-only `nsight-antivirus-update-history` action reads the documented
 60-day antivirus update-check history for one mapped device through the same
 generic API, CLI, and Agents definition editor paths. It returns bounded check
 names and dated provider statuses and accepts only the mapped device ID.
+The read-only `nsight-software-inventory` action reads the documented complete
+software inventory for a mapped asset through `list_all_software`, using the
+asset ID returned by the tenant-scoped device inventory.
 The read-only `nsight-antivirus-quarantine` action reads documented Managed
 Antivirus quarantine records for one mapped device through the same generic
 API, CLI, and Agents definition editor paths. It exposes bounded status, event,

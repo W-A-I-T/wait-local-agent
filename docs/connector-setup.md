@@ -289,6 +289,10 @@ The read-only `nsight-antivirus-update-history` action exposes the documented
 `list_av_history` service, returns bounded check names and dated statuses, and
 is reachable through `GET`/`POST .../smart-actions/nsight-antivirus-update-history`,
 the generic CLI, and the Agents definition editor.
+The read-only `nsight-software-inventory` action uses the documented
+`list_all_software` service after rechecking the mapped device and its asset ID.
+It returns bounded software IDs, catalog IDs, names, versions, and install dates
+through the generic API, CLI, and Agents definition editor.
 The read-only `nsight-antivirus-quarantine` action exposes documented Managed
 Antivirus quarantine records through the same generic API, CLI, and Agents
 paths. It accepts only a mapped device, rechecks scope, and never releases or

@@ -121,6 +121,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "nsight-check-inventory",
         "nsight-monitoring-details",
         "nsight-performance-history",
+        "nsight-software-inventory",
         "nsight-outage-lookup",
         "nsight-patch-lookup",
         "nsight-patch-approve",
@@ -2215,6 +2216,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
         "nsight-patch-approve",
         "nsight-patch-policy",
         "nsight-run-task-now",
+        "nsight-software-inventory",
     } <= tool_ids
     assert (
         next(
