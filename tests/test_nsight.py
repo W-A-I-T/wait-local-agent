@@ -39,6 +39,7 @@ from wait_local_agent.smart_actions import (
     NSightAntivirusScanControlAction,
     NSightAntivirusScansAction,
     NSightAntivirusScanStartAction,
+    NSightAntivirusUpdateHistoryAction,
     NSightCheckConfigAction,
     SmartActionService,
 )
@@ -137,6 +138,15 @@ MAV_DEFINITIONS_XML = """
   <definition><product></product><version>ignored</version><date>2026-08-01</date></definition>
   <definition><product>bitdefender</product><version></version><date>2026-07-01</date></definition>
 </definitions></result>
+"""
+MAV_UPDATE_HISTORY_XML = """
+<result status="OK"><checks>
+  <name>Windows Defender Update</name><name>Bitdefender Update</name>
+</checks>
+<days><day><date>2026-08-10</date><status>PASS</status></day></days>
+<days><day><date>2026-08-09</date><status>FAIL</status></day>
+  <day><date></date><status>ignored</status></day></days>
+</result>
 """
 MAV_QUARANTINE_XML = """
 <quarantines>
@@ -869,6 +879,77 @@ def test_nsight_antivirus_definitions_action_rejects_invalid_and_unavailable_inp
     assert run(
         SimpleNamespace(adapter_id="n-sight", list_antivirus_definitions=lambda product_id, **kwargs: {}),
         {"product_id": "bitdefender"},
+    ).status == "failed"
+
+
+def test_nsight_antivirus_update_history_rechecks_device_and_bounds_records(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_av_history":
+            assert request.url.params.get("deviceid") == "49324"
+            return httpx.Response(200, text=MAV_UPDATE_HISTORY_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    history = adapter.list_antivirus_update_history("server:49324", client_id="acme")
+    assert history == {
+        "checks": ["Windows Defender Update", "Bitdefender Update"],
+        "days": [
+            {"date": "2026-08-10", "status": "PASS"},
+            {"date": "2026-08-09", "status": "FAIL"},
+        ],
+    }
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_antivirus_update_history("server:999", client_id="acme")
+
+
+def test_nsight_antivirus_update_history_action_rejects_invalid_and_unavailable_inputs(
+    settings,
+) -> None:
+    action = NSightAntivirusUpdateHistoryAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_update_history=lambda device_id, **kwargs: {
+            "checks": ["Bitdefender Update"],
+            "days": [{"date": "2026-08-10", "status": "PASS"}],
+        },
+    )
+    result = run(provider, {"device_id": " server:49324 "})
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.evidence[0]["type"] == "rmm_antivirus_update_history"
+    assert run(provider, {}).status == "failed"
+    assert run(provider, {"device_id": "server:1", "unexpected": True}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {"device_id": "server:1"}).status == "failed"
+    assert run(
+        SimpleNamespace(
+            adapter_id="n-sight",
+            list_antivirus_update_history=lambda device_id, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("unavailable")
+            ),
+        ),
+        {"device_id": "server:1"},
+    ).status == "failed"
+    assert run(
+        SimpleNamespace(
+            adapter_id="n-sight",
+            list_antivirus_update_history=lambda device_id, **kwargs: {"checks": [], "days": {}},
+        ),
+        {"device_id": "server:1"},
     ).status == "failed"
 
 

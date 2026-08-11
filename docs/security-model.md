@@ -78,6 +78,11 @@ The read-only `nsight-antivirus-scans` operation uses the documented
 summaries and optional threat details are bounded and redacted before entering
  action output or audit data; no unapproved antivirus mutation service is
  exposed.
+The read-only `nsight-antivirus-update-history` operation uses the documented
+`list_av_history` service only after rechecking the mapped device. Check names
+are capped at 25 and dated statuses at 60 records, matching the provider's
+documented 60-day window; all values are bounded and redacted before action
+output or audit evidence.
 The read-only `nsight-antivirus-quarantine` operation uses the documented
 `mav_quarantine_list` service only after rechecking the mapped device. Quarantine
 IDs, status, event, threat, trace-count, and engine fields are bounded and

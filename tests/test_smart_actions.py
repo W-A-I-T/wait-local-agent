@@ -1077,6 +1077,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "nsight-antivirus-scan-start",
         "nsight-antivirus-scans",
         "nsight-antivirus-threats",
+        "nsight-antivirus-update-history",
         "nsight-asset-details",
         "nsight-backup-history",
         "nsight-backup-sessions",

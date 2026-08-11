@@ -6,6 +6,7 @@ documented client, site, server, workstation, check-inventory,
     monitoring-details, backup-session, bounded patch, check-configuration,
     antivirus-scan, antivirus-scan-start, antivirus-scan-pause,
     antivirus-scan-resume, antivirus-scan-cancel,
+    antivirus-update-history,
     antivirus-quarantine, antivirus-product, antivirus-definition, and automated-task
     services here. A local
 WAIT-client-to-N-sight-client map is mandatory; returned site, device, alert,
@@ -52,6 +53,8 @@ MAX_PATCH_IDS = 20
 MAX_ANTIVIRUS_THREATS = 100
 MAX_ANTIVIRUS_PRODUCTS = 100
 MAX_ANTIVIRUS_DEFINITIONS = 20
+MAX_ANTIVIRUS_HISTORY_CHECKS = 25
+MAX_ANTIVIRUS_HISTORY_DAYS = 60
 MAX_OUTAGES = 100
 MAX_BACKUP_SESSIONS = 100
 MAX_BACKUP_CHECKS = 25
@@ -470,6 +473,25 @@ class NSightRmmAdapter(RmmInventoryProvider):
             client_id=client_id,
         )
         return _antivirus_scan_records(root, include_details=include_details)[:MAX_ANTIVIRUS_SCANS]
+
+    def list_antivirus_update_history(
+        self,
+        device_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        """Read the documented 60-day antivirus update-check history for a mapped device."""
+
+        numeric_device_id = _device_numeric_id(device_id)
+        mapped_devices = self.list_devices(client_id)
+        if not any(device.device_id == device_id for device in mapped_devices):
+            raise NSightRmmError("N-sight device is outside the mapped client scope")
+        root = self._request(
+            "list_av_history",
+            {"deviceid": str(numeric_device_id)},
+            client_id=client_id,
+        )
+        return _antivirus_update_history_records(root)
 
     def start_antivirus_scan(
         self,
@@ -1524,6 +1546,28 @@ def _antivirus_definition_records(root: Any) -> list[dict[str, object]]:
         if len(definitions) >= MAX_ANTIVIRUS_DEFINITIONS:
             return definitions
     return definitions
+
+
+def _antivirus_update_history_records(root: Any) -> dict[str, object]:
+    checks: list[str] = []
+    checks_container = root.find("checks")
+    if checks_container is not None:
+        for name in checks_container.findall("name")[:MAX_ANTIVIRUS_HISTORY_CHECKS]:
+            value = _bounded_text(name.text.strip() if isinstance(name.text, str) else "")
+            if value:
+                checks.append(value)
+
+    days: list[dict[str, object]] = []
+    for days_container in root.findall("days"):
+        for day in days_container.findall("day"):
+            date = _bounded_text(_text(day, "date"))
+            status = _bounded_text(_text(day, "status"))
+            if not date or not status:
+                continue
+            days.append({"date": date, "status": status})
+            if len(days) >= MAX_ANTIVIRUS_HISTORY_DAYS:
+                return {"checks": checks, "days": days}
+    return {"checks": checks, "days": days}
 
 
 def _antivirus_quarantine_records(root: Any) -> list[dict[str, object]]:

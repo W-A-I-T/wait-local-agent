@@ -53,7 +53,8 @@ WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer 
   provider contract; the local adapter blocks execution, while reviewed
   NinjaOne, Datto, and N-central adapters expose bounded
   write paths, N-able N-sight exposes tenant-scoped device and check inventory,
-  failing-check, outage, antivirus-threat, Backup & Recovery session, and
+  failing-check, outage, antivirus-threat, antivirus product/definition/update-check
+  history, Backup & Recovery session, and
   backup-check history inventory, mapped patch reads, and approval-gated
   patch approval, TimeZest exposes tenant-mapped scheduling-request reads and an
   approval-gated documented scheduling-request create action, ScalePad
@@ -980,7 +981,7 @@ and [task/job API overview](https://developer.n-able.com/n-central/docs/task-job
 
 The N-sight adapter is a bounded XML Data Extraction API surface for
 tenant-scoped site, server, and workstation inventory plus documented per-device
-check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus product/threat, definition, and scan history, Backup & Recovery sessions, and
+check inventory, performance history, asset details, monitoring details, failing checks, outages, managed-antivirus product/threat, definition, update-check, and scan history, Backup & Recovery sessions, and
 backup-check history. It uses an explicit local
 WAIT-client-to-N-sight-client map and
 rechecks the returned client before exposing bounded device and alert records:
@@ -1020,6 +1021,10 @@ versions and release dates for one product returned by that catalog. It accepts
 only the product ID and a bounded 1-20 result count, rechecks the product in
 tenant scope, and is reachable through the same generic API, CLI, and Agents
 definition editor paths.
+The read-only `nsight-antivirus-update-history` action reads the documented
+60-day antivirus update-check history for one mapped device through the same
+generic API, CLI, and Agents definition editor paths. It returns bounded check
+names and dated provider statuses and accepts only the mapped device ID.
 The read-only `nsight-antivirus-quarantine` action reads documented Managed
 Antivirus quarantine records for one mapped device through the same generic
 API, CLI, and Agents definition editor paths. It exposes bounded status, event,
@@ -1121,6 +1126,7 @@ and [check configuration](https://developer.n-able.com/n-sight/docs/listing-chec
 and [Managed Antivirus scans](https://developer.n-able.com/n-sight/docs/list-managed-antivirus-scans),
 and [supported antivirus products](https://developer.n-able.com/n-sight/docs/list-supported-av-products),
 and [antivirus definitions](https://developer.n-able.com/n-sight/docs/list-av-definitions),
+and [antivirus update-check history](https://developer.n-able.com/n-sight/docs/list-av-update-check-history),
 and [Managed Antivirus start scan](https://developer.n-able.com/n-sight/docs/start-scan),
 and [Managed Antivirus scan cancel](https://developer.n-able.com/n-sight/docs/scan-cancel),
 and [Managed Antivirus scan pause](https://developer.n-able.com/n-sight/docs/pause-scan),
