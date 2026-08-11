@@ -105,7 +105,7 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 - N-able N-sight tenant-scoped site, server, and workstation inventory,
   documented per-device check inventory and check-configuration reads,
   performance-history, asset-details, and monitoring-details inventory, failing-check alerts, mapped-device outages, managed-antivirus
-  products, threats, definition history, update-check history, software inventory, scan history, and quarantine records, plus approval-gated mapped-device scan start,
+  products, threats, definition history, update-check history, software/hardware inventory, scan history, and quarantine records, plus approval-gated mapped-device scan start,
   pause, resume, and cancellation,
   Backup & Recovery session and 60-day backup-check history through the
   XML Data Extraction API and an explicit client map. Patch approval is available only through the

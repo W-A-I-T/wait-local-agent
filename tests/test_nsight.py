@@ -41,6 +41,7 @@ from wait_local_agent.smart_actions import (
     NSightAntivirusScanStartAction,
     NSightAntivirusUpdateHistoryAction,
     NSightCheckConfigAction,
+    NSightHardwareInventoryAction,
     NSightSoftwareInventoryAction,
     SmartActionService,
 )
@@ -171,6 +172,15 @@ SOFTWARE_INVENTORY_XML = """
     <name>Security Update</name><version>1.2.3</version><install_date>2026-08-10 00:00:00</install_date>
   </software>
   <software><softwareid>bad</softwareid><name>Ignored</name></software>
+</items></result>
+"""
+HARDWARE_INVENTORY_XML = """
+<result status="OK"><items>
+  <hardware><hardwareid>123456</hardwareid><name>Ethernet Adapter</name>
+    <type>1</type><manufacturer>Example</manufacturer><details>AdapterType=Ethernet</details>
+    <status>OK</status><deleted>0</deleted><modified>1</modified>
+  </hardware>
+  <hardware><hardwareid>bad</hardwareid><name>Ignored</name></hardware>
 </items></result>
 """
 MAV_QUARANTINE_MUTATION_XML = '<result status="OK"><msg>accepted</msg></result>'
@@ -1039,6 +1049,91 @@ def test_nsight_software_inventory_action_rejects_invalid_and_unavailable_inputs
     ).status == "failed"
     assert run(
         SimpleNamespace(adapter_id="n-sight", list_software=lambda device_id, **kwargs: ["bad"]),
+        {"device_id": "server:1"},
+    ).status == "failed"
+
+
+def test_nsight_hardware_inventory_rechecks_asset_scope_and_bounds_records(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_servers":
+            return httpx.Response(200, text=SERVERS_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        if service == "list_all_hardware":
+            assert request.url.params.get("assetid") == "70001"
+            return httpx.Response(200, text=HARDWARE_INVENTORY_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    assert adapter.list_hardware("server:49324", client_id="acme") == [
+        {
+            "hardware_id": 123456,
+            "name": "Ethernet Adapter",
+            "type": 1,
+            "manufacturer": "Example",
+            "details": "AdapterType=Ethernet",
+            "status": "OK",
+            "deleted": False,
+            "modified": True,
+        }
+    ]
+    with pytest.raises(NSightRmmError, match="outside the mapped client scope"):
+        adapter.list_hardware("server:999", client_id="acme")
+
+    def missing_asset_handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_servers":
+            return httpx.Response(
+                200,
+                text=SERVERS_XML.replace("<assetid>70001</assetid>", ""),
+            )
+        if service == "list_sites":
+            return httpx.Response(200, text=SITES_XML)
+        if service == "list_workstations":
+            return httpx.Response(200, text=EMPTY_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    with pytest.raises(NSightRmmError, match="no usable asset ID"):
+        _adapter(settings, missing_asset_handler).list_hardware("server:49324", client_id="acme")
+
+
+def test_nsight_hardware_inventory_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
+    action = NSightHardwareInventoryAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_hardware=lambda device_id, **kwargs: [{"hardware_id": 1, "name": "Example"}],
+    )
+    result = run(provider, {"device_id": "server:49324"})
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.evidence[0]["type"] == "rmm_hardware_inventory"
+    assert run(provider, {}).status == "failed"
+    assert run(provider, {"device_id": "server:1", "unexpected": True}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {"device_id": "server:1"}).status == "failed"
+    assert run(
+        SimpleNamespace(
+            adapter_id="n-sight",
+            list_hardware=lambda device_id, **kwargs: (_ for _ in ()).throw(RuntimeError("unavailable")),
+        ),
+        {"device_id": "server:1"},
+    ).status == "failed"
+    assert run(
+        SimpleNamespace(adapter_id="n-sight", list_hardware=lambda device_id, **kwargs: {}),
+        {"device_id": "server:1"},
+    ).status == "failed"
+    assert run(
+        SimpleNamespace(adapter_id="n-sight", list_hardware=lambda device_id, **kwargs: ["bad"]),
         {"device_id": "server:1"},
     ).status == "failed"
 

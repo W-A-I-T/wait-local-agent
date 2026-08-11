@@ -88,6 +88,11 @@ The read-only `nsight-software-inventory` operation uses the documented
 the asset ID returned by provider inventory. Software IDs, catalog IDs, names,
 versions, and install dates are bounded and redacted before action output or
 audit evidence; no software write or deployment service is exposed.
+The read-only `nsight-hardware-inventory` operation uses the documented
+`list_all_hardware` service only after rechecking mapped-device membership and
+the provider asset ID. Hardware IDs, names, types, manufacturers, status, and
+change flags are bounded and redacted before action output or audit evidence;
+no hardware write or deployment service is exposed.
 The read-only `nsight-antivirus-quarantine` operation uses the documented
 `mav_quarantine_list` service only after rechecking the mapped device. Quarantine
 IDs, status, event, threat, trace-count, and engine fields are bounded and
