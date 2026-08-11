@@ -170,7 +170,7 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   path; execution scope is persisted locally before status lookup.
   The N-able N-sight adapter maps WAIT clients to explicit N-sight client IDs,
   reads documented site/server/workstation XML inventory, per-device check, performance-history, asset-details, and monitoring-details inventory, failing-check alerts,
-  managed-antivirus product and threat records, mapped-device outage records, Backup & Recovery
+  managed-antivirus product, threat, and definition records, mapped-device outage records, Backup & Recovery
   session records, 60-day backup-check history, and mapped-device patch records, rechecks
   returned client/device scope, and
   exposes patch approval, patch reprocessing, and allowlisted patch policy

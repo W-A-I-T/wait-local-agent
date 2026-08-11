@@ -31,6 +31,7 @@ from wait_local_agent.nsight import (
 from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.smart_actions import (
     ActionContext,
+    NSightAntivirusDefinitionsAction,
     NSightAntivirusProductsAction,
     NSightAntivirusQuarantineAction,
     NSightAntivirusQuarantineMutationAction,
@@ -125,6 +126,14 @@ MAV_PRODUCTS_XML = """
   <product><name></name><id>ignored</id></product>
   <product><name>Ignored</name><id></id></product>
 </products>
+"""
+MAV_DEFINITIONS_XML = """
+<result status="OK"><definitions>
+  <definition><product>bitdefender</product><version>7.9.1</version><date>2026-08-10 10:00:00</date></definition>
+  <definition><product>bitdefender</product><version>7.9.0</version><date>2026-08-03 10:00:00</date></definition>
+  <definition><product></product><version>ignored</version><date>2026-08-01</date></definition>
+  <definition><product>bitdefender</product><version></version><date>2026-07-01</date></definition>
+</definitions></result>
 """
 MAV_QUARANTINE_XML = """
 <quarantines>
@@ -793,6 +802,70 @@ def test_nsight_supported_antivirus_products_action_rejects_inputs_and_failures(
     assert run(
         SimpleNamespace(adapter_id="n-sight", list_supported_antivirus_products=lambda **kwargs: {}),
         {},
+    ).status == "failed"
+
+
+def test_nsight_antivirus_definitions_recheck_product_and_bound_results(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        service = request.url.params.get("service")
+        if service == "list_supported_av_products":
+            return httpx.Response(200, text=MAV_PRODUCTS_XML)
+        if service == "list_av_definitions":
+            assert request.url.params.get("product") == "bitdefender"
+            assert request.url.params.get("max_results") == "2"
+            return httpx.Response(200, text=MAV_DEFINITIONS_XML)
+        raise AssertionError(f"unexpected service {service}")
+
+    adapter = _adapter(settings, handler)
+    assert adapter.list_antivirus_definitions(
+        " bitdefender ", max_results=2, client_id="acme"
+    ) == [
+        {"product": "bitdefender", "version": "7.9.1", "date": "2026-08-10 10:00:00"},
+        {"product": "bitdefender", "version": "7.9.0", "date": "2026-08-03 10:00:00"},
+    ]
+    with pytest.raises(NSightRmmError, match="not in the supported product catalog"):
+        adapter.list_antivirus_definitions("unknown", client_id="acme")
+    with pytest.raises(NSightRmmError, match="1 to 20"):
+        adapter.list_antivirus_definitions("bitdefender", max_results=21, client_id="acme")
+
+
+def test_nsight_antivirus_definitions_action_rejects_invalid_and_unavailable_inputs(settings) -> None:
+    action = NSightAntivirusDefinitionsAction()
+    store = Store(settings.data_path)
+
+    def run(provider, payload):
+        return action.run(
+            ActionContext(store=store, settings=settings, actor="technician", rmm_provider=provider),
+            payload,
+        )
+
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_antivirus_definitions=lambda product_id, **kwargs: [
+            {"product": product_id, "version": "7.9.1", "date": "2026-08-10"}
+        ],
+    )
+    result = run(provider, {"product_id": " bitdefender ", "max_results": 2})
+    assert result.status == "success"
+    assert result.output["product_id"] == "bitdefender"
+    assert result.evidence[0]["type"] == "rmm_antivirus_definition"
+    assert run(provider, {}).status == "failed"
+    assert run(provider, {"product_id": "", "max_results": 2}).status == "failed"
+    assert run(provider, {"product_id": "bitdefender", "max_results": 21}).status == "failed"
+    assert run(provider, {"product_id": "bitdefender", "unexpected": True}).status == "failed"
+    assert run(SimpleNamespace(adapter_id="other"), {"product_id": "bitdefender"}).status == "failed"
+    assert run(
+        SimpleNamespace(
+            adapter_id="n-sight",
+            list_antivirus_definitions=lambda product_id, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("unavailable")
+            ),
+        ),
+        {"product_id": "bitdefender"},
+    ).status == "failed"
+    assert run(
+        SimpleNamespace(adapter_id="n-sight", list_antivirus_definitions=lambda product_id, **kwargs: {}),
+        {"product_id": "bitdefender"},
     ).status == "failed"
 
 
