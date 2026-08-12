@@ -186,6 +186,7 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
@@ -426,6 +427,13 @@ class PowerAutomatePlanRequest(BaseModel):
 class DiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class SupervisorPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    task: str = Field(min_length=1, max_length=2000)
+    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4063,6 +4071,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
         except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/supervisor/plan")
+    def consultant_supervisor_plan(
+        payload: SupervisorPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definitions = agent_service.list_definitions(scoped_client_id)
+        try:
+            return build_supervisor_delegation_plan(
+                client_id=scoped_client_id,
+                task=payload.task,
+                child_agent_ids=payload.child_agent_ids,
+                definitions=definitions,
+            )
+        except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/use-cases")

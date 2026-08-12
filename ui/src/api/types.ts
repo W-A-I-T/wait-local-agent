@@ -216,6 +216,12 @@ export type ConsultantArchitecture = {
   readiness: "ready" | "needs_review";
   execution_started: boolean;
   deployment_started: boolean;
+  supervisor?: {
+    mode: string;
+    children: Array<{ id: string; kind: string; purpose?: string; context_policy?: string }>;
+    context_policy?: string;
+    execution_started?: boolean;
+  };
 };
 
 export type ConsultantUseCase = {

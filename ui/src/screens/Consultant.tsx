@@ -302,6 +302,23 @@ export function Consultant() {
               ) : null}
             </div>
           ) : null}
+          {architecture.supervisor && architecture.supervisor.children.length > 1 ? (
+            <div className="panel-subsection">
+              <h3>Supervisor delegation</h3>
+              <p className="screen-note">Child agents receive bounded tenant-scoped tasks and structured results only.</p>
+              <div className="consultant-component-list">
+                {architecture.supervisor.children.map((child) => (
+                  <div className="consultant-component" key={child.id}>
+                    <div>
+                      <strong>{child.id}</strong>
+                      <span>{child.kind} · {child.context_policy ?? "bounded structured context"}</span>
+                    </div>
+                    <StatusChip status="evidence_partial" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="panel-subsection">
             <h3>Implementation mapping</h3>
             <div className="consultant-component-list">

@@ -149,6 +149,7 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
@@ -179,6 +180,7 @@ microsoft_power_apps_app = typer.Typer(help="Metadata-only Power Apps and Datave
 microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
 microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
+microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -210,6 +212,7 @@ microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
 microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
 microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
 microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
+microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2845,6 +2848,31 @@ def assess_microsoft_discovery(source: Path) -> None:
     try:
         result = build_solution_discovery(client_id=client_id, answers=answers)
     except DiscoveryValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_supervisor_app.command("plan")
+def plan_microsoft_supervisor(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    task = payload.get("task")
+    child_agent_ids = payload.get("child_agent_ids")
+    if not isinstance(client_id, str) or not isinstance(task, str) or not isinstance(child_agent_ids, list):
+        raise typer.BadParameter("source must contain client_id, task, and child_agent_ids")
+    if any(not isinstance(item, str) for item in child_agent_ids):
+        raise typer.BadParameter("child_agent_ids must contain text values")
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    try:
+        result = build_supervisor_delegation_plan(
+            client_id=client_id,
+            task=task,
+            child_agent_ids=child_agent_ids,
+            definitions=service.list_definitions(client_id),
+        )
+    except SupervisorPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
