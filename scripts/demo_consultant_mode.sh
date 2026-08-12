@@ -9,5 +9,6 @@ wait-local-agent microsoft power-apps plan examples/consultant/power-apps-plan.j
 wait-local-agent microsoft workflow plan examples/consultant/flow-plan.json
 wait-local-agent microsoft evaluation run examples/consultant/evaluation.json
 wait-local-agent microsoft governance evaluate examples/consultant/governance.json
+wait-local-agent microsoft delivery plan examples/consultant/delivery.json
 wait-local-agent microsoft solution status
 wait-local-agent microsoft monitoring agents

@@ -1,0 +1,19 @@
+{
+  "client_id": "demo",
+  "architecture": {
+    "client_id": "demo",
+    "readiness": "ready",
+    "approval_policy": {"assign_license": "IT"},
+    "components": [
+      {"kind": "agent", "id": "onboarding-supervisor"},
+      {"kind": "workflow", "id": "employee_onboarding"},
+      {"kind": "knowledge_source", "id": "employee-handbook"}
+    ]
+  },
+  "evaluation": {"production_readiness": "pass", "case_count": 48},
+  "governance": {"client_id": "demo", "status": "pass"},
+  "deployment_targets": ["Teams", "Microsoft 365 Copilot"],
+  "connector_artifacts": [
+    {"connector_id": "m365", "credentials_included": false}
+  ]
+}

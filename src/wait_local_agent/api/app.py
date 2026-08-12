@@ -93,6 +93,7 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
@@ -434,6 +435,16 @@ class SupervisorPlanRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     task: str = Field(min_length=1, max_length=2000)
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeliveryPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    architecture: dict[str, object]
+    evaluation: dict[str, object]
+    governance: dict[str, object]
+    deployment_targets: list[str] = Field(min_length=1, max_length=8)
+    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4090,6 +4101,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 definitions=definitions,
             )
         except SupervisorPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/delivery-plan")
+    def consultant_delivery_plan(
+        payload: DeliveryPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_consultant_delivery_plan(
+                client_id=scoped_client_id,
+                architecture=payload.architecture,
+                evaluation=payload.evaluation,
+                governance=payload.governance,
+                deployment_targets=payload.deployment_targets,
+                connector_artifacts=payload.connector_artifacts,
+            )
+        except DeliveryPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/use-cases")

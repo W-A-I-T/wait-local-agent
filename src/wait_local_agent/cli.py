@@ -89,6 +89,7 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
@@ -181,6 +182,7 @@ microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use c
 microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
 microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
+microsoft_delivery_app = typer.Typer(help="Review-only consultant delivery handoffs.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -213,6 +215,7 @@ microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
 microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
 microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
 microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
+microsoft_app.add_typer(microsoft_delivery_app, name="delivery")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2873,6 +2876,45 @@ def plan_microsoft_supervisor(source: Path) -> None:
             definitions=service.list_definitions(client_id),
         )
     except SupervisorPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_delivery_app.command("plan")
+def plan_microsoft_delivery(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "architecture", "evaluation", "governance", "deployment_targets")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter(
+            "source must contain client_id, architecture, evaluation, governance, and deployment_targets"
+        )
+    client_id = payload["client_id"]
+    architecture = payload["architecture"]
+    evaluation = payload["evaluation"]
+    governance = payload["governance"]
+    deployment_targets = payload["deployment_targets"]
+    connector_artifacts = payload.get("connector_artifacts", [])
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(architecture, dict)
+        or not isinstance(evaluation, dict)
+        or not isinstance(governance, dict)
+        or not isinstance(deployment_targets, list)
+        or any(not isinstance(item, str) for item in deployment_targets)
+        or not isinstance(connector_artifacts, list)
+        or any(not isinstance(item, dict) for item in connector_artifacts)
+    ):
+        raise typer.BadParameter("source contains invalid delivery-plan fields")
+    try:
+        result = build_consultant_delivery_plan(
+            client_id=client_id,
+            architecture=architecture,
+            evaluation=evaluation,
+            governance=governance,
+            deployment_targets=deployment_targets,
+            connector_artifacts=connector_artifacts,
+        )
+    except DeliveryPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
