@@ -405,7 +405,7 @@ def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> Non
 
 
 def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(settings) -> None:
-    client = TestClient(create_app(settings))
+    endpoint = _endpoint(settings, "/consultant/solutions/deployment-approvals")
     base = {
         "client_id": "acme",
         "solution_name": "onboarding_review",
@@ -418,12 +418,13 @@ def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(sett
             {"name": "prod", "environment_url": "https://prod.crm.dynamics.com"},
         ],
     }
-    missing = client.post(
-        "/consultant/solutions/deployment-approvals",
-        json={**base, "stage": "test"},
-    )
-    assert missing.status_code == 422
-    assert "requires promotion_evidence" in missing.json()["detail"]
+    with pytest.raises(HTTPException, match="requires promotion_evidence") as missing:
+        endpoint(
+            PowerPlatformDeploymentRequest.model_validate({**base, "stage": "test"}),
+            _request(),
+            _technician(),
+        )
+    assert missing.value.status_code == 422
 
     promotion_evidence = {
         "source_stage": "dev",
@@ -437,15 +438,17 @@ def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(sett
             "artifact_digest": "sha256:" + "b" * 64,
         },
     }
-    approved_for_review = client.post(
-        "/consultant/solutions/deployment-approvals",
-        json={**base, "stage": "test", "promotion_evidence": promotion_evidence},
+    approved_for_review = endpoint(
+        PowerPlatformDeploymentRequest.model_validate(
+            {**base, "stage": "test", "promotion_evidence": promotion_evidence}
+        ),
+        _request(),
+        _technician(),
     )
-    assert approved_for_review.status_code == 201, approved_for_review.text
-    approval = approved_for_review.json()["approval"]
+    approval = approved_for_review["approval"]
     assert approval["status"] == "pending"
     assert approval["payload"]["promotion_evidence"]["source_stage"] == "dev"
-    assert approved_for_review.json()["plan"]["deployment_started"] is False
+    assert approved_for_review["plan"]["deployment_started"] is False
 
 
 def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
