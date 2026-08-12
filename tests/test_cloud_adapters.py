@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+import wait_local_agent.cloud_connectors._safe as safe_module
 import wait_local_agent.cloud_connectors.adapters as adapters_module
 from wait_local_agent.cloud_connectors.adapters import (
     AwsCloudAdapter,
@@ -77,6 +78,39 @@ class _LegacyConnector(_FakeConnector):
 
     def collect(self, config: dict[str, Any]) -> dict[str, Any]:
         return {"assets": self.records, "observations": []}
+
+
+def test_safe_cloud_outcomes_classify_provider_failures_and_bounds() -> None:
+    class _AccessDeniedByName(Exception):
+        pass
+
+    class _StatusError(Exception):
+        status_code = 403
+
+    assert safe_module.provider_outcome(
+        "aws", PermissionError(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", _AccessDeniedByName(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", _StatusError(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", ImportError(), permission_hint="check IAM"
+    )["error_code"] == "sdk_unavailable"
+    assert safe_module.provider_outcome(
+        "aws", RuntimeError(), permission_hint="check IAM"
+    )["error_code"] == "collection_unavailable"
+    assert safe_module.truncation_outcome("aws", limit=3)["status"] == "partial"
+    assert safe_module.result_status(0, []) == "empty"
+    assert safe_module.result_status(2, [{"status": "unavailable"}]) == "partial"
+    assert safe_module.result_status(0, [{"status": "not_authorized"}]) == "not_authorized"
+    assert safe_module.result_status(0, [{"status": "unavailable"}]) == "unavailable"
+    assert safe_module.result_status(0, [{"status": "partial"}]) == "partial"
+    assert safe_module.result_errors([{"error_code": "bad", "error_detail": "failed"}, {"status": "empty"}]) == [
+        "bad: failed"
+    ]
 
 
 class _ValidationConnector(_FakeConnector):

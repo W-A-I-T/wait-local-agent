@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import cast
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -1369,6 +1370,32 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     for params in invalid_params:
         with pytest.raises(HTTPException, match="include ticket_id"):
             app_module._scheduled_ticket_id(params)
+
+    assert app_module._redact_request_input(
+        {"license": "secret", "nested": [{"value": "x"}]}, {"license", "value"}
+    ) == {
+        "license": "[redacted]",
+        "nested": [{"value": "[redacted]"}],
+    }
+    assert app_module._redact_request_input("plain", set()) == "plain"
+
+    class ValidationStub(Exception):
+        def errors(self):
+            return [
+                {"loc": ("body", "license"), "input": "secret", "msg": "bad", "type": "value_error"},
+                {"loc": ("body", "other"), "input": {"license": "secret"}, "msg": "bad", "type": "value_error"},
+            ]
+
+    request = Request({"type": "http", "method": "POST", "path": "/secrets", "headers": []})
+    response = app_module._request_validation_error_handler(request, ValidationStub())
+    body = json.loads(response.body)
+    assert body["detail"][0]["input"] == "[redacted]"
+    assert body["detail"][1]["input"] == {"license": "[redacted]"}
+    contract_response = app_module._founder_contract_error_handler(
+        request, app_module.FounderPackContractError("contract rejected")
+    )
+    assert contract_response.status_code == 502
+    assert json.loads(contract_response.body)["detail"] == "contract rejected"
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
