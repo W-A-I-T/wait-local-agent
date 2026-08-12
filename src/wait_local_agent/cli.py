@@ -55,6 +55,7 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
     validate_connector_credentials,
 )
+from wait_local_agent.consultant import BlueprintValidationError, blueprint_view, parse_solution_blueprint
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
@@ -85,6 +86,8 @@ audit_app = typer.Typer(help="Audit log commands.")
 knowledge_app = typer.Typer(help="Local knowledge base commands.")
 connectors_app = typer.Typer(help="Connector status and safe draft commands.")
 workflows_app = typer.Typer(help="Workflow template and run commands.")
+consultant_app = typer.Typer(help="Local-first solution consultant commands.")
+blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -104,6 +107,8 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(workflows_app, name="workflows")
+consultant_app.add_typer(blueprints_app, name="blueprints")
+app.add_typer(consultant_app, name="consultant")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
@@ -759,6 +764,67 @@ def run_workflow(template_id: str, ticket_id: str) -> None:
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 
 
+@blueprints_app.command("create")
+def create_solution_blueprint(
+    source: Path,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a tenant client_id is required")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        blueprint = parse_solution_blueprint(
+            payload,
+            client_id=scoped_client_id,
+            created_by=context.approver_id or "cli",
+        )
+    except OSError as exc:
+        raise typer.BadParameter("blueprint file could not be read") from exc
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("blueprint file must contain a JSON object") from exc
+    except BlueprintValidationError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    persisted = Store(settings.data_path).create_solution_blueprint(blueprint)
+    typer.echo(json.dumps(blueprint_view(persisted), sort_keys=True, indent=2))
+
+
+@blueprints_app.command("list")
+def list_solution_blueprints(
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    blueprints = Store(settings.data_path).list_solution_blueprints(client_id=scoped_client_id)
+    typer.echo(json.dumps([blueprint_view(item) for item in blueprints], sort_keys=True, indent=2))
+
+
+@blueprints_app.command("show")
+def show_solution_blueprint(
+    blueprint_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, None)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    blueprint = Store(settings.data_path).get_solution_blueprint(
+        blueprint_id,
+        client_id=scoped_client_id,
+    )
+    if blueprint is None:
+        raise typer.BadParameter("solution blueprint not found")
+    typer.echo(json.dumps(blueprint_view(blueprint), sort_keys=True, indent=2))
+
+
 @knowledge_app.command("ingest")
 def ingest_knowledge(
     path: Path,
@@ -1388,6 +1454,26 @@ def _cli_access(settings, token: str | None, minimum: Role):
     if context.role < minimum:
         raise typer.BadParameter("insufficient role")
     return context
+
+
+def _cli_blueprint_client_scope(
+    bound_client_id: str | None,
+    role: Role,
+    requested_client_id: str | None,
+) -> str | None:
+    bound = bound_client_id.strip() if isinstance(bound_client_id, str) and bound_client_id.strip() else None
+    requested = (
+        requested_client_id.strip()
+        if isinstance(requested_client_id, str) and requested_client_id.strip()
+        else None
+    )
+    if role >= Role.ADMIN:
+        return requested or bound
+    if bound is None:
+        return None
+    if requested is not None and requested != bound:
+        raise typer.BadParameter("requested tenant is outside authenticated scope")
+    return bound
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:

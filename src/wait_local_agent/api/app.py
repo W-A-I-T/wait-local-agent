@@ -55,6 +55,11 @@ from wait_local_agent.connectors import (
     list_secret_records,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.consultant import (
+    BlueprintValidationError,
+    blueprint_view,
+    parse_solution_blueprint,
+)
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -131,6 +136,22 @@ class HaloDraftRequest(BaseModel):
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
     client_id: str | None = None
+
+
+class SolutionBlueprintRequest(BaseModel):
+    solution: dict[str, object]
+    business_goal: dict[str, object]
+    users: list[object]
+    knowledge: list[object]
+    systems: list[object]
+    agents: list[dict[str, object]]
+    workflows: list[dict[str, object]]
+    approvals: dict[str, object]
+    deployment: list[object]
+    risk: str
+    client_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -1000,6 +1021,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
 
+    @app.post("/consultant/blueprints", status_code=201)
+    def create_consultant_blueprint(
+        payload: SolutionBlueprintRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        client_id = _consultant_client_scope(context, payload.client_id)
+        if client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            blueprint = parse_solution_blueprint(
+                payload.model_dump(exclude={"client_id"}),
+                client_id=client_id,
+                created_by=context.approver_id or "api",
+            )
+            return blueprint_view(store.create_solution_blueprint(blueprint))
+        except BlueprintValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/consultant/blueprints")
+    def consultant_blueprints(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return [
+            blueprint_view(blueprint)
+            for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)
+        ]
+
+    @app.get("/consultant/blueprints/{blueprint_id}")
+    def consultant_blueprint_detail(
+        blueprint_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+        return blueprint_view(blueprint)
+
     @app.get("/scheduled-jobs")
     def scheduled_jobs(
         _: ViewerAccess,
@@ -1418,6 +1484,18 @@ def _approval_in_scope(context: AuthContext, approval) -> bool:
         or approval_client_id is None
         or approval_client_id == scoped_client_id
     )
+
+
+def _consultant_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+    requested = _normalize_client_id(requested_client_id)
+    bound = _normalize_client_id(context.client_id)
+    if context.role >= Role.ADMIN:
+        return requested or bound
+    if bound is None:
+        return None
+    if requested is not None and requested != bound:
+        raise HTTPException(status_code=403, detail="requested tenant is outside authenticated scope")
+    return bound
 
 
 def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:

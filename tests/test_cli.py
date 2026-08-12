@@ -701,5 +701,101 @@ def test_executions_cli_requires_tenant_for_non_admin(monkeypatch, tmp_path) -> 
     assert "workflow" in admin.output
 
 
+def test_consultant_blueprint_cli_round_trip_and_tenant_guard(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    monkeypatch.setenv("WAIT_VIEWER_TOKEN", "viewer-token")
+    source = tmp_path / "blueprint.json"
+    source.write_text(
+        json.dumps(
+            {
+                "solution": {"name": "Onboarding"},
+                "business_goal": {"reduce_manual_onboarding": True},
+                "users": ["HR"],
+                "knowledge": ["Handbook"],
+                "systems": ["Entra"],
+                "agents": [],
+                "workflows": [],
+                "approvals": {},
+                "deployment": ["Teams"],
+                "risk": "low",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        ["consultant", "blueprints", "create", str(source), "--token", "tech-token"],
+    )
+    listed = runner.invoke(
+        app,
+        ["consultant", "blueprints", "list", "--token", "viewer-token"],
+    )
+    shown = runner.invoke(
+        app,
+        [
+            "consultant",
+            "blueprints",
+            "show",
+            json.loads(created.output)["id"],
+            "--token",
+            "viewer-token",
+        ],
+    )
+    foreign = runner.invoke(
+        app,
+        [
+            "consultant",
+            "blueprints",
+            "list",
+            "--client-id",
+            "beta",
+            "--token",
+            "tech-token",
+        ],
+    )
+
+    assert created.exit_code == 0
+    assert json.loads(created.output)["client_id"] == "acme"
+    assert listed.exit_code == 0
+    assert len(json.loads(listed.output)) == 1
+    assert shown.exit_code == 0
+    assert json.loads(shown.output)["solution"] == {"name": "Onboarding"}
+    assert foreign.exit_code != 0
+    assert "outside authenticated scope" in foreign.output
+
+
+def test_consultant_blueprint_cli_rejects_non_string_risk(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    source = tmp_path / "invalid-blueprint.json"
+    source.write_text(
+        json.dumps(
+            {
+                "solution": {"name": "Invalid"},
+                "business_goal": {},
+                "users": [],
+                "knowledge": [],
+                "systems": [],
+                "agents": [],
+                "workflows": [],
+                "approvals": {},
+                "deployment": [],
+                "risk": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(app, ["consultant", "blueprints", "create", str(source)])
+
+    assert result.exit_code != 0
+    assert "risk must be one of" in result.output
+
+
 def _hudu_response(items):
     return cli_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)

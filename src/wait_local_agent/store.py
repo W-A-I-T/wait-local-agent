@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
 from wait_local_agent.models import (
     ApprovalRequest,
     AssetObservation,
@@ -25,6 +27,7 @@ from wait_local_agent.models import (
     RestoreExercise,
     ScheduledJob,
     SmartActionRun,
+    SolutionBlueprint,
     Ticket,
     WorkflowRun,
     utc_now,
@@ -198,6 +201,18 @@ class Store:
                     created_at text not null,
                     updated_at text not null,
                     client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists solution_blueprints (
+                    id text primary key,
+                    client_id text not null,
+                    created_by text not null,
+                    payload_json text not null,
+                    created_at text not null,
+                    updated_at text not null
                 )
                 """
             )
@@ -1092,6 +1107,89 @@ class Store:
                     (normalized_client_id,),
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
+
+    def create_solution_blueprint(self, blueprint: SolutionBlueprint) -> SolutionBlueprint:
+        normalized_client_id = _normalize_client_id(blueprint.client_id)
+        if normalized_client_id is None:
+            raise ValueError("solution blueprint requires a client_id")
+        payload_json = _json_dumps(blueprint_payload(blueprint))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into solution_blueprints
+                  (id, client_id, created_by, payload_json, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    blueprint.id,
+                    normalized_client_id,
+                    blueprint.created_by,
+                    payload_json,
+                    blueprint.created_at,
+                    blueprint.updated_at,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "consultant.blueprint_created",
+                blueprint.id,
+                f"solution blueprint created: {blueprint.solution_name}",
+                client_id=normalized_client_id,
+            )
+            self._add_event_history(
+                connection,
+                "consultant.blueprint_created",
+                blueprint.id,
+                "completed",
+                "solution blueprint persisted locally",
+                payload_json,
+                normalized_client_id,
+            )
+        persisted = self.get_solution_blueprint(blueprint.id, client_id=normalized_client_id)
+        if persisted is None:
+            raise RuntimeError("solution blueprint was not persisted")
+        return persisted
+
+    def get_solution_blueprint(
+        self,
+        blueprint_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> SolutionBlueprint | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from solution_blueprints where id = ?",
+                    (blueprint_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from solution_blueprints
+                    where id = ? and client_id = ?
+                    """,
+                    (blueprint_id, normalized_client_id),
+                ).fetchone()
+        return _solution_blueprint_from_row(row) if row else None
+
+    def list_solution_blueprints(self, client_id: str | None = None) -> list[SolutionBlueprint]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from solution_blueprints order by created_at desc, id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from solution_blueprints
+                    where client_id = ?
+                    order by created_at desc, id desc
+                    """,
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_solution_blueprint_from_row(row) for row in rows]
 
     def create_smart_action_run(
         self,
@@ -3247,6 +3345,21 @@ def _execution_range_filters(
         params.append(started_to)
     where = f" where {' and '.join(clauses)}" if clauses else ""
     return where, params
+
+
+def _solution_blueprint_from_row(row: sqlite3.Row) -> SolutionBlueprint:
+    try:
+        payload = json.loads(str(row["payload_json"]))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("stored solution blueprint is malformed") from exc
+    blueprint = parse_solution_blueprint(
+        payload,
+        blueprint_id=str(row["id"]),
+        client_id=str(row["client_id"]),
+        created_by=str(row["created_by"]),
+        now=str(row["created_at"]),
+    )
+    return replace(blueprint, updated_at=str(row["updated_at"]))
 
 
 def _normalize_client_id(client_id: str | None) -> str | None:

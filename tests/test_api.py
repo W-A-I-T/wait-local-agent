@@ -1703,6 +1703,133 @@ def test_execution_steps_are_redacted_at_serialization(settings) -> None:
     assert "legacy-secret" not in detail.text
 
 
+def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    payload = {
+        "solution": {"name": "Employee Onboarding Agent"},
+        "business_goal": {"reduce_manual_onboarding": True},
+        "users": ["HR", "IT"],
+        "knowledge": ["Employee Handbook"],
+        "systems": ["Microsoft Entra"],
+        "agents": [
+            {"id": "onboarding", "name": "Onboarding", "purpose": "Design onboarding"}
+        ],
+        "workflows": [
+            {"id": "create-user", "name": "Create user", "trigger": "HR", "steps": ["Validate"]}
+        ],
+        "approvals": {"create_user": "HR"},
+        "deployment": ["Teams"],
+        "risk": "medium",
+    }
+    client = TestClient(create_app(secure_settings))
+
+    created = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "acme"},
+    )
+    foreign_create = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "beta"},
+    )
+    viewer_list = client.get("/consultant/blueprints", headers=_auth("viewer-token"))
+    viewer_detail = client.get(
+        f"/consultant/blueprints/{created.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+    admin_create = client.post(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        json={**payload, "client_id": "beta"},
+    )
+    admin_beta = client.get(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        params={"client_id": "beta"},
+    )
+    foreign_detail = client.get(
+        f"/consultant/blueprints/{admin_create.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+    foreign_list = client.get(
+        "/consultant/blueprints",
+        headers=_auth("viewer-token"),
+        params={"client_id": "beta"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["client_id"] == "acme"
+    assert created.json()["solution"] == {"name": "Employee Onboarding Agent"}
+    assert created.json()["agents"][0]["tools"] == []
+    assert foreign_create.status_code == 403
+    assert [item["client_id"] for item in viewer_list.json()] == ["acme"]
+    assert viewer_detail.status_code == 200
+    assert admin_create.status_code == 201
+    assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
+    assert foreign_detail.status_code == 404
+    assert foreign_list.status_code == 403
+
+    invalid = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "acme", "risk": "critical"},
+    )
+    assert invalid.status_code == 422
+    assert len(client.get("/consultant/blueprints", headers=_auth("viewer-token")).json()) == 1
+
+
+def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    minimal = {
+        "solution": {"name": "Design"},
+        "business_goal": {},
+        "users": [],
+        "knowledge": [],
+        "systems": [],
+        "agents": [],
+        "workflows": [],
+        "approvals": {},
+        "deployment": [],
+        "risk": "low",
+    }
+
+    viewer = client.post("/consultant/blueprints", headers=_auth("viewer-token"), json=minimal)
+    no_tenant = client.post("/consultant/blueprints", headers=_auth("tech-token"), json=minimal)
+    admin = client.post(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        json={**minimal, "client_id": "acme"},
+    )
+    unbound_detail = client.get(
+        f"/consultant/blueprints/{admin.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+
+    assert viewer.status_code == 403
+    assert no_tenant.status_code == 403
+    assert admin.status_code == 201
+    assert unbound_detail.status_code == 403
+
+
 def _read_response(items):
     return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 
