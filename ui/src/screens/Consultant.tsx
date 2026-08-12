@@ -160,7 +160,7 @@ export function Consultant() {
 
   async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
     if (!clientId || !discoveryGoal.trim()) {
       setMessage("A tenant scope and business goal are required before assessing discovery.");
       return;
@@ -197,7 +197,7 @@ export function Consultant() {
   }
 
   async function startGuidedDiscovery() {
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
     if (!clientId || !discoveryGoal.trim()) {
       setMessage("A tenant scope and business goal are required before starting guided discovery.");
       return;
@@ -232,7 +232,7 @@ export function Consultant() {
   async function answerGuidedDiscovery() {
     const question = discoverySession?.next_question;
     if (!question) return;
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
     if (!clientId) return;
     const answer = question.kind === "boolean"
       ? guidedBooleanAnswer
@@ -268,7 +268,7 @@ export function Consultant() {
   }
 
   async function promoteDiscovery() {
-    const clientId = selected?.client_id ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
     if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
       setMessage("Complete the required discovery evidence before saving a solution blueprint.");
       return;
@@ -310,7 +310,7 @@ export function Consultant() {
 
   async function buildPowerAppsArtifact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? scopedClientId ?? blueprints[0]?.client_id;
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
     if (!clientId || !powerAppsName.trim()) {
       setMessage("Choose a blueprint tenant and provide an app name before building the artifact.");
       return;
@@ -387,7 +387,7 @@ export function Consultant() {
             <label>
               Customer workspace ID
               <input
-                value={discoveryClientId || selected?.client_id || blueprints[0]?.client_id || ""}
+                value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
                 onChange={(event) => setDiscoveryClientId(event.target.value)}
                 placeholder="acme"
               />
@@ -651,6 +651,17 @@ export function Consultant() {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveClientId(
+  selectedClientId: string | undefined,
+  scopedClientId: string,
+  enteredClientId: string,
+  fallbackClientId: string | undefined,
+): string {
+  return [selectedClientId, scopedClientId, enteredClientId, fallbackClientId]
+    .map((value) => value?.trim() ?? "")
+    .find(Boolean) ?? "";
 }
 
 function powerAutomateIdentifier(value: string): string {
