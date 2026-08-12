@@ -905,6 +905,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def auth_role(context: ViewerAccess) -> dict[str, object]:
         return {
             "role": context.role.label(),
+            "client_id": context.client_id,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
         }
@@ -4232,6 +4233,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return build_solution_discovery(client_id=client_id, answers=answers, environment=environment)
 
+    def _promote_completed_discovery(
+        result: dict[str, object],
+        *,
+        client_id: str,
+        created_by: str,
+    ) -> dict[str, object]:
+        """Persist complete guided evidence as a review-only blueprint."""
+
+        if result.get("status") != "complete":
+            return result
+        candidate = result.get("blueprint_candidate")
+        answered = result.get("answered")
+        if not isinstance(candidate, dict) or not isinstance(answered, dict):
+            raise DiscoveryValidationError("completed discovery is missing blueprint evidence")
+        solution = candidate.get("solution")
+        solution_name = solution.get("name") if isinstance(solution, dict) else None
+        if not isinstance(solution_name, str) or not solution_name.strip():
+            solution_name = "Guided discovery solution"
+        risk_review = result.get("risk_review")
+        risk = risk_review.get("level") if isinstance(risk_review, dict) else None
+        if risk not in {"low", "medium", "high"}:
+            risk = "high" if answered.get("data_leaves_tenant") is True else "medium"
+        try:
+            blueprint = promote_discovery_candidate(
+                candidate,
+                client_id=client_id,
+                solution_name=solution_name.strip(),
+                risk=cast(str, risk),
+                created_by=created_by,
+            )
+            persisted = store.create_solution_blueprint(blueprint)
+        except BlueprintValidationError as exc:
+            raise DiscoveryValidationError(f"completed discovery cannot become a blueprint: {exc}") from exc
+        result["blueprint_id"] = persisted.id
+        result["blueprint"] = blueprint_view(persisted)
+        return result
+
     @app.post("/consultant/discovery")
     def consultant_discovery(
         payload: DiscoveryRequest,
@@ -4297,7 +4335,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 if "business_goal" not in answers:
                     answers["business_goal"] = opening_message
-            result = _consultant_discovery_result(scoped_client_id, answers)
+            result = _promote_completed_discovery(
+                _consultant_discovery_result(scoped_client_id, answers),
+                client_id=scoped_client_id,
+                created_by=context.approver_id or "api",
+            )
         except DiscoveryValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         principal_id = context.approver_id or "api"
@@ -4362,7 +4404,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise DiscoveryValidationError("discovery session state is invalid")
             answers = dict(cast(dict[str, object], answers_value))
             answers[payload.field] = payload.answer
-            result = _consultant_discovery_result(scoped_client_id, answers)
+            result = _promote_completed_discovery(
+                _consultant_discovery_result(scoped_client_id, answers),
+                client_id=scoped_client_id,
+                created_by=principal_id,
+            )
         except (DiscoveryValidationError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         answered = cast(dict[str, object], result["answered"])

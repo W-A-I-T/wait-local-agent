@@ -4,15 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({ canWrite: true, clientId: "acme" })
 }));
 
 describe("Consultant", () => {
+  let noBlueprints = false;
+
   beforeEach(() => {
+    noBlueprints = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
-        return Promise.resolve(new Response(JSON.stringify([{
+        return Promise.resolve(new Response(JSON.stringify(noBlueprints ? [] : [{
           id: "bp-acme",
           client_id: "acme",
           created_by: "architect",
@@ -148,6 +151,24 @@ describe("Consultant", () => {
           deployment_started: false,
         }), { status: 201 }));
       }
+      if (path === "/consultant/discovery/sessions") {
+        return Promise.resolve(new Response(JSON.stringify({
+          session_id: "CDS-guided",
+          principal_scope: "technician",
+          transcript: [],
+          turn_index: 0,
+          next_question: { id: "users", prompt: "Who uses this?", kind: "list", required: true, answered: false },
+          assistant_message: "Who uses this?",
+          missing_required: ["users"],
+          readiness: "needs_discovery",
+          risk_review: { level: "medium", factors: [], evidence_only: true },
+          roi_analysis: { status: "needs_estimates" },
+          status: "active",
+          inference_started: false,
+          execution_started: false,
+          deployment_started: false,
+        }), { status: 200 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -184,6 +205,21 @@ describe("Consultant", () => {
     const promotionCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/promote");
     expect(promotionCall?.[1]).toMatchObject({
       body: expect.stringContaining('"solution_name":"Employee onboarding review"'),
+    });
+  });
+
+  it("starts guided discovery from the authenticated tenant when no blueprint exists", async () => {
+    noBlueprints = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start guided discovery" }));
+
+    expect(await screen.findByText("Who uses this?")).toBeInTheDocument();
+    const guidedCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/sessions");
+    expect(guidedCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"client_id":"acme"'),
     });
   });
 });

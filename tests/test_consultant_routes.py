@@ -381,6 +381,49 @@ def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None
     assert foreign.value.status_code == 404
 
 
+def test_completed_guided_discovery_promotes_a_tenant_scoped_blueprint(settings) -> None:
+    result = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            answers={
+                "solution_name": "Employee onboarding",
+                "business_goal": "Automate employee onboarding",
+                "users": ["HR", "IT"],
+                "knowledge": ["Employee handbook"],
+                "systems": ["Microsoft 365", "Entra"],
+                "reads": ["Employee record"],
+                "changes": ["Prepare identity"],
+                "approvals": ["Identity creation"],
+                "failure_handling": "Pause for human review",
+                "data_location": ["Customer tenant"],
+                "data_leaves_tenant": False,
+                "licenses": ["Microsoft 365 E3"],
+                "current_process": "HR submits a request and IT provisions access.",
+                "owners": ["HR operations"],
+                "approvers": ["IT manager"],
+                "sensitive_operations": ["Identity creation"],
+                "compliance": ["Least privilege"],
+                "data_residency": ["Customer tenant"],
+                "existing_apis": ["Microsoft Graph"],
+                "existing_automation": ["HR request process"],
+                "channels": ["Teams"],
+                "expected_volume": "40 per month",
+                "business_value": "Reduce provisioning time",
+                "success_metrics": ["Time to provision"],
+                "rollback_expectations": "Pause before irreversible changes.",
+            },
+        ),
+        _technician(),
+    )
+
+    assert result["status"] == "complete"
+    assert isinstance(result["blueprint_id"], str)
+    blueprint = Store(settings.data_path).get_solution_blueprint(result["blueprint_id"], client_id="acme")
+    assert blueprint is not None
+    assert blueprint.solution_name == "Employee onboarding"
+    assert blueprint.discovery["business_goal"] == "Automate employee onboarding"
+
+
 def test_guided_discovery_session_turn_is_bounded(settings) -> None:
     start = _endpoint(settings, "/consultant/discovery/sessions")(
         DiscoverySessionStartRequest(client_id="acme", answers={"business_goal": "Review onboarding"}),

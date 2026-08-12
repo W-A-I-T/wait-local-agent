@@ -18,6 +18,7 @@ def test_auth_role_endpoint_reports_rbac_roles_and_legacy_api_token(settings) ->
             "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
+            "client_id": "acme",
         }
     )
     client = TestClient(create_app(secure_settings))
@@ -31,6 +32,7 @@ def test_auth_role_endpoint_reports_rbac_roles_and_legacy_api_token(settings) ->
     assert viewer.json()["role"] == "viewer"
     assert technician.status_code == 200
     assert technician.json()["role"] == "technician"
+    assert technician.json()["client_id"] == "acme"
     assert admin.status_code == 200
     assert admin.json()["role"] == "admin"
     assert legacy.status_code == 200

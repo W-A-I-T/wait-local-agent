@@ -36,7 +36,7 @@ const DEFAULT_POWER_APPS_ACTIONS = JSON.stringify([
 ], null, 2);
 
 export function Consultant() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clientId: scopedClientId } = useDashboard();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
@@ -160,9 +160,9 @@ export function Consultant() {
 
   async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
     if (!clientId || !discoveryGoal.trim()) {
-      setMessage("Choose a blueprint tenant and provide a business goal before assessing discovery.");
+      setMessage("A tenant scope and business goal are required before assessing discovery.");
       return;
     }
     setDiscoveryLoading(true);
@@ -197,9 +197,9 @@ export function Consultant() {
   }
 
   async function startGuidedDiscovery() {
-    const clientId = selected?.client_id ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
     if (!clientId || !discoveryGoal.trim()) {
-      setMessage("Choose a blueprint tenant and provide a business goal before starting guided discovery.");
+      setMessage("A tenant scope and business goal are required before starting guided discovery.");
       return;
     }
     setGuidedLoading(true);
@@ -218,6 +218,10 @@ export function Consultant() {
       setDiscoveryResult(result);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
+      if (result.blueprint_id) {
+        setMessage(`Discovery completed and blueprint ${result.blueprint_id} was saved for review.`);
+        await refresh();
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to start guided discovery.");
     } finally {
@@ -228,7 +232,7 @@ export function Consultant() {
   async function answerGuidedDiscovery() {
     const question = discoverySession?.next_question;
     if (!question) return;
-    const clientId = selected?.client_id ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
     if (!clientId) return;
     const answer = question.kind === "boolean"
       ? guidedBooleanAnswer
@@ -252,6 +256,10 @@ export function Consultant() {
       setDiscoveryResult(result);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
+      if (result.blueprint_id) {
+        setMessage(`Discovery completed and blueprint ${result.blueprint_id} was saved for review.`);
+        await refresh();
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to record the discovery answer.");
     } finally {
@@ -302,7 +310,7 @@ export function Consultant() {
 
   async function buildPowerAppsArtifact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    const clientId = selected?.client_id ?? scopedClientId ?? blueprints[0]?.client_id;
     if (!clientId || !powerAppsName.trim()) {
       setMessage("Choose a blueprint tenant and provide an app name before building the artifact.");
       return;

@@ -693,6 +693,30 @@ def promote_discovery_candidate(
             raise BlueprintValidationError(f"approval action identifiers collide: {normalized_action}")
         approvals[normalized_action] = approver
     payload["approvals"] = approvals
+    raw_environment = payload.get("environment")
+    if isinstance(raw_environment, list):
+        environment: list[object] = []
+        seen_environment_ids: set[str] = set()
+        for index, raw_system in enumerate(raw_environment, start=1):
+            if not isinstance(raw_system, Mapping):
+                environment.append(raw_system)
+                continue
+            system = dict(raw_system)
+            raw_id = system.get("id")
+            if isinstance(raw_id, str) and raw_id.strip():
+                identifier = raw_id.strip()
+                if identifier in seen_environment_ids:
+                    name = system.get("name")
+                    base_identifier = _safe_decision_id(str(name)) if name is not None else f"system-{index}"
+                    identifier = base_identifier
+                    suffix = 2
+                    while identifier in seen_environment_ids:
+                        identifier = f"{base_identifier}-{suffix}"[:64]
+                        suffix += 1
+                    system["id"] = identifier
+                seen_environment_ids.add(identifier)
+            environment.append(system)
+        payload["environment"] = environment
     return parse_solution_blueprint(
         payload,
         client_id=client_id,
