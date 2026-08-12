@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -1384,6 +1384,7 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
             return [
                 {"loc": ("body", "value"), "input": "secret", "msg": "bad", "type": "value_error"},
                 {"loc": ("body", "other"), "input": {"license": "secret"}, "msg": "bad", "type": "value_error"},
+                {"loc": ("body", "missing"), "msg": "bad", "type": "value_error"},
             ]
 
     request = Request({"type": "http", "method": "POST", "path": "/secrets", "headers": []})
@@ -1391,11 +1392,14 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     body = json.loads(response.body)
     assert body["detail"][0]["input"] == "[redacted]"
     assert body["detail"][1]["input"] == {"license": "[redacted]"}
+    assert "input" not in body["detail"][2]
     contract_response = app_module._founder_contract_error_handler(
         request, app_module.FounderPackContractError("contract rejected")
     )
     assert contract_response.status_code == 502
     assert json.loads(contract_response.body)["detail"] == "contract rejected"
+    monkeypatch.setattr(app_module, "_rate_limit_exceeded_handler", lambda *_args: Response(status_code=429))
+    assert app_module._rate_limit_handler(request, Exception()).status_code == 429
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:

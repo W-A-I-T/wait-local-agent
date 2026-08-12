@@ -96,6 +96,9 @@ def test_safe_cloud_outcomes_classify_provider_failures_and_bounds() -> None:
     class _ResponseError(Exception):
         response = {"Error": {"Code": "AccessDenied"}}
 
+    class _LowerResponseError(Exception):
+        response = {"error": {"Code": "UnauthorizedOperation"}}
+
     assert safe_module.provider_outcome(
         "aws", PermissionError(), permission_hint="check IAM"
     )["status"] == "not_authorized"
@@ -110,6 +113,9 @@ def test_safe_cloud_outcomes_classify_provider_failures_and_bounds() -> None:
     )["status"] == "not_authorized"
     assert safe_module.provider_outcome(
         "aws", _ResponseError(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", _LowerResponseError(), permission_hint="check IAM"
     )["status"] == "not_authorized"
     assert safe_module.provider_outcome(
         "aws", ImportError(), permission_hint="check IAM"

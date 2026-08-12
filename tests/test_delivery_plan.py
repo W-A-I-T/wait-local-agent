@@ -103,3 +103,32 @@ def test_delivery_plan_rejects_unbounded_or_malformed_evidence(case, message) ->
         kwargs["deployment_targets"] = ["Teams", "Teams"]
     with pytest.raises(DeliveryPlanError, match=message):
         build_consultant_delivery_plan(**kwargs)
+
+
+def test_delivery_plan_rejects_governance_and_connector_limits() -> None:
+    with pytest.raises(DeliveryPlanError, match="governance is outside"):
+        build_consultant_delivery_plan(
+            client_id="acme",
+            architecture=_architecture(),
+            evaluation={"production_readiness": "pass", "case_count": 1},
+            governance={"client_id": "beta", "status": "pass"},
+            deployment_targets=["Teams"],
+        )
+    with pytest.raises(DeliveryPlanError, match="at most 16"):
+        build_consultant_delivery_plan(
+            client_id="acme",
+            architecture=_architecture(),
+            evaluation={"production_readiness": "pass", "case_count": 1},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Teams"],
+            connector_artifacts=[{}] * 17,
+        )
+    for value, message in (("", "non-empty"), ("bad\nvalue", "control")):
+        with pytest.raises(DeliveryPlanError, match=message):
+            build_consultant_delivery_plan(
+                client_id="acme",
+                architecture=_architecture(),
+                evaluation={"production_readiness": "pass", "case_count": 1},
+                governance={"client_id": "acme", "status": "pass"},
+                deployment_targets=[value],
+            )
