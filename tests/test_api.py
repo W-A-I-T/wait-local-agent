@@ -5543,6 +5543,148 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert len(client.get("/consultant/blueprints", headers=_auth("viewer-token")).json()) == 1
 
 
+def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    tech = {"headers": _auth("tech-token")}
+
+    invalid_calls = [
+        ("/consultant/connectors/openapi/generate", {"connector_id": "bad", "definition": {}}),
+        ("/consultant/evaluations", {"test_set": [], "observations": {}}),
+        ("/consultant/governance/evaluate", {"architecture": {"client_id": "acme", "components": "bad"}}),
+        (
+            "/consultant/power-apps/plan",
+            {
+                "client_id": "acme",
+                "app_name": "Onboarding",
+                "entities": [{"logical_name": "employee", "fields": []}],
+                "screens": [{"id": "browse", "entity": "employee"}],
+                "actions": [{"id": "write", "connector_id": "m365", "method": "POST"}],
+            },
+        ),
+        (
+            "/consultant/discovery",
+            {"client_id": "acme", "answers": {"unsupported": "value"}},
+        ),
+        (
+            "/consultant/supervisor/plan",
+            {"client_id": "acme", "task": "Review", "child_agent_ids": ["missing"]},
+        ),
+        (
+            "/consultant/supervisor/run",
+            {
+                "client_id": "acme",
+                "entity_id": "TCK-1",
+                "task": "Review",
+                "child_agent_ids": ["missing"],
+            },
+        ),
+        (
+            "/consultant/delivery-plan",
+            {
+                "client_id": "acme",
+                "architecture": {"client_id": "beta"},
+                "evaluation": {},
+                "governance": {},
+                "deployment_targets": ["Teams"],
+            },
+        ),
+        (
+            "/consultant/workflows/power-automate/plan",
+            {
+                "client_id": "acme",
+                "workflow_id": "onboarding",
+                "workflow_name": "Onboarding",
+                "trigger": "HR",
+                "steps": [{"id": "write", "name": "Write", "method": "POST"}],
+            },
+        ),
+        (
+            "/consultant/solutions/deployment-approvals",
+            {
+                "client_id": "acme",
+                "solution_name": "onboarding",
+                "publisher_name": "WAIT",
+                "publisher_prefix": "wlp",
+                "output_directory": "/tmp/wait-solution",
+                "deployment_targets": [{"name": "dev", "environment_url": "http://unsafe"}],
+            },
+        ),
+    ]
+    for path, payload in invalid_calls:
+        response = client.post(path, json=payload, **tech)
+        assert response.status_code == 422, (path, response.text)
+
+    assert client.get("/consultant/blueprints/missing", headers=_auth("viewer-token")).status_code == 404
+    assert (
+        client.get(
+            "/consultant/blueprints",
+            headers=_auth("viewer-token"),
+            params={"client_id": "beta"},
+        ).status_code
+        == 403
+    )
+
+
+def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    tech = {"headers": _auth("tech-token")}
+    deployment = {
+        "client_id": "acme",
+        "solution_name": "onboarding",
+        "publisher_name": "WAIT",
+        "publisher_prefix": "wlp",
+        "output_directory": "/tmp/wait-solution",
+        "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+        "stage": "build",
+    }
+    power_apps = {
+        "client_id": "acme",
+        "app_name": "Onboarding",
+        "entities": [{"logical_name": "employee", "display_name": "Employee", "fields": []}],
+        "screens": [{"id": "browse", "title": "Browse", "entity": "employee", "mode": "browse"}],
+        "actions": [{"id": "lookup", "connector_id": "m365", "method": "GET"}],
+    }
+
+    built = client.post("/consultant/power-apps/build", json=power_apps, **tech)
+    requested = client.post("/consultant/solutions/deployment-approvals", json=deployment, **tech)
+    request_id = requested.json()["approval"]["id"]
+    pending = client.post(
+        f"/consultant/solutions/deployment-approvals/{request_id}/execute",
+        headers=_auth("admin-token"),
+    )
+    missing = client.post(
+        "/consultant/solutions/deployment-approvals/99999/execute",
+        headers=_auth("admin-token"),
+    )
+
+    assert built.status_code == 200
+    assert built.json()["deployment_started"] is False
+    assert requested.status_code == 201
+    assert requested.json()["plan"]["approval_required_for_every_stage"] is True
+    assert pending.status_code == 409
+    assert missing.status_code == 404
+
+
 def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
     secure_settings = settings.__class__(
         **{

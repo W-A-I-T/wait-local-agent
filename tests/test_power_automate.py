@@ -80,6 +80,27 @@ def test_power_automate_plan_is_review_only_and_approval_aware() -> None:
             "unsupported step",
         ),
         (lambda value: value.update({"steps": []}), "steps must contain"),
+        (lambda value: value.update({"workflow_id": "Not valid"}), "workflow_id must be a lowercase identifier"),
+        (lambda value: value.update({"steps": ["not an object"]}), "steps must contain objects"),
+        (
+            lambda value: value.update(
+                {"steps": [{"id": "one", "name": "One", "approval_required": "yes"}]}
+            ),
+            "approval_required must be boolean",
+        ),
+        (
+            lambda value: value.update(
+                {"steps": [{"id": "one", "name": "One", "kind": "approval", "approval_required": False}]}
+            ),
+            "approval step must require approval",
+        ),
+        (
+            lambda value: value.update(
+                {"steps": [{"id": "one", "name": "One", "method": "GET", "tool_id": "secret_token"}]}
+            ),
+            "secret material",
+        ),
+        (lambda value: value.update({"trigger": "bad\ntrigger"}), "unsupported control characters"),
     ],
 )
 def test_power_automate_plan_rejects_unsafe_shapes(change, message) -> None:

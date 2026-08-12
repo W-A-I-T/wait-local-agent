@@ -68,6 +68,101 @@ def test_microsoft_power_apps_build_cli_emits_local_artifact(monkeypatch, tmp_pa
     assert artifact["deployment_started"] is False
 
 
+def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+    commands = [
+        ["microsoft", "connector", "validate", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "connector", "generate", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "connector", "package", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "solution", "status"],
+        [
+            "microsoft",
+            "solution",
+            "plan",
+            "onboarding_review",
+            "WAITConsulting",
+            "wlp",
+            str(tmp_path / "solution"),
+        ],
+        ["microsoft", "solution", "deployment-plan", "examples/consultant/deployment.json"],
+        ["microsoft", "evaluation", "run", "examples/consultant/evaluation.json"],
+        ["microsoft", "governance", "evaluate", "examples/consultant/governance.json"],
+        ["microsoft", "monitoring", "agents"],
+        ["microsoft", "power-apps", "plan", "examples/consultant/power-apps-plan.json"],
+        ["microsoft", "power-apps", "build", "examples/consultant/power-apps-build.json"],
+        ["microsoft", "use-cases", "list"],
+        ["microsoft", "workflow", "plan", "examples/consultant/flow-plan.json"],
+        ["microsoft", "discovery", "assess", "examples/consultant/discovery.json"],
+        ["microsoft", "delivery", "plan", "examples/consultant/delivery.json"],
+    ]
+
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0, f"{command}: {result.output}"
+
+
+def test_microsoft_solution_deployment_cli_stays_approval_gated(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+    requested = runner.invoke(
+        app,
+        ["microsoft", "solution", "request-deployment-approval", "examples/consultant/deployment.json"],
+    )
+    assert requested.exit_code == 0, requested.output
+    request_id = json.loads(requested.output)["id"]
+
+    pending = runner.invoke(app, ["microsoft", "solution", "execute-stage", str(request_id)])
+    invalid_stage = runner.invoke(
+        app,
+        [
+            "microsoft",
+            "solution",
+            "request-deployment-approval",
+            "examples/consultant/deployment.json",
+            "--stage",
+            "missing",
+        ],
+    )
+
+    assert pending.exit_code != 0
+    assert "must be approved" in pending.output
+    assert invalid_stage.exit_code != 0
+    assert "stage is not present" in invalid_stage.output
+
+
+def test_microsoft_consultant_cli_rejects_malformed_sources(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}", encoding="utf-8")
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("not-json", encoding="utf-8")
+    runner = CliRunner()
+
+    commands = [
+        ["microsoft", "connector", "validate", str(empty), "demo"],
+        ["microsoft", "connector", "generate", str(empty), "demo"],
+        ["microsoft", "connector", "package", str(empty), "demo"],
+        ["microsoft", "solution", "deployment-plan", str(empty)],
+        ["microsoft", "evaluation", "run", str(empty)],
+        ["microsoft", "governance", "evaluate", str(empty)],
+        ["microsoft", "power-apps", "plan", str(empty)],
+        ["microsoft", "power-apps", "build", str(empty)],
+        ["microsoft", "workflow", "plan", str(empty)],
+        ["microsoft", "discovery", "assess", str(empty)],
+        ["microsoft", "supervisor", "plan", str(empty)],
+        ["microsoft", "supervisor", "run", str(empty)],
+        ["microsoft", "delivery", "plan", str(empty)],
+        ["microsoft", "solution", "request-deployment-approval", str(empty)],
+        ["microsoft", "connector", "validate", str(malformed), "demo"],
+        ["microsoft", "use-cases", "list", "--category", "invalid"],
+        ["microsoft", "solution", "execute-stage", "99999"],
+    ]
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code != 0, f"{command}: {result.output}"
+
+
 def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()

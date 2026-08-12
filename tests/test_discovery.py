@@ -69,8 +69,20 @@ def test_discovery_reports_missing_answers_without_inventing_them() -> None:
             "hourly_value must be a number",
         ),
         ({"business_goal": "password=secret"}, "secret material"),
+        ({"business_goal": "bad\nvalue"}, "unsupported control characters"),
+        ({"users": "HR"}, "users must contain"),
+        ({"impact": "not-an-object"}, "impact must be an object"),
+        ({"impact": {"unexpected": 1}}, "unsupported impact fields"),
+        (
+            {"impact": {"monthly_runs": 1, "minutes_saved_per_run": 1, "affected_users": 1}},
+            "estimated_monthly",
+        ),
     ],
 )
 def test_discovery_rejects_unsafe_or_invalid_answers(answers, message) -> None:
-    with pytest.raises(DiscoveryValidationError, match=message):
-        build_solution_discovery(client_id="acme", answers=answers)
+    if message == "estimated_monthly":
+        result = build_solution_discovery(client_id="acme", answers=answers)
+        assert "estimated_monthly_value" not in result["roi_analysis"]
+    else:
+        with pytest.raises(DiscoveryValidationError, match=message):
+            build_solution_discovery(client_id="acme", answers=answers)

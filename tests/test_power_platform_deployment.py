@@ -11,6 +11,7 @@ import wait_local_agent.power_platform_deployment as deployment
 from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
+    build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
 )
 
@@ -97,3 +98,107 @@ def test_execution_is_shell_free_bounded_and_stops_on_failure(settings, tmp_path
     assert calls[0][1] == workspace.resolve()
     assert calls[0][2] <= 1_800
     assert result["commands"][0]["stdout"] == "token=[redacted]"  # type: ignore[index]
+
+
+def test_deployment_payload_rebuild_rejects_missing_fields_and_accepts_canonical_payload() -> None:
+    plan = _plan()
+    payload: dict[str, object] = {
+        "solution_name": "onboarding_review",
+        "publisher_name": "WAITConsulting",
+        "publisher_prefix": "wlp",
+        "output_directory": "/tmp/power-platform/solution",
+        "deployment_targets": _targets(),
+    }
+    rebuilt = build_power_platform_deployment_plan_from_payload(payload)
+    assert rebuilt["stages"] == plan["stages"]
+
+    for field in (
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+    ):
+        invalid = dict(payload)
+        invalid[field] = None
+        with pytest.raises(PowerPlatformDeploymentError, match=field):
+            build_power_platform_deployment_plan_from_payload(invalid)
+    invalid_targets = dict(payload, deployment_targets=["dev"])
+    with pytest.raises(PowerPlatformDeploymentError, match="deployment_targets"):
+        build_power_platform_deployment_plan_from_payload(invalid_targets)
+
+
+def test_execution_covers_gates_path_confinement_and_command_failures(settings, tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    plan = _plan(str(workspace / "solution"))
+
+    assert execute_power_platform_stage(plan, "build", settings, approved=False)["status"] == "blocked"
+    assert execute_power_platform_stage(
+        plan, "build", replace(settings, allow_write_actions=True), approved=True
+    )["status"] == "blocked"
+    assert execute_power_platform_stage(
+        plan,
+        "build",
+        replace(settings, allow_write_actions=True, allow_power_platform_deployment=False),
+        approved=True,
+    )["status"] == "blocked"
+    assert execute_power_platform_stage(
+        dict(plan, credentials_included=True), "build", configured, approved=True
+    )["status"] == "blocked"
+
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: None)
+    assert execute_power_platform_stage(plan, "build", configured, approved=True)["status"] == "blocked"
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    assert execute_power_platform_stage(plan, "unknown", configured, approved=True)["status"] == "blocked"
+    assert execute_power_platform_stage(
+        dict(plan, stages=None), "build", configured, approved=True
+    )["status"] == "blocked"
+    assert execute_power_platform_stage(
+        dict(plan, solution={"output_directory": str(tmp_path / "outside")}),
+        "build",
+        configured,
+        approved=True,
+    )["status"] == "blocked"
+    assert execute_power_platform_stage(
+        dict(plan, solution={"output_directory": str(workspace)}), "build", configured, approved=True
+    )["status"] == "blocked"
+    missing_workspace = replace(configured, power_platform_workspace=tmp_path / "missing")
+    assert execute_power_platform_stage(plan, "build", missing_workspace, approved=True)["status"] == "blocked"
+
+    def invalid_command_runner(command, cwd, timeout):
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    invalid_command_plan = dict(plan, stages=[{"id": "build", "commands": [["not-pac"]]}])
+    assert execute_power_platform_stage(
+        invalid_command_plan, "build", configured, approved=True, runner=invalid_command_runner
+    )["status"] == "failed"
+    malformed_command_plan = dict(plan, stages=[{"id": "build", "commands": ["pac"]}])
+    assert execute_power_platform_stage(
+        malformed_command_plan, "build", configured, approved=True, runner=invalid_command_runner
+    )["status"] == "failed"
+
+    def timeout_runner(command, cwd, timeout):
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    assert execute_power_platform_stage(
+        plan, "build", configured, approved=True, runner=timeout_runner
+    )["status"] == "failed"
+
+    def os_error_runner(command, cwd, timeout):
+        raise OSError("pac unavailable")
+
+    assert execute_power_platform_stage(
+        plan, "build", configured, approved=True, runner=os_error_runner
+    )["status"] == "failed"
+
+    def success_runner(command, cwd, timeout):
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    succeeded = execute_power_platform_stage(plan, "build", configured, approved=True, runner=success_runner)
+    assert succeeded["status"] == "succeeded"

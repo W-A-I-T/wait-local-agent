@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 
 from wait_local_agent.agents import AgentExecutionResult
-from wait_local_agent.models import AgentDefinition
+from wait_local_agent.models import AgentDefinition, AgentRun
 from wait_local_agent.rbac import Role
 from wait_local_agent.store import Store
 from wait_local_agent.supervisor import (
@@ -124,4 +124,92 @@ def test_supervisor_plan_rejects_missing_duplicate_or_foreign_children(child_ids
             task="Review request",
             child_agent_ids=child_ids,
             definitions=definitions,
+        )
+
+
+def test_supervisor_execution_handles_authority_disabled_children_and_dependency_errors(settings) -> None:
+    identity = _definition("identity")
+    disabled = replace(identity, id="disabled", enabled=False)
+
+    class Runner:
+        def run(self, *_args, **_kwargs):
+            return AgentExecutionResult(1, "identity", "completed", 1, [], final_result={})
+
+    with pytest.raises(SupervisorPlanError, match="technician authority"):
+        execute_supervisor_delegation(
+            client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+            definitions=[identity], agent_service=Runner(), store=Store(settings.data_path),
+            actor="viewer", actor_role=Role.VIEWER,
+        )
+    with pytest.raises(SupervisorPlanError, match="disabled"):
+        execute_supervisor_delegation(
+            client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["disabled"],
+            definitions=[disabled], agent_service=Runner(), store=Store(settings.data_path),
+            actor="tech", actor_role=Role.TECHNICIAN,
+        )
+    with pytest.raises(SupervisorPlanError, match="dependency cycle"):
+        execute_supervisor_delegation(
+            client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["a", "b"],
+            definitions=[
+                replace(_definition("a"), depends_on_agent_ids=["b"]),
+                replace(_definition("b"), depends_on_agent_ids=["a"]),
+            ],
+            agent_service=Runner(), store=Store(settings.data_path), actor="tech", actor_role=Role.TECHNICIAN,
+        )
+    with pytest.raises(SupervisorPlanError, match="dependency agent"):
+        execute_supervisor_delegation(
+            client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["b"],
+            definitions=[replace(_definition("b"), depends_on_agent_ids=["a"])],
+            agent_service=Runner(), store=Store(settings.data_path), actor="tech", actor_role=Role.TECHNICIAN,
+        )
+
+
+@pytest.mark.parametrize("status", ["pending_approval", "failed"])
+def test_supervisor_execution_preserves_pending_and_failure_results(settings, status: str) -> None:
+    child = _definition("identity")
+
+    class Runner:
+        def run(self, *_args, **_kwargs):
+            if status == "failed":
+                raise RuntimeError("provider secret should be redacted")
+            return AgentExecutionResult(9, "identity", status, 1, [], approval_id=7, error_detail="blocked")
+
+    result = execute_supervisor_delegation(
+        client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+        definitions=[child], agent_service=Runner(), store=Store(settings.data_path),
+        actor="tech", actor_role=Role.TECHNICIAN,
+    )
+    assert result["status"] == status
+    assert result["approval_requests_created"] is (status == "pending_approval")
+    assert result["resumption"]["next_child_agent_id"] == "identity"
+
+
+def test_supervisor_resumes_completed_run_and_rejects_malformed_or_foreign_state(settings, monkeypatch) -> None:
+    child = _definition("identity")
+    store = Store(settings.data_path)
+    completed = AgentRun(
+        id=12, agent_id="identity", entity_id="TCK-1", actor="tech", status="completed",
+        current_step=1, state_json='{"final_result":{"summary":"done"}}',
+        started_at="", finished_at="", revision_version=1, client_id="acme",
+    )
+    monkeypatch.setattr(store, "get_agent_run", lambda _run_id, _client_id: completed)
+
+    class Runner:
+        def run(self, *_args, **_kwargs):
+            raise AssertionError("resumed child must not execute")
+
+    result = execute_supervisor_delegation(
+        client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+        definitions=[child], agent_service=Runner(), store=store, actor="tech", actor_role=Role.TECHNICIAN,
+        completed_run_ids=[12],
+    )
+    assert result["execution_started"] is True
+    assert result["children"][0]["resumed"] is True
+
+    monkeypatch.setattr(store, "get_agent_run", lambda _run_id, _client_id: replace(completed, state_json="not-json"))
+    with pytest.raises(SupervisorPlanError, match="malformed"):
+        execute_supervisor_delegation(
+            client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+            definitions=[child], agent_service=Runner(), store=store, actor="tech", actor_role=Role.TECHNICIAN,
+            completed_run_ids=[12],
         )

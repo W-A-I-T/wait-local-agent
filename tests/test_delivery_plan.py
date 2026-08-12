@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
@@ -60,3 +62,44 @@ def test_delivery_plan_reports_unready_evidence_and_rejects_foreign_architecture
             governance={"client_id": "acme", "status": "pass"},
             deployment_targets=["Teams"],
         )
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("empty_targets", "deployment_targets must contain"),
+        ("duplicate_targets", "must not contain duplicates"),
+        ("connector_object", "must contain objects"),
+        ("components_type", "components must be an array"),
+        ("approval_policy_type", "approval_policy must be an object"),
+        ("negative_cases", "case_count must be a non-negative integer"),
+        ("boolean_cases", "case_count must be a non-negative integer"),
+    ],
+)
+def test_delivery_plan_rejects_unbounded_or_malformed_evidence(case, message) -> None:
+    architecture = _architecture()
+    evaluation = {"production_readiness": "pass", "case_count": 1}
+    kwargs: dict[str, Any] = {
+        "client_id": "acme",
+        "architecture": architecture,
+        "evaluation": evaluation,
+        "governance": {"client_id": "acme", "status": "pass"},
+        "deployment_targets": ["Teams"],
+        "connector_artifacts": [],
+    }
+    if case == "components_type":
+        architecture["components"] = "agent"
+    elif case == "approval_policy_type":
+        architecture["approval_policy"] = []
+    elif case == "negative_cases":
+        evaluation["case_count"] = -1
+    elif case == "boolean_cases":
+        evaluation["case_count"] = True
+    elif case == "connector_object":
+        kwargs["connector_artifacts"] = [object()]
+    elif case == "empty_targets":
+        kwargs["deployment_targets"] = []
+    elif case == "duplicate_targets":
+        kwargs["deployment_targets"] = ["Teams", "Teams"]
+    with pytest.raises(DeliveryPlanError, match=message):
+        build_consultant_delivery_plan(**kwargs)
