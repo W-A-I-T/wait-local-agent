@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
@@ -11,6 +12,8 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
+    DiscoverySessionStartRequest,
+    DiscoveryTurnRequest,
     EnvironmentDiscoveryRequest,
     EvaluationExecutionRequest,
     EvaluationRequest,
@@ -125,6 +128,80 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert power_apps_artifact["deployment_started"] is False
     assert flow["export_status"] == "review_only"
     assert delivery["production_deployment_requires_approval"] is True
+
+
+def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            opening_message="Reduce manual onboarding effort",
+        ),
+        _technician(),
+    )
+    assert start["session_id"].startswith("CDS-")
+    assert start["answered"]["business_goal"] == "Reduce manual onboarding effort"
+    assert start["next_question"]["id"] == "users"
+    assert start["execution_started"] is False
+
+    turn = _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+        start["session_id"],
+        DiscoveryTurnRequest(field="users", answer=["HR operations"]),
+        _technician(),
+    )
+    assert turn["answered"]["users"] == ["HR operations"]
+    assert turn["transcript"][-2]["role"] == "user"
+    assert turn["transcript"][-1]["role"] == "assistant"
+
+    with pytest.raises(HTTPException) as foreign:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            start["session_id"],
+            DiscoveryTurnRequest(field="knowledge", answer=["Handbook"]),
+            _technician("beta"),
+        )
+    assert foreign.value.status_code == 404
+
+
+def test_guided_discovery_session_turn_is_bounded(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(client_id="acme", answers={"business_goal": "Review onboarding"}),
+        _technician(),
+    )
+    session_id = start["session_id"]
+    transcript = cast(
+        list[dict[str, object]],
+        [{"role": "assistant", "field": "users", "content": "Who uses this?"}] * 64,
+    )
+    Store(settings.data_path).update_consultant_discovery_session(
+        session_id,
+        client_id="acme",
+        principal_id=_technician().approver_id or "api",
+        status="active",
+        answers={"business_goal": "Review onboarding"},
+        transcript=transcript,
+    )
+
+    with pytest.raises(HTTPException) as bounded:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            session_id,
+            DiscoveryTurnRequest(field="users", answer=["HR"]),
+            _technician(),
+        )
+    assert bounded.value.status_code == 422
+
+
+def test_guided_discovery_session_rejects_impact_side_channel(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(client_id="acme"),
+        _technician(),
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            start["session_id"],
+            DiscoveryTurnRequest(field="impact", answer={"monthly_runs": 1}),
+            _technician(),
+        )
+    assert rejected.value.status_code == 422
 
 
 def test_power_platform_deployment_route_creates_approval_and_stays_gated(settings) -> None:

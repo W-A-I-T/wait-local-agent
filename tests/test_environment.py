@@ -69,6 +69,7 @@ def test_environment_discovery_deduplicates_aliases_and_projects_unrequested_rea
             _status("hudu", "Hudu", "ready"),
             _status("itglue", "IT Glue", "offline"),
             _status("connectwise", "ConnectWise", "offline"),
+            _status("syncro", "Syncro", "not_configured"),
         ],
         configured_client_id="acme",
     )

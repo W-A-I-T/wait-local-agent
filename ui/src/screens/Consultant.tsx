@@ -8,6 +8,7 @@ import type {
   ConsultantArchitectureComponent,
   ConsultantBlueprint,
   ConsultantDiscoveryResult,
+  ConsultantDiscoverySession,
   ConsultantMonitoring,
   ConsultantUseCase,
   PowerAppsArtifact,
@@ -60,6 +61,10 @@ export function Consultant() {
   const [discoveryLeavesTenant, setDiscoveryLeavesTenant] = useState(false);
   const [discoveryResult, setDiscoveryResult] = useState<ConsultantDiscoveryResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoverySession, setDiscoverySession] = useState<ConsultantDiscoverySession | null>(null);
+  const [guidedAnswer, setGuidedAnswer] = useState("");
+  const [guidedBooleanAnswer, setGuidedBooleanAnswer] = useState(false);
+  const [guidedLoading, setGuidedLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -182,6 +187,65 @@ export function Consultant() {
       setMessage(error instanceof Error ? error.message : "Unable to assess discovery.");
     } finally {
       setDiscoveryLoading(false);
+    }
+  }
+
+  async function startGuidedDiscovery() {
+    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    if (!clientId || !discoveryGoal.trim()) {
+      setMessage("Choose a blueprint tenant and provide a business goal before starting guided discovery.");
+      return;
+    }
+    setGuidedLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantDiscoverySession>("/consultant/discovery/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, opening_message: discoveryGoal.trim() }),
+      });
+      setDiscoverySession(result);
+      setDiscoveryResult(result);
+      setGuidedAnswer("");
+      setGuidedBooleanAnswer(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to start guided discovery.");
+    } finally {
+      setGuidedLoading(false);
+    }
+  }
+
+  async function answerGuidedDiscovery() {
+    const question = discoverySession?.next_question;
+    if (!question) return;
+    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    if (!clientId) return;
+    const answer = question.kind === "boolean"
+      ? guidedBooleanAnswer
+      : question.kind === "list" ? splitList(guidedAnswer) : guidedAnswer.trim();
+    if (question.kind !== "boolean" && !guidedAnswer.trim()) {
+      setMessage("Provide an explicit answer before continuing guided discovery.");
+      return;
+    }
+    setGuidedLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantDiscoverySession>(
+        `/consultant/discovery/sessions/${encodeURIComponent(discoverySession.session_id)}/turn`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field: question.id, answer }),
+        },
+      );
+      setDiscoverySession(result);
+      setDiscoveryResult(result);
+      setGuidedAnswer("");
+      setGuidedBooleanAnswer(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to record the discovery answer.");
+    } finally {
+      setGuidedLoading(false);
     }
   }
 
@@ -310,6 +374,38 @@ export function Consultant() {
             Risk review: {discoveryResult.risk_review.level}. ROI estimate: {discoveryResult.roi_analysis.status}.
           </div>
         ) : null}
+        <div className="notice">
+          <strong>Guided discovery</strong>{" "}
+          <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
+          {!discoverySession ? (
+            <div>
+              <button type="button" onClick={() => void startGuidedDiscovery()} disabled={!canWrite || guidedLoading || !discoveryGoal.trim()}>
+                {guidedLoading ? "Starting…" : "Start guided discovery"}
+              </button>
+            </div>
+          ) : discoverySession.next_question ? (
+            <div className="draft-form">
+              <p><strong>{discoverySession.assistant_message}</strong></p>
+              {discoverySession.next_question.kind === "boolean" ? (
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={guidedBooleanAnswer} onChange={(event) => setGuidedBooleanAnswer(event.target.checked)} />
+                  Yes
+                </label>
+              ) : (
+                <label>
+                  Your answer
+                  <input aria-label="Guided discovery answer" value={guidedAnswer} onChange={(event) => setGuidedAnswer(event.target.value)} placeholder={discoverySession.next_question.kind === "list" ? "Use commas for separate items" : "Enter explicit evidence"} />
+                </label>
+              )}
+              <button type="button" onClick={() => void answerGuidedDiscovery()} disabled={!canWrite || guidedLoading}>
+                {guidedLoading ? "Saving…" : "Save answer and continue"}
+              </button>
+              <p className="screen-note">{discoverySession.unanswered?.length ?? 0} evidence questions remain unanswered.</p>
+            </div>
+          ) : (
+            <p>Guided discovery is complete. Review the evidence and readiness result above.</p>
+          )}
+        </div>
       </section>
 
       <section className="panel">

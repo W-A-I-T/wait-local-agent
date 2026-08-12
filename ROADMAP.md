@@ -45,7 +45,9 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Current foundation
 
-- Guided discovery, tenant-scoped provider-neutral `SolutionBlueprint` data,
+- Guided discovery, including tenant/principal-scoped persisted sessions with
+  bounded one-question turns, explicit transcript evidence, and no-inference
+  next-question state; tenant-scoped provider-neutral `SolutionBlueprint` data,
   architecture projections, workflow design, use-case catalog, delivery
   handoff, governance review, evaluation contracts, monitoring, and bounded
   supervisor/child-agent plans.
@@ -63,12 +65,10 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Next increments
 
-- Conversational discovery that asks only unresolved questions and records
-  missing information instead of inferring systems, licenses, permissions, or
-  deployment targets.
-- A verified flagship employee-onboarding fixture that demonstrates local
-  fixture mode, artifact generation, provider execution, approvals, evaluation,
-  and deployment as distinct states.
+- Broader guided discovery ergonomics, including resumable operator views,
+  richer transcript review, and a verified flagship employee-onboarding
+  fixture that demonstrates local fixture mode, artifact generation, provider
+  execution, approvals, evaluation, and deployment as distinct states.
 
 ## Microsoft / Power Platform
 

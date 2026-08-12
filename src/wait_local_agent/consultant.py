@@ -49,6 +49,7 @@ _TOP_LEVEL_FIELDS = {
     "model",
     "orchestration",
     "environment",
+    "discovery",
 }
 _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "instructions",
@@ -57,6 +58,7 @@ _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "model",
     "orchestration",
     "environment",
+    "discovery",
 }
 _ORCHESTRATION_MODES = {"single_agent", "supervisor", "event_driven", "hybrid"}
 _VERIFIED_ENVIRONMENT_STATUSES = {"reachable", "authenticated", "authorized"}
@@ -167,9 +169,7 @@ def architect_solution_blueprint(
 
     for name in blueprint.systems:
         environment = _matching_environment(name, blueprint.environment)
-        verified = bool(
-            environment and environment.get("status") in _VERIFIED_ENVIRONMENT_STATUSES
-        )
+        verified = bool(environment and environment.get("status") in _VERIFIED_ENVIRONMENT_STATUSES)
         if not verified:
             open_items.append(
                 {
@@ -276,10 +276,7 @@ def _architecture_decisions(
     components: list[dict[str, object]],
     templates: Mapping[str, WorkflowTemplate],
 ) -> list[dict[str, object]]:
-    return [
-        _decision_for_component(blueprint, component, templates)
-        for component in components
-    ]
+    return [_decision_for_component(blueprint, component, templates) for component in components]
 
 
 def _decision_for_component(
@@ -304,9 +301,7 @@ def _decision_for_component(
         "alternatives_considered": ["human_process"],
         "systems_involved": list(blueprint.systems),
         "dependencies": [],
-        "required_permissions": _unknown_requirement(
-            "provider permissions are not declared by the local catalog"
-        ),
+        "required_permissions": _unknown_requirement("provider permissions are not declared by the local catalog"),
         "licenses": _unknown_requirement("licensing evidence is not present in the blueprint"),
         "read_write_behavior": {
             "read": "not_declared",
@@ -354,9 +349,7 @@ def _decision_for_component(
             }
         )
         if unresolved:
-            common["open_questions"] = [
-                "resolve every requested tool against the local smart-action catalog"
-            ]
+            common["open_questions"] = ["resolve every requested tool against the local smart-action catalog"]
         return common
 
     if kind == "workflow":
@@ -635,12 +628,8 @@ def parse_solution_blueprint(
     orchestration = payload.get("orchestration", "")
     if orchestration is None:
         orchestration = ""
-    if not isinstance(orchestration, str) or (
-        orchestration and orchestration not in _ORCHESTRATION_MODES
-    ):
-        raise BlueprintValidationError(
-            f"orchestration must be one of: {', '.join(sorted(_ORCHESTRATION_MODES))}"
-        )
+    if not isinstance(orchestration, str) or (orchestration and orchestration not in _ORCHESTRATION_MODES):
+        raise BlueprintValidationError(f"orchestration must be one of: {', '.join(sorted(_ORCHESTRATION_MODES))}")
 
     return SolutionBlueprint(
         id=identifier,
@@ -664,6 +653,7 @@ def parse_solution_blueprint(
         model=model,
         orchestration=cast(str, orchestration),
         environment=_environment(payload.get("environment", []), client_id=client),
+        discovery=_discovery(payload.get("discovery", {})),
     )
 
 
@@ -709,6 +699,8 @@ def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, Any]:
         payload["orchestration"] = blueprint.orchestration
     if blueprint.environment:
         payload["environment"] = [dict(item) for item in blueprint.environment]
+    if blueprint.discovery:
+        payload["discovery"] = dict(blueprint.discovery)
     return payload
 
 
@@ -842,16 +834,90 @@ def _environment(value: object, *, client_id: str) -> tuple[dict[str, object], .
                 normalized[boolean_field] = boolean_value
         for text_field in ("tenant_scope", "provider_status"):
             if text_field in item:
-                text_value = _text(
-                    item[text_field], f"environment[{index}].{text_field}", max_length=128
-                )
+                text_value = _text(item[text_field], f"environment[{index}].{text_field}", max_length=128)
                 if text_field == "tenant_scope" and text_value != client_id:
-                    raise BlueprintValidationError(
-                        f"environment[{index}].tenant_scope is outside the blueprint tenant"
-                    )
+                    raise BlueprintValidationError(f"environment[{index}].tenant_scope is outside the blueprint tenant")
                 normalized[text_field] = text_value
         result.append(normalized)
     return tuple(result)
+
+
+def _discovery(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise BlueprintValidationError("discovery must be an object")
+    allowed = {
+        "solution_name",
+        "business_goal",
+        "users",
+        "knowledge",
+        "systems",
+        "reads",
+        "changes",
+        "approvals",
+        "failure_handling",
+        "licenses",
+        "data_location",
+        "data_leaves_tenant",
+        "current_process",
+        "owners",
+        "approvers",
+        "sensitive_operations",
+        "compliance",
+        "data_residency",
+        "existing_apis",
+        "existing_automation",
+        "channels",
+        "expected_volume",
+        "business_value",
+        "success_metrics",
+        "rollback_expectations",
+    }
+    _reject_unknown(value, allowed, "discovery")
+    list_fields = {
+        "users",
+        "knowledge",
+        "systems",
+        "reads",
+        "changes",
+        "approvals",
+        "licenses",
+        "data_location",
+        "owners",
+        "approvers",
+        "sensitive_operations",
+        "compliance",
+        "data_residency",
+        "existing_apis",
+        "existing_automation",
+        "channels",
+        "success_metrics",
+    }
+    text_fields = {
+        "solution_name",
+        "business_goal",
+        "failure_handling",
+        "current_process",
+        "expected_volume",
+        "business_value",
+        "rollback_expectations",
+    }
+    result: dict[str, object] = {}
+    for key, raw in value.items():
+        if key in list_fields:
+            normalized_list = list(_text_list(raw, f"discovery.{key}"))
+            if any(_has_forbidden_key(item) for item in normalized_list):
+                raise BlueprintValidationError("discovery evidence cannot contain secret material")
+            result[key] = normalized_list
+        elif key in text_fields:
+            normalized_text = _text(raw, f"discovery.{key}")
+            if _has_forbidden_key(normalized_text):
+                raise BlueprintValidationError("discovery evidence cannot contain secret material")
+            result[key] = normalized_text
+        elif key == "data_leaves_tenant":
+            if not isinstance(raw, bool):
+                raise BlueprintValidationError("discovery.data_leaves_tenant must be boolean")
+            result[key] = raw
+    return result
 
 
 def _business_goal(value: object) -> dict[str, str | bool | int]:
@@ -868,9 +934,7 @@ def _business_goal(value: object) -> dict[str, str | bool | int]:
         elif isinstance(item, str):
             result[identifier] = _text(item, f"business_goal.{identifier}", max_length=MAX_BLUEPRINT_GOAL_VALUE)
         else:
-            raise BlueprintValidationError(
-                f"business_goal.{identifier} must be text, integer, or boolean"
-            )
+            raise BlueprintValidationError(f"business_goal.{identifier} must be text, integer, or boolean")
     return result
 
 

@@ -74,10 +74,78 @@ def test_blueprint_validation_and_store_round_trip(tmp_path) -> None:
         event.event_type == "consultant.blueprint_created" and event.client_id == "acme"
         for event in reopened.list_audit_events(client_id="acme")
     )
-
     with pytest.raises(ValueError, match="requires a client_id"):
         reopened.create_solution_blueprint(replace(blueprint, client_id=""))
 
+
+def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets() -> None:
+    discovery = {
+        "business_goal": "Reduce onboarding effort",
+        "current_process": "HR emails IT",
+        "owners": ["HR operations"],
+        "approvers": ["IT manager"],
+        "data_leaves_tenant": False,
+    }
+    blueprint = parse_solution_blueprint(
+        {**_payload(), "discovery": discovery},
+        client_id="acme",
+        created_by="architect",
+    )
+
+    assert blueprint.discovery == discovery
+    assert blueprint_payload(blueprint)["discovery"] == discovery
+    with pytest.raises(BlueprintValidationError, match="secret material"):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": {"business_goal": "token=secret"}},
+            client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_discovery_session_store_is_tenant_and_principal_scoped(tmp_path) -> None:
+    store = Store(tmp_path / "state.db")
+    session = store.create_consultant_discovery_session(
+        client_id="acme",
+        principal_id="technician-1",
+        answers={"business_goal": "Reduce manual work"},
+        transcript=[{"role": "user", "field": "business_goal", "content": "Reduce manual work"}],
+    )
+
+    reopened = Store(tmp_path / "state.db")
+    loaded = reopened.get_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+    )
+    assert loaded is not None
+    assert json.loads(loaded.answers_json)["business_goal"] == "Reduce manual work"
+    assert reopened.get_consultant_discovery_session(session.id, client_id="beta") is None
+    assert (
+        reopened.get_consultant_discovery_session(
+            session.id,
+            client_id="acme",
+            principal_id="technician-2",
+        )
+        is None
+    )
+    updated = reopened.update_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+        status="completed",
+        answers={"business_goal": "Reduce manual work", "users": ["HR"]},
+        transcript=[{"role": "assistant", "content": "Who uses this?"}],
+    )
+    assert updated is not None
+    assert updated.status == "completed"
+    assert reopened.update_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+        status="active",
+        answers={},
+        transcript=[],
+    ) is None
 
 @pytest.mark.parametrize(
     ("change", "message"),
