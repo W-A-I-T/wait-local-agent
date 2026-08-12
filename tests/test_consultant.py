@@ -155,6 +155,29 @@ def test_discovery_candidate_promotion_rejects_unsafe_approval_labels(raw_action
         )
 
 
+@pytest.mark.parametrize(
+    ("approvals", "message"),
+    [
+        ([], "must be an object"),
+        ({1: "HR"}, "approval action must be text"),
+        ({"Assign license": "HR", "assign_license": "IT"}, "identifiers collide"),
+    ],
+)
+def test_discovery_candidate_promotion_rejects_invalid_approval_objects(
+    approvals: object,
+    message: str,
+) -> None:
+    candidate = {**_payload(), "approvals": approvals}
+    with pytest.raises(BlueprintValidationError, match=message):
+        promote_discovery_candidate(
+            candidate,
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+
+
 def test_discovery_session_store_is_tenant_and_principal_scoped(tmp_path) -> None:
     store = Store(tmp_path / "state.db")
     session = store.create_consultant_discovery_session(
