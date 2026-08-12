@@ -132,8 +132,16 @@ def test_blueprint_rejects_malformed_fields(mutate, message) -> None:
     ("field", "value", "message"),
     [
         ("business_goal", {f"goal-{index}": True for index in range(33)}, "business_goal may contain"),
-        ("agents", [_payload()["agents"][0] for _ in range(33)], "agents may contain"),
-        ("workflows", [_payload()["workflows"][0] for _ in range(33)], "workflows may contain"),
+        (
+            "agents",
+            [cast(list[dict[str, object]], _payload()["agents"])[0] for _ in range(33)],
+            "agents may contain",
+        ),
+        (
+            "workflows",
+            [cast(list[dict[str, object]], _payload()["workflows"])[0] for _ in range(33)],
+            "workflows may contain",
+        ),
         ("approvals", {f"action-{index}": "HR" for index in range(33)}, "approvals may contain"),
     ],
 )
@@ -188,7 +196,7 @@ def test_blueprint_store_reports_unexpected_missing_persistence(tmp_path, monkey
 
 def test_blueprint_rejects_non_identifier_id_and_non_object_payload() -> None:
     with pytest.raises(BlueprintValidationError, match="JSON object"):
-        parse_solution_blueprint(cast(object, []), client_id="acme", created_by="architect")
+        parse_solution_blueprint(cast(dict[str, object], []), client_id="acme", created_by="architect")
     with pytest.raises(BlueprintValidationError, match="lowercase identifier"):
         parse_solution_blueprint(
             _payload(), client_id="acme", created_by="architect", blueprint_id="Not Valid"
