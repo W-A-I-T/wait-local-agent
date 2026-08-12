@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { ApiRequestError, apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch, apiFetchBlob } from "../api/client";
 import {
   type EvidenceReport,
   type EvidenceStatus,
@@ -66,8 +66,13 @@ export function Reports() {
   const [exportText, setExportText] = useState("");
   const [restoreSource, setRestoreSource] = useState("");
   const [restoreEncrypted, setRestoreEncrypted] = useState(false);
+  const [reportPeriodStart, setReportPeriodStart] = useState("");
+  const [reportPeriodEnd, setReportPeriodEnd] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [runningAction, setRunningAction] = useState<"hardening" | "restore" | null>(null);
+  const [reportGeneration, setReportGeneration] = useState<
+    "qbr" | "automation-opportunity" | "recurring-service-review" | null
+  >(null);
   const [loadState, setLoadState] = useState<EvidenceLoadState>("loading");
   const [technicalError, setTechnicalError] = useState("");
 
@@ -122,20 +127,21 @@ export function Reports() {
     }
   }
 
-  async function exportReport(report: EvidenceReport, format: "json" | "markdown") {
+  async function exportReport(report: EvidenceReport, format: "json" | "markdown" | "pdf") {
     try {
+      if (format === "pdf") {
+        const blob = await apiFetchBlob(`/reports/${encodeURIComponent(report.id)}/export?export_format=pdf`);
+        downloadBlob(blob, `wait-report-${report.id}.pdf`);
+        setStatusMessage("PDF report downloaded.");
+        return;
+      }
       const payload = await apiFetch<ReportExport | string>(
         `/reports/${encodeURIComponent(report.id)}/export?export_format=${format}`
       );
       const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
       setExportText(text);
       const blob = new Blob([text], { type: format === "markdown" ? "text/markdown" : "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `wait-report-${report.id}.${format === "markdown" ? "md" : "json"}`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `wait-report-${report.id}.${format === "markdown" ? "md" : "json"}`);
     } catch (error) {
       showError(error, "Report export failed.", setStatusMessage, setTechnicalError);
     }
@@ -178,6 +184,39 @@ export function Reports() {
       showError(error, "Restore drill could not be started.", setStatusMessage, setTechnicalError);
     } finally {
       setRunningAction(null);
+    }
+  }
+
+  async function generateClientReport(
+    reportType: "qbr" | "automation-opportunity" | "recurring-service-review"
+  ) {
+    if (!reportPeriodStart || !reportPeriodEnd) {
+      setStatusMessage("Choose a start and end date before generating a client report.");
+      return;
+    }
+    if (reportPeriodEnd < reportPeriodStart) {
+      setStatusMessage("The report end date must be on or after the start date.");
+      return;
+    }
+    setReportGeneration(reportType);
+    try {
+      const report = await apiFetch<EvidenceReport>(`/reports/${reportType}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId.trim() || undefined,
+          period_start: reportPeriodStart,
+          period_end: reportPeriodEnd
+        })
+      });
+      setSelectedReport(report);
+      setSelectedDetail(report);
+      setStatusMessage(`${humanize(reportType)} report generated from local evidence.`);
+      await refresh();
+    } catch (error) {
+      showError(error, "The client report could not be generated.", setStatusMessage, setTechnicalError);
+    } finally {
+      setReportGeneration(null);
     }
   }
 
@@ -257,6 +296,27 @@ export function Reports() {
           <h2>All reports</h2>
           <span>{visibleReports.length} reports</span>
         </div>
+        <div className="report-generation panel-subsection">
+          <div>
+            <h3>Client reports</h3>
+            <p className="screen-note">Generate deterministic QBR, automation-opportunity, or recurring service review reports from local ticket and execution evidence. Follow-up candidates are review-only; no workflow or communication is enabled by report generation.</p>
+          </div>
+          <div className="grid">
+            <label>
+              Period start
+              <input type="date" value={reportPeriodStart} onChange={(event) => setReportPeriodStart(event.target.value)} />
+            </label>
+            <label>
+              Period end
+              <input type="date" value={reportPeriodEnd} onChange={(event) => setReportPeriodEnd(event.target.value)} />
+            </label>
+          </div>
+          <div className="row-actions">
+            <button type="button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("qbr")}>{reportGeneration === "qbr" ? "Generating…" : "Generate QBR"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("automation-opportunity")}>{reportGeneration === "automation-opportunity" ? "Generating…" : "Find automation opportunities"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("recurring-service-review")}>{reportGeneration === "recurring-service-review" ? "Generating…" : "Generate service review"}</button>
+          </div>
+        </div>
         <form className="draft-form" onSubmit={openReport}>
           <div className="grid">
             <label>
@@ -264,7 +324,7 @@ export function Reports() {
               <input value={reportType} onChange={(event) => setReportType(event.target.value)} placeholder="Filter reports" />
             </label>
             <label>
-              Client
+              Client scope (admin only; others are bound)
               <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
             </label>
             <label>
@@ -291,6 +351,7 @@ export function Reports() {
                 <button type="button" className="icon-button" onClick={() => setSelectedReport(report)}>Open</button>
                 <button type="button" className="icon-button" onClick={() => void exportReport(report, "json")}>Export JSON</button>
                 <button type="button" className="icon-button" onClick={() => void exportReport(report, "markdown")}>Export Markdown</button>
+                <button type="button" className="icon-button" onClick={() => void exportReport(report, "pdf")}>Export PDF</button>
               </div>
             </article>
           ))}
@@ -321,7 +382,7 @@ function EvidencePanel({
   description: string;
   status: EvidenceDisplayStatus;
   report?: EvidenceReport;
-  onExport: (report: EvidenceReport, format: "json" | "markdown") => Promise<void>;
+  onExport: (report: EvidenceReport, format: "json" | "markdown" | "pdf") => Promise<void>;
   children: ReactNode;
 }) {
   const kind = title === "Hardening posture" ? "hardening" : "restore";
@@ -343,10 +404,20 @@ function EvidencePanel({
         <div className="export-actions" aria-label={`${title} exports`}>
           <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "json")}>Export JSON</button>
           <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "markdown")}>Export Markdown</button>
+          <button type="button" className="icon-button" disabled={!report} onClick={() => report && void onExport(report, "pdf")}>Export PDF</button>
         </div>
       </div>
     </section>
   );
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function HardeningCheckCard({ check }: { check: HardeningCheckResult }) {

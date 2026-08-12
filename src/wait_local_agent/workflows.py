@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import json
+from typing import Protocol
+
 from wait_local_agent.models import Ticket, WorkflowRun, WorkflowTemplate
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.services import classify_ticket
-from wait_local_agent.store import Store
+from wait_local_agent.smart_actions import ActionResult
+from wait_local_agent.store import Store, _normalize_client_id
+
+MAX_WORKFLOW_PAYLOAD_FIELDS = 16
+MAX_WORKFLOW_PAYLOAD_BYTES = 8_000
+
+
+class WorkflowToolExecutor(Protocol):
+    def invoke(
+        self,
+        action_id: str,
+        payload: dict[str, object],
+        actor: str | None,
+        *,
+        confirm: bool = False,
+        client_id: str | None = None,
+    ) -> ActionResult:
+        """Run one existing smart action inside a workflow boundary."""
 
 WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
     WorkflowTemplate(
@@ -30,31 +51,351 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         id="inactive-ticket-follow-up",
         name="Inactive Ticket Follow-up",
         trigger="schedule.daily",
-        description="Find stale tickets and draft a safe client or internal follow-up.",
+        description=(
+            "Prepare an approval-gated follow-up for a stale ticket. The default is a "
+            "local ticket note; configured communication adapters may be selected explicitly."
+        ),
         action_type="ticket.follow_up",
         approval_required=True,
         risk_level="medium",
         preview_fields=("ticket_id", "message"),
+        tool_id="communication-send",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "body": "optional follow-up body; a deterministic local draft is used when omitted",
+            },
+        },
     ),
     WorkflowTemplate(
         id="p1-alert",
         name="P1 Alert",
         trigger="ticket.priority_changed",
-        description="Detect urgent tickets and prepare an internal alert payload.",
+        description=(
+            "Prepare an approval-gated internal alert. The default is a local ticket note; "
+            "configured communication adapters may be selected explicitly."
+        ),
         action_type="ticket.alert",
         approval_required=True,
         risk_level="high",
         preview_fields=("ticket_id", "priority", "message"),
+        tool_id="communication-send",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "body": "optional alert body; a deterministic local alert is used when omitted",
+            },
+        },
     ),
     WorkflowTemplate(
         id="documentation-assisted-response",
         name="Documentation-assisted Response",
         trigger="ticket.created",
-        description="Use cited local knowledge to draft a client-safe response.",
+        description=(
+            "Use tenant-scoped local knowledge to draft a cited client-safe response "
+            "and deliver it through the existing approval-gated communication boundary."
+        ),
         action_type="ticket.draft_response",
         approval_required=True,
         risk_level="medium",
         preview_fields=("ticket_id", "response", "sources"),
+        tool_id="documentation-assisted-response",
+        payload_schema={
+            "type": "object",
+            "properties": {
+                "channel": "ticket_note, email, teams, slack, or sms (default: ticket_note)",
+                "recipient": "required for non-ticket channels",
+                "subject": "optional subject for email, Teams, or Slack",
+                "response": "optional operator-edited response; local/provider draft is used when omitted",
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="l1-resolution-review",
+        name="L1 Resolution Review",
+        trigger="ticket.created",
+        description=(
+            "Draft a cited, technician-facing L1 resolution suggestion from "
+            "local knowledge; no ticket mutation is performed."
+        ),
+        action_type="ticket.l1_resolution",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "suggestion", "citations"),
+        tool_id="suggest-resolution",
+    ),
+    WorkflowTemplate(
+        id="ticket-quality-review",
+        name="Ticket Quality Review",
+        trigger="ticket.created",
+        description="Check required ticket fields and controlled priority/status values.",
+        action_type="ticket.quality",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "quality_score", "issues"),
+        tool_id="ticket-quality",
+    ),
+    WorkflowTemplate(
+        id="ticket-sentiment-review",
+        name="Ticket Sentiment Review",
+        trigger="ticket.updated",
+        description="Assess customer-facing language and flag bounded escalation signals.",
+        action_type="ticket.sentiment",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "sentiment", "score", "escalation_signal"),
+        tool_id="ticket-sentiment",
+    ),
+    WorkflowTemplate(
+        id="ticket-escalation-review",
+        name="Ticket Escalation Review",
+        trigger="ticket.priority_changed",
+        description="Recommend a bounded urgency and next step without changing the ticket.",
+        action_type="ticket.escalation",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "urgency", "recommendation"),
+        tool_id="ticket-escalation",
+    ),
+    WorkflowTemplate(
+        id="security-alert-review",
+        name="Security Alert Review",
+        trigger="ticket.created",
+        description=(
+            "Detect bounded security-alert indicators and route the ticket to "
+            "human security handling without taking side effects."
+        ),
+        action_type="ticket.security_alert",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "security_signal", "severity", "indicators", "recommendation"),
+        tool_id="security-alert-assessment",
+    ),
+    WorkflowTemplate(
+        id="similar-ticket-review",
+        name="Similar Ticket Review",
+        trigger="ticket.created",
+        description="Rank local tickets by deterministic subject and body overlap for technician review.",
+        action_type="ticket.similar",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "matches"),
+        tool_id="find-similar-tickets",
+    ),
+    WorkflowTemplate(
+        id="duplicate-ticket-review",
+        name="Duplicate Ticket Review",
+        trigger="ticket.created",
+        description=(
+            "Find deterministic local candidate duplicates for technician review; "
+            "this workflow never merges or closes tickets."
+        ),
+        action_type="ticket.duplicate_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "matches"),
+        tool_id="find-similar-tickets",
+    ),
+    WorkflowTemplate(
+        id="technician-dispatch-review",
+        name="Technician Dispatch Review",
+        trigger="ticket.unassigned",
+        description=(
+            "Draft a workload-aware technician recommendation for human approval; "
+            "the workflow never assigns a technician by itself."
+        ),
+        action_type="ticket.assign",
+        approval_required=True,
+        risk_level="medium",
+        preview_fields=("ticket_id", "recommendation", "approved"),
+        tool_id="dispatch-suggestion",
+    ),
+    WorkflowTemplate(
+        id="ticket-sla-risk-review",
+        name="Ticket SLA Risk Review",
+        trigger="schedule.daily",
+        description=(
+            "Compare ticket age with explicit operator-supplied thresholds and "
+            "report evidence-backed SLA risk without inferring a vendor contract."
+        ),
+        action_type="ticket.sla_assessment",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("ticket_id", "assessment", "evidence_status"),
+        tool_id="ticket-sla-assessment",
+        payload_schema={
+            "type": "object",
+            "required": ["thresholds_minutes"],
+            "properties": {"thresholds_minutes": "object of priority to positive minutes"},
+        },
+    ),
+    WorkflowTemplate(
+        id="stale-ticket-sweep-review",
+        name="Stale Ticket Sweep Review",
+        trigger="schedule.daily",
+        description=(
+            "Find open local tickets older than an explicit threshold; missing "
+            "timestamps are excluded and reported."
+        ),
+        action_type="ticket.stale_sweep",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("tickets", "count", "excluded_missing_timestamp"),
+        tool_id="stale-ticket-sweep",
+        payload_schema={
+            "type": "object",
+            "required": ["stale_after_minutes"],
+            "properties": {"stale_after_minutes": "positive integer"},
+        },
+    ),
+    WorkflowTemplate(
+        id="recurring-service-review",
+        name="Recurring Service Review",
+        trigger="schedule.monthly",
+        description=(
+            "Review a client-scoped local service posture, explicit follow-up candidates, "
+            "lifecycle evidence, and automation activity without changing records."
+        ),
+        action_type="client.recurring_service_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("client_id", "period_start", "period_end", "follow_up_candidates", "evidence_status"),
+        tool_id="recurring-service-review",
+        payload_schema={
+            "type": "object",
+            "required": ["period_start", "period_end"],
+            "properties": {
+                "period_start": "inclusive ISO date",
+                "period_end": "inclusive ISO date",
+                "follow_up_after_days": "integer from 1 to 90",
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-user-onboarding-review",
+        name="Microsoft 365 User Onboarding Review",
+        trigger="ticket.created",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 user creation request from a ticket; "
+            "the existing admin approval and local-vault credential path remains required."
+        ),
+        action_type="m365.user_onboarding",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_principal_name", "display_name", "mail_nickname", "approval_required"),
+        tool_id="m365-user-onboarding",
+        payload_schema={
+            "type": "object",
+            "required": [
+                "user_principal_name",
+                "display_name",
+                "mail_nickname",
+                "temporary_vault_name",
+            ],
+            "properties": {
+                "user_principal_name": "string",
+                "display_name": "string",
+                "mail_nickname": "string",
+                "temporary_vault_name": "local vault key name",
+                "account_enabled": "boolean",
+                "force_change_password_next_sign_in": "boolean",  # nosec B105 - schema descriptor
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-user-offboarding-review",
+        name="Microsoft 365 User Offboarding Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 disable-and-revoke request; "
+            "the existing admin approval and partial-failure reporting remain required."
+        ),
+        action_type="m365.user_offboarding",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "user_id", "approval_required"),
+        tool_id="m365-user-offboarding",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "user_id"],
+            "properties": {"user_identity": "string", "user_id": "immutable directory ID"},
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-password-reset-review",
+        name="Microsoft 365 Password Reset Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare an approval-gated Microsoft 365 password reset using a temporary "
+            "credential reference held in WAIT's local encrypted vault."
+        ),
+        action_type="m365.password_reset",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "temporary_vault_name", "approval_required"),
+        tool_id="m365-password-reset",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "temporary_vault_name"],
+            "properties": {
+                "user_identity": "string",
+                "temporary_vault_name": "local vault key name",
+                "force_change_password_next_sign_in": "boolean",  # nosec B105 - schema descriptor
+                "force_change_password_next_sign_in_with_mfa": "boolean",  # nosec B105 - schema descriptor
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-authentication-method-removal-review",
+        name="Microsoft 365 Authentication Method Removal Review",
+        trigger="ticket.updated",
+        description=(
+            "Prepare an approval-gated removal of one explicitly identified Microsoft 365 "
+            "authentication method; broad MFA reset operations are not performed."
+        ),
+        action_type="m365.authentication_method_removal",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("user_identity", "method_type", "method_id", "approval_required"),
+        tool_id="m365-authentication-method-remove",
+        payload_schema={
+            "type": "object",
+            "required": ["user_identity", "method_type", "method_id"],
+            "properties": {
+                "user_identity": "string",
+                "method_type": "fido2, microsoft_authenticator, phone, or software_oath",
+                "method_id": "immutable authentication method ID",
+            },
+        },
+    ),
+    WorkflowTemplate(
+        id="m365-license-request-review",
+        name="Microsoft 365 License Request Review",
+        trigger="ticket.created",
+        description=(
+            "Prepare an approval-gated Microsoft 365 license add or removal request "
+            "using immutable user and SKU IDs."
+        ),
+        action_type="m365.license_request",
+        approval_required=True,
+        risk_level="high",
+        preview_fields=("operation", "user_id", "sku_ids", "approval_required"),
+        tool_id="m365-license-change",
+        payload_schema={
+            "type": "object",
+            "required": ["user_id", "sku_ids", "operation"],
+            "properties": {
+                "user_id": "immutable directory ID",
+                "sku_ids": "array of immutable license SKU IDs",
+                "operation": "add or remove",
+            },
+        },
     ),
 )
 
@@ -75,19 +416,43 @@ def run_workflow_template(
     client_id: str | None = None,
     actor: str = "",
     trigger_source: str = "workflow",
+    tool_executor: WorkflowToolExecutor | None = None,
+    template_override: WorkflowTemplate | None = None,
+    operator_instructions: str = "",
+    template_version: int | None = None,
+    input_payload: dict[str, object] | None = None,
 ) -> WorkflowRun:
-    template = get_workflow_template(template_id)
+    template = template_override or get_workflow_template(template_id)
     if template is None:
         raise KeyError(template_id)
-    ticket = store.get_ticket(ticket_id)
+    normalized_client_id = _normalize_client_id(client_id)
+    ticket = store.get_ticket(ticket_id, client_id=normalized_client_id)
     if ticket is None:
         raise LookupError(ticket_id)
-    effective_client_id = client_id if client_id is not None else ticket.client_id
+    effective_client_id = normalized_client_id if normalized_client_id is not None else ticket.client_id
+    bounded_payload = _bounded_workflow_payload(
+        template,
+        {} if input_payload is None else input_payload,
+    )
 
-    message = _workflow_message(template, ticket)
+    tool_result = _run_template_tool(
+        template,
+        ticket,
+        tool_executor,
+        actor=actor,
+        client_id=effective_client_id,
+        input_payload=bounded_payload,
+    )
+    message = _workflow_message(template, ticket, tool_result)
+    safe_instructions = redact_text(operator_instructions).strip()
+    if safe_instructions:
+        message = f"{message} Operator instructions: {safe_instructions}"
     approval_request_id = None
     status = "completed"
-    if template.approval_required:
+    if tool_result is not None:
+        status = _workflow_status_for_tool(tool_result)
+        approval_request_id = tool_result.approval_id
+    elif template.approval_required:
         approval = store.create_approval_request(
             ticket_id,
             template.action_type,
@@ -108,6 +473,7 @@ def run_workflow_template(
         message=message,
         approval_request_id=approval_request_id,
         client_id=effective_client_id,
+        template_version=template_version,
     )
     _record_workflow_execution(store, run, actor=actor, trigger_source=trigger_source)
     return run
@@ -129,6 +495,7 @@ def _record_workflow_execution(
         output={
             "message": run.message,
             "approval_request_id": run.approval_request_id,
+            "template_version": run.template_version,
         },
     )
     ExecutionRecorder(store).record_execution(
@@ -142,7 +509,19 @@ def _record_workflow_execution(
     )
 
 
-def _workflow_message(template: WorkflowTemplate, ticket: Ticket) -> str:
+def _workflow_message(
+    template: WorkflowTemplate,
+    ticket: Ticket,
+    tool_result: ActionResult | None = None,
+) -> str:
+    if tool_result is not None:
+        if tool_result.status == "success":
+            return f"Completed {template.name.lower()} for {ticket.id}."
+        if tool_result.status == "pending_approval":
+            return f"Prepared {template.name.lower()} for {ticket.id}; approval required before execution."
+        detail = redact_text(tool_result.error_detail).strip()
+        suffix = f": {detail}" if detail else "."
+        return f"{template.name} for {ticket.id} {tool_result.status}{suffix}"
     if template.id == "ticket-triage":
         return f"Classified {ticket.id} as {classify_ticket(ticket.subject, ticket.body)}."
     if template.id == "assign-technician":
@@ -161,3 +540,97 @@ def _workflow_message(template: WorkflowTemplate, ticket: Ticket) -> str:
         f"Drafted documentation-assisted response for {ticket.id}; "
         "approval required before posting."
     )
+
+
+def _run_template_tool(
+    template: WorkflowTemplate,
+    ticket: Ticket,
+    tool_executor: WorkflowToolExecutor | None,
+    *,
+    actor: str,
+    client_id: str | None,
+    input_payload: dict[str, object],
+) -> ActionResult | None:
+    if template.tool_id is None:
+        return None
+    if tool_executor is None:
+        raise RuntimeError(f"workflow tool {template.tool_id} is not configured")
+    payload = dict(input_payload)
+    if template.id in {"inactive-ticket-follow-up", "p1-alert"}:
+        if "channel" not in payload:
+            payload["channel"] = "ticket_note"
+        if "body" not in payload:
+            payload["body"] = (
+                f'P1 alert for ticket "{ticket.subject}". '
+                "Review and acknowledge this urgent ticket."
+                if template.id == "p1-alert"
+                else f'Following up on inactive ticket "{ticket.subject}". '
+                "Please reply with an update or let us know if assistance is still needed."
+            )
+    payload["ticket_id"] = ticket.id
+    return tool_executor.invoke(
+        template.tool_id,
+        payload,
+        actor or "workflow",
+        client_id=client_id,
+    )
+
+
+def _bounded_workflow_payload(
+    template: WorkflowTemplate,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("workflow payload must be a JSON object")
+    if len(payload) > MAX_WORKFLOW_PAYLOAD_FIELDS:
+        raise ValueError(
+            f"workflow payload may contain at most {MAX_WORKFLOW_PAYLOAD_FIELDS} fields"
+        )
+    safe_payload = redact_value(payload)
+    try:
+        encoded = json.dumps(safe_payload, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("workflow payload must contain JSON-compatible values") from exc
+    if len(encoded.encode("utf-8")) > MAX_WORKFLOW_PAYLOAD_BYTES:
+        raise ValueError(
+            f"workflow payload must be at most {MAX_WORKFLOW_PAYLOAD_BYTES} bytes"
+        )
+    required = template.payload_schema.get("required", [])
+    if isinstance(required, list):
+        missing = [field for field in required if isinstance(field, str) and field not in safe_payload]
+        if missing:
+            raise ValueError(f"workflow payload is missing required field(s): {', '.join(missing)}")
+    if template.id == "ticket-sla-risk-review":
+        thresholds = safe_payload.get("thresholds_minutes")
+        if not isinstance(thresholds, dict) or not thresholds:
+            raise ValueError("thresholds_minutes must map priorities to positive minutes")
+        if any(
+            not isinstance(priority, str)
+            or not priority.strip()
+            or isinstance(minutes, bool)
+            or not isinstance(minutes, int)
+            or minutes <= 0
+            for priority, minutes in thresholds.items()
+        ):
+            raise ValueError("thresholds_minutes must map priorities to positive minutes")
+    elif template.id == "stale-ticket-sweep-review":
+        threshold = safe_payload.get("stale_after_minutes")
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold <= 0:
+            raise ValueError("stale_after_minutes must be a positive integer")
+    elif template.id == "recurring-service-review":
+        follow_up_after_days = safe_payload.get("follow_up_after_days", 14)
+        if (
+            isinstance(follow_up_after_days, bool)
+            or not isinstance(follow_up_after_days, int)
+            or not 1 <= follow_up_after_days <= 90
+        ):
+            raise ValueError("follow_up_after_days must be an integer between 1 and 90")
+    return safe_payload
+
+
+def _workflow_status_for_tool(result: ActionResult) -> str:
+    if result.status == "success":
+        return "completed"
+    if result.status == "pending_approval":
+        return "pending_approval"
+    return "failed"

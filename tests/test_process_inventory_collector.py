@@ -144,6 +144,24 @@ def test_collect_parses_pid_name_cmdline_and_state(
     assert observations["process.state"] == "R (running)"
 
 
+def test_collect_reads_process_inventory_through_fake_host_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    host_root = tmp_path / "host"
+    proc_root = host_root / "proc"
+    proc_root.mkdir(parents=True)
+    _write_process(proc_root, 41, name="host-worker", cmdline=b"host-worker\x00--serve\x00")
+    monkeypatch.setenv("WAIT_HOST_ROOT", str(host_root))
+    monkeypatch.setattr(collectors, "_ProcessInventoryPath", collectors.collection_path)
+
+    result = _collector().collect()
+
+    assert result["count"] == 1
+    asset = result["items"][0]["canonical_asset"]
+    assert asset["asset_id"] == "process:41"
+    assert asset["attributes"]["name"] == "host-worker"
+
+
 def test_collect_sorts_records_by_pid_and_ignores_non_numeric_entries(
     monkeypatch: pytest.MonkeyPatch, proc_root: Path
 ) -> None:

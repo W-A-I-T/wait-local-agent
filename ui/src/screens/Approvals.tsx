@@ -86,6 +86,7 @@ function ApprovalCard({
         <em>{request.status} / {request.execution_status}</em>
       </div>
       <p>{request.execution_message || request.comment || "Waiting for review"}</p>
+      {request.expires_at ? <p className="screen-note">Approval deadline: {request.expires_at}</p> : null}
       {request.block_reason ? (
         <div className="blocked-reason">
           <AlertTriangle size={15} aria-hidden="true" />

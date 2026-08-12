@@ -22,7 +22,7 @@ Scope: `W-A-I-T/wait-local-agent` (public, Apache-2.0 open core) and `W-A-I-T/wa
 
 **What should be built first:** the generic report framework (done, this branch), then report-first connector health and audit export, then the pack loader interface — because every paid feature is a report provider or connector provider plugging into those three pieces.
 
-**Repo placement:** all framework, interfaces, open-core connectors, and safety machinery stay in `wait-local-agent`. All paid connector internals, QBR/Founder report logic, licensing, branding, and sync stay in `wait-local-agent-packs`. Section 3 has the full table.
+**Repo placement:** all framework, interfaces, open-core connectors, and safety machinery stay in `wait-local-agent`. The current public core also contains a bounded deterministic QBR and automation-opportunity report path; richer paid connector internals, provider-backed report enrichment, licensing, branding, and sync may stay in `wait-local-agent-packs`. Section 3 has the historical boundary table.
 
 **Access limitation:** the private packs repo could not be cloned from this build environment (no GitHub credentials available). Everything in this report about the packs repo internals is design intent derived from the public repo's documented boundary, and is explicitly marked **UNVERIFIED** until the repo is inspected directly.
 
@@ -88,10 +88,10 @@ Scope: `W-A-I-T/wait-local-agent` (public, Apache-2.0 open core) and `W-A-I-T/wa
 | IT Glue connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | ConnectWise connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
 | Autotask connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
-| RMM connectors (NinjaOne/Datto/N-able/Kaseya) | No | Yes | Paid, read-only stubs first | `packs/msp/` (UNVERIFIED) |
+| RMM connectors (NinjaOne/Datto/N-central/N-sight/Kaseya) | Partial | Yes | Bounded NinjaOne, Datto, N-central, N-sight, and Kaseya VSA X inventory plus Kaseya script catalog/approval-gated execution surfaces are public; broader provider coverage and remediation remain incomplete | `src/wait_local_agent/{ninjaone,dattormm,ncentral,nsight,kaseya}.py` |
 | M365/Entra read-only connector | No | Yes | Paid MSP surface | `packs/msp/` (UNVERIFIED) |
-| QBR reports | No | Yes | Paid report provider | `packs/msp/reports/qbr.py` (UNVERIFIED) |
-| Automation opportunity / ROI report | No | Yes | Paid report provider | `packs/msp/reports/` (UNVERIFIED) |
+| QBR reports | Bounded JSON/Markdown in public core | Yes | Provider-backed enrichment and PDF remain optional paid/report-provider work | `src/wait_local_agent/reports/msp.py` |
+| Automation opportunity / ROI report | Bounded local estimate and candidate ranking in public core | Yes | Measured/provider-backed ROI remains optional paid/report-provider work | `src/wait_local_agent/reports/msp.py` |
 | Founder scanner | No | Yes | Paid Founder surface | `packs/founder/` (UNVERIFIED) |
 | Evidence vault | No | Yes | Paid Founder surface | `packs/founder/` (UNVERIFIED) |
 | LP CollectorBundle export | No | Yes | Paid; upload path is human-approval-gated | `packs/founder/` (PROTECTED: `lp_client.py`) |
@@ -136,7 +136,7 @@ Every arrow crossing the appliance boundary is opt-in, credentialed, and audited
 
 Everything the product does should end in a stored, exportable report. All twelve types are registered in the shipped `ReportType` enum (PR 1) so IDs are stable before providers exist.
 
-Shared plumbing for every type (shipped in PR 1): storage in the `reports` table; JSON schema in `reports/schemas.py`; JSON and Markdown renderers with mandatory secret redaction; `GET /reports`, `GET /reports/{id}`, `GET /reports/{id}/export`; `wait-local-agent reports list|show|export`; audit events `report.created` and `report.exported`; PDF rendering deferred (enum value reserved, renderer raises a clear error, covered by tests).
+Shared plumbing for every type (shipped in PR 1 and extended since): storage in the `reports` table; JSON schema in `reports/schemas.py`; JSON, Markdown, and local PDF renderers with mandatory secret redaction; `GET /reports`, `GET /reports/{id}`, `GET /reports/{id}/export`; `wait-local-agent reports list|show|export`; audit events `report.created` and `report.exported`.
 
 | # | Report type | Purpose | User | Inputs | Producer & repo |
 |---|---|---|---|---|---|
@@ -199,7 +199,7 @@ Conventions (all verified against the existing app): routes live in `create_app`
 
 **Planned public routes:** `POST /reports/connector-health` (runs checks, stores report — PR 2), `GET /audit/report` (stores an `audit_export` report then returns it — PR 2), `GET /packs` (registry list — PR 3), `GET /license/status` (stub returning open-core status — PR 3), `GET /auth/session` (role/session status — PR 10), `GET /onboarding/status` (setup checklist — PR 9/10).
 
-**Planned private-pack routes (mounted by the loader only when the pack is installed and licensed; all UNVERIFIED):** `POST /packs/msp/reports/qbr`, `POST /packs/msp/reports/automation-opportunity`, `POST /packs/founder/reports/preflight`, `POST /packs/founder/reports/handoff`, `POST /packs/founder/bundles` + `POST /packs/founder/bundles/{id}/validate` + `GET /packs/founder/bundles/{id}/export` (build/validate/export only — **no upload route without explicit human approval**), `GET/PUT /packs/branding/config`, `GET /sync/status`. Each requires a validated request model, writes an audit event, and ships with tests in the packs repo.
+**Historical planned private-pack routes (mounted by the loader only when the pack is installed and licensed; all UNVERIFIED):** `POST /packs/msp/reports/qbr`, `POST /packs/msp/reports/automation-opportunity`, `POST /packs/founder/reports/preflight`, `POST /packs/founder/reports/handoff`, `POST /packs/founder/bundles` + `POST /packs/founder/bundles/{id}/validate` + `GET /packs/founder/bundles/{id}/export` (build/validate/export only — **no upload route without explicit human approval**), `GET/PUT /packs/branding/config`, `GET /sync/status`. The public core now exposes the bounded report routes documented in `docs/status.md`; these historical pack routes would represent richer provider-backed variants and still require a separately verified pack implementation.
 
 ---
 
@@ -348,6 +348,6 @@ All commands existed as documented; no substitutions required. Note: the CI work
 
 ## 14. Risks and Next Step
 
-**Risks:** (1) private packs repo remains uninspected — PR 4+ design is provisional; (2) coverage floor headroom is still modest — keep new modules near 100%; (3) SQLite JSON columns for report sections trade queryability for simplicity — acceptable until report volume demands indexed columns; (4) PDF export is promised by the enum but intentionally unimplemented — tracked for the report-provider phase; (5) demo-mode compose file has auth off — hardening docs (PR 10) must state this loudly.
+**Risks:** (1) private packs repo remains uninspected — PR 4+ design is provisional; (2) coverage floor headroom is still modest — keep new modules near 100%; (3) SQLite JSON columns for report sections trade queryability for simplicity — acceptable until report volume demands indexed columns; (4) local PDF output is now available, while provider-backed lifecycle enrichment remains a separate gap; (5) demo-mode compose file has auth off — hardening docs (PR 10) must state this loudly.
 
 **Next PR:** PR 2 — `feat/report-first-health-audit` in `wait-local-agent`: produce `connector_health` and `audit_export` reports through the new framework, add `POST /reports/connector-health`, `wait-local-agent connectors validate`, and `wait-local-agent audit report`, with tests holding coverage ≥95%.

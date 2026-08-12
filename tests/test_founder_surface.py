@@ -75,9 +75,13 @@ def test_open_flow_is_pack_free_and_preview_gated(monkeypatch, settings, tmp_pat
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.method == "POST" and request.url.path.endswith("collector-bundle"):
-            return httpx.Response(200, json={"artifact_id": "remote-1", "status": "uploaded"})
+            return httpx.Response(200, json={"artifact_id": "remote-1", "status": "bearer-secret"})
         if request.url.path == "/api/health":
             return httpx.Response(200, json={"capabilities": {"launch_scan": True}})
+        if request.url.path.endswith("/scans"):
+            return httpx.Response(200, json=[{"status": "bearer-secret", "message": "sk_live_UPSTREAM_SECRET"}])
+        if request.url.path.endswith("/reports/latest"):
+            return httpx.Response(200, json={"message": "bearer-secret"})
         return httpx.Response(200, json=[])
 
     transport_client = LaunchPassportClient(
@@ -103,12 +107,111 @@ def test_open_flow_is_pack_free_and_preview_gated(monkeypatch, settings, tmp_pat
 
     uploaded = client.post(f"/founder/upload/{artifact_id}", json={"confirm": True})
     assert uploaded.status_code == 200
-    assert uploaded.json()["status"] == "uploaded"
+    assert uploaded.json()["status"] == "unknown"
+    assert "bearer-secret" not in uploaded.text
     wire = json.loads(requests[0].content)
     assert wire["metadata"]["sourceCode"] is False
     assert "private source" not in json.dumps(wire)
     assert "bearer-secret" not in json.dumps(wire)
+    results = client.get("/founder/results")
+    assert results.status_code == 200
+    assert "bearer-secret" not in results.text
+    assert "sk_live_UPSTREAM_SECRET" not in results.text
+    assert results.json()["scans"] == {"count": 1, "states": ["unknown"]}
     transport_client.close()
+
+
+def test_founder_api_projections_redact_token_and_close_upstream_states() -> None:
+    token = "launch-passport-token"
+    upload = founder_module.project_founder_upload(
+        {"status": token, "message": token, "secret": "sk_live_UPSTREAM_SECRET"}, token=token
+    )
+    results = founder_module.project_founder_results(
+        {
+            "scans": [{"state": token, "message": token}],
+            "latest_report": {"message": token},
+        },
+        token=token,
+    )
+    body = json.dumps({"upload": upload, "results": results})
+
+    assert upload["status"] == "unknown"
+    assert results["scans"] == {"count": 1, "states": ["unknown"]}
+    assert token not in body
+    assert "sk_live_UPSTREAM_SECRET" not in body
+
+
+def test_founder_projection_contract_and_shape_edges(monkeypatch) -> None:
+    with monkeypatch.context() as isolated:
+        isolated.setattr(founder_module, "scrub_upstream_value", lambda *_args, **_kwargs: "scalar")
+        with pytest.raises(FounderPackContractError, match="scan must return an object"):
+            founder_module.project_founder_scan({})
+        with pytest.raises(FounderPackContractError, match="upload must return an object"):
+            founder_module.project_founder_upload({})
+
+    assert founder_module.project_founder_scan(
+        {
+            "status": "completed",
+            "artifactId": "artifact-1",
+            "projectId": "project-1",
+            "file_count": 3,
+            "dependency_count": 0,
+            "env_key_count": 2,
+            "ignored": -1,
+        }
+    ) == {
+        "status": "completed",
+        "artifact_id": "artifact-1",
+        "project_id": "project-1",
+        "file_count": 3,
+        "dependency_count": 0,
+        "env_key_count": 2,
+    }
+    assert founder_module.project_founder_status({"status": "connected"}) == {
+        "status": "connected",
+        "token_configured": True,
+        "capabilities": {},
+    }
+    assert founder_module.project_founder_results(
+        {"scans": {"items": [], "count": -4}, "latest_report": []}
+    ) == {
+        "scans": {"count": 0, "states": []},
+        "latest_report": {"available": False},
+    }
+
+
+def test_pack_status_passthrough_does_not_bypass_http_projection(monkeypatch, settings) -> None:
+    module = ModuleType("packs.founder")
+    pack_status = {
+        "status": "connected",
+        "capabilities": {"pack_only": True},
+        "token_configured": True,
+    }
+    module.get_lp_status = lambda: pack_status  # type: ignore[attr-defined]
+    pack = LoadedPack(manifest={"name": "founder"}, module=module)
+    monkeypatch.setattr(founder_module, "get_pack", lambda name: pack if name == "founder" else None)
+    application = FastAPI()
+    application.state.settings = settings
+    application.state.store = Store(settings.data_path)
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "app": application}
+    )
+    endpoints = {
+        route.path: route.endpoint
+        for route in founder_module.create_router().routes
+        if isinstance(route, APIRoute)
+    }
+
+    assert endpoints["/founder/lp-status"](request, None) == pack_status
+    assert founder_module.project_founder_status(
+        {"status": "not-a-real-state", "capabilities": {"pack_only": True}},
+        project_id="project-1",
+    ) == {
+        "status": "unknown",
+        "token_configured": True,
+        "capabilities": {},
+        "lp_project_id": "project-1",
+    }
 
 
 def test_configuration_stores_token_only_in_encrypted_vault(settings) -> None:
@@ -322,7 +425,7 @@ def test_pack_behavior_takes_precedence(monkeypatch, settings) -> None:
     client = TestClient(create_app(settings))
     response = client.post("/founder/scan", json={"path": "/tmp/project"})
     assert response.status_code == 200
-    assert response.json()["status"] == "pack"
+    assert response.json()["status"] == "unknown"
 
 
 def test_pack_founder_routes_cover_delegated_operations_and_errors(monkeypatch, settings) -> None:
@@ -368,7 +471,10 @@ def test_pack_founder_routes_cover_delegated_operations_and_errors(monkeypatch, 
     )
     assert uploaded["status"] == "uploaded"
     assert endpoints["/founder/lp-status"](request, None) == {"status": "connected"}
-    assert endpoints["/founder/results"](request, None) == {"results": ["report-1"]}
+    assert endpoints["/founder/results"](request, None) == {
+        "scans": {"count": 0, "states": []},
+        "latest_report": {"available": False},
+    }
 
     monkeypatch.setattr(founder_module, "get_pack", lambda _name: None)
     configured_store = application.state.store
@@ -645,6 +751,9 @@ def test_upload_preview_contract_and_fresh_preview_edges(tmp_path: Path) -> None
     preview = build_upload_preview("artifact", bundle)
     assert preview["file_count"] == 1
     assert preview["env_key_names"] == ["PUBLIC_NAME"]
+    assert build_upload_preview(
+        "artifact", {"files": [], "manifests": [], "routes": [], "env_keys": [], "findings": [{"type": 1}]}
+    )["finding_types"] == []
     with pytest.raises(FounderPackContractError, match="files must be a list"):
         build_upload_preview("artifact", {"files": "bad"})
     with pytest.raises(FounderPackContractError, match="env_keys entries"):
@@ -710,7 +819,52 @@ def test_open_founder_operations_cover_persistence_and_remote_results(monkeypatc
     results = founder_module.open_founder_results(settings, config)
     latest_report = results["latest_report"]
     assert isinstance(latest_report, dict)
-    assert latest_report["report"] == "latest"
+    assert latest_report["available"] is True
+
+
+def test_open_http_operations_use_and_close_the_launch_passport_client(monkeypatch, settings) -> None:
+    events: list[str] = []
+
+    class TrackingClient:
+        def __enter__(self):
+            events.append("enter")
+            return self
+
+        def __exit__(self, *_args):
+            events.append("exit")
+            return None
+
+        def sanitize_upstream(self, value):
+            events.append("sanitize")
+            return founder_module.scrub_upstream_value(value, token="remote-token")
+
+        def status(self):
+            return {"status": "connected", "capabilities": {"launch_scan": True}, "token": "remote-token"}
+
+        def list_scans(self, project_id):
+            return [{"status": "running", "project": project_id, "token": "remote-token"}]
+
+        def latest_report(self, project_id):
+            return {"project": project_id, "token": "remote-token"}
+
+    monkeypatch.setattr(founder_module, "_open_client", lambda *_args: TrackingClient())
+    config = {"lp_project_id": "project-1", "lp_base_url": "https://lp.test", "token_vault_ref": "ref"}
+
+    status_payload = founder_module.open_founder_status(settings, config)
+    results = founder_module.open_founder_results(settings, config)
+
+    assert status_payload == {
+        "status": "connected",
+        "token_configured": True,
+        "capabilities": {"launch_scan": True},
+        "lp_project_id": "project-1",
+    }
+    assert results == {
+        "scans": {"count": 1, "states": ["running"]},
+        "latest_report": {"available": True},
+        "project_id": "project-1",
+    }
+    assert events == ["enter", "sanitize", "exit", "enter", "sanitize", "sanitize", "exit"]
 
 
 def test_open_upload_checks_project_hash_and_remote_error_passthrough(monkeypatch, settings, tmp_path: Path) -> None:
@@ -795,3 +949,16 @@ def test_open_config_and_client_token_provider_handle_vault_errors(monkeypatch, 
         assert client.token_provider() is None
     finally:
         client.close()
+
+
+def test_configured_founder_token_returns_none_on_vault_error(monkeypatch, settings) -> None:
+    store = Store(settings.data_path)
+    store.save_founder_config(lp_base_url="https://lp.test", lp_project_id="project", token_vault_ref="ref")
+    application = FastAPI()
+    application.state.settings = settings
+    application.state.store = store
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "app": application}
+    )
+    monkeypatch.setattr(founder_module.SecretVault, "get", lambda *_args: (_ for _ in ()).throw(SecretVaultError()))
+    assert founder_module._configured_founder_token(request) is None

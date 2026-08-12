@@ -43,6 +43,30 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return payload as T;
 }
 
+export async function apiFetchBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(buildApiHeaders(Boolean(init.body)));
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), { ...init, headers });
+  } catch (error) {
+    throw new ApiRequestError(
+      "We couldn't connect to the appliance. Check that it is available, then try again.",
+      `${path} request could not be completed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (!response.ok) {
+    let payload: unknown;
+    try {
+      payload = await readResponsePayload(response);
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiRequestError(apiErrorMessage(response.status), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status);
+  }
+  return response.blob();
+}
+
 async function readResponsePayload(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -78,6 +102,9 @@ function apiErrorMessage(status: number): string {
   }
   if (status === 409) {
     return "That action conflicts with the appliance's current state. Refresh and try again.";
+  }
+  if (status === 429) {
+    return "The appliance is handling too many requests right now. Wait a moment and try again.";
   }
   if (status >= 500) {
     return "The appliance couldn't complete the request. Try again shortly.";

@@ -53,6 +53,7 @@ Expected demo defaults:
 write_actions_enabled=false
 http_probing_enabled=false
 cloud_fallback_enabled=false
+offline_mode=false
 llm_inference_enabled=false
 api_auth_required=false
 demo_mode=true

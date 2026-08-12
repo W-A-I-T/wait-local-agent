@@ -1,17 +1,64 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import cast
 
+import pytest
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
-from wait_local_agent.api.app import create_app
+from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
+from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
     default_registry,
 )
+from wait_local_agent.confluence import ConfluencePage, ConfluenceReadResponse
+from wait_local_agent.connectwise import ConnectWiseReadResponse
+from wait_local_agent.itglue import (
+    ItGlueDocument,
+    ItGlueFolder,
+    ItGlueOrganization,
+    ItGlueReadResponse,
+)
+from wait_local_agent.m365_graph import (
+    M365GraphAuthenticationMethodDeleteResult,
+    M365GraphGroup,
+    M365GraphGroupMembershipResult,
+    M365GraphGroupReadResponse,
+    M365GraphLicenseChangeResult,
+    M365GraphLicenseDetail,
+    M365GraphLicenseDetailReadResponse,
+    M365GraphLicenseReadResponse,
+    M365GraphMailboxSettingsUpdateResult,
+    M365GraphMailFolder,
+    M365GraphMailFolderReadResponse,
+    M365GraphMailMessage,
+    M365GraphMailMessageDeleteResult,
+    M365GraphMailMessageMoveResult,
+    M365GraphMailMessageReadResponse,
+    M365GraphMailMessageReadStateResult,
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
+    M365GraphManagedDeviceRebootResult,
+    M365GraphManagedDeviceRemoteLockResult,
+    M365GraphManagedDeviceRetireResult,
+    M365GraphManagedDeviceSyncResult,
+    M365GraphPasswordResetResult,
+    M365GraphReadResponse,
+    M365GraphSessionRevokeResult,
+    M365GraphSubscribedSku,
+    M365GraphUser,
+    M365GraphUserCreateResult,
+    M365GraphUserDisableResult,
+)
 from wait_local_agent.models import (
+    ConnectorReadResult,
+    ConnectWiseWriteResult,
     HaloReadResult,
     HaloTicket,
     HaloWriteResult,
@@ -19,7 +66,13 @@ from wait_local_agent.models import (
     HuduCompany,
     HuduFolder,
 )
+from wait_local_agent.notion import NotionDataSource, NotionDataSourceResponse, NotionPage, NotionReadResponse
+from wait_local_agent.rbac import AuthContext, Role
+from wait_local_agent.servicenow import ServiceNowReadResponse
+from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse, SharePointSite
 from wait_local_agent.store import Store
+from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
+from wait_local_agent.vault import SecretVault
 
 
 def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default_registry) -> None:
@@ -43,6 +96,7 @@ def test_health_reports_safe_defaults(settings) -> None:
     assert response.json()["write_actions_enabled"] is False
     assert response.json()["http_probing_enabled"] is False
     assert response.json()["cloud_fallback_enabled"] is False
+    assert response.json()["offline_mode"] is False
     assert response.json()["demo_mode"] is True
     assert response.json()["api_auth_required"] is False
 
@@ -95,8 +149,94 @@ def test_provider_settings_and_tickets_list(settings) -> None:
     assert providers.json()["vector_backend"] == "sqlite"
     assert providers.json()["llm_inference_enabled"] is False
     assert providers.json()["local_model_timeout_seconds"] == 20.0
+    assert providers.json()["offline_mode"] is False
+    assert providers.json()["remote_model_enabled"] is False
+    assert providers.json()["model_input_cost_usd_per_million_tokens"] is None
+    assert providers.json()["model_output_cost_usd_per_million_tokens"] is None
     assert tickets.status_code == 200
     assert len(tickets.json()) == 2
+
+
+def test_provider_settings_expose_remote_status_without_secret(settings) -> None:
+    remote_settings = replace(
+        settings,
+        allow_llm_inference=True,
+        allow_cloud_fallback=True,
+        remote_model_provider="anthropic",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(remote_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["remote_model_provider"] == "anthropic"
+    assert payload["remote_model_configured"] is True
+    assert payload["remote_model_enabled"] is True
+    assert "remote_model_api_key" not in payload
+    assert "do-not-return" not in response.text
+
+
+def test_provider_settings_report_remote_fallback_disabled_in_offline_mode(settings) -> None:
+    offline_settings = replace(
+        settings,
+        allow_llm_inference=True,
+        allow_cloud_fallback=True,
+        offline_mode=True,
+        remote_model_provider="anthropic",
+        remote_model_base_url="https://api.example/v1",
+        remote_model_name="documented-model",
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(offline_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["offline_mode"] is True
+    assert payload["remote_model_configured"] is True
+    assert payload["remote_model_enabled"] is False
+    assert "do-not-return" not in response.text
+
+
+def test_provider_health_is_admin_triggered_and_audited(settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "probe_model_providers",
+        lambda active_settings: {
+            "local": {"provider": "deterministic", "model": "llama3.1", "status": "ready", "probe": "not_required"},
+            "remote": {"provider": None, "model": None, "status": "not_configured", "probe": "not_run"},
+        },
+    )
+    client = TestClient(create_app(settings))
+
+    response = client.get("/settings/providers/health")
+
+    assert response.status_code == 200
+    assert response.json()["local"]["status"] == "ready"
+    assert response.json()["remote"]["status"] == "not_configured"
+    assert any(event["event_type"] == "model_provider.health" for event in client.get("/audit").json())
+
+
+def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
+    priced_settings = replace(
+        settings,
+        model_input_cost_usd_per_million_tokens=1.25,
+        model_output_cost_usd_per_million_tokens=4.5,
+        remote_model_api_key="do-not-return",
+    )
+    client = TestClient(create_app(priced_settings))
+
+    response = client.get("/settings/providers")
+
+    assert response.status_code == 200
+    assert response.json()["model_input_cost_usd_per_million_tokens"] == 1.25
+    assert response.json()["model_output_cost_usd_per_million_tokens"] == 4.5
+    assert "do-not-return" not in response.text
 
 
 def test_ticket_summary_and_approval_flow(settings) -> None:
@@ -450,6 +590,71 @@ def test_workflow_run_detail_hides_foreign_approval_payload(settings) -> None:
     assert local_payload["approval_request"]["workflow_run_id"] == local_run.id
 
 
+def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    left = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-ACME",
+        "failed",
+        "provider api_key=left-secret",
+        client_id="acme",
+        template_version=1,
+    )
+    right = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-ACME",
+        "completed",
+        "provider api_key=right-secret",
+        client_id="acme",
+        template_version=2,
+    )
+    foreign = store.create_workflow_run(
+        "ticket-triage",
+        "TCK-BETA",
+        "completed",
+        "foreign",
+        client_id="beta",
+        template_version=3,
+    )
+    client = TestClient(create_app(secure_settings))
+
+    compared = client.get(
+        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("tech-token")
+    )
+    foreign_response = client.get(
+        f"/workflow-runs/{left.id}/compare/{foreign.id}", headers=_auth("tech-token")
+    )
+    missing_response = client.get(
+        f"/workflow-runs/{left.id}/compare/99999", headers=_auth("tech-token")
+    )
+    no_tenant_settings = secure_settings.__class__(
+        **{**secure_settings.__dict__, "client_id": "", "tech_token": "", "viewer_token": "viewer-token"}
+    )
+    no_tenant_response = TestClient(create_app(no_tenant_settings)).get(
+        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("viewer-token")
+    )
+
+    assert compared.status_code == 200
+    assert compared.json()["changed"] is True
+    assert {change["field"] for change in compared.json()["changes"]} >= {
+        "status",
+        "template_version",
+    }
+    assert "left-secret" not in compared.text
+    assert "right-secret" not in compared.text
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert no_tenant_response.status_code == 404
+
+
 def test_bound_technician_can_patch_in_scope_approval_payload(settings) -> None:
     secure_settings = settings.__class__(
         **{
@@ -612,7 +817,25 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 5
+    assert len(templates.json()) == 21
+    assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
+    assert any(item["tool_id"] == "dispatch-suggestion" for item in templates.json())
+    assert {
+        item["id"] for item in templates.json() if item["id"].startswith("m365-")
+    } == {
+        "m365-user-onboarding-review",
+        "m365-user-offboarding-review",
+        "m365-password-reset-review",
+        "m365-authentication-method-removal-review",
+        "m365-license-request-review",
+    }
+    assert all(
+        item["approval_required"]
+        for item in templates.json()
+        if item["id"].startswith("m365-")
+    )
+    sla_template = next(item for item in templates.json() if item["id"] == "ticket-sla-risk-review")
+    assert sla_template["payload_schema"]["required"] == ["thresholds_minutes"]
     assert run.status_code == 200
     assert run.json()["status"] == "pending_approval"
     assert draft.status_code == 200
@@ -626,6 +849,53 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert workflow_runs.status_code == 200
     assert workflow_runs.json()[0]["template_id"] == "documentation-assisted-response"
     assert workflow_runs.json()[0]["status"] == "pending_approval"
+
+
+def test_tool_backed_workflow_runs_existing_action_and_preserves_tenant_scope(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    run = client.post(
+        "/workflows/templates/ticket-quality-review/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    actions = client.get("/smart-actions/runs", params={"client_id": "acme"})
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert "ticket quality review" in run.json()["message"].lower()
+    assert actions.status_code == 200
+    assert actions.json()[0]["action_id"] == "ticket-quality"
+    assert actions.json()[0]["client_id"] == "acme"
+
+
+def test_threshold_workflow_api_accepts_bounded_payload_and_rejects_missing_fields(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    missing = client.post(
+        "/workflows/templates/ticket-sla-risk-review/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme", "payload": {}},
+    )
+    completed = client.post(
+        "/workflows/templates/ticket-sla-risk-review/runs",
+        json={
+            "ticket_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {"thresholds_minutes": {"high": 1}},
+        },
+    )
+
+    assert missing.status_code == 422
+    assert "thresholds_minutes" in missing.json()["detail"]
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
 
 
 def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) -> None:
@@ -647,7 +917,10 @@ def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) 
 
     assert run.status_code == 200
     assert run.json()["client_id"] == "acme"
-    assert [request["subject_id"] for request in approvals.json()] == ["TCK-1002"]
+    assert [request["action_type"] for request in approvals.json()] == [
+        "smart_action:documentation-assisted-response"
+    ]
+    assert approvals.json()[0]["client_id"] == "acme"
     assert [item["ticket_id"] for item in runs.json()] == ["TCK-1002"]
 
 
@@ -657,6 +930,7 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -691,12 +965,126 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
     assert [job["id"] for job in filtered.json()] == [created.json()["id"]]
 
 
+def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "scheduler_enabled": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    app = create_app(secure_settings)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/scheduled-jobs"
+        and route.methods is not None
+        and "POST" in route.methods
+    )
+    technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id="acme")
+    created = endpoint(
+        ScheduledJobCreateRequest(
+            report_type="qbr",
+            cron="0 9 * * *",
+            params={"client_id": "globex", "period_days": 90},
+        ),
+        technician,
+    )
+
+    with pytest.raises(HTTPException, match="period_days or period_start"):
+        endpoint(
+            ScheduledJobCreateRequest(report_type="qbr", cron="0 9 * * *", params={"client_id": "acme"}),
+            technician,
+        )
+    with pytest.raises(HTTPException, match="cannot include"):
+        endpoint(
+            ScheduledJobCreateRequest(
+                report_type="qbr",
+                template_id="ticket-triage",
+                cron="0 9 * * *",
+                params={"client_id": "acme", "period_days": 30},
+            ),
+            technician,
+        )
+
+    assert created["job_kind"] == "report"
+    assert created["template_id"] == "qbr"
+    assert created["client_id"] == "acme"
+    assert created["params"]["client_id"] == "acme"
+
+
+def test_recurring_service_review_report_route_is_bounded_and_client_scoped(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1001"),
+        )
+    endpoint = next(
+        route.endpoint
+        for route in create_app(settings).routes
+        if isinstance(route, APIRoute)
+        and route.path == "/reports/recurring-service-review"
+        and route.methods is not None
+        and "POST" in route.methods
+    )
+    context = AuthContext(role=Role.ADMIN, presented_token="demo")
+    response = endpoint(
+        ClientReportRequest(
+            client_id="acme",
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 3, 31),
+        ),
+        context,
+        follow_up_after_days=14,
+    )
+    with pytest.raises(HTTPException, match="between 1 and 90"):
+        endpoint(
+            ClientReportRequest(
+                client_id="acme",
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 3, 31),
+            ),
+            context,
+            follow_up_after_days=0,
+        )
+    with pytest.raises(HTTPException, match="client_id is required"):
+        endpoint(
+            ClientReportRequest(
+                period_start=date(2026, 1, 1),
+                period_end=date(2026, 3, 31),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
+    with pytest.raises(HTTPException, match="on or after"):
+        endpoint(
+            ClientReportRequest(
+                client_id="acme",
+                period_start=date(2026, 3, 31),
+                period_end=date(2026, 1, 1),
+            ),
+            context,
+            follow_up_after_days=14,
+        )
+
+    assert response["report_type"] == "recurring_service_review"
+    assert response["client_id"] == "acme"
+    assert response["metadata"]["scope"] == "single client"
+
+
 def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_id(settings) -> None:
     secure_settings = settings.__class__(
         **{
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -786,6 +1174,33 @@ def test_approval_detail_handles_invalid_payload_and_missing_write_health(settin
     assert response.json()["block_reason"] == "HaloPSA write health is unavailable."
 
 
+def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        "TCK-1002",
+        "halopsa.add_note",
+        {"fields": {"note": "ok"}},
+        expires_in_seconds=60,
+    )
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set expires_at = ? where id = ?",
+            ("2000-01-01T00:00:00+00:00", approval.id),
+        )
+    client = TestClient(create_app(settings))
+
+    detail = client.get(f"/approval-requests/{approval.id}")
+    late_approval = client.post(
+        f"/approval-requests/{approval.id}",
+        json={"status": "approved", "comment": "too late"},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "expired"
+    assert detail.json()["expires_at"] == "2000-01-01T00:00:00+00:00"
+    assert late_approval.status_code == 403
+
+
 def test_update_approval_request_recovers_from_runtime_error(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request(
@@ -827,6 +1242,7 @@ def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
     )
     pause = client.post("/scheduled-jobs/999/pause")
     resume = client.post("/scheduled-jobs/999/resume")
+    reschedule = client.post("/scheduled-jobs/999/reschedule", json={"cron": "0 2 * * *"})
     delete = client.delete("/scheduled-jobs/999")
 
     assert missing_template.status_code == 404
@@ -834,6 +1250,7 @@ def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
     assert missing_param.status_code == 422
     assert pause.status_code == 404
     assert resume.status_code == 404
+    assert reschedule.status_code == 404
     assert delete.status_code == 404
 
 
@@ -938,30 +1355,54 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
-    client = TestClient(create_app(settings))
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    client = TestClient(create_app(secure_settings))
 
     run = client.post(
         "/workflows/templates/documentation-assisted-response/runs",
+        headers=_auth("tech-token"),
         json={"ticket_id": "TCK-1002"},
     )
     approval_request_id = run.json()["approval_request_id"]
 
     approved = client.post(
         f"/approval-requests/{approval_request_id}",
+        headers=_auth("admin-token"),
         json={"status": "approved", "comment": "ready"},
     )
-    approved_runs = client.get("/workflow-runs")
+    approved_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
+    second_run = client.post(
+        "/workflows/templates/documentation-assisted-response/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1002"},
+    )
     rejected = client.post(
-        f"/approval-requests/{approval_request_id}",
+        f"/approval-requests/{second_run.json()['approval_request_id']}",
+        headers=_auth("admin-token"),
         json={"status": "rejected", "comment": "needs changes"},
     )
-    rejected_runs = client.get("/workflow-runs")
+    rejected_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
 
     assert approved.status_code == 200
-    assert approved_runs.json()[0]["status"] == "approved"
+    approved_view = next(item for item in approved_runs.json() if item["id"] == run.json()["id"])
+    assert approved_view["status"] == "approved"
     assert rejected.status_code == 200
-    assert rejected_runs.json()[0]["status"] == "rejected"
+    rejected_view = next(
+        item for item in rejected_runs.json() if item["id"] == second_run.json()["id"]
+    )
+    assert rejected_view["status"] == "rejected"
 
 
 def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registration(settings) -> None:
@@ -970,11 +1411,15 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             **settings.__dict__,
             "demo_mode": False,
             "scheduler_enabled": True,
+            "client_id": "acme",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
     )
-    Store(secure_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
 
     app = create_app(secure_settings)
 
@@ -985,6 +1430,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             json={
                 "template_id": "documentation-assisted-response",
                 "cron": "0 9 * * *",
+                "timezone": "America/Vancouver",
                 "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
             },
         )
@@ -1003,6 +1449,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             json={
                 "template_id": "documentation-assisted-response",
                 "cron": "0 9 * * *",
+                "timezone": "America/Vancouver",
                 "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
             },
         )
@@ -1015,13 +1462,60 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert created.status_code == 200
         assert created.json()["next_run_at"] is not None
         assert created.json()["params"]["ticket_id"] == "TCK-1001"
+        assert created.json()["timezone"] == "America/Vancouver"
         assert app.state.scheduler._scheduler is not None
-        assert len(app.state.scheduler._scheduler.get_jobs()) == 1
+        job_ids = {job.id for job in app.state.scheduler._scheduler.get_jobs()}
+        assert job_ids == {"event-delivery-retry-worker", f"scheduled-job:{job_id}"}
         assert listed.status_code == 200
         assert listed.json()[0]["id"] == job_id
 
+        interval = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "schedule_type": "interval",
+                "interval_seconds": 60,
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        once = client.post(
+            "/scheduled-jobs",
+            headers=_auth("tech-token"),
+            json={
+                "template_id": "documentation-assisted-response",
+                "schedule_type": "once",
+                "run_at": "2099-01-01T00:00:00+00:00",
+                "params": {"ticket_id": "TCK-1001", "client_id": "acme"},
+            },
+        )
+        assert interval.status_code == 200
+        assert interval.json()["schedule_type"] == "interval"
+        assert interval.json()["interval_seconds"] == 60
+        assert once.status_code == 200
+        assert once.json()["schedule_type"] == "once"
+        assert once.json()["run_at"] == "2099-01-01T00:00:00+00:00"
+
+        rescheduled = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"schedule_type": "interval", "interval_seconds": 120},
+        )
+        assert rescheduled.status_code == 200
+        assert rescheduled.json()["schedule_type"] == "interval"
+        assert rescheduled.json()["interval_seconds"] == 120
         paused = client.post(f"/scheduled-jobs/{job_id}/pause", headers=_auth("tech-token"))
         resumed = client.post(f"/scheduled-jobs/{job_id}/resume", headers=_auth("tech-token"))
+        rescheduled = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"schedule_type": "interval", "interval_seconds": 120, "timezone": "America/Vancouver"},
+        )
+        invalid_reschedule = client.post(
+            f"/scheduled-jobs/{job_id}/reschedule",
+            headers=_auth("tech-token"),
+            json={"cron": "bad cron"},
+        )
         deleted = client.delete(f"/scheduled-jobs/{job_id}", headers=_auth("tech-token"))
 
         assert paused.status_code == 200
@@ -1030,10 +1524,863 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert resumed.status_code == 200
         assert resumed.json()["paused"] is False
         assert resumed.json()["next_run_at"] is not None
+        assert rescheduled.status_code == 200
+        assert rescheduled.json()["schedule_type"] == "interval"
+        assert rescheduled.json()["interval_seconds"] == 120
+        assert rescheduled.json()["timezone"] == "America/Vancouver"
+        assert invalid_reschedule.status_code == 422
         assert deleted.status_code == 200
         assert deleted.json()["id"] == job_id
-        assert len(app.state.scheduler._scheduler.get_jobs()) == 0
+        assert client.delete(
+            f"/scheduled-jobs/{interval.json()['id']}", headers=_auth("tech-token")
+        ).status_code == 200
+        assert client.delete(
+            f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")
+        ).status_code == 200
+        assert [job.id for job in app.state.scheduler._scheduler.get_jobs()] == [
+            "event-delivery-retry-worker"
+        ]
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
+
+
+def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/agents",
+        json={
+            "name": "Scheduled triage",
+            "trigger": "scheduled",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    agent_id = created.json()["id"]
+
+    scheduled = client.post(
+        "/scheduled-jobs",
+        json={
+            "agent_id": agent_id,
+            "entity_id": "TCK-1001",
+            "cron": "0 9 * * *",
+            "params": {"client_id": "acme", "input": {"instruction": "triage"}},
+        },
+    )
+    assert scheduled.status_code == 200
+    assert scheduled.json()["job_kind"] == "agent"
+    assert scheduled.json()["agent_id"] == agent_id
+    assert scheduled.json()["entity_id"] == "TCK-1001"
+
+    manual = client.post(
+        "/agents",
+        json={
+            "name": "Manual triage",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert manual.status_code == 200
+    rejected = client.post(
+        "/scheduled-jobs",
+        json={
+            "agent_id": manual.json()["id"],
+            "entity_id": "TCK-1001",
+            "cron": "0 9 * * *",
+            "params": {"client_id": "acme"},
+        },
+    )
+    assert rejected.status_code == 422
+
+
+def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Created P1 triage",
+            "trigger": "event",
+            "filters": {"event_type": "ticket.created", "priority": "P1"},
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+
+    event = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-event-1"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "max_retries": 2,
+            "retry_delay_seconds": 7,
+            "payload": {"priority": "P1", "api_token": "secret-value"},
+        },
+    )
+    assert event.status_code == 200
+    assert event.json()["duplicate"] is False
+    assert event.json()["delivery"]["status"] == "completed"
+    assert event.json()["delivery"]["max_retries"] == 2
+    assert event.json()["delivery"]["retry_delay_seconds"] == 7
+    assert event.json()["run_ids"]
+    assert "secret-value" not in event.text
+
+    duplicate = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-event-1"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {"priority": "P1"},
+        },
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+
+    deliveries = client.get("/automation/event-deliveries")
+    assert deliveries.status_code == 200
+    assert deliveries.json()[0]["idempotency_key"] == "api-event-1"
+    detail = client.get(f"/automation/event-deliveries/{deliveries.json()[0]['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["event_type"] == "ticket.created"
+
+    missing_key = client.post(
+        "/automation/events",
+        json={"event_type": "ticket.created", "entity_id": "TCK-1001"},
+    )
+    assert missing_key.status_code == 422
+
+    invalid_policy = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-invalid-policy"},
+        json={
+            "event_type": "ticket.created",
+            "entity_id": "TCK-1001",
+            "max_retries": 11,
+        },
+    )
+    assert invalid_policy.status_code == 422
+
+    unsupported = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-unsupported-event"},
+        json={"event_type": "ticket.deleted", "entity_id": "TCK-1001"},
+    )
+    assert unsupported.status_code == 422
+
+    missing_entity = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-missing-entity"},
+        json={"event_type": "ticket.created", "entity_id": "NO-SUCH-TICKET"},
+    )
+    assert missing_entity.status_code == 404
+    missing_delivery = client.get("/automation/event-deliveries/99999")
+    assert missing_delivery.status_code == 404
+
+
+def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    delivery, _ = store.create_event_delivery(
+        idempotency_key="api-retry-event",
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1", "access_token": "do-not-echo"},
+        client_id="acme",
+    )
+    store.update_event_delivery(
+        delivery.id or 0,
+        status="failed",
+        matched_agent_count=0,
+        agent_ids=[],
+        run_ids=[],
+        error_detail="provider access_token=do-not-echo",
+        agent_attempts={},
+    )
+    beta_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "beta",
+            "tech_token": "beta-token",
+        }
+    )
+    wrong_tenant = TestClient(create_app(beta_settings)).post(
+        f"/automation/event-deliveries/{delivery.id}/retry",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    client = TestClient(create_app(settings))
+    retried = client.post(f"/automation/event-deliveries/{delivery.id}/retry")
+
+    assert wrong_tenant.status_code == 404
+    assert retried.status_code == 200
+    assert retried.json()["delivery"]["status"] == "completed"
+    assert retried.json()["delivery"]["retry_count"] == 1
+    assert retried.json()["delivery"]["next_retry_at"] is None
+    assert "do-not-echo" not in retried.text
+
+
+def test_manual_workflow_run_emits_completion_event(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Workflow completion triage",
+            "trigger": "event",
+            "filters": {
+                "event_type": "workflow.completed",
+                "workflow_template_id": "ticket-triage",
+            },
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+        },
+    )
+    assert agent.status_code == 200
+
+    run = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+
+    deliveries = client.get("/automation/event-deliveries")
+    assert deliveries.status_code == 200
+    completion = [
+        delivery for delivery in deliveries.json() if delivery["event_type"] == "workflow.completed"
+    ]
+    assert len(completion) == 1
+    assert completion[0]["status"] == "completed"
+    assert completion[0]["run_ids"]
+
+    pending = client.post(
+        "/workflows/templates/assign-technician/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+    assert pending.status_code == 200
+    assert pending.json()["status"] == "pending_approval"
+    assert len(
+        [delivery for delivery in client.get("/automation/event-deliveries").json()
+         if delivery["event_type"] == "workflow.completed"]
+    ) == 1
+
+
+def test_manual_workflow_completion_dispatch_failure_is_audited(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_dispatch(*_args, **_kwargs):
+        raise RuntimeError("api-key=secret-value")
+
+    monkeypatch.setattr(app_module.EventDispatcher, "dispatch", fail_dispatch)
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    failures = [
+        event for event in store.list_audit_events()
+        if event.event_type == "workflow.completion_dispatch_failed"
+    ]
+    assert len(failures) == 1
+    assert "secret-value" not in failures[0].detail
+
+
+def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(secure_settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/missing/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "workflow template not found"
+
+
+def test_manual_workflow_run_maps_runtime_ticket_lookup_failure(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+
+    def fail_workflow(*_args, **_kwargs):
+        raise LookupError("ticket disappeared")
+
+    monkeypatch.setattr(app_module, "run_workflow_template", fail_workflow)
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/workflows/templates/ticket-triage/runs",
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "ticket not found"
+
+
+def test_workflow_completion_event_filter_is_available_through_api(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "After triage",
+            "trigger": "event",
+            "filters": {
+                "event_type": "workflow.completed",
+                "workflow_template_id": "ticket-triage",
+            },
+            "enabled_tools": ["ticket-summary"],
+            "steps": [{"tool_id": "ticket-summary", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+
+    event = client.post(
+        "/automation/events",
+        headers={"Idempotency-Key": "api-workflow-completion-1"},
+        json={
+            "event_type": "workflow.completed",
+            "entity_id": "TCK-1001",
+            "client_id": "acme",
+            "payload": {
+                "workflow_run_id": "17",
+                "workflow_template_id": "ticket-triage",
+                "status": "completed",
+            },
+        },
+    )
+
+    assert event.status_code == 200
+    assert event.json()["delivery"]["event_type"] == "workflow.completed"
+    assert event.json()["run_ids"]
+
+
+def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "display_name": "Acme triage starter",
+            "provenance": "Reviewed by the local operator",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["source_template_id"] == "ticket-triage"
+    assert created.json()["provenance"] == "Reviewed by the local operator"
+    entry_id = created.json()["id"]
+
+    listed = client.get("/workflow-templates/gallery")
+    detail = client.get(f"/workflow-templates/gallery/{entry_id}")
+    assert listed.status_code == 200
+    assert detail.status_code == 200
+    assert detail.json()["id"] == entry_id
+
+    run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert run.status_code == 200
+    assert run.json()["template_id"] == "ticket-triage"
+    assert run.json()["status"] == "completed"
+
+    unknown_source = client.post(
+        "/workflow-templates/gallery",
+        json={"source_template_id": "not-a-template", "provenance": "review"},
+    )
+    foreign_run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "beta"},
+    )
+    missing_entry = client.get("/workflow-templates/gallery/not-a-gallery-entry")
+    missing_ticket = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "NO-SUCH-TICKET", "client_id": "acme"},
+    )
+    assert unknown_source.status_code == 404
+    assert foreign_run.status_code == 404
+    assert missing_entry.status_code == 404
+    assert missing_ticket.status_code == 404
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get(
+        "/workflow-templates/gallery",
+        headers=_auth("viewer-token"),
+    ).json() == []
+    assert secure_client.get(
+        "/workflow-templates/gallery/anything",
+        headers=_auth("viewer-token"),
+    ).status_code == 404
+    assert secure_client.post(
+        "/workflow-templates/gallery",
+        headers=_auth("tech-token"),
+        json={"source_template_id": "ticket-triage", "provenance": "review"},
+    ).status_code == 403
+    assert secure_client.post(
+        "/workflow-templates/gallery/anything/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    ).status_code == 403
+
+
+def test_template_gallery_instances_are_editable_versioned_and_disableable(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "provenance": "operator review",
+            "display_name": "Acme triage v1",
+            "instructions": "Use the local triage policy.",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    entry_id = created.json()["id"]
+    assert created.json()["version"] == 1
+    assert created.json()["enabled"] is True
+
+    updated = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={
+            "name": "Acme triage disabled",
+            "description": "A locally maintained triage definition.",
+            "instructions": "Do not post externally.",
+            "enabled": False,
+            "client_id": "acme",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["version"] == 2
+    assert updated.json()["enabled"] is False
+    assert updated.json()["instructions"] == "Do not post externally."
+
+    disabled_run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    revisions = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions",
+        params={"client_id": "acme"},
+    )
+    assert disabled_run.status_code == 409
+    assert revisions.status_code == 200
+    assert [revision["version"] for revision in revisions.json()] == [2, 1]
+    assert revisions.json()[0]["definition"]["enabled"] is False
+    diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "acme"},
+    )
+    assert diff.status_code == 200
+    assert diff.json()["changed"] is True
+    assert {change["field"] for change in diff.json()["changes"]} == {
+        "description",
+        "enabled",
+        "instructions",
+        "name",
+    }
+    foreign_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "beta"},
+    )
+    assert foreign_diff.status_code == 404
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update template_gallery_revisions set definition_json = ? where gallery_id = ? and version = 1",
+            (
+                '{"name":"Acme triage v1","description":"Review tickets.",'
+                '"instructions":"Use the local triage policy.","enabled":true,'
+                '"token":"do-not-echo"}',
+                entry_id,
+            ),
+        )
+    redacted_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "acme"},
+    )
+    assert redacted_diff.status_code == 200
+    assert "do-not-echo" not in redacted_diff.text
+
+    restored = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["version"] == 3
+    assert restored.json()["name"] == "Acme triage v1"
+    assert restored.json()["enabled"] is True
+
+    run = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert run.status_code == 200
+    assert run.json()["template_version"] == 3
+    assert "local triage policy" in run.json()["message"]
+
+    foreign_update = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={"name": "cross-tenant", "client_id": "beta"},
+    )
+    assert foreign_update.status_code == 404
+
+    missing_revisions = client.get("/workflow-templates/gallery/missing/revisions")
+    missing_diff = client.get("/workflow-templates/gallery/missing/revisions/1/diff/2")
+    missing_update = client.patch(
+        "/workflow-templates/gallery/missing",
+        json={"name": "Missing"},
+    )
+    invalid_update = client.patch(
+        f"/workflow-templates/gallery/{entry_id}",
+        json={"name": "   ", "client_id": "acme"},
+    )
+    missing_restore = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/999/restore",
+        json={"client_id": "acme"},
+    )
+    assert missing_revisions.status_code == 200
+    assert missing_revisions.json() == []
+    assert missing_diff.status_code == 404
+    assert missing_update.status_code == 404
+    assert invalid_update.status_code == 422
+    assert missing_restore.status_code == 404
+
+    missing_restore_entry = client.post(
+        "/workflow-templates/gallery/missing/revisions/1/restore",
+        json={},
+    )
+    missing_revision_diff = client.get(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/diff/999",
+        params={"client_id": "acme"},
+    )
+    assert missing_restore_entry.status_code == 404
+    assert missing_revision_diff.status_code == 404
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update template_gallery_revisions set definition_json = ? where gallery_id = ? and version = 1",
+            ('{"name":""}', entry_id),
+        )
+    invalid_restore = client.post(
+        f"/workflow-templates/gallery/{entry_id}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert invalid_restore.status_code == 409
+
+    monkeypatch.setattr(app_module, "get_workflow_template", lambda _template_id: None)
+    unavailable_source = client.post(
+        f"/workflow-templates/gallery/{entry_id}/runs",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert unavailable_source.status_code == 409
+
+
+def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> None:
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    store = Store(secure.data_path)
+    template = app_module.get_workflow_template("ticket-triage")
+    assert template is not None
+    entry = store.create_template_gallery_entry(template, provenance="operator review", client_id="acme")
+    client = TestClient(create_app(secure))
+
+    patch = client.patch(
+        f"/workflow-templates/gallery/{entry.id}",
+        headers=_auth("tech-token"),
+        json={"name": "No tenant"},
+    )
+    revisions = client.get(
+        f"/workflow-templates/gallery/{entry.id}/revisions",
+        headers=_auth("viewer-token"),
+    )
+    diff = client.get(
+        f"/workflow-templates/gallery/{entry.id}/revisions/1/diff/1",
+        headers=_auth("viewer-token"),
+    )
+    restore = client.post(
+        f"/workflow-templates/gallery/{entry.id}/revisions/1/restore",
+        headers=_auth("tech-token"),
+        json={},
+    )
+    run = client.post(
+        f"/workflow-templates/gallery/{entry.id}/runs",
+        headers=_auth("tech-token"),
+        json={"ticket_id": "TCK-1001"},
+    )
+
+    assert patch.status_code == 403
+    assert revisions.status_code == 200 and revisions.json() == []
+    assert diff.status_code == 404
+    assert restore.status_code == 404
+    assert run.status_code == 403
+
+
+def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = ?", ("acme",))
+    client = TestClient(create_app(settings))
+
+    agent = client.post(
+        "/agents",
+        json={
+            "name": "Backfill triage",
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    assert agent.status_code == 200
+    agent_id = agent.json()["id"]
+
+    preview = client.post(
+        "/agent-backfills/preview",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "backfill-secret"},
+            "max_concurrency": 2,
+            "client_id": "acme",
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["dry_run"] is True
+    assert preview.json()["entity_count"] == 2
+    assert preview.json()["estimated_runs"] == 2
+    assert preview.json()["max_concurrency"] == 2
+    assert preview.json()["execution_mode"] == "bounded_parallel"
+    assert preview.json()["will_persist"] is False
+    assert preview.json()["input"]["api_token"] == "[redacted]"
+    assert store.list_agent_backfills() == []
+
+    created = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": agent_id,
+            "entity_ids": ["TCK-1001", "TCK-1002"],
+            "input": {"api_token": "backfill-secret"},
+            "max_concurrency": 2,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["status"] == "queued"
+    assert "backfill-secret" not in created.text
+    backfill_id = created.json()["id"]
+    assert client.get("/agent-backfills").json()[0]["id"] == backfill_id
+    assert client.get(f"/agent-backfills/{backfill_id}").status_code == 200
+
+    paused = client.post(f"/agent-backfills/{backfill_id}/pause")
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+    resumed = client.post(f"/agent-backfills/{backfill_id}/run")
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["max_concurrency"] == 2
+    assert resumed.json()["succeeded_count"] == 2
+    assert client.post(f"/agent-backfills/{backfill_id}/run").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/rerun-failed").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/cancel").status_code == 409
+    assert client.post(f"/agent-backfills/{backfill_id}/pause").status_code == 409
+
+    queued_for_cancel = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    cancelled = client.post(f"/agent-backfills/{queued_for_cancel.json()['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+    disabled = client.post(
+        "/agents",
+        json={
+            "name": "Disabled backfill target",
+            "enabled": False,
+            "enabled_tools": ["ticket-triage"],
+            "steps": [{"tool_id": "ticket-triage", "payload": {}}],
+            "max_steps": 1,
+            "client_id": "acme",
+        },
+    )
+    failed_backfill = client.post(
+        "/agent-backfills",
+        json={
+            "agent_id": disabled.json()["id"],
+            "entity_ids": ["TCK-1001"],
+            "client_id": "acme",
+        },
+    )
+    failed_run = client.post(f"/agent-backfills/{failed_backfill.json()['id']}/run")
+    assert failed_run.status_code == 200
+    assert failed_run.json()["status"] == "completed_with_errors"
+    assert failed_run.json()["failed_entity_ids"] == ["TCK-1001"]
+    rerun = client.post(f"/agent-backfills/{failed_backfill.json()['id']}/rerun-failed")
+    assert rerun.status_code == 200
+    assert rerun.json()["failed_count"] == 1
+    assert client.post(f"/agent-backfills/{failed_backfill.json()['id']}/rerun-failed").status_code == 200
+
+    duplicate = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001", "TCK-1001"], "client_id": "acme"},
+    )
+    missing_ticket = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["NOPE"], "client_id": "acme"},
+    )
+    unknown_agent = client.post(
+        "/agent-backfills",
+        json={"agent_id": "no-such-agent", "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    assert duplicate.status_code == 422
+    assert missing_ticket.status_code == 404
+    assert unknown_agent.status_code == 404
+    preview_duplicate = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001", "TCK-1001"], "client_id": "acme"},
+    )
+    preview_missing_ticket = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": agent_id, "entity_ids": ["NOPE"], "client_id": "acme"},
+    )
+    preview_unknown_agent = client.post(
+        "/agent-backfills/preview",
+        json={"agent_id": "no-such-agent", "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    assert preview_duplicate.status_code == 422
+    assert preview_missing_ticket.status_code == 404
+    assert preview_unknown_agent.status_code == 404
+    assert client.get("/agent-backfills/99999").status_code == 404
+    assert client.post("/agent-backfills/99999/run").status_code == 404
+    assert client.post("/agent-backfills/99999/pause").status_code == 404
+    assert client.post("/agent-backfills/99999/cancel").status_code == 404
+    assert client.post("/agent-backfills/99999/rerun-failed").status_code == 404
+
+    from wait_local_agent.agents import AgentExecutionResult
+
+    def synthetic_failure(self, definition, *, entity_id, actor, input_payload):
+        return AgentExecutionResult(
+            run_id=0,
+            agent_id=definition.id,
+            status="failed",
+            current_step=0,
+            steps=[],
+        )
+
+    monkeypatch.setattr(app_module.AgentService, "run", synthetic_failure)
+    synthetic_backfill = client.post(
+        "/agent-backfills",
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"], "client_id": "acme"},
+    )
+    synthetic_run = client.post(f"/agent-backfills/{synthetic_backfill.json()['id']}/run")
+    assert synthetic_run.status_code == 200
+    assert synthetic_run.json()["failed_count"] == 1
+    assert synthetic_run.json()["run_ids"] == []
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get("/agent-backfills", headers=_auth("viewer-token")).status_code == 403
+    assert secure_client.get(
+        "/agent-backfills/1", headers=_auth("viewer-token")
+    ).status_code == 403
+    assert secure_client.post(
+        "/agent-backfills",
+        headers=_auth("tech-token"),
+        json={"agent_id": agent_id, "entity_ids": ["TCK-1001"]},
+    ).status_code == 403
 
 
 def test_workflow_and_halopsa_missing_resources_return_404(settings) -> None:
@@ -1333,6 +2680,363 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
+def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        client_id="acme",
+        n_sight_base_url="https://nsight.example.test",
+        n_sight_api_key="test-key",
+        n_sight_client_map_json='{"acme":123}',
+    )
+    client = TestClient(create_app(secure_settings))
+
+    tools = client.get("/tools", headers=_auth("tech-token"))
+    detail = client.get("/smart-actions/nsight-run-task-now", headers=_auth("tech-token"))
+    check_config_detail = client.get(
+        "/smart-actions/nsight-check-config", headers=_auth("tech-token")
+    )
+    antivirus_scans_detail = client.get(
+        "/smart-actions/nsight-antivirus-scans", headers=_auth("tech-token")
+    )
+    antivirus_scan_start_detail = client.get(
+        "/smart-actions/nsight-antivirus-scan-start", headers=_auth("tech-token")
+    )
+    antivirus_scan_cancel_detail = client.get(
+        "/smart-actions/nsight-antivirus-scan-cancel", headers=_auth("tech-token")
+    )
+    antivirus_scan_pause_detail = client.get(
+        "/smart-actions/nsight-antivirus-scan-pause", headers=_auth("tech-token")
+    )
+    antivirus_scan_resume_detail = client.get(
+        "/smart-actions/nsight-antivirus-scan-resume", headers=_auth("tech-token")
+    )
+    antivirus_quarantine_detail = client.get(
+        "/smart-actions/nsight-antivirus-quarantine", headers=_auth("tech-token")
+    )
+    antivirus_quarantine_release_detail = client.get(
+        "/smart-actions/nsight-antivirus-quarantine-release", headers=_auth("tech-token")
+    )
+    antivirus_quarantine_remove_detail = client.get(
+        "/smart-actions/nsight-antivirus-quarantine-remove", headers=_auth("tech-token")
+    )
+    antivirus_products_detail = client.get(
+        "/smart-actions/nsight-antivirus-products", headers=_auth("tech-token")
+    )
+    antivirus_definitions_detail = client.get(
+        "/smart-actions/nsight-antivirus-definitions", headers=_auth("tech-token")
+    )
+    antivirus_update_history_detail = client.get(
+        "/smart-actions/nsight-antivirus-update-history", headers=_auth("tech-token")
+    )
+    software_inventory_detail = client.get(
+        "/smart-actions/nsight-software-inventory", headers=_auth("tech-token")
+    )
+    hardware_inventory_detail = client.get(
+        "/smart-actions/nsight-hardware-inventory", headers=_auth("tech-token")
+    )
+    preview = client.post(
+        "/smart-actions/nsight-run-task-now/invoke",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "payload": {"device_id": "server:49324", "check_id": "1304847"},
+        },
+    )
+    scan_preview = client.post(
+        "/smart-actions/nsight-antivirus-scan-start/invoke",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "payload": {"device_id": "server:49324"}},
+    )
+    cancel_preview = client.post(
+        "/smart-actions/nsight-antivirus-scan-cancel/invoke",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "payload": {"device_id": "server:49324"}},
+    )
+
+    assert tools.status_code == 200
+    assert "nsight-run-task-now" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-scans" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-products" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-definitions" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-update-history" in {tool["id"] for tool in tools.json()}
+    assert "nsight-software-inventory" in {tool["id"] for tool in tools.json()}
+    assert "nsight-hardware-inventory" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-scan-pause" in {tool["id"] for tool in tools.json()}
+    assert "nsight-antivirus-scan-resume" in {tool["id"] for tool in tools.json()}
+    assert detail.status_code == 200
+    assert detail.json()["requires_approval"] is True
+    assert detail.json()["access_mode"] == "write"
+    assert check_config_detail.status_code == 200
+    assert check_config_detail.json()["access_mode"] == "read"
+    assert antivirus_scans_detail.status_code == 200
+    assert antivirus_scans_detail.json()["access_mode"] == "read"
+    assert antivirus_products_detail.status_code == 200
+    assert antivirus_products_detail.json()["access_mode"] == "read"
+    assert antivirus_definitions_detail.status_code == 200
+    assert antivirus_definitions_detail.json()["access_mode"] == "read"
+    assert antivirus_update_history_detail.status_code == 200
+    assert antivirus_update_history_detail.json()["access_mode"] == "read"
+    assert software_inventory_detail.status_code == 200
+    assert software_inventory_detail.json()["access_mode"] == "read"
+    assert hardware_inventory_detail.status_code == 200
+    assert hardware_inventory_detail.json()["access_mode"] == "read"
+    assert antivirus_scan_start_detail.status_code == 200
+    assert antivirus_scan_start_detail.json()["requires_approval"] is True
+    assert antivirus_scan_start_detail.json()["access_mode"] == "write"
+    assert antivirus_scan_pause_detail.status_code == 200
+    assert antivirus_scan_pause_detail.json()["requires_approval"] is True
+    assert antivirus_scan_pause_detail.json()["access_mode"] == "write"
+    assert antivirus_scan_resume_detail.status_code == 200
+    assert antivirus_scan_resume_detail.json()["requires_approval"] is True
+    assert antivirus_scan_resume_detail.json()["access_mode"] == "write"
+    assert antivirus_scan_cancel_detail.status_code == 200
+    assert antivirus_scan_cancel_detail.json()["requires_approval"] is True
+    assert antivirus_scan_cancel_detail.json()["access_mode"] == "write"
+    assert antivirus_quarantine_detail.status_code == 200
+    assert antivirus_quarantine_detail.json()["requires_approval"] is False
+    assert antivirus_quarantine_detail.json()["access_mode"] == "read"
+    assert antivirus_quarantine_release_detail.status_code == 200
+    assert antivirus_quarantine_release_detail.json()["requires_approval"] is True
+    assert antivirus_quarantine_release_detail.json()["access_mode"] == "write"
+    assert antivirus_quarantine_remove_detail.status_code == 200
+    assert antivirus_quarantine_remove_detail.json()["requires_approval"] is True
+    assert antivirus_quarantine_remove_detail.json()["access_mode"] == "write"
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "pending_approval"
+    assert preview.json()["output"]["check_id"] == 1304847
+    assert scan_preview.status_code == 200
+    assert scan_preview.json()["status"] == "pending_approval"
+    assert cancel_preview.status_code == 200
+    assert cancel_preview.json()["status"] == "pending_approval"
+
+
+def test_m365_write_actions_require_admin_at_invoke_boundary(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "client_id": "acme",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+
+    for action_id, payload in (
+        (
+            "m365-user-offboarding",
+            {"user_identity": "user@example.test", "user_id": "graph-user-1"},
+        ),
+        (
+            "m365-user-onboarding",
+            {
+                "user_principal_name": "user@example.test",
+                "display_name": "User Example",
+                "mail_nickname": "user.example",
+                "temporary_vault_name": "WAIT_M365_TEMP_USER",
+            },
+        ),
+        (
+            "m365-group-membership",
+            {
+                "group_id": "group-immutable-id",
+                "user_id": "user-immutable-id",
+                "operation": "add",
+            },
+        ),
+        (
+            "m365-license-change",
+            {
+                "user_id": "user-immutable-id",
+                "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+                "operation": "add",
+            },
+        ),
+        (
+            "m365-session-revocation",
+            {"user_id": "user-immutable-id"},
+        ),
+        (
+            "m365-mailbox-settings",
+            {
+                "user_identity": "user@example.test",
+                "settings": {"locale": "en-US"},
+            },
+        ),
+        (
+            "m365-mail-message-move",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+                "destination_folder_id": "archive-id",
+            },
+        ),
+        (
+            "m365-mail-message-read-state",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+                "is_read": True,
+            },
+        ),
+        (
+            "m365-mail-message-delete",
+            {
+                "user_identity": "user@example.test",
+                "source_folder_id": "inbox-id",
+                "message_id": "message-id",
+            },
+        ),
+        (
+            "m365-managed-device-reboot",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-remote-lock",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-retire",
+            {"device_id": "device-1"},
+        ),
+        (
+            "m365-managed-device-sync",
+            {"device_id": "device-1"},
+        ),
+    ):
+        denied = client.post(
+            f"/smart-actions/{action_id}/invoke",
+            headers=_auth("tech-token"),
+            json={"client_id": "acme", "payload": payload},
+        )
+        detail = client.get(f"/smart-actions/{action_id}", headers=_auth("tech-token"))
+
+        assert denied.status_code == 403
+        assert detail.status_code == 200
+        assert detail.json()["required_role"] == "admin"
+
+
+def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+            "client_id": "acme",
+        }
+    )
+    store = Store(secure_settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.executemany(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
+                ("TCK-BETA", "Beta", "MFA reset", "Sign-in blocked", "High", "Open", "beta"),
+            ],
+        )
+    client = TestClient(create_app(secure_settings))
+
+    help_response = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "help"},
+    )
+    triage = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "triage TCK-ACME"},
+    )
+    plan = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "plan triage and suggest a fix for TCK-ACME"},
+    )
+    cross_tenant = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "triage TCK-BETA"},
+    )
+    viewer = client.post(
+        "/technician/chat",
+        headers=_auth("viewer-token"),
+        json={"message": "triage TCK-ACME"},
+    )
+    unsupported = client.post(
+        "/technician/chat",
+        headers=_auth("tech-token"),
+        json={"message": "run arbitrary shell command TCK-ACME"},
+    )
+
+    assert help_response.status_code == 200
+    assert help_response.json()["status"] == "help"
+    assert triage.status_code == 200
+    assert triage.json()["action_id"] == "ticket-triage"
+    assert triage.json()["result"]["status"] == "success"
+    assert triage.json()["result"]["output"]["ticket_id"] == "TCK-ACME"
+    assert plan.status_code == 200
+    assert plan.json()["status"] == "preview"
+    assert [step["tool_id"] for step in plan.json()["plan"]["steps"]] == [
+        "ticket-triage",
+        "suggest-resolution",
+    ]
+    assert plan.json()["plan"]["definition"]["enabled"] is False
+    assert cross_tenant.status_code == 200
+    assert cross_tenant.json()["result"]["status"] == "failed"
+    assert "TCK-BETA" not in cross_tenant.text
+    assert viewer.status_code == 403
+    assert unsupported.status_code == 422
+
+
+def test_technician_chat_plan_blocked_results_are_explicit(settings) -> None:
+    from wait_local_agent.agents import AgentService
+    from wait_local_agent.smart_actions import SmartActionService
+
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-PLAN', 'Acme', 'MFA reset', 'Sign-in blocked', 'high', 'open', 'acme')
+            """
+        )
+    smart_actions = SmartActionService(store, settings)
+    planner = AgentService(store, settings, smart_actions)
+
+    no_match = app_module._invoke_technician_chat_message(
+        store,
+        smart_actions,
+        planner,
+        "plan invent a new unsupported operation for TCK-PLAN",
+        ticket_id="TCK-PLAN",
+        actor="tech",
+        client_id="acme",
+    )
+    missing_ticket = app_module._invoke_technician_chat_message(
+        store,
+        smart_actions,
+        planner,
+        "plan triage TCK-NOT-FOUND",
+        ticket_id="TCK-NOT-FOUND",
+        actor="tech",
+        client_id="acme",
+    )
+
+    assert no_match["status"] == "blocked"
+    assert missing_ticket["status"] == "blocked"
+    missing_plan = cast(dict[str, object], missing_ticket["plan"])
+    assert "not found" in str(missing_plan["blocked_reason"])
+
+
 def test_legacy_approval_rows_are_redacted_in_api_views(settings) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request("TCK-LEGACY", "halopsa.add_note", {})
@@ -1449,10 +3153,14 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
             page: int = 1,
             page_size: int | None = None,
         ):
-            return _hudu_response([HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle("A-1", "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def get_article(self, article_id: str):
-            return _hudu_response([HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "")])
+            return _hudu_response([
+                HuduArticle(article_id, "Runbook", "C-1", "F-1", "", "", "token=secret"),
+            ])
 
         def list_folders(
             self,
@@ -1477,9 +3185,1823 @@ def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> No
     assert health.json()["status"] == "ready"
     assert companies.json()["items"][0]["name"] == "Contoso"
     assert articles.json()["items"][0]["name"] == "Runbook"
+    assert articles.json()["items"][0]["content"] == "token=[redacted]"
     assert article.json()["items"][0]["id"] == "A-1"
+    assert article.json()["items"][0]["content"] == "token=[redacted]"
     assert folders.json()["items"][0]["name"] == "Ops"
     assert any(event["event_type"] == "hudu.read" for event in audit.json())
+
+
+def test_connectwise_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ConnectWise ready", 0)
+
+        def list_tickets(self, *, page=1, page_size=25, conditions=None):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult(
+                    "ready", f"tickets page={page} size={page_size} {conditions or ''}", 1
+                ),
+                [{"id": "42", "summary": "Printer offline"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "summary": "Printer offline"}],
+            )
+
+        def list_companies(self, *, page=1, page_size=25, conditions=None):
+            return ConnectWiseReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"id": "C-1", "name": "Contoso", "status": "Active"}],
+            )
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/connectwise/health")
+    tickets = client.get(
+        "/connectors/connectwise/tickets",
+        params={"page": 2, "page_size": 10, "conditions": "status/name = 'Open'"},
+    )
+    ticket = client.get("/connectors/connectwise/tickets/42")
+    companies = client.get("/connectors/connectwise/companies")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["id"] == "42"
+    assert ticket.json()["items"][0]["id"] == "42"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert any(connector["id"] == "connectwise" for connector in connectors.json())
+    assert any(event["event_type"] == "connectwise.read" for event in audit.json())
+
+
+def test_connectwise_approval_gated_ticket_update_routes(settings, monkeypatch) -> None:
+    class FakeConnectWiseClient:
+        def __init__(self, _settings) -> None:
+            self.executed: list[object] = []
+
+        def health(self):
+            return ConnectorReadResult("ready", "ConnectWise ready", 0)
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "ConnectWise writes ready", 0)
+
+        def execute_write(self, request):
+            self.executed.append(request)
+            return ConnectWiseWriteResult(
+                "succeeded", "updated", request.action_type, request.ticket_id,
+                endpoint="service/tickets/42", status_code=200, remote_id="42"
+            )
+
+        def list_tickets(self, **kwargs):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+        def get_ticket(self, ticket_id):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+        def list_companies(self, **kwargs):
+            return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
+
+    monkeypatch.setattr(app_module, "ConnectWiseClient", FakeConnectWiseClient)
+    client = TestClient(create_app(settings))
+
+    draft = client.post(
+        "/connectors/connectwise/tickets/42/drafts",
+        json={"action_type": "update_status", "fields": {"status_id": 7}, "client_id": "acme"},
+    )
+    assert draft.status_code == 200
+    request_id = draft.json()["approval_request_id"]
+    assert draft.json()["payload"]["connector"] == "connectwise"
+    assert draft.json()["payload"]["fields"] == {"status_id": 7}
+    edited = client.patch(
+        f"/approval-requests/{request_id}/payload",
+        json={"fields": {"status_id": 8}, "comment": "reviewed"},
+    )
+
+    write_health = client.get("/connectors/connectwise/write-health")
+    approved = client.post(
+        f"/approval-requests/{request_id}",
+        json={"status": "approved", "comment": "approved"},
+    )
+    audit = client.get("/audit")
+
+    assert write_health.json()["status"] == "ready"
+    assert edited.status_code == 200
+    assert edited.json()["payload"]["fields"] == {"status_id": 8}
+    assert approved.status_code == 200
+    assert approved.json()["execution_status"] == "succeeded"
+    assert any(event["event_type"] == "connectwise.write" for event in audit.json())
+
+
+def test_connectwise_draft_rejects_unsupported_fields(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/connectors/connectwise/tickets/42/drafts",
+        json={"action_type": "update_status", "fields": {"status": "Closed"}},
+    )
+
+    assert response.status_code == 400
+    assert "unsupported keys" in response.json()["detail"]
+
+
+def test_connectwise_routes_keep_viewer_auth_boundary(settings) -> None:
+    secure_settings = settings.__class__(
+        **{**settings.__dict__, "demo_mode": False, "api_token": "api-secret"}
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.get("/connectors/connectwise/health")
+
+    assert response.status_code == 401
+
+
+def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeSyncroClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Syncro ready", 0)
+
+        def list_tickets(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "42", "subject": "Printer offline"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "subject": "Printer offline"}],
+            )
+
+        def list_ticket_comments(self, ticket_id, **kwargs):
+            return SyncroCommentsResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "comment-1", "ticket_id": ticket_id, "body": "Reviewed"}],
+                {"page": kwargs["page"], "per_page": kwargs["per_page"], "total_pages": 1},
+            )
+
+        def list_customers(self, **kwargs):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "7", "name": "Contoso"}],
+            )
+
+        def get_customer(self, customer_id):
+            return SyncroReadResponse(
+                ConnectorReadResult("ready", "customer ready", 1),
+                [{"id": customer_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "SyncroClient", FakeSyncroClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/syncro/health")
+    tickets = client.get(
+        "/connectors/syncro/tickets",
+        params={"page": 2, "query": "printer", "customer_id": "7", "status": "Open"},
+    )
+    ticket = client.get("/connectors/syncro/tickets/42")
+    comments = client.get(
+        "/connectors/syncro/tickets/42/comments", params={"page": 2, "per_page": 5}
+    )
+    customers = client.get("/connectors/syncro/customers", params={"query": "Contoso"})
+    customer = client.get("/connectors/syncro/customers/7")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert tickets.json()["items"][0]["id"] == "42"
+    assert ticket.json()["items"][0]["id"] == "42"
+    assert comments.json()["items"][0]["body"] == "Reviewed"
+    assert comments.json()["meta"] == {"page": 2, "per_page": 5, "total_pages": 1}
+    assert customers.json()["items"][0]["name"] == "Contoso"
+    assert customer.json()["items"][0]["id"] == "7"
+    assert any(connector["id"] == "syncro" for connector in connectors.json())
+    assert any(event["event_type"] == "syncro.read" for event in audit.json())
+
+
+def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeServiceNowClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "ServiceNow ready", 0)
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "ServiceNow writes ready", 0)
+
+        def list_incidents(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"sys_id": "abc123", "number": "INC001"}],
+            )
+
+        def get_incident(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "incident ready", 1),
+                [{"sys_id": sys_id, "number": "INC001"}],
+            )
+
+        def list_companies(self, **kwargs):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"sys_id": "co-1", "name": "Contoso"}],
+            )
+
+        def get_company(self, sys_id):
+            return ServiceNowReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"sys_id": sys_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "ServiceNowClient", FakeServiceNowClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/servicenow/health")
+    write_health = client.get("/connectors/servicenow/write-health")
+    incidents = client.get(
+        "/connectors/servicenow/incidents",
+        params={"page": 2, "page_size": 10, "query": "active=true"},
+    )
+    incident = client.get("/connectors/servicenow/incidents/abc123")
+    companies = client.get("/connectors/servicenow/companies")
+    company = client.get("/connectors/servicenow/companies/co-1")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert write_health.status_code == 200
+    assert write_health.json()["status"] == "ready"
+    assert incidents.json()["items"][0]["number"] == "INC001"
+    assert incident.json()["items"][0]["sys_id"] == "abc123"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert company.json()["items"][0]["sys_id"] == "co-1"
+    assert any(connector["id"] == "servicenow" for connector in connectors.json())
+    assert any(event["event_type"] == "servicenow.read" for event in audit.json())
+
+
+def test_servicenow_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/servicenow/health")
+    assert response.status_code == 401
+
+
+def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeAutotaskClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Autotask ready", 0)
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "Autotask writes ready", 0)
+
+        def list_tickets(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "7", "ticket_number": "T-7"}],
+            )
+
+        def get_ticket(self, ticket_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "ticket ready", 1),
+                [{"id": ticket_id, "ticket_number": "T-7"}],
+            )
+
+        def list_companies(self, **kwargs):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [{"id": "3", "name": "Contoso"}],
+            )
+
+        def get_company(self, company_id):
+            return AutotaskReadResponse(
+                ConnectorReadResult("ready", "company ready", 1),
+                [{"id": company_id, "name": "Contoso"}],
+            )
+
+    monkeypatch.setattr(app_module, "AutotaskClient", FakeAutotaskClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/autotask/health")
+    write_health = client.get("/connectors/autotask/write-health")
+    tickets = client.get(
+        "/connectors/autotask/tickets",
+        params={"page": 2, "page_size": 10},
+    )
+    ticket = client.get("/connectors/autotask/tickets/7")
+    companies = client.get("/connectors/autotask/companies")
+    company = client.get("/connectors/autotask/companies/3")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert write_health.status_code == 200
+    assert write_health.json()["message"] == "Autotask writes ready"
+    assert tickets.json()["items"][0]["ticket_number"] == "T-7"
+    assert ticket.json()["items"][0]["id"] == "7"
+    assert companies.json()["items"][0]["name"] == "Contoso"
+    assert company.json()["items"][0]["id"] == "3"
+    assert any(connector["id"] == "autotask" for connector in connectors.json())
+    assert any(event["event_type"] == "autotask.read" for event in audit.json())
+    assert any(event["event_type"] == "autotask.write_health" for event in audit.json())
+
+
+def test_autotask_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/autotask/health")
+    assert response.status_code == 401
+
+
+def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeItGlueClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "IT Glue ready", 0)
+
+        def list_organizations(self, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueOrganization("1", "Contoso", "active")],
+            )
+
+        def list_documents(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueDocument("9", "Runbook", organization_id, "7", "today", "https://docs.test/9", "token=secret")],
+            )
+
+        def get_document(self, document_id):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", "document ready", 1),
+                [ItGlueDocument(document_id, "Runbook", "1", "7", "today", "https://docs.test/9", "token=secret")],
+            )
+
+        def list_folders(self, organization_id, **kwargs):
+            return ItGlueReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ItGlueFolder("7", "Ops", organization_id, "0")],
+            )
+
+    monkeypatch.setattr(app_module, "ItGlueClient", FakeItGlueClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/itglue/health")
+    organizations = client.get("/connectors/itglue/organizations")
+    documents = client.get(
+        "/connectors/itglue/organizations/1/documents",
+        params={"folder_id": "7"},
+    )
+    document = client.get("/connectors/itglue/documents/9")
+    folders = client.get("/connectors/itglue/organizations/1/folders")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert organizations.json()["items"][0]["name"] == "Contoso"
+    assert documents.json()["items"][0]["name"] == "Runbook"
+    assert documents.json()["items"][0]["content"] == "token=[redacted]"
+    assert document.json()["items"][0]["id"] == "9"
+    assert document.json()["items"][0]["content"] == "token=[redacted]"
+    assert folders.json()["items"][0]["name"] == "Ops"
+    assert any(connector["id"] == "itglue" for connector in connectors.json())
+    assert any(event["event_type"] == "itglue.read" for event in audit.json())
+
+
+def test_itglue_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/itglue/health")
+    assert response.status_code == 401
+
+
+def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeConfluenceClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Confluence ready", 0)
+
+        def list_pages(self, **kwargs):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [ConfluencePage("9", "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
+            )
+
+        def get_page(self, page_id):
+            return ConfluenceReadResponse(
+                ConnectorReadResult("ready", "page ready", 1),
+                [ConfluencePage(page_id, "Runbook", "42", "current", "3", "today", "/page/9", "token=secret")],
+            )
+
+    monkeypatch.setattr(app_module, "ConfluenceClient", FakeConfluenceClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/confluence/health")
+    pages = client.get(
+        "/connectors/confluence/pages",
+        params={"space_id": "42", "title": "Runbook", "cursor": "next", "page_size": 2},
+    )
+    page = client.get("/connectors/confluence/pages/9")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert pages.json()["items"][0]["title"] == "Runbook"
+    assert pages.json()["items"][0]["body"] == "token=[redacted]"
+    assert page.json()["items"][0]["id"] == "9"
+    assert page.json()["items"][0]["body"] == "token=[redacted]"
+    assert any(connector["id"] == "confluence" for connector in connectors.json())
+    assert any(event["event_type"] == "confluence.read" for event in audit.json())
+
+
+def test_confluence_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/confluence/health")
+    assert response.status_code == 401
+
+
+def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeypatch) -> None:
+    class FakeNotionClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Notion ready", 0)
+
+        def search_pages(self, **kwargs):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "MFA", "/mfa", "today", False, "body")],
+            )
+
+        def get_page(self, page_id, *, client_id):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", "page ready", 1),
+                [NotionPage(page_id, "MFA", "/mfa", "today", False, "token=secret")],
+            )
+
+        def query_data_source(self, data_source_id, *, client_id, page_size, start_cursor):
+            return NotionReadResponse(
+                ConnectorReadResult("ready", str(data_source_id), 1),
+                [NotionPage("11111111-2222-3333-4444-555555555555", "MFA", "/mfa", "today", False, "")],
+                "next-cursor",
+            )
+
+        def get_data_source(self, data_source_id, *, client_id):
+            return NotionDataSourceResponse(
+                ConnectorReadResult("ready", str(data_source_id), 1),
+                [NotionDataSource(data_source_id, {"Name": "title"})],
+            )
+
+    monkeypatch.setattr(app_module, "NotionClient", FakeNotionClient)
+    client = TestClient(create_app(settings))
+
+    missing_scope = client.get("/connectors/notion/pages", params={"query": "MFA"})
+    missing_data_source_scope = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000"
+    )
+    health = client.get("/connectors/notion/health")
+    pages = client.get(
+        "/connectors/notion/pages",
+        params={"client_id": "acme", "query": "MFA", "page_size": 2},
+    )
+    page = client.get(
+        "/connectors/notion/pages/11111111-2222-3333-4444-555555555555",
+        params={"client_id": "acme"},
+    )
+    data_source_pages = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000/pages",
+        params={"client_id": "acme", "page_size": 2, "start_cursor": "cursor"},
+    )
+    data_source = client.get(
+        "/connectors/notion/data-sources/66666666-7777-8888-9999-000000000000",
+        params={"client_id": "acme"},
+    )
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert missing_scope.status_code == 403
+    assert missing_data_source_scope.status_code == 403
+    assert health.status_code == 200
+    assert pages.json()["items"][0]["title"] == "MFA"
+    assert page.json()["items"][0]["markdown"] == "token=[redacted]"
+    assert data_source_pages.status_code == 200
+    assert data_source_pages.json()["next_cursor"] == "next-cursor"
+    assert data_source.status_code == 200
+    assert data_source.json()["items"][0]["properties"] == {"Name": "title"}
+    assert any(connector["id"] == "notion" for connector in connectors.json())
+    assert any(event["event_type"] == "notion.read" for event in audit.json())
+
+
+def test_notion_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/notion/health")
+    assert response.status_code == 401
+
+
+def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeSharePointClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "SharePoint ready", 0)
+
+        def list_sites(self, **kwargs):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [SharePointSite("site-1", "ops", "Operations", "https://sharepoint.test/ops")],
+            )
+
+        def get_site(self, site_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "site ready", 1),
+                [SharePointSite(site_id, "ops", "Operations", "https://sharepoint.test/ops")],
+            )
+
+        def list_documents(self, site_id, **kwargs):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [SharePointDocument("file-1", "MFA.md", site_id, "root", 42, "today", "/mfa", False)],
+            )
+
+        def get_document(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "document ready", 1),
+                [SharePointDocument(item_id, "MFA.md", site_id, "root", 42, "today", "/mfa", False)],
+            )
+
+        def get_document_content(self, site_id, item_id):
+            return SharePointReadResponse(
+                ConnectorReadResult("ready", "content ready", 1),
+                [SharePointDocument(
+                    item_id, "MFA.md", site_id, "root", 42, "today", "/mfa", False, True,
+                    "token=secret",
+                )],
+            )
+
+    monkeypatch.setattr(app_module, "SharePointClient", FakeSharePointClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/sharepoint/health")
+    sites = client.get("/connectors/sharepoint/sites")
+    site = client.get("/connectors/sharepoint/sites/site-1")
+    documents = client.get("/connectors/sharepoint/sites/site-1/documents")
+    document = client.get("/connectors/sharepoint/sites/site-1/documents/file-1")
+    content = client.get("/connectors/sharepoint/sites/site-1/documents/file-1/content")
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert sites.json()["items"][0]["display_name"] == "Operations"
+    assert site.json()["items"][0]["id"] == "site-1"
+    assert documents.json()["items"][0]["name"] == "MFA.md"
+    assert document.json()["items"][0]["id"] == "file-1"
+    assert content.json()["items"][0]["content"] == "token=[redacted]"
+    assert any(connector["id"] == "sharepoint" for connector in connectors.json())
+    assert any(event["event_type"] == "sharepoint.read" for event in audit.json())
+
+
+def test_sharepoint_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    response = TestClient(create_app(settings)).get("/connectors/sharepoint/health")
+    assert response.status_code == 401
+
+
+def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def health(self):
+            return ConnectorReadResult("ready", "Microsoft Graph ready", 1)
+
+        def list_users(self, **kwargs):
+            return M365GraphReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphUser(
+                        "user-1",
+                        "Adele Vance",
+                        "adele@example.test",
+                        "adele@example.test",
+                        True,
+                        "Manager",
+                        "Operations",
+                    )
+                ],
+                "next-token",
+            )
+
+        def list_groups(self, **kwargs):
+            return M365GraphGroupReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphGroup(
+                        "group-1",
+                        "Helpdesk",
+                        "helpdesk@example.test",
+                        "helpdesk",
+                        "Support team",
+                        True,
+                        False,
+                        ("Unified",),
+                    )
+                ],
+                "group-next-token",
+            )
+
+        def list_subscribed_skus(self, **kwargs):
+            return M365GraphLicenseReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphSubscribedSku(
+                        "sku-1",
+                        "sku-guid",
+                        "M365_BUSINESS_PREMIUM",
+                        "Enabled",
+                        "User",
+                        7,
+                        25,
+                        2,
+                        1,
+                        0,
+                    )
+                ],
+                "license-next-token",
+            )
+
+        def list_license_details(self, **kwargs):
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphLicenseDetail(
+                        "detail-1",
+                        "sku-guid",
+                        "M365_BUSINESS_PREMIUM",
+                        (),
+                    )
+                ],
+                "detail-next-token",
+            )
+
+        def list_mail_folders(self, **kwargs):
+            return M365GraphMailFolderReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [M365GraphMailFolder("inbox-id", "Inbox", "root-id", 3, 42, 5, False)],
+                "folder-next-token",
+            )
+
+        def list_mail_messages(self, **kwargs):
+            return M365GraphMailMessageReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphMailMessage(
+                        "message-1",
+                        "VPN issue",
+                        "Adele Vance",
+                        "adele@example.test",
+                        "today",
+                        False,
+                        True,
+                        "high",
+                    )
+                ],
+                "message-next-token",
+            )
+
+        def list_managed_devices(self, **kwargs):
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("ready", str(kwargs), 1),
+                [
+                    M365GraphManagedDevice(
+                        "device-1",
+                        "user-1",
+                        "LAPTOP-1",
+                        "company",
+                        "2026-08-01T10:00:00Z",
+                        "2026-08-07T10:00:00Z",
+                        "Windows",
+                        "compliant",
+                        "mdm",
+                        "11.0",
+                        True,
+                        "registered",
+                        True,
+                        "user@example.test",
+                        "Adele Vance",
+                        "Surface",
+                        "Microsoft",
+                    )
+                ],
+                "device-next-token",
+            )
+
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(settings))
+
+    health = client.get("/connectors/m365/health")
+    users = client.get(
+        "/connectors/m365/users",
+        params={"identity": "adele@example.test", "cursor": "next", "page_size": 2},
+    )
+    groups = client.get(
+        "/connectors/m365/groups",
+        params={"identity": "helpdesk@example.test", "cursor": "group-next", "page_size": 2},
+    )
+    licenses = client.get(
+        "/connectors/m365/licenses",
+        params={"cursor": "license-next"},
+    )
+    license_details = client.get(
+        "/connectors/m365/users/license-details",
+        params={"identity": "adele@example.test", "cursor": "detail-next", "page_size": 2},
+    )
+    mail_folders = client.get(
+        "/connectors/m365/mail-folders",
+        params={"identity": "adele@example.test", "cursor": "folder-next", "page_size": 2},
+    )
+    mail_messages = client.get(
+        "/connectors/m365/mail-messages",
+        params={
+            "identity": "adele@example.test",
+            "folder_id": "inbox-id",
+            "cursor": "message-next",
+            "page_size": 2,
+        },
+    )
+    managed_devices = client.get(
+        "/connectors/m365/managed-devices",
+        params={"cursor": "device-next", "page_size": 2},
+    )
+    connectors = client.get("/connectors")
+    audit = client.get("/audit")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ready"
+    assert users.json()["items"][0]["user_principal_name"] == "adele@example.test"
+    assert users.json()["next_cursor"] == "next-token"
+    assert groups.json()["items"][0]["mail_nickname"] == "helpdesk"
+    assert groups.json()["next_cursor"] == "group-next-token"
+    assert licenses.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
+    assert licenses.json()["next_cursor"] == "license-next-token"
+    assert license_details.json()["items"][0]["sku_part_number"] == "M365_BUSINESS_PREMIUM"
+    assert license_details.json()["next_cursor"] == "detail-next-token"
+    assert mail_folders.json()["items"][0]["display_name"] == "Inbox"
+    assert mail_folders.json()["next_cursor"] == "folder-next-token"
+    assert mail_messages.json()["items"][0]["subject"] == "VPN issue"
+    assert mail_messages.json()["next_cursor"] == "message-next-token"
+    assert managed_devices.json()["items"][0]["device_name"] == "LAPTOP-1"
+    assert managed_devices.json()["next_cursor"] == "device-next-token"
+    assert any(connector["id"] == "m365" for connector in connectors.json())
+    assert any(event["event_type"] == "m365.read" for event in audit.json())
+
+
+def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
+    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    client = TestClient(create_app(settings))
+    assert client.get("/connectors/m365/health").status_code == 401
+    assert client.get("/connectors/m365/groups").status_code == 401
+    assert client.get("/connectors/m365/licenses").status_code == 401
+    assert client.get("/connectors/m365/users/license-details", params={"identity": "user-1"}).status_code == 401
+    assert client.get("/connectors/m365/mail-folders").status_code == 401
+    assert client.get("/connectors/m365/mail-messages").status_code == 401
+    assert client.get("/connectors/m365/managed-devices").status_code == 401
+
+
+def test_m365_user_creation_requires_admin_approval_and_uses_vault_secret(settings, monkeypatch, tmp_path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def create_user(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphUserCreateResult(
+                "succeeded",
+                "created",
+                remote_id="user-1",
+                user_principal_name=str(kwargs["user_principal_name"]),
+                display_name=str(kwargs["display_name"]),
+                account_enabled=bool(kwargs["account_enabled"]),
+                status_code=201,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+        vault_path=tmp_path / "vault",
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    draft = client.post(
+        "/connectors/m365/users/drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_principal_name": "adele.vance@example.test",
+            "display_name": "Adele Vance",
+            "mail_nickname": "adele.vance",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+    assert draft.status_code == 200
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert calls[0]["temporary_password"] == "Temporary-Password-123!"
+    assert "Temporary-Password-123!" not in admin_approval.text
+
+
+def test_m365_user_disable_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def disable_user(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphUserDisableResult(
+                "succeeded",
+                "disabled",
+                user_identity=str(kwargs["user_identity"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    draft = client.post(
+        "/connectors/m365/users/disable-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_identity": "adele.vance@example.test",
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.users.disable"
+    assert draft.json()["payload"]["user_identity"] == "adele.vance@example.test"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"user_identity": "adele.vance@example.test"}]
+    assert "password" not in admin_approval.text.lower()
+
+
+def test_m365_password_and_authentication_method_routes_require_admin_approval(
+    settings, monkeypatch, tmp_path
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def reset_user_password(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphPasswordResetResult(
+                "succeeded", "reset", user_identity=str(kwargs["user_identity"]), status_code=204
+            )
+
+        def delete_authentication_method(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphAuthenticationMethodDeleteResult(
+                "succeeded",
+                "removed",
+                user_identity=str(kwargs["user_identity"]),
+                method_type=str(kwargs["method_type"]),
+                method_id=str(kwargs["method_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+        vault_path=tmp_path / "vault",
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        "WAIT_M365_TEMP_ADELE", "Temporary-Password-123!"
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    headers = _auth("admin-token")
+
+    password_draft = client.post(
+        "/connectors/m365/users/password-reset-drafts",
+        headers=headers,
+        json={
+            "user_identity": "adele.vance@example.test",
+            "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            "force_change_password_next_sign_in_with_mfa": True,
+        },
+    )
+    assert password_draft.status_code == 200
+    assert "Temporary-Password-123!" not in password_draft.text
+    password_approval = client.post(
+        f"/approval-requests/{password_draft.json()['id']}",
+        headers=headers,
+        json={"status": "approved"},
+    )
+    assert password_approval.status_code == 200
+
+    method_draft = client.post(
+        "/connectors/m365/users/authentication-method-drafts",
+        headers=headers,
+        json={
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    )
+    assert method_draft.status_code == 200
+    method_approval = client.post(
+        f"/approval-requests/{method_draft.json()['id']}",
+        headers=headers,
+        json={"status": "approved"},
+    )
+    assert method_approval.status_code == 200
+    assert calls == [
+        {
+            "user_identity": "adele.vance@example.test",
+            "temporary_password": "Temporary-Password-123!",
+            "force_change_password_next_sign_in": True,
+            "force_change_password_next_sign_in_with_mfa": True,
+        },
+        {
+            "user_identity": "adele.vance@example.test",
+            "method_type": "fido2",
+            "method_id": "method-1",
+        },
+    ]
+    assert "Temporary-Password-123!" not in password_approval.text
+
+
+def test_m365_group_membership_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def change_group_membership(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphGroupMembershipResult(
+                "succeeded",
+                "membership changed",
+                group_id=str(kwargs["group_id"]),
+                user_id=str(kwargs["user_id"]),
+                operation=str(kwargs["operation"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/groups/membership-drafts",
+        headers=_auth("viewer-token"),
+        json={"group_id": "group-1", "user_id": "user-1", "operation": "add"},
+    )
+
+    draft = client.post(
+        "/connectors/m365/groups/membership-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "group_id": "group-1",
+            "user_id": "user-1",
+            "operation": "remove",
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.groups.members.remove"
+    assert draft.json()["payload"]["group_id"] == "group-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["operation"] == "remove"
+    assert calls == [{"group_id": "group-1", "user_id": "user-1", "operation": "remove"}]
+
+
+def test_m365_license_change_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def change_user_licenses(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphLicenseChangeResult(
+                "succeeded",
+                "licenses changed",
+                user_id=str(kwargs["user_id"]),
+                operation=str(kwargs["operation"]),
+                sku_ids=tuple(kwargs["sku_ids"]),
+                status_code=200,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    sku_ids = ["84a661c4-e949-4bd2-a560-ed7766fcaf2b"]
+
+    viewer_draft = client.post(
+        "/connectors/m365/users/license-drafts",
+        headers=_auth("viewer-token"),
+        json={"user_id": "user-1", "sku_ids": sku_ids, "operation": "add"},
+    )
+    draft = client.post(
+        "/connectors/m365/users/license-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_id": "user-1",
+            "sku_ids": sku_ids,
+            "operation": "add",
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.users.licenses.add"
+    assert draft.json()["payload"]["sku_ids"] == sku_ids
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["operation"] == "add"
+    assert calls == [{"user_id": "user-1", "sku_ids": sku_ids, "operation": "add"}]
+
+
+def test_m365_session_revocation_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def revoke_user_sessions(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphSessionRevokeResult(
+                "succeeded",
+                "sessions revoked",
+                user_id=str(kwargs["user_id"]),
+                status_code=200,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/users/session-revocation-drafts",
+        headers=_auth("viewer-token"),
+        json={"user_id": "user-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/users/session-revocation-drafts",
+        headers=_auth("admin-token"),
+        json={"user_id": "user-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.users.sessions.revoke"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 200
+    assert calls == [{"user_id": "user-1"}]
+
+
+def test_m365_managed_device_retirement_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self):
+            return ConnectorReadResult("ready", "write ready")
+
+        def retire_managed_device(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphManagedDeviceRetireResult(
+                "succeeded",
+                "device retired",
+                device_id=str(kwargs["device_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/managed-devices/retire-drafts",
+        headers=_auth("viewer-token"),
+        json={"device_id": "device-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/managed-devices/retire-drafts",
+        headers=_auth("admin-token"),
+        json={"device_id": "device-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.managed-devices.retire"
+    assert draft.json()["payload"]["device_id"] == "device-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"device_id": "device-1"}]
+
+
+def test_m365_managed_device_sync_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def sync_managed_device(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphManagedDeviceSyncResult(
+                "succeeded",
+                "device synced",
+                device_id=str(kwargs["device_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/managed-devices/sync-drafts",
+        headers=_auth("viewer-token"),
+        json={"device_id": "device-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/managed-devices/sync-drafts",
+        headers=_auth("admin-token"),
+        json={"device_id": "device-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.managed-devices.sync"
+    assert draft.json()["payload"]["device_id"] == "device-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"device_id": "device-1"}]
+
+
+def test_m365_managed_device_reboot_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def reboot_managed_device(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphManagedDeviceRebootResult(
+                "succeeded",
+                "device rebooted",
+                device_id=str(kwargs["device_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/managed-devices/reboot-drafts",
+        headers=_auth("viewer-token"),
+        json={"device_id": "device-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/managed-devices/reboot-drafts",
+        headers=_auth("admin-token"),
+        json={"device_id": "device-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.managed-devices.reboot"
+    assert draft.json()["payload"]["device_id"] == "device-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"device_id": "device-1"}]
+
+
+def test_m365_managed_device_remote_lock_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def remote_lock_managed_device(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphManagedDeviceRemoteLockResult(
+                "succeeded",
+                "device locked",
+                device_id=str(kwargs["device_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+
+    viewer_draft = client.post(
+        "/connectors/m365/managed-devices/remote-lock-drafts",
+        headers=_auth("viewer-token"),
+        json={"device_id": "device-1"},
+    )
+    draft = client.post(
+        "/connectors/m365/managed-devices/remote-lock-drafts",
+        headers=_auth("admin-token"),
+        json={"device_id": "device-1", "client_id": "tenant-a"},
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.managed-devices.remote-lock"
+    assert draft.json()["payload"]["device_id"] == "device-1"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["status_code"] == 204
+    assert calls == [{"device_id": "device-1"}]
+
+
+def test_m365_mailbox_settings_update_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def update_mailbox_settings(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailboxSettingsUpdateResult(
+                "succeeded",
+                "mailbox settings updated",
+                user_identity=str(kwargs["user_identity"]),
+                settings=dict(kwargs["settings"]),
+                status_code=200,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    settings_payload = {"locale": "en-US", "time_zone": "UTC"}
+
+    viewer_draft = client.post(
+        "/connectors/m365/users/mailbox-settings-drafts",
+        headers=_auth("viewer-token"),
+        json={"user_identity": "user-1", "settings": settings_payload},
+    )
+    invalid_draft = client.post(
+        "/connectors/m365/users/mailbox-settings-drafts",
+        headers=_auth("admin-token"),
+        json={"user_identity": "user-1", "settings": {"forwarding": "bad"}},
+    )
+    draft = client.post(
+        "/connectors/m365/users/mailbox-settings-drafts",
+        headers=_auth("admin-token"),
+        json={
+            "user_identity": "user-1",
+            "settings": settings_payload,
+            "client_id": "tenant-a",
+        },
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert invalid_draft.status_code == 400
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.users.mailbox-settings.update"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["settings"] == settings_payload
+    assert calls == [{"user_identity": "user-1", "settings": settings_payload}]
+
+
+def test_m365_mail_message_move_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def move_mail_message(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailMessageMoveResult(
+                "succeeded",
+                "message moved",
+                user_identity=str(kwargs["user_identity"]),
+                source_folder_id=str(kwargs["source_folder_id"]),
+                message_id=str(kwargs["message_id"]),
+                destination_folder_id=str(kwargs["destination_folder_id"]),
+                status_code=201,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "destination_folder_id": "archive",
+        "client_id": "tenant-a",
+    }
+
+    viewer_draft = client.post(
+        "/connectors/m365/mail-messages/move-drafts",
+        headers=_auth("viewer-token"),
+        json=payload,
+    )
+    draft = client.post(
+        "/connectors/m365/mail-messages/move-drafts",
+        headers=_auth("admin-token"),
+        json=payload,
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.mail-messages.move"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+            "destination_folder_id": "archive",
+        }
+    ]
+
+
+def test_m365_mail_message_read_state_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def update_mail_message_read_state(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailMessageReadStateResult(
+                "succeeded",
+                "message read state updated",
+                user_identity=str(kwargs["user_identity"]),
+                source_folder_id=str(kwargs["source_folder_id"]),
+                message_id=str(kwargs["message_id"]),
+                is_read=bool(kwargs["is_read"]),
+                status_code=200,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "is_read": False,
+        "client_id": "tenant-a",
+    }
+
+    viewer_draft = client.post(
+        "/connectors/m365/mail-messages/read-state-drafts",
+        headers=_auth("viewer-token"),
+        json=payload,
+    )
+    draft = client.post(
+        "/connectors/m365/mail-messages/read-state-drafts",
+        headers=_auth("admin-token"),
+        json=payload,
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.mail-messages.read-state"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert admin_approval.json()["output"]["is_read"] is False
+    assert calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+            "is_read": False,
+        }
+    ]
+
+
+def test_m365_mail_message_delete_requires_admin_and_auto_executes_after_approval(
+    settings, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeM365GraphClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def delete_mail_message(self, **kwargs):
+            calls.append(kwargs)
+            return M365GraphMailMessageDeleteResult(
+                "succeeded",
+                "message deleted",
+                user_identity=str(kwargs["user_identity"]),
+                source_folder_id=str(kwargs["source_folder_id"]),
+                message_id=str(kwargs["message_id"]),
+                status_code=204,
+            )
+
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+        allow_http_probing=True,
+        allow_write_actions=True,
+        m365_graph_base_url="https://graph.microsoft.com/v1.0",
+        m365_access_token="graph-token",
+    )
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "user_identity": "user-1",
+        "source_folder_id": "inbox",
+        "message_id": "message-1",
+        "client_id": "tenant-a",
+    }
+
+    viewer_draft = client.post(
+        "/connectors/m365/mail-messages/delete-drafts",
+        headers=_auth("viewer-token"),
+        json=payload,
+    )
+    draft = client.post(
+        "/connectors/m365/mail-messages/delete-drafts",
+        headers=_auth("admin-token"),
+        json=payload,
+    )
+    request_id = draft.json()["id"]
+    technician_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved"},
+    )
+    admin_approval = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved"},
+    )
+
+    assert viewer_draft.status_code == 403
+    assert draft.status_code == 200
+    assert draft.json()["action_type"] == "m365.mail-messages.delete"
+    assert technician_approval.status_code == 403
+    assert admin_approval.status_code == 200
+    assert admin_approval.json()["execution_status"] == "succeeded"
+    assert calls == [
+        {
+            "user_identity": "user-1",
+            "source_folder_id": "inbox",
+            "message_id": "message-1",
+        }
+    ]
 
 
 def test_knowledge_api_missing_path_returns_400(settings) -> None:
@@ -1642,6 +5164,9 @@ def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> No
     assert listed.json() == []
     assert detail.status_code == 404
     assert analytics.json()["success_rate"]["total"] == 0
+    assert analytics.json()["approval_rate"]["requested"] == 0
+    assert analytics.json()["ticket_metrics"]["touched"] == 0
+    assert analytics.json()["activity_by_workflow"] == []
     assert analytics.json()["estimated_minutes_saved"]["estimate"] is True
 
 
@@ -1667,6 +5192,21 @@ def test_analytics_summary_api_returns_metric_groups(settings) -> None:
     assert summary["success_rate"]["succeeded"] == 1
     assert summary["failures_by_status"] == [{"status": "failed", "count": 1}]
     assert len(summary["executions_over_time"]) == 1
+    assert summary["activity_breakdown"]
+    assert summary["ticket_metrics"]["touched"] == 1
+    assert summary["ticket_metrics"]["resolved"] == 0
+    assert summary["activity_by_workflow"] == [
+        {
+            "run_kind": "smart_action",
+            "workflow_id": "ticket-triage",
+            "total": 2,
+            "succeeded": 1,
+            "status_counts": [
+                {"status": "failed", "count": 1},
+                {"status": "success", "count": 1},
+            ],
+        }
+    ]
     time_saved = summary["estimated_minutes_saved"]
     assert time_saved["estimate"] is True
     assert time_saved["minutes"] == 4
@@ -1731,7 +5271,6 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         "risk": "medium",
     }
     client = TestClient(create_app(secure_settings))
-
     created = client.post(
         "/consultant/blueprints",
         headers=_auth("tech-token"),
@@ -1766,7 +5305,6 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         headers=_auth("viewer-token"),
         params={"client_id": "beta"},
     )
-
     assert created.status_code == 201
     assert created.json()["client_id"] == "acme"
     assert created.json()["solution"] == {"name": "Employee Onboarding Agent"}
@@ -1778,7 +5316,6 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404
     assert foreign_list.status_code == 403
-
     invalid = client.post(
         "/consultant/blueprints",
         headers=_auth("tech-token"),
@@ -1811,7 +5348,6 @@ def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
         "deployment": [],
         "risk": "low",
     }
-
     viewer = client.post("/consultant/blueprints", headers=_auth("viewer-token"), json=minimal)
     no_tenant = client.post("/consultant/blueprints", headers=_auth("tech-token"), json=minimal)
     admin = client.post(
@@ -1823,11 +5359,104 @@ def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
         f"/consultant/blueprints/{admin.json()['id']}",
         headers=_auth("viewer-token"),
     )
-
     assert viewer.status_code == 403
     assert no_tenant.status_code == 403
     assert admin.status_code == 201
     assert unbound_detail.status_code == 403
+
+
+def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(settings) -> None:
+    client = TestClient(create_app(settings))
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "display_name": "Portable triage",
+            "provenance": "operator review",
+            "instructions": "Keep token=should-not-leak local.",
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 200
+    entry_id = created.json()["id"]
+
+    exported = client.get(f"/workflow-templates/gallery/{entry_id}/export")
+    assert exported.status_code == 200
+    artifact = exported.json()
+    assert artifact["format"] == "wait-local-agent.workflow-template"
+    assert artifact["format_version"] == 1
+    assert "client_id" not in artifact
+    assert "should-not-leak" not in exported.text
+
+    imported = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "client_id": "beta"},
+    )
+    assert imported.status_code == 200
+    assert imported.json()["client_id"] == "beta"
+    assert imported.json()["enabled"] is False
+    assert imported.json()["name"] == "Portable triage"
+
+    invalid_source = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "source_template_id": "not-a-template"},
+    )
+    invalid_format = client.post(
+        "/workflow-templates/gallery/import",
+        json={**artifact, "format_version": 2},
+    )
+    assert invalid_source.status_code == 404
+    assert invalid_format.status_code == 422
+    invalid_create = client.post(
+        "/workflow-templates/gallery",
+        json={"source_template_id": "ticket-triage", "provenance": "   ", "client_id": "acme"},
+    )
+    assert invalid_create.status_code == 422
+
+    secure = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    secure_client = TestClient(create_app(secure))
+    assert secure_client.get(
+        f"/workflow-templates/gallery/{entry_id}/export",
+        headers=_auth("viewer-token"),
+    ).status_code == 404
+    assert secure_client.post(
+        "/workflow-templates/gallery/import",
+        headers=_auth("tech-token"),
+        json=artifact,
+    ).status_code == 403
+
+
+def test_ticket_status_history_api_exposes_recorded_transitions(settings, tmp_path) -> None:
+    ticket_file = tmp_path / "ticket.json"
+    ticket_file.write_text(
+        "[{\"id\":\"TCK-HISTORY\",\"client\":\"Acme\",\"subject\":\"History\","
+        "\"body\":\"Status tracking\",\"priority\":\"normal\",\"status\":\"open\","
+        "\"client_id\":\"acme\",\"created_at\":\"2026-08-08T10:00:00+00:00\","
+        "\"updated_at\":\"2026-08-08T10:00:00+00:00\"}]",
+        encoding="utf-8",
+    )
+    Store(settings.data_path).ingest_ticket_file(ticket_file)
+    client = TestClient(create_app(settings))
+
+    response = client.get("/tickets/TCK-HISTORY/status-history")
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "id": 1,
+        "ticket_id": "TCK-HISTORY",
+        "client_id": "acme",
+        "from_status": "",
+        "to_status": "open",
+        "changed_at": "2026-08-08T10:00:00+00:00",
+        "source": "ticket_ingest",
+    }]
 
 
 def _read_response(items):

@@ -188,7 +188,7 @@ def test_status_handles_unreachable_and_list_payloads(monkeypatch) -> None:
     assert "GET request failed" in result["error"]
 
     with _client(lambda _request: httpx.Response(200, json=[{"id": "scan"}])) as client:
-        assert client.status() == {"status": "connected", "response": [{"id": "scan"}]}
+        assert client.status() == {"status": "connected", "capabilities": {}}
 
 
 def test_get_and_post_map_request_and_payload_errors(monkeypatch) -> None:
@@ -262,7 +262,7 @@ def test_upload_result_fallback_and_token_configuration() -> None:
 
 def test_lp_client_covers_status_error_and_invalid_payload_shapes(monkeypatch) -> None:
     with _client(lambda _request: httpx.Response(200, json={"status": "ok"})) as client:
-        assert client.status() == {"status": "ok"}
+        assert client.status() == {"status": "unknown", "capabilities": {}}
 
     with _client(lambda _request: httpx.Response(500)) as client:
         with pytest.raises(LaunchPassportRequestError, match="500"):
@@ -278,6 +278,70 @@ def test_lp_client_covers_status_error_and_invalid_payload_shapes(monkeypatch) -
 
     assert LaunchPassportClient._safe_project_id(" project-1 ") == "project-1"
     assert lp_client_module._string_payload_value({"artifactId": 4}, "artifactId") == ""
+
+
+def test_get_has_defensive_fallback_when_retry_loop_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(lp_client_module, "range", lambda _count: [], raising=False)
+    with _client(lambda _request: httpx.Response(200, json={})) as client:
+        with pytest.raises(LaunchPassportRequestError, match="GET request failed"):
+            client._get("/path")
+
+
+def test_upload_result_redacts_configured_token_and_secret_shaped_text() -> None:
+    token = "launch-passport-token"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            201,
+            json={
+                "artifactId": "artifact-1",
+                "status": token,
+                "message": f"echo={token} sk_live_EXPOSED_VALUE",
+            },
+        )
+
+    with LaunchPassportClient(
+        "https://lp.test", lambda: token, transport=httpx.MockTransport(handler)
+    ) as client:
+        result = client.upload_bundle("project-1", {"metadata": {"sourceCode": False}})
+
+    assert result.status == "unknown"
+    assert token not in json.dumps(result.payload)
+    assert "sk_live_EXPOSED_VALUE" not in json.dumps(result.payload)
+    assert token not in json.dumps(result.as_dict())
+
+
+def test_upstream_projection_scrubs_nested_sensitive_values_and_collections() -> None:
+    with _client(lambda _request: httpx.Response(200, json={"status": "completed"})) as client:
+        projected = client.sanitize_upstream(
+            {
+                "api_key": "hidden",
+                "items": [{"message": "safe"}],
+                "details": ("safe", {"password": "hidden"}),
+            }
+        )
+
+    assert projected == {
+        "api_key": "[redacted]",
+        "items": [{"message": "safe"}],
+        "details": ["safe", {"password": "[redacted]"}],
+    }
+
+
+def test_client_maps_only_known_upstream_statuses() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/scans"):
+            return httpx.Response(200, json={"status": "completed"})
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, json={"status": "not-a-state", "capabilities": {"launch_scan": True}})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with _client(handler) as client:
+        assert client.launch_scan("project-1")["status"] == "completed"
+        assert client.status() == {
+            "status": "unknown",
+            "capabilities": {"launch_scan": True},
+        }
 
 
 def test_lp_client_zip_flow_rejects_missing_storage_and_upload_request_errors(monkeypatch) -> None:

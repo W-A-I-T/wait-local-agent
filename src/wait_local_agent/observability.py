@@ -17,9 +17,10 @@ import os
 import stat
 import threading
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -40,6 +41,29 @@ ESTIMATED_MINUTES_SAVED_DERIVATION = (
     "Sum of the per-action estimated_minutes_saved declared in smart-action "
     "manifests for successful smart-action executions in the range. This is "
     "derived from manifest estimates, not measured wall-clock time."
+)
+
+APPROVAL_RATE_DERIVATION = (
+    "Approved approval requests divided by decided approval requests in the "
+    "requested date range; pending requests are reported separately."
+)
+
+TICKET_METRICS_DERIVATION = (
+    "Distinct tickets referenced by workflow/agent source records or explicit "
+    "ticket_id fields in redacted execution-step inputs. Resolved means the "
+    "current ticket status is resolved or closed; historical resolution time "
+    "is not inferred."
+)
+
+TICKET_LIFECYCLE_DERIVATION = (
+    "Historical resolution metrics use explicit local ticket status transitions "
+    "recorded during ticket ingestion or local end-user actions. Existing tickets "
+    "start with a snapshot and do not receive an inferred historical transition."
+)
+
+MODEL_COST_DERIVATION = (
+    "Configured estimate from redacted provider usage metadata and operator-supplied "
+    "input/output rates; WAIT never infers provider pricing or measured savings."
 )
 
 
@@ -80,12 +104,13 @@ class ExecutionRecorder:
     def record_execution(
         self,
         *,
-        run_kind: Literal["workflow", "smart_action"],
+        run_kind: Literal["workflow", "smart_action", "agent"],
         source_run_id: int | None,
         actor: str,
         status: str,
         trigger_source: str,
         client_id: str | None = None,
+        metadata: dict[str, object] | None = None,
         steps: tuple[StepRecord, ...] = (),
         artifacts: tuple[ArtifactRecord, ...] = (),
     ) -> int | None:
@@ -107,6 +132,7 @@ class ExecutionRecorder:
                     status=status,
                     trigger_source=trigger_source,
                     client_id=client_id,
+                    metadata=metadata,
                     steps=steps,
                     artifacts=artifacts,
                 )
@@ -131,12 +157,13 @@ class ExecutionRecorder:
     def _record_execution(
         self,
         *,
-        run_kind: Literal["workflow", "smart_action"],
+        run_kind: Literal["workflow", "smart_action", "agent"],
         source_run_id: int | None,
         actor: str,
         status: str,
         trigger_source: str,
         client_id: str | None,
+        metadata: dict[str, object] | None,
         steps: tuple[StepRecord, ...],
         artifacts: tuple[ArtifactRecord, ...],
     ) -> int:
@@ -159,6 +186,7 @@ class ExecutionRecorder:
                 now,
                 trigger_source,
                 client_id=client_id,
+                metadata=metadata,
             )
             ordinal = 0
         if run.id is None:
@@ -442,6 +470,63 @@ def build_analytics_summary(
         started_from, started_to, client_id
     )
     minutes = sum(estimates.get(action_id, 0) * count for action_id, count in success_counts)
+    activity_breakdown = [
+        {
+            "run_kind": run_kind,
+            "trigger_source": trigger_source,
+            "status": status,
+            "count": count,
+        }
+        for run_kind, trigger_source, status, count in store.execution_activity_counts(
+            started_from, started_to, client_id
+        )
+    ]
+    approval_status_counts = dict(
+        store.approval_activity_counts(started_from, started_to, client_id)
+    )
+    approved = approval_status_counts.get("approved", 0)
+    rejected = approval_status_counts.get("rejected", 0)
+    decided = approved + rejected
+    ticket_activity = store.execution_ticket_activity(started_from, started_to, client_id)
+    lifecycle = store.ticket_lifecycle_metrics(started_from, started_to, client_id)
+    resolved_tickets = sum(
+        1 for _, status in ticket_activity if status.strip().lower() in {"resolved", "closed"}
+    )
+    workflow_buckets: dict[tuple[str, str], dict[str, object]] = {}
+    for run_kind, workflow_id, status, count in store.execution_workflow_activity(
+        started_from, started_to, client_id
+    ):
+        workflow_bucket = workflow_buckets.setdefault(
+            (run_kind, workflow_id),
+            {"run_kind": run_kind, "workflow_id": workflow_id, "total": 0, "statuses": {}},
+        )
+        workflow_bucket["total"] = cast(int, workflow_bucket["total"]) + count
+        statuses = cast(dict[str, int], workflow_bucket["statuses"])
+        statuses[status] = statuses.get(status, 0) + count
+    activity_by_workflow: list[dict[str, object]] = []
+    for workflow_bucket in workflow_buckets.values():
+        statuses = cast(dict[str, int], workflow_bucket.pop("statuses"))
+        succeeded_for_bucket = sum(
+            count for status, count in statuses.items() if status in EXECUTION_SUCCESS_STATUSES
+        )
+        activity_by_workflow.append(
+            {
+                **workflow_bucket,
+                "succeeded": succeeded_for_bucket,
+                "status_counts": [
+                    {"status": status, "count": count}
+                    for status, count in sorted(statuses.items())
+                ],
+            }
+        )
+    activity_by_workflow.sort(key=lambda item: (str(item["run_kind"]), str(item["workflow_id"])))
+    model_usage = _model_usage_summary(
+        store.list_execution_runs(
+            client_id,
+            started_from=started_from,
+            started_to=started_to,
+        )
+    )
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": client_id,
@@ -452,11 +537,71 @@ def build_analytics_summary(
             "rate": (succeeded / total) if total else 0.0,
         },
         "failures_by_status": failures_by_status,
+        "activity_breakdown": activity_breakdown,
+        "approval_rate": {
+            "requested": sum(approval_status_counts.values()),
+            "decided": decided,
+            "approved": approved,
+            "rejected": rejected,
+            "pending": approval_status_counts.get("pending", 0),
+            "rate": (approved / decided) if decided else 0.0,
+            "derivation": APPROVAL_RATE_DERIVATION,
+        },
+        "ticket_metrics": {
+            "touched": len(ticket_activity),
+            "resolved": resolved_tickets,
+            "resolution_rate": (resolved_tickets / len(ticket_activity)) if ticket_activity else 0.0,
+            "derivation": TICKET_METRICS_DERIVATION,
+            "historical_resolution": {
+                **lifecycle,
+                "derivation": TICKET_LIFECYCLE_DERIVATION,
+            },
+        },
+        "activity_by_workflow": activity_by_workflow,
         "estimated_minutes_saved": {
             "minutes": minutes,
             "estimate": True,
             "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
         },
+        "model_usage": model_usage,
+    }
+
+
+def _model_usage_summary(runs: Sequence[object]) -> dict[str, object]:
+    input_tokens = 0
+    output_tokens = 0
+    runs_with_usage = 0
+    runs_with_cost = 0
+    estimated_cost_usd = 0.0
+    for run in runs:
+        try:
+            metadata = json.loads(str(getattr(run, "metadata_json", "{}")))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("usage_status") == "reported":
+            runs_with_usage += 1
+            input_value = metadata.get("input_tokens")
+            output_value = metadata.get("output_tokens")
+            if isinstance(input_value, int) and input_value >= 0:
+                input_tokens += input_value
+            if isinstance(output_value, int) and output_value >= 0:
+                output_tokens += output_value
+        if metadata.get("cost_status") != "configured_estimate":
+            continue
+        cost = metadata.get("cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            runs_with_cost += 1
+            estimated_cost_usd += float(cost)
+    return {
+        "runs_with_usage": runs_with_usage,
+        "runs_with_cost": runs_with_cost,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": round(estimated_cost_usd, 8),
+        "estimate": True,
+        "derivation": MODEL_COST_DERIVATION,
     }
 
 

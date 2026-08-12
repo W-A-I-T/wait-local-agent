@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="WAIT Local Agent">
+  <rect width="64" height="64" rx="14" fill="#172033"/>
+  <path d="M12 17h10l4 22 6-22h9l-6 30H24z" fill="#7dd3fc"/>
+  <path d="M43 17h9l-4 30h-9z" fill="#a7f3d0"/>
+</svg>
