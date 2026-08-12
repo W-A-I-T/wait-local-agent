@@ -102,6 +102,12 @@ def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets()
             client_id="acme",
             created_by="architect",
         )
+    with pytest.raises(BlueprintValidationError, match="secret material"):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": {"users": ["api_key"]}},
+            client_id="acme",
+            created_by="architect",
+        )
 
 
 def test_discovery_candidate_promotion_normalizes_labels_and_preserves_evidence() -> None:
@@ -174,6 +180,50 @@ def test_discovery_candidate_promotion_rejects_invalid_approval_objects(
             client_id="acme",
             solution_name="Onboarding",
             risk="medium",
+            created_by="architect",
+        )
+
+
+def test_discovery_candidate_promotion_rebinds_duplicate_environment_ids() -> None:
+    environment = [
+        {"id": "system", "name": "System", "kind": "declared", "status": "detected"},
+        {"id": "system", "name": "System", "kind": "declared", "status": "detected"},
+        {"id": "system", "name": "System", "kind": "declared", "status": "detected"},
+    ]
+    blueprint = promote_discovery_candidate(
+        {**_payload(), "environment": environment},
+        client_id="acme",
+        solution_name="Onboarding",
+        risk="medium",
+        created_by="architect",
+    )
+
+    assert [item["id"] for item in blueprint.environment] == ["system", "system-2", "system-3"]
+
+
+def test_discovery_candidate_promotion_rejects_non_object_environment_records() -> None:
+    with pytest.raises(BlueprintValidationError, match=r"environment\[0\] must be an object"):
+        promote_discovery_candidate(
+            {**_payload(), "environment": ["not-an-object"]},
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+
+
+def test_blueprint_rejects_non_object_discovery_evidence() -> None:
+    with pytest.raises(BlueprintValidationError, match="discovery must be an object"):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": []},
+            client_id="acme",
+            created_by="architect",
+        )
+
+    with pytest.raises(BlueprintValidationError, match="data_leaves_tenant must be boolean"):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": {"data_leaves_tenant": "unknown"}},
+            client_id="acme",
             created_by="architect",
         )
 
