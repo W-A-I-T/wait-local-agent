@@ -1351,6 +1351,11 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert app_module._safe_json_object("not-json") == {}
     assert app_module._safe_json_value('{"ok": true}') == {"ok": True}
     assert app_module._safe_json_value("not-json") is None
+    empty_summary = app_module._empty_analytics_summary("2026-01-01", "2026-01-31")
+    assert empty_summary["range"] == {"from": "2026-01-01", "to": "2026-01-31"}
+    assert empty_summary["success_rate"] == {"total": 0, "succeeded": 0, "rate": 0.0}
+    model_usage = cast(dict[str, object], empty_summary["model_usage"])
+    assert model_usage["estimate"] is True
     redacted = app_module._redact_payload({"nested": {"token": "x"}, "items": [{"bearer": "x"}]})
     nested = cast(dict[str, object], redacted["nested"])
     assert nested["token"] == "[redacted]"
