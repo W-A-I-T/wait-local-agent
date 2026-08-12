@@ -114,6 +114,13 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.mcp_server import (
+    MCP_MAX_REQUEST_BYTES,
+    McpProtocolError,
+    error_response,
+    handle_message,
+    validate_transport_headers,
+)
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_EVENT_MAX_RETRIES,
@@ -134,7 +141,14 @@ from wait_local_agent.observability import (
     build_analytics_summary,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
-from wait_local_agent.rbac import AuthContext, Role, require_end_user, require_role
+from wait_local_agent.rbac import (
+    AuthContext,
+    Role,
+    require_end_user,
+    require_role,
+    resolve_auth_context,
+    tokens_configured,
+)
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
     build_restore_evidence_report,
@@ -841,6 +855,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tools")
     def tools(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(tool) for tool in agent_service.list_tools()]
+
+    @app.get("/mcp")
+    def mcp_get(request: Request) -> Response:
+        _mcp_auth_context(request, active_settings)
+        _validate_mcp_origin(request, active_settings)
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.post("/mcp")
+    async def mcp_endpoint(request: Request) -> Response:
+        context = _mcp_auth_context(request, active_settings)
+        _validate_mcp_origin(request, active_settings)
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MCP_MAX_REQUEST_BYTES:
+                    raise HTTPException(status_code=413, detail="MCP request is too large")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="invalid Content-Length") from exc
+        raw_body = await request.body()
+        if len(raw_body) > MCP_MAX_REQUEST_BYTES:
+            raise HTTPException(status_code=413, detail="MCP request is too large")
+        try:
+            message = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return JSONResponse(
+                status_code=400,
+                content=error_response(None, McpProtocolError(-32700, "parse error")),
+            )
+        if not isinstance(message, dict):
+            return JSONResponse(
+                status_code=400,
+                content=error_response(message, McpProtocolError(-32600, "invalid JSON-RPC request")),
+            )
+        try:
+            validate_transport_headers(
+                message,
+                protocol_version=request.headers.get("mcp-protocol-version"),
+                mcp_method=request.headers.get("mcp-method"),
+                mcp_name=request.headers.get("mcp-name"),
+            )
+            result = handle_message(
+                message,
+                context=context,
+                agent_service=agent_service,
+                smart_action_service=smart_action_service,
+            )
+        except McpProtocolError as exc:
+            return JSONResponse(status_code=400, content=error_response(message, exc))
+        if result is None:
+            return Response(status_code=202)
+        return JSONResponse(content=result)
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
@@ -5608,6 +5673,30 @@ def _scheduled_ticket_id(params: dict[str, object]) -> str:
     if not isinstance(ticket_id, str) or not ticket_id.strip():
         raise HTTPException(status_code=422, detail="scheduled job params must include ticket_id")
     return ticket_id
+
+
+def _mcp_auth_context(request: Request, settings: Settings) -> AuthContext:
+    """Require explicit opt-in and real bearer authentication for MCP clients."""
+
+    if not settings.mcp_enabled:
+        raise HTTPException(status_code=404, detail="not found")
+    if settings.demo_mode or not tokens_configured(settings):
+        raise HTTPException(
+            status_code=503,
+            detail="MCP requires demo mode disabled and bearer tokens configured",
+        )
+    context = resolve_auth_context(settings, request.headers.get("authorization"))
+    if context.role < Role.VIEWER:
+        raise HTTPException(status_code=403, detail="insufficient role")
+    return context
+
+
+def _validate_mcp_origin(request: Request, settings: Settings) -> None:
+    """Apply exact-origin protection for browser-based Streamable HTTP clients."""
+
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in settings.mcp_allowed_origins:
+        raise HTTPException(status_code=403, detail="origin is not allowed")
 
 
 def _rate_limit_handler(request: Request, exc: Exception) -> Response:

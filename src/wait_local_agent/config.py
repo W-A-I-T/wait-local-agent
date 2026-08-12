@@ -135,6 +135,8 @@ class Settings:
     screenconnect_script_catalog_json: str = ""
     client_id: str = ""
     demo_mode: bool = True
+    mcp_enabled: bool = False
+    mcp_allowed_origins: tuple[str, ...] = ()
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
     document_parser: str = "basic"
@@ -445,6 +447,12 @@ def load_settings() -> Settings:
         ),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
+        mcp_enabled=_bool_env("WAIT_MCP_ENABLED", False),
+        mcp_allowed_origins=tuple(
+            value.strip()
+            for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
+            if value.strip()
+        ),
         secrets_backend=backend,
         vault_path=vault_path,
         document_parser=os.getenv("WAIT_DOCUMENT_PARSER", "basic"),

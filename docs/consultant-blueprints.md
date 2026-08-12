@@ -34,5 +34,8 @@ fields. This surface intentionally does not accept connector credentials or
 arbitrary extension blobs. The existing local Store redaction also applies
 when the JSON payload is persisted or exported, so secret-like text in valid
 free-text fields may be redacted. Natural-language discovery, Microsoft Graph,
-Copilot Studio, MCP, Power Platform packaging, deployment, and execution are
-follow-up capabilities and are not implied by a stored blueprint.
+Copilot Studio, and Power Platform packaging, deployment, and execution are
+separate capabilities and are not implied by a stored blueprint. The
+authenticated MCP endpoint is documented in
+[`docs/mcp.md`](mcp.md); storing a blueprint does not expose it or invoke any
+tool.
