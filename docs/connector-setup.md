@@ -1015,3 +1015,8 @@ approval record, and execution requires that approval plus both existing live
 HTTP and write gates. The token is never placed in a URL or approval payload.
 Use only the least-privileged Teams permissions required by the delegated or
 application flow ([list joined teams](https://learn.microsoft.com/en-us/graph/api/user-list-joinedteams?view=graph-rest-1.0), [list channels](https://learn.microsoft.com/en-us/graph/api/channel-list?view=graph-rest-1.0), [list channel messages](https://learn.microsoft.com/en-us/graph/api/channel-list-messages?view=graph-rest-1.0), [send channel message](https://learn.microsoft.com/en-us/graph/api/channel-post-messages?view=graph-rest-1.0)).
+
+The Agents/smart-action catalog also exposes the read-only
+`m365-teams-context` action for `teams`, `channels`, and `messages` resources.
+It cannot send messages; sending remains confined to the dedicated approval
+route above.

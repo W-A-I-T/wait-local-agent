@@ -152,8 +152,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   strict-ID group membership add/remove, direct user license add/remove, and
   approved session revocation, Intune managed-device sync/reboot/retirement/
   remote-lock, and
-  allowlisted mailbox-settings updates;
-  broader resource reads and other mutations remain unavailable.
+  allowlisted mailbox-settings updates. Teams joined-team, channel, and
+  bounded message reads plus an admin-approved native channel-message send
+  are available through the same Graph boundary; broader resource reads,
+  conversation history, and other mutations remain unavailable.
 - Preview-first communication for local ticket notes, email, Teams, Slack, and
   SMS through the common smart-action contract. Approved local notes are
   tenant-scoped; external delivery supports configured SMTP/webhook adapters
@@ -242,8 +244,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   React `/technician-chat` screen for creating, selecting, messaging, and closing
   sessions. Explicit
   script/device requests can prepare an RMM preview or approval-gated execution
-  through the existing RMM action; unrestricted planning, external Teams
-  conversation delivery, and an end-user conversational agent are not shipped.
+  through the existing RMM action; unrestricted planning, richer Teams
+  conversation delivery/history, and an end-user conversational agent are not
+  shipped.
 - Optional end-user support can create and track requester-scoped local tickets,
   send isolated requester follow-up messages, and request technician escalation
   through both `/end-user/tickets*` and the separate `/end-user` React surface;
@@ -385,8 +388,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   user creation, disable/offboarding, password reset, explicit
   authentication-method removal, group membership, direct license changes,
   session revocation, Intune managed-device sync/reboot/retirement, mailbox-settings,
-  message-move, message-read-state, and message-delete updates remain
-  unavailable.
+  message-move, message-read-state, message-delete, and the bounded Teams
+  channel-message update remain unavailable outside their dedicated approval
+  routes.
 - Ungated OCR. Scanned PDF OCR requires the optional Docling install and explicit OCR opt-in.
 - Multi-tenant hosted control plane.
 - Ungated side effects. PSA writes require explicit flags, credentials, rate-limit budget, and approval; Syncro is limited to its documented comment action and other live writes remain disabled.

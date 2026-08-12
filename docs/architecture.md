@@ -44,6 +44,8 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
   row queries through the documented API, plus an approval-gated bounded page
   comment write
 - SharePoint read-only site and drive-item metadata through Microsoft Graph
+- Teams joined-team, channel, and bounded channel-message reads through
+  Microsoft Graph, plus an admin-approved native channel-message send
 - Microsoft Graph read-only user and group context lookup through the guarded
   HTTP boundary
 - ConnectWise PSA ticket and company lookup plus an allowlisted,

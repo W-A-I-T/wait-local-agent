@@ -715,6 +715,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         confluence_client=confluence_client,
         notion_client=notion_client,
         sharepoint_client=sharepoint_client,
+        teams_client=teams_client,
         timezest_client=timezest_client,
         scalepad_client=scalepad_client,
         m365_client=m365_client,

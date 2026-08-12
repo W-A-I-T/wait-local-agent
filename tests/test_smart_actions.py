@@ -92,6 +92,7 @@ from wait_local_agent.smart_actions import (
     SyncroTicketCommentsAction,
     SyncroTicketLookupAction,
     SyncroTicketWriteAction,
+    TeamsGraphContextAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
@@ -103,6 +104,14 @@ from wait_local_agent.smart_actions import (
     _stored_action_status,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.teams_graph import (
+    TeamsChannel,
+    TeamsChannelReadResponse,
+    TeamsMessage,
+    TeamsMessageReadResponse,
+    TeamsTeam,
+    TeamsTeamReadResponse,
+)
 from wait_local_agent.vault import SecretVault
 
 
@@ -220,6 +229,44 @@ def _action_context(
         provider_available=available,
         collector_service=collector_service,
     )
+
+
+def test_teams_context_action_is_bounded_and_read_only(settings) -> None:
+    provider = SimpleNamespace(
+        list_teams=lambda **_: TeamsTeamReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsTeam("team-1", "Operations", "", "")],
+        ),
+        list_channels=lambda team_id, **_: TeamsChannelReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsChannel("channel-1", team_id, "General", "", "standard", "")],
+        ),
+        list_messages=lambda team_id, channel_id, **_: TeamsMessageReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsMessage("message-1", team_id, channel_id, "", "token=secret", "Adele", "", "")],
+        ),
+    )
+    context = ActionContext(
+        store=Store(settings.data_path),
+        settings=settings,
+        client_id="acme",
+        teams_client=provider,
+    )
+
+    teams = TeamsGraphContextAction().run(context, {"resource": "teams"})
+    channels = TeamsGraphContextAction().run(
+        context, {"resource": "channels", "team_id": "team-1"}
+    )
+    messages = TeamsGraphContextAction().run(
+        context,
+        {"resource": "messages", "team_id": "team-1", "channel_id": "channel-1"},
+    )
+
+    assert teams.status == channels.status == messages.status == "success"
+    assert teams.output["items"][0]["id"] == "team-1"  # type: ignore[index]
+    assert channels.output["items"][0]["team_id"] == "team-1"  # type: ignore[index]
+    assert messages.output["items"][0]["body"] == "token=[redacted]"  # type: ignore[index]
+    assert messages.evidence[0]["connector"] == "m365-teams"
 
 
 class FakeCollectorPreviewService:
@@ -1061,6 +1108,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-managed-device-sync",
         "m365-password-reset",
         "m365-session-revocation",
+        "m365-teams-context",
         "m365-user-offboarding",
         "m365-user-onboarding",
         "notion-data-source-query",

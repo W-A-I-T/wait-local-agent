@@ -59,6 +59,7 @@ from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.syncro import SyncroReadProvider, SyncroWriteProvider
+from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider, TimeZestWriteProvider
 from wait_local_agent.workiq import WorkIqClient
 
@@ -244,6 +245,30 @@ class M365ManagedDeviceWriteProvider(Protocol):
         """Request remote lock for one explicitly identified device."""
 
 
+class TeamsGraphReadProvider(Protocol):
+    def list_teams(self, *, cursor: str | None = None, page_size: int = 25) -> object:
+        """Read bounded joined-team metadata."""
+
+    def list_channels(
+        self,
+        team_id: str,
+        *,
+        cursor: str | None = None,
+        page_size: int = 25,
+    ) -> object:
+        """Read bounded channel metadata for one team."""
+
+    def list_messages(
+        self,
+        team_id: str,
+        channel_id: str,
+        *,
+        cursor: str | None = None,
+        page_size: int = 25,
+    ) -> object:
+        """Read bounded messages for one channel."""
+
+
 ActionStatus = Literal[
     "success",
     "provider_not_configured",
@@ -329,6 +354,7 @@ class ActionContext:
     confluence_client: ConfluenceClientProtocol | None = None
     notion_client: NotionClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
+    teams_client: TeamsGraphReadProvider | None = None
     work_iq_client: WorkIqClient | None = None
     m365_client: (
         M365GraphReadProvider
@@ -1834,6 +1860,129 @@ class M365LiveContextAction:
                 }
             ],
         )
+
+
+class TeamsGraphContextAction:
+    manifest = SmartActionManifest(
+        action_id="m365-teams-context",
+        title="Microsoft Teams live context",
+        description=(
+            "Read bounded joined-team, channel, or channel-message context through "
+            "the guarded Microsoft Graph Teams boundary."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["resource"],
+            "properties": {
+                "resource": {
+                    "type": "string",
+                    "enum": ["teams", "channels", "messages"],
+                },
+                "team_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "channel_id": {"type": "string", "minLength": 1, "maxLength": 320},
+                "cursor": {"type": "string", "maxLength": 4096},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={
+            "resource": "string",
+            "items": "array",
+            "count": "integer",
+            "next_cursor": "string",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        resource = payload.get("resource")
+        if resource not in {"teams", "channels", "messages"}:
+            return _failed("resource must be one of teams, channels, or messages")
+        limit = payload.get("limit", 20)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            return _failed("limit must be an integer between 1 and 50")
+        cursor = payload.get("cursor")
+        if cursor is not None and (
+            not isinstance(cursor, str) or not cursor.strip() or len(cursor.strip()) > 4096
+        ):
+            return _failed("cursor must be non-empty text of at most 4096 characters")
+        team_id = payload.get("team_id")
+        channel_id = payload.get("channel_id")
+        if resource in {"channels", "messages"} and not _valid_teams_id(team_id):
+            return _failed("team_id must be non-empty text of at most 320 characters")
+        if resource == "messages" and not _valid_teams_id(channel_id):
+            return _failed("channel_id must be non-empty text of at most 320 characters")
+        provider = cast(TeamsGraphReadProvider, context.teams_client or TeamsGraphClient(context.settings))
+        try:
+            if resource == "teams":
+                response = provider.list_teams(
+                    cursor=cursor.strip() if isinstance(cursor, str) else None,
+                    page_size=limit,
+                )
+            elif resource == "channels":
+                response = provider.list_channels(
+                    cast(str, team_id).strip(),
+                    cursor=cursor.strip() if isinstance(cursor, str) else None,
+                    page_size=limit,
+                )
+            else:
+                response = provider.list_messages(
+                    cast(str, team_id).strip(),
+                    cast(str, channel_id).strip(),
+                    cursor=cursor.strip() if isinstance(cursor, str) else None,
+                    page_size=limit,
+                )
+        except Exception:
+            return _failed("Microsoft Teams context lookup failed")
+        result = getattr(response, "result", None)
+        status = str(getattr(result, "status", "failed"))
+        message = redact_text(str(getattr(result, "message", "Microsoft Teams read failed")))
+        items = getattr(response, "items", [])
+        if not isinstance(items, list):
+            return _failed("Microsoft Teams returned malformed context data")
+        output: dict[str, object] = {
+            "resource": resource,
+            "connector_status": status,
+            "items": [],
+            "count": 0,
+            "next_cursor": "",
+        }
+        if status != "ready":
+            return ActionResult(status="failed", output=output, error_detail=message)
+        normalized: list[dict[str, object]] = []
+        for item in items[:limit]:
+            if not hasattr(item, "__dataclass_fields__"):
+                return _failed("Microsoft Teams returned malformed context data")
+            normalized.append(cast(dict[str, object], redact_value(asdict(item))))
+        output["items"] = normalized
+        output["count"] = len(normalized)
+        output["next_cursor"] = str(getattr(response, "next_cursor", ""))
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "m365-teams",
+                    "operation": f"{resource}.list",
+                    "client_id": context.client_id,
+                }
+            ],
+        )
+
+
+def _valid_teams_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value.strip()) <= 320
+        and not any(ord(character) < 32 for character in value)
+    )
 
 
 class M365MailMessageMoveAction:
@@ -8539,6 +8688,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ScalePadGoalLookupAction(),
         ScalePadAssessmentLookupAction(),
         M365LiveContextAction(),
+        TeamsGraphContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
         M365SessionRevocationAction(),
@@ -8624,6 +8774,7 @@ class SmartActionService:
         confluence_client: ConfluenceClientProtocol | None = None,
         notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
+        teams_client: TeamsGraphReadProvider | None = None,
         work_iq_client: WorkIqClient | None = None,
         timezest_client: TimeZestReadProvider | TimeZestWriteProvider | None = None,
         scalepad_client: ScalePadReadProvider | None = None,
@@ -8660,18 +8811,23 @@ class SmartActionService:
         self.confluence_client = confluence_client
         self.notion_client = notion_client
         self.sharepoint_client = sharepoint_client
+        self.teams_client = teams_client
         self.work_iq_client = work_iq_client
         self.timezest_client = timezest_client
         self.scalepad_client = scalepad_client
         self.m365_client = m365_client
         configured_communication = ConfiguredCommunicationProvider(settings)
         self.communication_provider = communication_provider or configured_communication
-        self.communication_sender: CommunicationSender | None = communication_sender or (
-            configured_communication
-            if communication_provider is None
-            else communication_provider
-            if hasattr(communication_provider, "send")
-            else None
+        self.communication_sender = cast(
+            CommunicationSender | None,
+            communication_sender
+            or (
+                configured_communication
+                if communication_provider is None
+                else communication_provider
+                if hasattr(communication_provider, "send")
+                else None
+            ),
         )
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
@@ -9031,6 +9187,7 @@ class SmartActionService:
             confluence_client=self.confluence_client,
             notion_client=self.notion_client,
             sharepoint_client=self.sharepoint_client,
+            teams_client=self.teams_client,
             work_iq_client=self.work_iq_client,
             timezest_client=self.timezest_client,
             scalepad_client=self.scalepad_client,
