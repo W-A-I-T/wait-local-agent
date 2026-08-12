@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
+from wait_local_agent.discovery import (
+    DiscoveryValidationError,
+    build_solution_discovery,
+    discover_solution_environment,
+)
 
 
 def _answers() -> dict[str, object]:
@@ -48,6 +52,15 @@ def test_discovery_reports_missing_answers_without_inventing_them() -> None:
     assert "systems" in result["missing_required"]
     assert result["blueprint_candidate"]["systems"] == []
     assert result["roi_analysis"]["status"] == "needs_estimates"
+
+
+def test_environment_discovery_translates_environment_validation_errors() -> None:
+    with pytest.raises(DiscoveryValidationError, match="secret material"):
+        discover_solution_environment(
+            client_id="acme",
+            systems=["token=secret"],
+            connector_statuses=[],
+        )
 
 
 @pytest.mark.parametrize(

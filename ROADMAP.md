@@ -49,6 +49,10 @@ credential or undocumented vendor API remains an explicit boundary.
   architecture projections, workflow design, use-case catalog, delivery
   handoff, governance review, evaluation contracts, monitoring, and bounded
   supervisor/child-agent plans.
+- No-probe environment discovery that matches customer declarations to the
+  existing connector catalog, preserves configured/detected/
+  permission-limited/not-configured/unknown states, and carries evidence into
+  the blueprint candidate and architecture review.
 - Reviewable Power Apps, Power Automate, connector, deployment, and delivery
   artifacts that preserve the distinction between plan, generate, validate,
   package, and deploy.

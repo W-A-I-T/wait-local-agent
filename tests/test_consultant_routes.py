@@ -11,6 +11,7 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
+    EnvironmentDiscoveryRequest,
     EvaluationExecutionRequest,
     EvaluationRequest,
     PowerAppsPlanRequest,
@@ -299,6 +300,18 @@ def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settin
             ),
             _technician(),
         )
+
+
+def test_environment_discovery_route_returns_explicit_local_evidence(settings) -> None:
+    result = _endpoint(settings, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365", "Custom API"]),
+        _technician(),
+    )
+
+    assert result["probe_performed"] is False
+    systems = {item["name"]: item for item in result["systems"]}
+    assert systems["Microsoft 365"]["status"] == "not_configured"
+    assert systems["Custom API"]["status"] == "detected"
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

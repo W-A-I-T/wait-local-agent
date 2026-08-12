@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, cast
+
+from wait_local_agent.environment import EnvironmentDiscoveryError, discover_environment
+from wait_local_agent.models import ConnectorStatus
 
 MAX_DISCOVERY_ANSWERS = 12
 MAX_DISCOVERY_LIST_ITEMS = 16
@@ -41,7 +44,12 @@ class DiscoveryValidationError(ValueError):
     """Raised when discovery evidence is malformed or unsafe."""
 
 
-def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -> dict[str, Any]:
+def build_solution_discovery(
+    *,
+    client_id: str,
+    answers: Mapping[str, object],
+    environment: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if len(set(answers) - {"impact"}) > MAX_DISCOVERY_ANSWERS:
         raise DiscoveryValidationError(f"answers may contain at most {MAX_DISCOVERY_ANSWERS} fields")
@@ -56,6 +64,9 @@ def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -
         and (question["id"] not in normalized or not _answer_present(normalized[cast(str, question["id"])]))
     ]
     risk = _risk_review(normalized, missing)
+    environment_view = dict(environment) if environment is not None else _not_run_environment(tenant)
+    candidate = _blueprint_candidate(normalized)
+    candidate["environment"] = list(cast(list[dict[str, object]], environment_view.get("systems", [])))
     return {
         "format": "wait-local-agent.solution-discovery",
         "format_version": 1,
@@ -73,7 +84,47 @@ def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -
         "readiness": "ready_for_architecture" if not missing else "needs_discovery",
         "risk_review": risk,
         "roi_analysis": _roi_analysis(answers.get("impact")),
-        "blueprint_candidate": _blueprint_candidate(normalized),
+        "blueprint_candidate": candidate,
+        "environment": environment_view,
+        "inference_started": False,
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
+def discover_solution_environment(
+    *,
+    client_id: str,
+    systems: Sequence[object],
+    connector_statuses: Iterable[ConnectorStatus],
+    configured_client_id: str | None = None,
+) -> dict[str, Any]:
+    """Build environment evidence for a discovery request without probing."""
+
+    try:
+        return discover_environment(
+            client_id=client_id,
+            requested_systems=systems,
+            connector_statuses=connector_statuses,
+            configured_client_id=configured_client_id,
+        )
+    except EnvironmentDiscoveryError as exc:
+        raise DiscoveryValidationError(str(exc)) from exc
+
+
+def _not_run_environment(client_id: str) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.environment-discovery",
+        "format_version": 1,
+        "client_id": client_id,
+        "source": "not_requested",
+        "probe_performed": False,
+        "systems": [],
+        "unresolved": [],
+        "limitations": [
+            {"system": "environment", "reason": "environment discovery was not requested"}
+        ],
+        "readiness": "needs_environment_verification",
         "inference_started": False,
         "execution_started": False,
         "deployment_started": False,

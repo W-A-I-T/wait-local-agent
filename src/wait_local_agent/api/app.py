@@ -95,7 +95,11 @@ from wait_local_agent.consultant import (
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
-from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
+from wait_local_agent.discovery import (
+    DiscoveryValidationError,
+    build_solution_discovery,
+    discover_solution_environment,
+)
 from wait_local_agent.evaluation import (
     AgentServiceEvaluationExecutor,
     EvaluationValidationError,
@@ -473,6 +477,13 @@ class PowerAutomatePlanRequest(BaseModel):
 class DiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class EnvironmentDiscoveryRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    systems: list[object] = Field(default_factory=list, max_length=32)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4320,7 +4331,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
-            return build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
+            preliminary = build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
+            environment = discover_solution_environment(
+                client_id=scoped_client_id,
+                systems=cast(list[object], preliminary["answered"].get("systems", [])),
+                connector_statuses=list_connector_statuses(active_settings),
+                configured_client_id=active_settings.client_id,
+            )
+            return build_solution_discovery(
+                client_id=scoped_client_id,
+                answers=payload.answers,
+                environment=environment,
+            )
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/environment-discovery")
+    def consultant_environment_discovery(
+        payload: EnvironmentDiscoveryRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return discover_solution_environment(
+                client_id=scoped_client_id,
+                systems=payload.systems,
+                connector_statuses=list_connector_statuses(active_settings),
+                configured_client_id=active_settings.client_id,
+            )
         except DiscoveryValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

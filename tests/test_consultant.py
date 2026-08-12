@@ -240,6 +240,36 @@ def test_architect_resolves_existing_catalogs_and_reports_open_items() -> None:
     )
 
 
+def test_blueprint_round_trip_preserves_environment_evidence_and_architecture_boundary() -> None:
+    payload = {
+        **_payload(),
+        "environment": [
+            {
+                "id": "m365",
+                "name": "Microsoft 365",
+                "kind": "m365",
+                "connector_id": "m365",
+                "status": "configured",
+                "evidence": ["local_connector_configuration"],
+                "limitation": "provider authorization is unknown",
+                "tenant_scope": "acme",
+                "http_probing_enabled": False,
+            }
+        ],
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    assert blueprint.environment[0]["status"] == "configured"
+    environment_component = next(item for item in architecture["components"] if item["kind"] == "environment")
+    assert environment_component["status"] == "needs_review"
+    assert any(item["kind"] == "environment" for item in architecture["open_items"])
+
+
 def test_architect_can_be_ready_for_empty_local_design() -> None:
     payload = _payload()
     payload.update(

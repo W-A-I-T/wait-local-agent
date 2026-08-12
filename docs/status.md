@@ -11,6 +11,11 @@ Platform preparation surfaces. External credentials, provider availability, and
 deployment authorization remain explicit prerequisites; artifact generation is
 not deployment.
 
+Tenant-scoped environment discovery matches explicit system declarations to
+local connector configuration without probing providers; configured,
+not-configured, detected, permission-limited, and unknown states remain
+explicit and flow into blueprint candidates and architecture review.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

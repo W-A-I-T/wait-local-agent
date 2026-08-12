@@ -48,6 +48,7 @@ _TOP_LEVEL_FIELDS = {
     "skills",
     "model",
     "orchestration",
+    "environment",
 }
 _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "instructions",
@@ -55,6 +56,7 @@ _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "skills",
     "model",
     "orchestration",
+    "environment",
 }
 _ORCHESTRATION_MODES = {"single_agent", "supervisor", "event_driven", "hybrid"}
 
@@ -176,6 +178,33 @@ def architect_solution_blueprint(
                 "name": name,
                 "implementation": "existing_connector_or_mcp_boundary",
                 "status": "needs_review",
+            }
+        )
+
+    for environment in blueprint.environment:
+        status = str(environment["status"])
+        connector_id = str(environment.get("connector_id") or "")
+        if status not in {"authorized", "authenticated", "reachable"}:
+            open_items.append(
+                {
+                    "kind": "environment",
+                    "component_id": str(environment["id"]),
+                    "detail": str(
+                        environment.get("limitation")
+                        or f"environment status is {status}; provider verification is incomplete"
+                    ),
+                }
+            )
+        components.append(
+            {
+                "id": environment["id"],
+                "kind": "environment",
+                "name": environment["name"],
+                "connector_id": connector_id or None,
+                "observed_status": status,
+                "evidence": list(cast(list[str], environment.get("evidence", []))),
+                "implementation": "existing_connector_boundary" if connector_id else "customer_declared_system",
+                "status": "ready" if status in {"authorized", "authenticated", "reachable"} else "needs_review",
             }
         )
 
@@ -307,6 +336,7 @@ def parse_solution_blueprint(
         skills=skills,
         model=model,
         orchestration=cast(str, orchestration),
+        environment=_environment(payload.get("environment", [])),
     )
 
 
@@ -350,6 +380,8 @@ def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, Any]:
         payload["model"] = blueprint.model
     if blueprint.orchestration:
         payload["orchestration"] = blueprint.orchestration
+    if blueprint.environment:
+        payload["environment"] = [dict(item) for item in blueprint.environment]
     return payload
 
 
@@ -418,6 +450,74 @@ def _text_list(value: object, field: str) -> tuple[str, ...]:
     if len(value) > MAX_BLUEPRINT_ITEMS:
         raise BlueprintValidationError(f"{field} may contain at most {MAX_BLUEPRINT_ITEMS} items")
     return tuple(_text(item, f"{field}[{index}]") for index, item in enumerate(value))
+
+
+def _environment(value: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list):
+        raise BlueprintValidationError("environment must be an array")
+    if len(value) > MAX_BLUEPRINT_ITEMS:
+        raise BlueprintValidationError(f"environment may contain at most {MAX_BLUEPRINT_ITEMS} items")
+    allowed = {
+        "id",
+        "name",
+        "kind",
+        "connector_id",
+        "status",
+        "evidence",
+        "limitation",
+        "tenant_scope",
+        "provider_status",
+        "http_probing_enabled",
+        "write_actions_enabled",
+    }
+    statuses = {
+        "configured",
+        "detected",
+        "reachable",
+        "authenticated",
+        "authorized",
+        "permission-limited",
+        "unavailable",
+        "not_configured",
+        "unknown",
+    }
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        item = _object(raw, f"environment[{index}]")
+        _reject_unknown(item, allowed, f"environment[{index}]")
+        identifier = _identifier(item.get("id"), f"environment[{index}].id", allow_prefix=True)
+        if identifier in seen:
+            raise BlueprintValidationError(f"environment contains duplicate id: {identifier}")
+        seen.add(identifier)
+        status = _text(item.get("status"), f"environment[{index}].status", max_length=32)
+        if status not in statuses:
+            raise BlueprintValidationError(f"environment[{index}].status is unsupported")
+        evidence = _text_list(item.get("evidence", []), f"environment[{index}].evidence")
+        normalized: dict[str, object] = {
+            "id": identifier,
+            "name": _text(item.get("name"), f"environment[{index}].name"),
+            "kind": _text(item.get("kind"), f"environment[{index}].kind", max_length=64),
+            "connector_id": _optional_text(
+                item.get("connector_id"),
+                f"environment[{index}].connector_id",
+                max_length=64,
+            ),
+            "status": status,
+            "evidence": list(evidence),
+            "limitation": _optional_text(item.get("limitation"), f"environment[{index}].limitation", max_length=500),
+        }
+        for boolean_field in ("http_probing_enabled", "write_actions_enabled"):
+            if boolean_field in item:
+                boolean_value = item[boolean_field]
+                if not isinstance(boolean_value, bool):
+                    raise BlueprintValidationError(f"environment[{index}].{boolean_field} must be boolean")
+                normalized[boolean_field] = boolean_value
+        for text_field in ("tenant_scope", "provider_status"):
+            if text_field in item:
+                normalized[text_field] = _text(item[text_field], f"environment[{index}].{text_field}", max_length=128)
+        result.append(normalized)
+    return tuple(result)
 
 
 def _business_goal(value: object) -> dict[str, str | bool | int]:

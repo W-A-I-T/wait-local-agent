@@ -472,6 +472,7 @@ class SolutionBlueprint:
     skills: tuple[str, ...] = ()
     model: str = ""
     orchestration: str = ""
+    environment: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)

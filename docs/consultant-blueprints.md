@@ -51,6 +51,12 @@ workflow-template catalogs. Knowledge sources, external systems, and deployment
 targets remain explicit review items unless they are a supported local surface
 (`local`, `api`, `cli`, `agents`, or `mcp`). The response reports `ready` or
 `needs_review` and always states that execution and deployment have not started.
+Blueprints may also carry an optional `environment` array from
+`/consultant/environment-discovery`. Each record includes a bounded system
+identity, connector boundary when known, status, evidence, and limitations.
+`configured`, `detected`, and `permission-limited` are not equivalent to
+provider authorization; the architecture view preserves that distinction and
+requires review until provider evidence reaches a supported verified state.
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
 within the blueprint tenant; blueprint creation still does not create or run
