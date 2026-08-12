@@ -97,6 +97,121 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
 
 
 @pytest.mark.parametrize(
+    ("stage", "evidence", "message"),
+    [
+        ("unknown", {}, "stage must be"),
+        ("build", {"unexpected": True}, "does not accept"),
+        ("test", [], "requires promotion_evidence"),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "pending",
+            },
+            "source_status must be succeeded",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "not-a-digest",
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {
+                    "available": True,
+                    "strategy": "restore",
+                    "artifact_digest": "sha256:" + "b" * 64,
+                },
+            },
+            "artifact_digest must be",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass", "case_count": "one"},
+            },
+            "case_count must be",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "needs_review"},
+            },
+            "governance must have",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {"available": False},
+            },
+            "rollback.available must be true",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {"available": True, "strategy": ""},
+            },
+            "rollback.strategy is required",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {
+                    "available": True,
+                    "strategy": "restore",
+                    "artifact_digest": "not-a-digest",
+                },
+            },
+            "rollback.artifact_digest must be",
+        ),
+        (
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {
+                    "available": True,
+                    "strategy": "restore",
+                    "artifact_digest": "sha256:" + "b" * 64,
+                },
+                "extra": True,
+            },
+            "unsupported fields",
+        ),
+    ],
+)
+def test_promotion_evidence_rejects_unsafe_or_incomplete_values(stage, evidence, message) -> None:
+    with pytest.raises(PowerPlatformDeploymentError, match=message):
+        validate_promotion_evidence(stage, evidence)
+
+
+@pytest.mark.parametrize(
     ("targets", "message"),
     [
         ([], "contain 1-3"),
