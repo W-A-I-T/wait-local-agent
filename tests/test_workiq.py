@@ -133,6 +133,7 @@ def test_workiq_validation_edges_and_configured_endpoint(settings) -> None:
             settings,
             work_iq_mcp_endpoint="https://workiq.example.test/mcp",
             work_iq_mcp_access_token="access-token",
+            mcp_client_allowed_hosts=("workiq.example.test",),
         )
     )
     assert configured._mcp_client is not None  # noqa: SLF001

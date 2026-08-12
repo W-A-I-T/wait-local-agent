@@ -19,6 +19,7 @@ Configuration is optional:
 WAIT_WORK_IQ_MCP_ENDPOINT=
 WAIT_WORK_IQ_MCP_ACCESS_TOKEN=
 WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS=20
+WAIT_MCP_CLIENT_ALLOWED_HOSTS=
 ```
 
 The endpoint and access token are kept server-side. The access token must be

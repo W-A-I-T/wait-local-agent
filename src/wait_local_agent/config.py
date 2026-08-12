@@ -155,6 +155,7 @@ class Settings:
     update_channel_url: str = ""
     update_pubkeys: tuple[str, ...] = ()
     mcp_allowed_origins: tuple[str, ...] = ()
+    mcp_client_allowed_hosts: tuple[str, ...] = ()
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -482,6 +483,11 @@ def load_settings() -> Settings:
         mcp_allowed_origins=tuple(
             value.strip().rstrip("/")
             for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
+            if value.strip()
+        ),
+        mcp_client_allowed_hosts=tuple(
+            value.strip().casefold()
+            for value in os.getenv("WAIT_MCP_CLIENT_ALLOWED_HOSTS", "").split(",")
             if value.strip()
         ),
         halopsa_base_url=_secret_value(

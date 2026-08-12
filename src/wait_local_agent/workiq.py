@@ -51,6 +51,7 @@ class WorkIqClient:
                     settings.work_iq_mcp_endpoint,
                     bearer_token=settings.work_iq_mcp_access_token,
                     timeout_seconds=settings.work_iq_mcp_timeout_seconds,
+                    allowed_hosts=settings.mcp_client_allowed_hosts,
                 )
             )
 

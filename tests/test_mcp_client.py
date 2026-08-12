@@ -67,7 +67,11 @@ def test_mcp_client_lifecycle_catalog_pagination_and_call() -> None:
         )
 
     client = McpClient(
-        McpClientConfig("https://mcp.example.test", bearer_token="secret"),
+        McpClientConfig(
+            "https://mcp.example.test",
+            bearer_token="secret",
+            allowed_hosts=("mcp.example.test",),
+        ),
         transport=httpx.MockTransport(handler),
     )
     assert client.initialize() == "session-1"
@@ -92,6 +96,8 @@ def test_mcp_client_rejects_invalid_config_and_lifecycle_use() -> None:
     for endpoint in invalid:
         with pytest.raises(McpClientError):
             McpClient(McpClientConfig(endpoint))
+    with pytest.raises(McpClientError, match="not allowlisted"):
+        McpClient(McpClientConfig("https://mcp.example.test"))
     with pytest.raises(McpClientError):
         McpClient(McpClientConfig("https://mcp.example.test", timeout_seconds=0))
     with pytest.raises(McpClientError):
@@ -106,7 +112,9 @@ def test_mcp_client_rejects_invalid_config_and_lifecycle_use() -> None:
     with pytest.raises(McpClientError, match="initialize before use"):
         client.call_tool("tool")
     with pytest.raises(McpClientError, match="bounded text"):
-        McpClient(McpClientConfig("https://mcp.example.test")).initialize(client_name=" ")
+        McpClient(
+            McpClientConfig("https://mcp.example.test", allowed_hosts=("mcp.example.test",))
+        ).initialize(client_name=" ")
     assert McpClient(McpClientConfig("http://localhost:8791")).session_id is None
 
 

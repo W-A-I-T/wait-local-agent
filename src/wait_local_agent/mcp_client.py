@@ -34,6 +34,7 @@ class McpClientConfig:
     bearer_token: str = ""
     timeout_seconds: float = 20.0
     verify_tls: bool = True
+    allowed_hosts: tuple[str, ...] = ()
 
     def validate(self) -> None:
         endpoint = self.endpoint.strip()
@@ -46,6 +47,13 @@ class McpClientConfig:
             raise McpClientError("MCP endpoint must not contain embedded credentials")
         if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise McpClientError("non-local MCP endpoints must use HTTPS")
+        host = parsed.hostname.casefold().rstrip(".")
+        if host not in {"localhost", "127.0.0.1", "::1"} and host not in {
+            value.strip().casefold().rstrip(".")
+            for value in self.allowed_hosts
+            if value.strip()
+        }:
+            raise McpClientError("MCP endpoint host is not allowlisted")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 120:
             raise McpClientError("MCP timeout must be between 0 and 120 seconds")
         if any(ord(character) < 32 for character in self.bearer_token):
