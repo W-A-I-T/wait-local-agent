@@ -2,13 +2,15 @@
 
 Audited against the 11 issues returned by the GitHub open-issue query on
 2026-08-12. Each issue has one primary roadmap category. Cross-category work is
-called out without changing the primary ownership boundary.
+called out without changing the primary ownership boundary. PR #270's latest
+authoritative CI run passed both backend and UI checks; that is evidence for
+the integrated PR only, not proof that every release or browser gate is done.
 
 | Issue | Primary category | Status and action | Remaining blocker |
 | --- | --- | --- | --- |
-| [#261](https://github.com/W-A-I-T/wait-local-agent/issues/261) | D. MSP Operations Vertical | Keep open as the coordination tracker; reframe from NeoAgent parity to MSP Operations Vertical completion and enterprise evidence. | Child issues and the final truth audit remain open. |
+| [#261](https://github.com/W-A-I-T/wait-local-agent/issues/261) | D. MSP Operations Vertical | Keep open as the coordination tracker; reframe from NeoAgent parity to MSP Operations Vertical completion and enterprise evidence. The canonical onboarding fixture now exercises eight bounded child roles locally. | Child issues and the final truth audit remain open. |
 | [#260](https://github.com/W-A-I-T/wait-local-agent/issues/260) | A. Core Platform | Keep open; complete deterministic/local/optional-remote provider conformance and failure-path evidence. | Provider fixtures and offline/remote boundary validation. |
-| [#259](https://github.com/W-A-I-T/wait-local-agent/issues/259) | E. Evaluation / Governance | Keep open; make the enterprise-readiness matrix executable and verify backend, UI, security, and local-first gates. | Full repository and CI evidence is not yet recorded. |
+| [#259](https://github.com/W-A-I-T/wait-local-agent/issues/259) | E. Evaluation / Governance | Keep open; make the enterprise-readiness matrix executable and verify backend, UI, security, and local-first gates. PR #270 backend and UI CI are passing. | Release-script, security-audit, and real-browser evidence remain separate gates. |
 | [#258](https://github.com/W-A-I-T/wait-local-agent/issues/258) | E. Evaluation / Governance | Keep open; truth-audit every capability against reachable interfaces, tests, and unsupported boundaries. | Documentation still needs a final current-state pass after integration. |
 | [#257](https://github.com/W-A-I-T/wait-local-agent/issues/257) | F. Enterprise Readiness | Keep open; continue the route/control/state matrix, responsive behavior, and recovery pass. A current Chromium slice covers `/consultant` success, validation, server-error recovery, and review-only boundaries; see [UI and API wiring evidence](ui-feature-evidence.md). | Full route/control coverage, denied/offline/provider-error matrices, and responsive/accessibility evidence remain to be completed. |
 | [#256](https://github.com/W-A-I-T/wait-local-agent/issues/256) | D. MSP Operations Vertical | Keep open; add governed PSA and documentation operations; Microsoft and marketplace work remains explicitly cross-referenced to C/H. | Each provider operation still needs a documented contract, scope, approval, audit, and tests. |
