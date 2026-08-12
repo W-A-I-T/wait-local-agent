@@ -184,6 +184,7 @@ from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
+from wait_local_agent.work_iq import WorkIqClient
 from wait_local_agent.workflows import (
     get_workflow_template,
     list_workflow_templates,
@@ -622,6 +623,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
     mcp_client = McpClient(active_settings)
+    work_iq_client = WorkIqClient(active_settings)
     event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
         store,
@@ -915,6 +917,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Discover an explicitly configured remote MCP server without registering its tools."""
 
         return asdict(mcp_client.list_tools())
+
+    @app.get("/mcp/work-iq/tools")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def work_iq_tools(request: Request, _: AdminAccess) -> dict[str, object]:
+        """Discover an explicitly configured Work IQ gateway without executing tools."""
+
+        return asdict(work_iq_client.list_tools())
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:

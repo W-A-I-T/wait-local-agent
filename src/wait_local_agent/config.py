@@ -143,6 +143,12 @@ class Settings:
     mcp_client_name: str = "WAIT Local Agent"
     mcp_client_allowed_hosts: tuple[str, ...] = ()
     mcp_client_timeout_seconds: float = 20.0
+    work_iq_enabled: bool = False
+    work_iq_url: str = ""
+    work_iq_token: str = ""
+    work_iq_allowed_hosts: tuple[str, ...] = ()
+    work_iq_read_tool_names: tuple[str, ...] = ()
+    work_iq_timeout_seconds: float = 20.0
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
     document_parser: str = "basic"
@@ -475,6 +481,25 @@ def load_settings() -> Settings:
             if value.strip()
         ),
         mcp_client_timeout_seconds=_float_env("WAIT_MCP_CLIENT_TIMEOUT_SECONDS", 20.0),
+        work_iq_enabled=_bool_env("WAIT_WORK_IQ_ENABLED", False),
+        work_iq_url=os.getenv("WAIT_WORK_IQ_URL", "").strip(),
+        work_iq_token=_secret_value(
+            "WAIT_WORK_IQ_TOKEN",
+            os.getenv("WAIT_WORK_IQ_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        work_iq_allowed_hosts=tuple(
+            value.strip().lower()
+            for value in os.getenv("WAIT_WORK_IQ_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        ),
+        work_iq_read_tool_names=tuple(
+            value.strip()
+            for value in os.getenv("WAIT_WORK_IQ_READ_TOOL_NAMES", "").split(",")
+            if value.strip()
+        ),
+        work_iq_timeout_seconds=_float_env("WAIT_WORK_IQ_TIMEOUT_SECONDS", 20.0),
         secrets_backend=backend,
         vault_path=vault_path,
         document_parser=os.getenv("WAIT_DOCUMENT_PARSER", "basic"),

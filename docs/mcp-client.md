@@ -41,3 +41,30 @@ is exposed through the API.
 
 Work IQ-specific authentication and behavior are not part of this generic
 client slice.
+
+## Work IQ adapter
+
+WAIT also includes an opt-in Work IQ adapter for [Microsoft’s preview MCP
+gateway](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview).
+Configure it separately from a generic remote MCP server:
+
+```dotenv
+WAIT_WORK_IQ_ENABLED=true
+WAIT_WORK_IQ_URL=https://agent365.svc.cloud.microsoft
+WAIT_WORK_IQ_TOKEN=<operator-acquired-entra-bearer-token>
+WAIT_WORK_IQ_ALLOWED_HOSTS=agent365.svc.cloud.microsoft
+WAIT_WORK_IQ_READ_TOOL_NAMES=fetch,search_paths
+WAIT_WORK_IQ_TIMEOUT_SECONDS=20
+WAIT_ALLOW_HTTP_PROBING=true
+```
+
+`GET /mcp/work-iq/tools` is admin-only and performs discovery without
+registering or executing tools. Explicit read calls remain library-only and
+require a locally configured tool-name allowlist; known Work IQ mutation/action
+tools are rejected even if misconfigured into that list. Remote annotations,
+descriptions, schemas, and results are untrusted and are not used as an
+authorization decision. The adapter does not acquire OAuth tokens, expose a
+generic Work IQ call endpoint, or support Work IQ writes. Work IQ is a preview
+service; Microsoft may change tool names and parameters, so deployments must
+validate their configured names against discovery and keep the integration
+behind local approval and tenant controls.
