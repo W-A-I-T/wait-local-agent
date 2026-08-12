@@ -4,7 +4,9 @@ import json
 from dataclasses import replace
 
 import httpx
+import pytest
 
+import wait_local_agent.teams_graph as teams_module
 from wait_local_agent.teams_graph import TeamsGraphClient
 
 
@@ -134,3 +136,31 @@ def test_teams_pagination_and_connection_failure_are_bounded(settings) -> None:
 
     broken = TeamsGraphClient(_configured(settings), transport=httpx.MockTransport(disconnected))
     assert broken.list_teams().result.status == "failed"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://graph.example", "https://user:pass@graph.example", "https://graph.example/?x=1"],
+)
+def test_teams_rejects_unsafe_base_urls(value: str) -> None:
+    with pytest.raises(teams_module.TeamsGraphReadError, match="base URL"):
+        teams_module._api_base_url(value)
+
+
+def test_teams_private_bounds_reject_unsafe_values() -> None:
+    for value in ("", "../teams", "teams//channels", "teams/%2fchannels"):
+        with pytest.raises(teams_module.TeamsGraphReadError):
+            teams_module._safe_endpoint(value)
+    for value in ("", "x" * 321, "team\x01"):
+        with pytest.raises(teams_module.TeamsGraphReadError):
+            teams_module._safe_id(value, "team_id")
+    for value in ("", "x" * 4001, "bad\x01message"):
+        with pytest.raises(teams_module.TeamsGraphReadError):
+            teams_module._safe_message(value)
+    for page_size, cursor in ((True, None), (1, "bad\x01cursor"), (1, "x" * 4097)):
+        with pytest.raises(teams_module.TeamsGraphReadError):
+            teams_module._list_params(page_size, cursor)
+    assert teams_module._payload_rows({"value": "not-a-list"}) == []
+    assert teams_module._payload_rows([]) == []
+    assert teams_module._next_cursor({"@odata.nextLink": "https://graph.example/teams"}) == ""
+    assert teams_module._string_value("not-an-object", "id") == ""

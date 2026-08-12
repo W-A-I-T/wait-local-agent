@@ -202,3 +202,45 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
 
     succeeded = execute_power_platform_stage(plan, "build", configured, approved=True, runner=success_runner)
     assert succeeded["status"] == "succeeded"
+
+
+def test_deployment_shape_guards_cover_target_and_execution_path_edges(settings, tmp_path: Path) -> None:
+    with pytest.raises(PowerPlatformDeploymentError):
+        build_power_platform_deployment_plan(
+            solution_name="bad name",
+            publisher_name="WAIT",
+            publisher_prefix="wlp",
+            output_directory="/tmp/solution",
+            deployment_targets=_targets(),
+        )
+    for targets in (
+        ["dev"],
+        [{"name": "test", "environment_url": "https://test.example"}],
+        [{"name": "dev", "environment_url": "https://user:pass@example"}],
+        [{"name": "dev", "environment_url": "https://example?x=1"}],
+    ):
+        with pytest.raises(PowerPlatformDeploymentError):
+            deployment._targets(targets)  # type: ignore[arg-type]
+    stage_cases: tuple[tuple[str, dict[str, object]], ...] = (
+        ("missing", {}),
+        ("build", {"stages": "bad"}),
+        ("prod", {"stages": []}),
+    )
+    for stage_id, plan in stage_cases:
+        with pytest.raises(PowerPlatformDeploymentError):
+            deployment._stage(plan, stage_id)
+    invalid_plans: tuple[dict[str, object], ...] = (
+        {},
+        {"solution": {}},
+        {"solution": {"output_directory": ""}},
+    )
+    for invalid_plan in invalid_plans:
+        with pytest.raises(PowerPlatformDeploymentError):
+            deployment._execution_paths(invalid_plan, settings)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    confined = replace(settings, power_platform_workspace=workspace)
+    with pytest.raises(PowerPlatformDeploymentError, match="already exist"):
+        deployment._execution_paths(
+            {"solution": {"output_directory": str(workspace / "missing" / "child")}}, confined
+        )
