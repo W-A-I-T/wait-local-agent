@@ -9,7 +9,7 @@ returns redacted bounded output.
 from __future__ import annotations
 
 import shutil
-import subprocess
+import subprocess  # nosec B404 - argv is fixed and shell execution is disabled below
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -254,7 +254,7 @@ def _execution_paths(plan: Mapping[str, object], settings: Settings) -> tuple[Pa
 
 
 def _run_command(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return subprocess.run(  # nosec B603 - command is fixed and validated before execution
         command,
         cwd=cwd,
         capture_output=True,
