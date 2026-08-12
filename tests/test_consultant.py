@@ -164,6 +164,36 @@ def test_blueprint_accepts_text_business_goal() -> None:
     assert blueprint.business_goal == {"description": "reduce manual work"}
 
 
+def test_blueprint_supports_instructions_intents_skills_model_and_orchestration() -> None:
+    payload = _payload()
+    payload.update(
+        {
+            "instructions": "Use only grounded tenant evidence.",
+            "intents": ["onboard_employee", "assign_license"],
+            "skills": ["identity_lookup", "approval_request"],
+            "model": "gpt-4.1",
+            "orchestration": "supervisor",
+        }
+    )
+
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    assert blueprint.instructions == "Use only grounded tenant evidence."
+    assert blueprint.intents == ("onboard_employee", "assign_license")
+    assert blueprint.skills == ("identity_lookup", "approval_request")
+    assert blueprint.model == "gpt-4.1"
+    assert blueprint.orchestration == "supervisor"
+    assert blueprint_payload(blueprint) == payload
+
+
+def test_blueprint_rejects_unknown_orchestration_mode() -> None:
+    payload = _payload()
+    payload["orchestration"] = "unbounded"
+
+    with pytest.raises(BlueprintValidationError, match="orchestration must be one of"):
+        parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+
 def test_blueprint_view_includes_identity_and_payload() -> None:
     blueprint = parse_solution_blueprint(_payload(), client_id="acme", created_by="architect")
 

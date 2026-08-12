@@ -43,7 +43,20 @@ _TOP_LEVEL_FIELDS = {
     "approvals",
     "deployment",
     "risk",
+    "instructions",
+    "intents",
+    "skills",
+    "model",
+    "orchestration",
 }
+_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
+    "instructions",
+    "intents",
+    "skills",
+    "model",
+    "orchestration",
+}
+_ORCHESTRATION_MODES = {"single_agent", "supervisor", "event_driven", "hybrid"}
 
 
 class BlueprintValidationError(ValueError):
@@ -238,7 +251,7 @@ def parse_solution_blueprint(
     unknown = sorted(set(payload) - _TOP_LEVEL_FIELDS)
     if unknown:
         raise BlueprintValidationError(f"unsupported blueprint fields: {', '.join(unknown)}")
-    missing = sorted(_TOP_LEVEL_FIELDS - set(payload))
+    missing = sorted(_REQUIRED_TOP_LEVEL_FIELDS - set(payload))
     if missing:
         raise BlueprintValidationError(f"missing blueprint fields: {', '.join(missing)}")
 
@@ -259,6 +272,19 @@ def parse_solution_blueprint(
     approvals = _approvals(payload["approvals"])
     deployment = _text_list(payload["deployment"], "deployment")
     risk = _risk(payload["risk"])
+    instructions = _optional_text(payload.get("instructions"), "instructions", max_length=4000)
+    intents = _text_list(payload.get("intents", []), "intents")
+    skills = _text_list(payload.get("skills", []), "skills")
+    model = _optional_text(payload.get("model"), "model")
+    orchestration = payload.get("orchestration", "")
+    if orchestration is None:
+        orchestration = ""
+    if not isinstance(orchestration, str) or (
+        orchestration and orchestration not in _ORCHESTRATION_MODES
+    ):
+        raise BlueprintValidationError(
+            f"orchestration must be one of: {', '.join(sorted(_ORCHESTRATION_MODES))}"
+        )
 
     return SolutionBlueprint(
         id=identifier,
@@ -276,11 +302,16 @@ def parse_solution_blueprint(
         approvals=approvals,
         deployment=deployment,
         risk=risk,
+        instructions=instructions,
+        intents=intents,
+        skills=skills,
+        model=model,
+        orchestration=cast(str, orchestration),
     )
 
 
 def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "solution": {"name": blueprint.solution_name},
         "business_goal": dict(blueprint.business_goal),
         "users": list(blueprint.users),
@@ -309,6 +340,17 @@ def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, object]:
         "deployment": list(blueprint.deployment),
         "risk": blueprint.risk,
     }
+    if blueprint.instructions:
+        payload["instructions"] = blueprint.instructions
+    if blueprint.intents:
+        payload["intents"] = list(blueprint.intents)
+    if blueprint.skills:
+        payload["skills"] = list(blueprint.skills)
+    if blueprint.model:
+        payload["model"] = blueprint.model
+    if blueprint.orchestration:
+        payload["orchestration"] = blueprint.orchestration
+    return payload
 
 
 def blueprint_view(blueprint: SolutionBlueprint) -> dict[str, object]:
@@ -353,6 +395,12 @@ def _text(value: object, field: str, *, max_length: int = MAX_BLUEPRINT_TEXT) ->
     if any(ord(character) < 32 and character not in "\t\n" for character in normalized):
         raise BlueprintValidationError(f"{field} contains unsupported control characters")
     return normalized
+
+
+def _optional_text(value: object, field: str, *, max_length: int = MAX_BLUEPRINT_TEXT) -> str:
+    if value is None or value == "":
+        return ""
+    return _text(value, field, max_length=max_length)
 
 
 def _identifier(value: object, field: str, *, allow_prefix: bool = False) -> str:

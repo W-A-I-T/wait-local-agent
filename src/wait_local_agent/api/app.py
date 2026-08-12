@@ -388,6 +388,11 @@ class SolutionBlueprintRequest(BaseModel):
     approvals: dict[str, object]
     deployment: list[object]
     risk: str
+    instructions: str = Field(default="", max_length=4000)
+    intents: list[object] = Field(default_factory=list, max_length=32)
+    skills: list[object] = Field(default_factory=list, max_length=32)
+    model: str = Field(default="", max_length=240)
+    orchestration: str = Field(default="", max_length=32)
     client_id: str | None = None
     model_config = ConfigDict(extra="forbid")
 

@@ -4,8 +4,10 @@ WAIT Local Agent can store an inspectable solution blueprint for a proposed
 Microsoft 365 or MSP automation solution. A blueprint is a local design
 artifact: it describes the business goal, users, knowledge, systems, proposed
 agents, deterministic workflows, approval boundaries, deployment targets, and
-risk level. Creating or reading one does not call Microsoft services, invoke a
-tool, execute a workflow, or deploy a solution.
+risk level. It can also carry bounded agent instructions, intents, skills,
+model choice, and orchestration mode (`single_agent`, `supervisor`,
+`event_driven`, or `hybrid`). Creating or reading one does not call Microsoft
+services, invoke a tool, execute a workflow, or deploy a solution.
 
 The API exposes the artifact through authenticated routes:
 

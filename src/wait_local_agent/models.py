@@ -466,6 +466,11 @@ class SolutionBlueprint:
     approvals: dict[str, str]
     deployment: tuple[str, ...]
     risk: RiskLevel
+    instructions: str = ""
+    intents: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    model: str = ""
+    orchestration: str = ""
 
 
 @dataclass(frozen=True)
