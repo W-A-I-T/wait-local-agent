@@ -190,6 +190,21 @@ export type PowerPlatformConnectorBundle = {
   api_properties: Record<string, unknown>;
 };
 
+export type PowerPlatformPacPlan = {
+  format: "wait-local-agent.power-platform-cli-plan";
+  format_version: 1;
+  operation: "connector.create";
+  mutates_external_state: true;
+  requires_approval: true;
+  pac_available: boolean;
+  environment: string;
+  solution_unique_name: string | null;
+  artifact_dir: string;
+  files: Record<string, { path: string; bytes: number; sha256: string }>;
+  command: string[];
+  approval_payload: Record<string, unknown>;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;

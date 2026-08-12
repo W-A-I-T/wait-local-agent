@@ -146,6 +146,11 @@ from wait_local_agent.power_platform import (
     PowerPlatformConnectorError,
     build_power_platform_connector,
 )
+from wait_local_agent.power_platform_cli import (
+    PowerPlatformCliError,
+    build_pac_connector_create_plan,
+    run_pac_connector_create,
+)
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
     AuthContext,
@@ -402,6 +407,19 @@ class PowerPlatformConnectorFactoryRequest(BaseModel):
     client_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformPacConnectorRequest(BaseModel):
+    artifact_dir: str = Field(min_length=1, max_length=500)
+    environment: str = Field(min_length=1, max_length=2048)
+    solution_unique_name: str | None = Field(default=None, max_length=100)
+    client_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformPacExecuteRequest(PowerPlatformPacConnectorRequest):
+    approval_request_id: int | None = Field(default=None, ge=1)
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -2170,8 +2188,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             existing_approval = store.get_approval_request(request_id)
             if existing_approval is None or not _approval_in_scope(context, existing_approval):
                 raise KeyError(request_id)
-            if existing_approval.action_type.startswith("m365.") and context.role < Role.ADMIN:
-                raise PermissionError("M365 approvals require admin authority")
+            if (
+                existing_approval.action_type.startswith("m365.")
+                or existing_approval.action_type == "power_platform.pac.connector.create"
+            ) and context.role < Role.ADMIN:
+                raise PermissionError("this approval requires admin authority")
             if existing_approval.action_type.startswith("smart_action:"):
                 smart_action_service.update_approval(
                     request_id,
@@ -4002,6 +4023,94 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return bundle
 
+    @app.post("/consultant/power-platform/pac/connector/create/plan")
+    def plan_power_platform_pac_connector(
+        payload: PowerPlatformPacConnectorRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = build_pac_connector_create_plan(
+                payload.artifact_dir,
+                environment=payload.environment,
+                solution_unique_name=payload.solution_unique_name,
+            )
+        except PowerPlatformCliError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        store.add_audit_event(
+            "consultant.power_platform_pac_planned",
+            f"power-platform-pac:{plan['environment']}",
+            "approval-gated PAC connector create plan generated",
+            client_id=scoped_client_id,
+        )
+        return plan
+
+    @app.post("/consultant/power-platform/pac/connector/create")
+    def execute_power_platform_pac_connector(
+        payload: PowerPlatformPacExecuteRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = build_pac_connector_create_plan(
+                payload.artifact_dir,
+                environment=payload.environment,
+                solution_unique_name=payload.solution_unique_name,
+            )
+        except PowerPlatformCliError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        approval_payload = cast(dict[str, object], plan["approval_payload"])
+        subject_id = f"power-platform-pac:{plan['environment']}"
+        if payload.approval_request_id is None:
+            approval = store.create_approval_request(
+                subject_id,
+                "power_platform.pac.connector.create",
+                approval_payload,
+                client_id=scoped_client_id,
+            )
+            return {
+                "status": "pending_approval",
+                "plan": plan,
+                "approval": _approval_view(approval),
+            }
+        existing_approval = store.get_approval_request(payload.approval_request_id)
+        if existing_approval is None or not _approval_in_scope(context, existing_approval):
+            raise HTTPException(status_code=404, detail="approval request not found")
+        if existing_approval.action_type != "power_platform.pac.connector.create":
+            raise HTTPException(status_code=409, detail="approval request is for a different operation")
+        if existing_approval.status != "approved":
+            raise HTTPException(status_code=409, detail="approval request must be approved before execution")
+        try:
+            stored_payload = json.loads(existing_approval.payload_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=409, detail="approval request payload is invalid") from exc
+        if stored_payload != approval_payload:
+            raise HTTPException(status_code=409, detail="artifact or target changed after approval")
+        if existing_approval.execution_status == "succeeded":
+            raise HTTPException(status_code=409, detail="approval request has already executed successfully")
+        try:
+            result = run_pac_connector_create(plan, approved=True)
+        except PowerPlatformCliError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        execution_status = "succeeded" if result["status"] == "succeeded" else "failed"
+        completed_approval = store.record_approval_execution(
+            payload.approval_request_id,
+            status=execution_status,
+            message=str(result["message"]),
+            result=result,
+            audit_event_type="power_platform.pac.connector.create",
+        )
+        return {
+            "status": result["status"],
+            "plan": plan,
+            "result": result,
+            "approval": _approval_view(completed_approval),
+        }
+
     @app.get("/consultant/blueprints")
     def consultant_blueprints(
         context: ViewerAccess,
@@ -4942,6 +5051,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             write_health = m365_client.write_health()
             if write_health.status != "ready":
                 return False, write_health.message
+            return True, ""
+        if request.action_type == "power_platform.pac.connector.create":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
             return True, ""
         if not request.action_type.startswith("halopsa."):
             return False, "Only HaloPSA approvals have live execution in this release."

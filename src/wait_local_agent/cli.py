@@ -101,6 +101,11 @@ from wait_local_agent.m365_graph import (
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.power_platform import PowerPlatformConnectorError, build_power_platform_connector
+from wait_local_agent.power_platform_cli import (
+    PowerPlatformCliError,
+    build_pac_connector_create_plan,
+    run_pac_connector_create,
+)
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -2624,6 +2629,107 @@ def generate_power_platform_connector(
     typer.echo(
         f"output_dir={output_dir} name={bundle['name']} operations={bundle['operation_count']} "
         f"auth_type={bundle['auth_type']} client_id={scoped_client_id}"
+    )
+
+
+@power_platform_app.command("pac-plan")
+def plan_power_platform_pac_connector(
+    artifact_dir: Path,
+    environment: Annotated[str, typer.Option("--environment")],
+    solution_unique_name: Annotated[str | None, typer.Option("--solution-unique-name")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a tenant client_id is required")
+    try:
+        plan = build_pac_connector_create_plan(
+            artifact_dir,
+            environment=environment,
+            solution_unique_name=solution_unique_name,
+        )
+    except PowerPlatformCliError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@power_platform_app.command("pac-create")
+def create_power_platform_pac_connector(
+    artifact_dir: Path,
+    environment: Annotated[str, typer.Option("--environment")],
+    solution_unique_name: Annotated[str | None, typer.Option("--solution-unique-name")] = None,
+    approval_id: Annotated[int | None, typer.Option("--approval-id", min=1)] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a tenant client_id is required")
+    try:
+        plan = build_pac_connector_create_plan(
+            artifact_dir,
+            environment=environment,
+            solution_unique_name=solution_unique_name,
+        )
+    except PowerPlatformCliError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    store = Store(settings.data_path)
+    approval_payload = cast(dict[str, object], plan["approval_payload"])
+    if approval_id is None:
+        approval = store.create_approval_request(
+            f"power-platform-pac:{plan['environment']}",
+            "power_platform.pac.connector.create",
+            approval_payload,
+            client_id=scoped_client_id,
+        )
+        typer.echo(
+            json.dumps(
+                {"status": "pending_approval", "plan": plan, "approval": _approval_cli_view(approval)},
+                sort_keys=True,
+                indent=2,
+            )
+        )
+        return
+    existing_approval = store.get_approval_request(approval_id)
+    if existing_approval is None or (
+        existing_approval.client_id is not None and existing_approval.client_id != scoped_client_id
+    ):
+        raise typer.BadParameter("approval request not found")
+    if existing_approval.action_type != "power_platform.pac.connector.create":
+        raise typer.BadParameter("approval request is for a different operation")
+    if existing_approval.status != "approved":
+        raise typer.BadParameter("approval request must be approved before execution")
+    try:
+        stored_payload = json.loads(existing_approval.payload_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("approval request payload is invalid") from exc
+    if stored_payload != approval_payload:
+        raise typer.BadParameter("artifact or target changed after approval")
+    if existing_approval.execution_status == "succeeded":
+        raise typer.BadParameter("approval request has already executed successfully")
+    try:
+        result = run_pac_connector_create(plan, approved=True)
+    except PowerPlatformCliError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    execution_status = "succeeded" if result["status"] == "succeeded" else "failed"
+    completed = store.record_approval_execution(
+        approval_id,
+        status=execution_status,
+        message=str(result["message"]),
+        result=result,
+        audit_event_type="power_platform.pac.connector.create",
+    )
+    typer.echo(
+        json.dumps(
+            {"status": result["status"], "plan": plan, "result": result, "approval": _approval_cli_view(completed)},
+            sort_keys=True,
+            indent=2,
+        )
     )
 
 

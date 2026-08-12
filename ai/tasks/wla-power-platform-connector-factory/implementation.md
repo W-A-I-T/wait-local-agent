@@ -7,16 +7,20 @@
 - Added API key, Basic, and supported OAuth 2.0 connection metadata.
 - Added redaction, local-reference, HTTPS, size, operation, and tenant/RBAC
   validation tests.
+- Added a PAC connector-create planner and approval-gated executor that
+  consumes only validated factory artifacts.
 
 ## Existing primitives used
 
 - Existing technician/viewer/admin RBAC and tenant-scope helper.
 - Existing consultant API and audit event surface.
 - Existing Typer CLI and React dashboard/API client.
+- Existing approval-request, audit, and execution-result persistence.
 
 ## Explicit non-goals
 
-This slice does not invoke `pac`, authenticate to Dataverse, create/update a
-Power Platform connector, resolve remote references, probe the target API, or
-store connector credentials. Those actions belong to the separately gated
-Power Platform DevOps/deployment capability.
+The PAC execution path is deliberately bounded: it invokes only the fixed
+`pac connector create` command after approval, with explicit environment,
+artifact digest, timeout, and output controls. It does not implement solution
+packaging/checker/import pipelines, provision Dataverse, resolve remote
+references, probe the target API, or store connector credentials.

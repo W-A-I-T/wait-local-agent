@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -5525,6 +5526,209 @@ def test_power_platform_connector_factory_is_tenant_scoped_and_side_effect_free(
         event["event_type"] == "consultant.power_platform_connector_generated"
         for event in client.get("/audit", headers=_auth("viewer-token")).json()
     )
+
+
+def test_power_platform_pac_connector_is_approval_gated_and_digest_bound(settings, tmp_path, monkeypatch) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    artifact_dir = tmp_path / "connector-artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "apiDefinition.json").write_text(
+        json.dumps({"swagger": "2.0", "info": {"title": "WAIT", "version": "1"}}),
+        encoding="utf-8",
+    )
+    (artifact_dir / "apiProperties.json").write_text(json.dumps({"properties": {}}), encoding="utf-8")
+    (artifact_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "wait-local-agent.power-platform-connector",
+                "format_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(secure_settings))
+    request = {
+        "artifact_dir": str(artifact_dir),
+        "environment": "00000000-0000-0000-0000-000000000001",
+        "solution_unique_name": "WaitConnector",
+        "client_id": "acme",
+    }
+    plan = client.post(
+        "/consultant/power-platform/pac/connector/create/plan",
+        headers=_auth("tech-token"),
+        json=request,
+    )
+    viewer = client.post(
+        "/consultant/power-platform/pac/connector/create/plan",
+        headers=_auth("viewer-token"),
+        json=request,
+    )
+    pending = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json=request,
+    )
+    invalid_plan = client.post(
+        "/consultant/power-platform/pac/connector/create/plan",
+        headers=_auth("tech-token"),
+        json={**request, "artifact_dir": str(tmp_path / "missing")},
+    )
+    invalid_execute = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "artifact_dir": str(tmp_path / "missing")},
+    )
+    foreign_execute = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "client_id": "beta"},
+    )
+
+    assert plan.status_code == 200
+    assert plan.json()["requires_approval"] is True
+    assert plan.json()["command"][0:3] == ["pac", "connector", "create"]
+    assert viewer.status_code == 403
+    assert pending.status_code == 200
+    assert invalid_plan.status_code == 422
+    assert invalid_execute.status_code == 422
+    assert foreign_execute.status_code == 200
+    no_tenant_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+        }
+    )
+    no_tenant_client = TestClient(create_app(no_tenant_settings))
+    no_tenant_plan = no_tenant_client.post(
+        "/consultant/power-platform/pac/connector/create/plan",
+        headers=_auth("tech-token"),
+        json={**request, "client_id": None},
+    )
+    no_tenant_execute = no_tenant_client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "client_id": None},
+    )
+    assert no_tenant_plan.status_code == 403
+    assert no_tenant_execute.status_code == 403
+    assert pending.json()["status"] == "pending_approval"
+    approval_id = pending.json()["approval"]["id"]
+
+    before_approval = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": approval_id},
+    )
+    missing_approval = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": 999999},
+    )
+    assert before_approval.status_code == 409
+    assert missing_approval.status_code == 404
+
+    technician_approval = client.post(
+        f"/approval-requests/{approval_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "Technician cannot deploy"},
+    )
+    assert technician_approval.status_code == 403
+
+    approved = client.post(
+        f"/approval-requests/{approval_id}",
+        headers=_auth("admin-token"),
+        json={"status": "approved", "comment": "Approved for the test environment"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["can_execute"] is True
+
+    original_properties = (artifact_dir / "apiProperties.json").read_bytes()
+    (artifact_dir / "apiProperties.json").write_text(
+        json.dumps({"properties": {"changed": True}}), encoding="utf-8"
+    )
+    changed = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": approval_id},
+    )
+    (artifact_dir / "apiProperties.json").write_bytes(original_properties)
+    assert changed.status_code == 409
+
+    wrong_approval = Store(secure_settings.data_path).create_approval_request(
+        "other", "other.operation", {}, client_id="acme"
+    )
+    Store(secure_settings.data_path).update_approval_request(wrong_approval.id or 0, "approved")
+    wrong_operation = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": wrong_approval.id},
+    )
+    assert wrong_operation.status_code == 409
+
+    invalid_payload = Store(secure_settings.data_path).create_approval_request(
+        "invalid", "power_platform.pac.connector.create", {}, client_id="acme"
+    )
+    with Store(secure_settings.data_path)._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update approval_requests set payload_json = ? where id = ?",
+            ("not-json", invalid_payload.id),
+        )
+    Store(secure_settings.data_path).update_approval_request(invalid_payload.id or 0, "approved")
+    invalid_payload_response = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": invalid_payload.id},
+    )
+    assert invalid_payload_response.status_code == 409
+
+    def fail_pac(plan, approved):
+        raise app_module.PowerPlatformCliError("PAC unavailable")
+
+    monkeypatch.setattr(app_module, "run_pac_connector_create", fail_pac)
+    failed = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": approval_id},
+    )
+    assert failed.status_code == 409
+
+    monkeypatch.setattr(
+        app_module,
+        "run_pac_connector_create",
+        lambda plan, approved: {
+            "status": "succeeded",
+            "exit_code": 0,
+            "message": "PAC connector create completed",
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    executed = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": approval_id},
+    )
+    assert executed.status_code == 200
+    assert executed.json()["status"] == "succeeded"
+    assert executed.json()["approval"]["execution_status"] == "succeeded"
+    repeated = client.post(
+        "/consultant/power-platform/pac/connector/create",
+        headers=_auth("admin-token"),
+        json={**request, "approval_request_id": approval_id},
+    )
+    assert repeated.status_code == 409
 
 
 def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:

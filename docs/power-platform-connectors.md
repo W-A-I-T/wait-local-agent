@@ -28,6 +28,36 @@ OAuth 2.0 definitions; OAuth application/client-credentials flow is rejected.
 Microsoft's connector import guidance currently requires OpenAPI 2.0 and a
 definition smaller than 1 MB. The generated files are therefore import
 artifacts for operator review, not a claim that a connector has been created
-or deployed. The later Power Platform CLI/DevOps slice can consume these files
-through `pac connector create` after explicit environment and deployment
-approval.
+or deployed.
+
+## PAC deployment planning and execution
+
+An administrator can validate an artifact directory and produce a fixed PAC
+plan with an explicit target environment:
+
+```text
+wait-local-agent consultant power-platform pac-plan ./connector-artifact \
+  --environment https://org.crm.dynamics.com --token "$WAIT_ADMIN_TOKEN"
+```
+
+The API equivalents are:
+
+- `POST /consultant/power-platform/pac/connector/create/plan` — technician
+  plan generation.
+- `POST /consultant/power-platform/pac/connector/create` — creates a pending
+  approval request, or executes the exact approved plan as an administrator.
+
+The plan accepts only the factory's `apiDefinition.json`, `apiProperties.json`,
+and `manifest.json`; validates their format, local paths, bounded size, and
+SHA-256 digests; and emits only the documented `pac connector create` argument
+vector. It requires a GUID or HTTPS environment target and never relies on the
+PAC active profile. The execution path uses an argument array with
+`shell=False`, a bounded timeout/output, a sanitized environment, and no
+credential arguments. A changed artifact, target, or solution name invalidates
+the approval payload. If `pac` is absent, the result is explicitly
+`not_configured`; WAIT does not silently fall back to another deployment path.
+
+This remains a governed deployment boundary: planning is reviewable, external
+mutation requires approval, and the current slice does not claim solution
+packaging, solution-checker execution, Dataverse provisioning, or production
+deployment automation.

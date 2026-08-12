@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { PowerPlatformConnectorBundle } from "../api/types";
+import type { PowerPlatformConnectorBundle, PowerPlatformPacPlan } from "../api/types";
 
 const DEFAULT_OPENAPI = JSON.stringify(
   {
@@ -28,9 +28,14 @@ export function ConnectorFactory() {
   const [definitionText, setDefinitionText] = useState(DEFAULT_OPENAPI);
   const [name, setName] = useState("");
   const [clientId, setClientId] = useState("");
+  const [artifactDir, setArtifactDir] = useState("");
+  const [environment, setEnvironment] = useState("");
+  const [solutionUniqueName, setSolutionUniqueName] = useState("");
   const [bundle, setBundle] = useState<PowerPlatformConnectorBundle | null>(null);
+  const [pacPlan, setPacPlan] = useState<PowerPlatformPacPlan | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pacLoading, setPacLoading] = useState(false);
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,6 +69,31 @@ export function ConnectorFactory() {
     }
   }
 
+  async function planPacCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPacLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<PowerPlatformPacPlan>("/consultant/power-platform/pac/connector/create/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact_dir: artifactDir.trim(),
+          environment: environment.trim(),
+          solution_unique_name: solutionUniqueName.trim() || null,
+          client_id: clientId.trim() || null
+        })
+      });
+      setPacPlan(result);
+      setMessage(result.pac_available ? "PAC plan generated; approval is required before execution." : "PAC plan generated; PAC is not installed on the server.");
+    } catch (error) {
+      setPacPlan(null);
+      setMessage(error instanceof Error ? error.message : "PAC plan could not be generated.");
+    } finally {
+      setPacLoading(false);
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -92,6 +122,17 @@ export function ConnectorFactory() {
           </div>
         </section>
       ) : null}
+      <section className="panel">
+        <div className="panel-heading"><div><h2>PAC deployment plan</h2><span>review-only command planning</span></div><span>approval required</span></div>
+        <p className="screen-note">Point WAIT at a locally generated artifact directory and target environment. This creates a fixed <code>pac connector create</code> plan; it does not execute PAC or deploy anything.</p>
+        <form className="connector-factory-form" onSubmit={(event) => void planPacCreate(event)}>
+          <label>Artifact directory<input value={artifactDir} onChange={(event) => setArtifactDir(event.target.value)} placeholder="/path/to/connector-artifact" required /></label>
+          <label>Power Platform environment<input value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder="https://org.crm.dynamics.com" required /></label>
+          <label>Solution unique name (optional)<input value={solutionUniqueName} onChange={(event) => setSolutionUniqueName(event.target.value)} placeholder="WaitConnector" /></label>
+          <button type="submit" disabled={!canWrite || pacLoading}>{pacLoading ? "Planning…" : "Create PAC plan"}</button>
+        </form>
+        {pacPlan ? <div className="connector-pac-plan"><div className="notice">PAC available: {pacPlan.pac_available ? "yes" : "no"}. External mutation: {pacPlan.mutates_external_state ? "yes" : "no"}. Approval required: yes.</div><pre>{pacPlan.command.join(" ")}</pre></div> : null}
+      </section>
     </div>
   );
 }

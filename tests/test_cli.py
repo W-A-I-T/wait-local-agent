@@ -2046,5 +2046,90 @@ def test_power_platform_connector_cli_writes_bounded_artifacts(monkeypatch, tmp_
     assert json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))["operation_count"] == 1
 
 
+def test_power_platform_pac_cli_requires_approval_and_runs_fixed_plan(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    artifact_dir = tmp_path / "connector-artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "apiDefinition.json").write_text(
+        json.dumps({"swagger": "2.0", "info": {"title": "WAIT", "version": "1"}}),
+        encoding="utf-8",
+    )
+    (artifact_dir / "apiProperties.json").write_text(json.dumps({"properties": {}}), encoding="utf-8")
+    (artifact_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "wait-local-agent.power-platform-connector",
+                "format_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    planned = runner.invoke(
+        app,
+        [
+            "consultant",
+            "power-platform",
+            "pac-plan",
+            str(artifact_dir),
+            "--environment",
+            "https://org.crm.dynamics.com",
+            "--token",
+            "admin-token",
+        ],
+    )
+    assert planned.exit_code == 0
+    assert json.loads(planned.output)["requires_approval"] is True
+
+    pending = runner.invoke(
+        app,
+        [
+            "consultant",
+            "power-platform",
+            "pac-create",
+            str(artifact_dir),
+            "--environment",
+            "https://org.crm.dynamics.com",
+            "--token",
+            "admin-token",
+        ],
+    )
+    assert pending.exit_code == 0
+    pending_payload = json.loads(pending.output)
+    approval_id = pending_payload["approval"]["id"]
+    Store(tmp_path / "state.db").update_approval_request(approval_id, "approved")
+    monkeypatch.setattr(
+        cli_module,
+        "run_pac_connector_create",
+        lambda plan, approved: {
+            "status": "succeeded",
+            "exit_code": 0,
+            "message": "PAC connector create completed",
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    executed = runner.invoke(
+        app,
+        [
+            "consultant",
+            "power-platform",
+            "pac-create",
+            str(artifact_dir),
+            "--environment",
+            "https://org.crm.dynamics.com",
+            "--approval-id",
+            str(approval_id),
+            "--token",
+            "admin-token",
+        ],
+    )
+    assert executed.exit_code == 0
+    assert json.loads(executed.output)["status"] == "succeeded"
+
+
 def _hudu_response(items):
     return cli_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
