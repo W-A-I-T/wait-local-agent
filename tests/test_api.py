@@ -5341,6 +5341,19 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             },
         },
     )
+    governance = client.post(
+        "/consultant/governance/evaluate",
+        headers=_auth("tech-token"),
+        json={
+            "architecture": {
+                "client_id": "acme",
+                "readiness": "ready",
+                "components": [],
+                "open_items": [],
+            },
+            "connector_artifacts": [],
+        },
+    )
     admin_create = client.post(
         "/consultant/blueprints",
         headers=_auth("admin-token"),
@@ -5376,6 +5389,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert connector_viewer.status_code == 403
     assert evaluation.status_code == 200
     assert evaluation.json()["production_readiness"] == "pass"
+    assert governance.status_code == 200
+    assert governance.json()["status"] == "pass"
     assert admin_create.status_code == 201
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404

@@ -95,6 +95,7 @@ from wait_local_agent.consultant import (
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
+from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -392,6 +393,11 @@ class OpenApiConnectorRequest(BaseModel):
 class EvaluationRequest(BaseModel):
     test_set: list[dict[str, object]]
     observations: dict[str, object]
+
+
+class GovernanceRequest(BaseModel):
+    architecture: dict[str, object]
+    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -3986,6 +3992,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return evaluate_tool_contract(payload.test_set, payload.observations)
         except EvaluationValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/governance/evaluate")
+    def evaluate_consultant_governance(
+        payload: GovernanceRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return evaluate_solution_governance(payload.architecture, payload.connector_artifacts)
+        except GovernanceValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/blueprints/{blueprint_id}")

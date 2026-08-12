@@ -90,6 +90,7 @@ from wait_local_agent.consultant import (
 )
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
+from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -167,6 +168,7 @@ microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
 microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
+microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -192,6 +194,7 @@ app.add_typer(consultant_app, name="consultant")
 microsoft_app.add_typer(microsoft_connector_app, name="connector")
 microsoft_app.add_typer(microsoft_solution_app, name="solution")
 microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
+microsoft_app.add_typer(microsoft_governance_app, name="governance")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2708,6 +2711,20 @@ def run_microsoft_evaluation(source: Path) -> None:
     try:
         result = evaluate_tool_contract(test_set, observations)
     except EvaluationValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_governance_app.command("evaluate")
+def evaluate_microsoft_governance(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    architecture = payload.get("architecture")
+    connector_artifacts = payload.get("connector_artifacts", [])
+    if not isinstance(architecture, dict) or not isinstance(connector_artifacts, list):
+        raise typer.BadParameter("source must contain architecture and connector_artifacts")
+    try:
+        result = evaluate_solution_governance(architecture, connector_artifacts)
+    except GovernanceValidationError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
