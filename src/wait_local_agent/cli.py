@@ -82,7 +82,18 @@ from wait_local_agent.connectors import (
     validate_connector_credentials,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
+from wait_local_agent.consultant import (
+    BlueprintValidationError,
+    architect_solution_blueprint,
+    blueprint_view,
+    parse_solution_blueprint,
+)
+from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
+from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
+from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -97,8 +108,27 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
+from wait_local_agent.power_apps import (
+    PowerAppsPlanError,
+    build_power_apps_artifact,
+    build_power_apps_plan,
+)
+from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
+from wait_local_agent.power_platform import (
+    OpenApiDefinitionError,
+    build_solution_command_plan,
+    generate_power_platform_connector,
+    power_platform_cli_status,
+)
+from wait_local_agent.power_platform_deployment import (
+    PowerPlatformDeploymentError,
+    build_power_platform_deployment_plan,
+    build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_stage,
+)
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -130,7 +160,18 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.supervisor import (
+    SupervisorPlanError,
+    build_supervisor_delegation_plan,
+    execute_supervisor_delegation,
+)
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
+from wait_local_agent.teams_graph import (
+    TeamsChannelReadResponse,
+    TeamsGraphClient,
+    TeamsMessageReadResponse,
+    TeamsTeamReadResponse,
+)
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
@@ -148,6 +189,20 @@ audit_app = typer.Typer(help="Audit log commands.")
 knowledge_app = typer.Typer(help="Local knowledge base commands.")
 connectors_app = typer.Typer(help="Connector status and safe draft commands.")
 workflows_app = typer.Typer(help="Workflow template and run commands.")
+consultant_app = typer.Typer(help="Local-first solution consultant commands.")
+blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
+microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
+microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
+microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
+microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
+microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
+microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
+microsoft_power_apps_app = typer.Typer(help="Bounded Power Apps and Dataverse plans and build artifacts.")
+microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
+microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
+microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
+microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
+microsoft_delivery_app = typer.Typer(help="Review-only consultant delivery handoffs.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -168,6 +223,20 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(workflows_app, name="workflows")
+consultant_app.add_typer(blueprints_app, name="blueprints")
+app.add_typer(consultant_app, name="consultant")
+microsoft_app.add_typer(microsoft_connector_app, name="connector")
+microsoft_app.add_typer(microsoft_solution_app, name="solution")
+microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
+microsoft_app.add_typer(microsoft_governance_app, name="governance")
+microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
+microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
+microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
+microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
+microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
+microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
+microsoft_app.add_typer(microsoft_delivery_app, name="delivery")
+app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
@@ -237,6 +306,10 @@ def _sharepoint_client() -> SharePointClient:
 
 def _m365_client() -> M365GraphClient:
     return M365GraphClient(load_settings())
+
+
+def _teams_client() -> TeamsGraphClient:
+    return TeamsGraphClient(load_settings())
 
 
 def _timezest_client() -> TimeZestClient:
@@ -899,7 +972,7 @@ def update_approval_request(
             )
         except (PermissionError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
-    elif existing.action_type.startswith("m365."):
+    elif existing.action_type.startswith("m365.") or existing.action_type == "teams.message.send":
         context = _cli_access(load_settings(), token, Role.ADMIN)
         approval = store.update_approval_request(
             request_id,
@@ -2120,6 +2193,113 @@ def m365_health() -> None:
     typer.echo(f"{result.status} count={result.count} {result.message}")
 
 
+@connectors_app.command("m365-teams")
+def m365_teams(cursor: str | None = None, page_size: int | None = None) -> None:
+    response = _teams_client().list_teams(
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.list", response)
+
+
+@connectors_app.command("m365-team-channels")
+def m365_team_channels(
+    team_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    response = _teams_client().list_channels(
+        team_id,
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.channels.list", response)
+
+
+@connectors_app.command("m365-team-messages")
+def m365_team_messages(
+    team_id: str,
+    channel_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    response = _teams_client().list_messages(
+        team_id,
+        channel_id,
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.messages.list", response)
+
+
+@connectors_app.command("draft-m365-team-message")
+def draft_m365_team_message(
+    team_id: str,
+    channel_id: str,
+    body: str,
+    client_id: str | None = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a client id is required for a Teams message approval")
+    approval = Store(settings.data_path).create_approval_request(
+        subject_id=f"{scoped_client_id}:{team_id}:{channel_id}",
+        action_type="teams.message.send",
+        payload={
+            "connector": "m365-teams",
+            "action_type": "message.send",
+            "client_id": scoped_client_id,
+            "team_id": team_id,
+            "channel_id": channel_id,
+            "body": body,
+        },
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@connectors_app.command("execute-m365-team-message")
+def execute_m365_team_message(
+    request_id: int,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    store = Store(settings.data_path)
+    approval = store.get_approval_request(request_id)
+    if approval is None or approval.action_type != "teams.message.send":
+        raise typer.BadParameter("Teams message approval request not found")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, approval.client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("approval request is outside authenticated scope")
+    if approval.status != "approved":
+        raise typer.BadParameter("Teams message approval must be approved before execution")
+    try:
+        payload = json.loads(approval.payload_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("Teams message approval payload is malformed") from exc
+    if not isinstance(payload, dict) or not all(
+        isinstance(payload.get(key), str) for key in ("team_id", "channel_id", "body")
+    ):
+        raise typer.BadParameter("Teams message approval payload is invalid")
+    result = _teams_client().send_message(
+        team_id=cast(str, payload["team_id"]),
+        channel_id=cast(str, payload["channel_id"]),
+        body=cast(str, payload["body"]),
+    )
+    updated = store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result=asdict(result),
+        audit_event_type="teams.message.send",
+    )
+    typer.echo(json.dumps(_approval_cli_view(updated), sort_keys=True, indent=2))
+
+
 @connectors_app.command("m365-users")
 def m365_users(
     identity: str | None = None,
@@ -2297,7 +2477,12 @@ def import_workflow_gallery(
     ):
         raise typer.BadParameter("unsupported template artifact", param_hint="artifact_path")
     source_template_id = artifact.get("source_template_id")
-    if not isinstance(source_template_id, str) or get_workflow_template(source_template_id) is None:
+    template = (
+        get_workflow_template(source_template_id)
+        if isinstance(source_template_id, str)
+        else None
+    )
+    if template is None:
         raise typer.BadParameter("workflow template source is unavailable", param_hint="artifact_path")
     name = artifact.get("name")
     description = artifact.get("description")
@@ -2310,7 +2495,7 @@ def import_workflow_gallery(
     provenance = cast(str, provenance)
     instructions = cast(str, instructions)
     entry = _store().create_template_gallery_entry(
-        get_workflow_template(source_template_id),  # type: ignore[arg-type]
+        template,
         provenance=provenance,
         client_id=client_id,
         name=name,
@@ -2505,6 +2690,590 @@ def run_workflow(
         raise typer.BadParameter(str(exc)) from exc
     _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
+
+
+@blueprints_app.command("create")
+def create_solution_blueprint(
+    source: Path,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a tenant client_id is required")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        blueprint = parse_solution_blueprint(
+            payload,
+            client_id=scoped_client_id,
+            created_by=context.approver_id or "cli",
+        )
+    except OSError as exc:
+        raise typer.BadParameter("blueprint file could not be read") from exc
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("blueprint file must contain a JSON object") from exc
+    except BlueprintValidationError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    persisted = Store(settings.data_path).create_solution_blueprint(blueprint)
+    typer.echo(json.dumps(blueprint_view(persisted), sort_keys=True, indent=2))
+
+
+@blueprints_app.command("list")
+def list_solution_blueprints(
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    blueprints = Store(settings.data_path).list_solution_blueprints(client_id=scoped_client_id)
+    typer.echo(json.dumps([blueprint_view(item) for item in blueprints], sort_keys=True, indent=2))
+
+
+@blueprints_app.command("show")
+def show_solution_blueprint(
+    blueprint_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, None)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    blueprint = Store(settings.data_path).get_solution_blueprint(
+        blueprint_id,
+        client_id=scoped_client_id,
+    )
+    if blueprint is None:
+        raise typer.BadParameter("solution blueprint not found")
+    typer.echo(json.dumps(blueprint_view(blueprint), sort_keys=True, indent=2))
+
+
+@blueprints_app.command("architect")
+def architect_solution_blueprint_command(
+    blueprint_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, None)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    store = Store(settings.data_path)
+    blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+    if blueprint is None:
+        raise typer.BadParameter("solution blueprint not found")
+    agent_service = AgentService(store, settings, SmartActionService(store, settings))
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=(tool.id for tool in agent_service.list_tools()),
+        workflow_templates=list_workflow_templates(),
+    )
+    typer.echo(json.dumps(architecture, sort_keys=True, indent=2))
+
+
+@microsoft_connector_app.command("validate")
+def validate_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(
+        json.dumps(
+            {
+                "valid": True,
+                "connector_id": artifact["connector_id"],
+                "action_count": len(cast(list[object], artifact["actions"])),
+                "credentials_included": artifact["credentials_included"],
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+@microsoft_connector_app.command("generate")
+def generate_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(artifact, sort_keys=True, indent=2))
+
+
+@microsoft_connector_app.command("package")
+def package_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(
+        json.dumps(
+            {
+                "format": "wait-local-agent.power-platform.connector-package",
+                "format_version": 1,
+                "connector": artifact,
+                "package_status": "review_only",
+                "deployment_started": False,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+@microsoft_solution_app.command("status")
+def microsoft_solution_status() -> None:
+    typer.echo(json.dumps(power_platform_cli_status(), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("plan")
+def microsoft_solution_plan(
+    solution_name: str,
+    publisher_name: str,
+    publisher_prefix: str,
+    output_directory: str,
+) -> None:
+    try:
+        plan = build_solution_command_plan(
+            solution_name,
+            publisher_name,
+            publisher_prefix,
+            output_directory,
+        )
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("deployment-plan")
+def microsoft_solution_deployment_plan(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = (
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+        "deployment_targets",
+    )
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain solution fields and deployment_targets")
+    values = {key: payload[key] for key in required}
+    targets = values.pop("deployment_targets")
+    if (
+        any(not isinstance(values[key], str) for key in values)
+        or not isinstance(targets, list)
+        or any(not isinstance(item, dict) for item in targets)
+    ):
+        raise typer.BadParameter("source contains invalid deployment-plan fields")
+    try:
+        plan = build_power_platform_deployment_plan(
+            **cast(dict[str, str], values),
+            deployment_targets=cast(list[dict[str, object]], targets),
+        )
+    except PowerPlatformDeploymentError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("request-deployment-approval")
+def request_microsoft_solution_deployment_approval(
+    source: Path,
+    stage: str = typer.Option("build", help="Stage to approve: build, dev, test, or prod."),
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    payload = _load_openapi_definition(source)
+    required = (
+        "client_id",
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+        "deployment_targets",
+    )
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, solution fields, and deployment_targets")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, cast(str, payload["client_id"]))
+    if scoped_client_id is None:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    targets = payload["deployment_targets"]
+    if not isinstance(targets, list) or any(not isinstance(item, dict) for item in targets):
+        raise typer.BadParameter("deployment_targets must contain objects")
+    try:
+        plan = build_power_platform_deployment_plan(
+            solution_name=cast(str, payload["solution_name"]),
+            publisher_name=cast(str, payload["publisher_name"]),
+            publisher_prefix=cast(str, payload["publisher_prefix"]),
+            output_directory=cast(str, payload["output_directory"]),
+            deployment_targets=cast(list[dict[str, object]], targets),
+        )
+        if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
+            raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
+    except (PowerPlatformDeploymentError, KeyError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    approval_payload = {
+        "format": "wait-local-agent.power-platform.deployment-approval",
+        "format_version": 1,
+        "client_id": scoped_client_id,
+        "solution_name": payload["solution_name"],
+        "publisher_name": payload["publisher_name"],
+        "publisher_prefix": payload["publisher_prefix"],
+        "output_directory": payload["output_directory"],
+        "deployment_targets": plan["deployment_targets"],
+        "stage": stage,
+        "credentials_included": False,
+    }
+    approval = Store(settings.data_path).create_approval_request(
+        subject_id=f"{scoped_client_id}:{payload['solution_name']}:{stage}",
+        action_type="power_platform.solution_stage",
+        payload=approval_payload,
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("execute-stage")
+def execute_microsoft_solution_stage(
+    request_id: int,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    store = Store(settings.data_path)
+    approval = store.get_approval_request(request_id)
+    if approval is None or approval.action_type != "power_platform.solution_stage":
+        raise typer.BadParameter("Power Platform deployment approval request not found")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, approval.client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("approval request is outside the authenticated tenant scope")
+    if approval.status != "approved":
+        raise typer.BadParameter("deployment approval must be approved before execution")
+    try:
+        payload = json.loads(approval.payload_json)
+        if not isinstance(payload, dict):
+            raise PowerPlatformDeploymentError("approval payload is malformed")
+        plan = build_power_platform_deployment_plan_from_payload(payload)
+        stage_id = payload.get("stage")
+        if not isinstance(stage_id, str):
+            raise PowerPlatformDeploymentError("approval stage is invalid")
+        result = execute_power_platform_stage(plan, stage_id, settings, approved=True)
+        approval = store.record_approval_execution(
+            request_id,
+            status=cast(str, result["status"]),
+            message=cast(str, result["message"]),
+            result=result,
+            audit_event_type="power_platform.solution_stage",
+        )
+    except (PowerPlatformDeploymentError, json.JSONDecodeError, KeyError, PermissionError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@microsoft_evaluation_app.command("run")
+def run_microsoft_evaluation(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    test_set = payload.get("test_set")
+    observations = payload.get("observations")
+    if not isinstance(test_set, list) or not isinstance(observations, dict):
+        raise typer.BadParameter("source must contain test_set and observations")
+    try:
+        result = evaluate_tool_contract(test_set, observations)
+    except EvaluationValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_governance_app.command("evaluate")
+def evaluate_microsoft_governance(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    architecture = payload.get("architecture")
+    connector_artifacts = payload.get("connector_artifacts", [])
+    if not isinstance(architecture, dict) or not isinstance(connector_artifacts, list):
+        raise typer.BadParameter("source must contain architecture and connector_artifacts")
+    try:
+        result = evaluate_solution_governance(architecture, connector_artifacts)
+    except GovernanceValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_monitoring_app.command("agents")
+def monitor_microsoft_agents(client_id: str | None = None) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    scoped_client_id = client_id or settings.client_id
+    result = build_agent_health_summary(
+        store.list_agent_runs(scoped_client_id),
+        service.list_definitions(scoped_client_id),
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_power_apps_app.command("plan")
+def plan_microsoft_power_apps(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "app_name", "entities", "screens", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, app_name, entities, screens, and actions")
+    client_id = payload["client_id"]
+    app_name = payload["app_name"]
+    entities = payload["entities"]
+    screens = payload["screens"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(app_name, str)
+        or not isinstance(entities, list)
+        or not isinstance(screens, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in entities + screens + actions)
+    ):
+        raise typer.BadParameter("source fields must contain text values and object lists")
+    try:
+        result = build_power_apps_plan(
+            client_id=client_id,
+            app_name=app_name,
+            entities=entities,
+            screens=screens,
+            actions=actions,
+        )
+    except PowerAppsPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_power_apps_app.command("build")
+def build_microsoft_power_apps(
+    source: Path,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Write the local artifact manifest to this file."),
+    ] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "app_name", "entities", "screens", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, app_name, entities, screens, and actions")
+    client_id = payload["client_id"]
+    app_name = payload["app_name"]
+    entities = payload["entities"]
+    screens = payload["screens"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(app_name, str)
+        or not isinstance(entities, list)
+        or not isinstance(screens, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in entities + screens + actions)
+    ):
+        raise typer.BadParameter("source fields must contain text values and object lists")
+    try:
+        artifact = build_power_apps_artifact(
+            client_id=client_id,
+            app_name=app_name,
+            entities=entities,
+            screens=screens,
+            actions=actions,
+        )
+    except PowerAppsPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    rendered = json.dumps(artifact, sort_keys=True, indent=2) + "\n"
+    if output is not None:
+        try:
+            output.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            raise typer.BadParameter("unable to write artifact output", param_hint="--output") from exc
+        typer.echo(f"artifact={output}")
+        return
+    typer.echo(rendered, nl=False)
+
+
+@microsoft_use_cases_app.command("list")
+def list_microsoft_use_cases(
+    category: Annotated[str | None, typer.Option("--category")] = None,
+) -> None:
+    try:
+        result = list_consultant_use_cases(category)
+    except UseCaseCatalogError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--category") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_workflow_app.command("plan")
+def plan_microsoft_workflow(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "workflow_id", "workflow_name", "trigger", "steps")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, workflow_id, workflow_name, trigger, and steps")
+    client_id = payload["client_id"]
+    workflow_id = payload["workflow_id"]
+    workflow_name = payload["workflow_name"]
+    trigger = payload["trigger"]
+    steps = payload["steps"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(workflow_id, str)
+        or not isinstance(workflow_name, str)
+        or not isinstance(trigger, str)
+        or not isinstance(steps, list)
+        or any(not isinstance(item, dict) for item in steps)
+    ):
+        raise typer.BadParameter("source fields must contain text values and an object list")
+    try:
+        result = build_power_automate_flow_plan(
+            client_id=client_id,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            trigger=trigger,
+            steps=steps,
+        )
+    except PowerAutomatePlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_discovery_app.command("assess")
+def assess_microsoft_discovery(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    answers = payload.get("answers")
+    if not isinstance(client_id, str) or not isinstance(answers, dict):
+        raise typer.BadParameter("source must contain client_id and an answers object")
+    try:
+        result = build_solution_discovery(client_id=client_id, answers=answers)
+    except DiscoveryValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_supervisor_app.command("plan")
+def plan_microsoft_supervisor(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    task = payload.get("task")
+    child_agent_ids = payload.get("child_agent_ids")
+    if not isinstance(client_id, str) or not isinstance(task, str) or not isinstance(child_agent_ids, list):
+        raise typer.BadParameter("source must contain client_id, task, and child_agent_ids")
+    if any(not isinstance(item, str) for item in child_agent_ids):
+        raise typer.BadParameter("child_agent_ids must contain text values")
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    try:
+        result = build_supervisor_delegation_plan(
+            client_id=client_id,
+            task=task,
+            child_agent_ids=child_agent_ids,
+            definitions=service.list_definitions(client_id),
+        )
+    except SupervisorPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_supervisor_app.command("run")
+def run_microsoft_supervisor(
+    source: Path,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    entity_id = payload.get("entity_id")
+    task = payload.get("task")
+    child_agent_ids = payload.get("child_agent_ids")
+    input_payload = payload.get("input", {})
+    completed_run_ids = payload.get("completed_run_ids", [])
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(entity_id, str)
+        or not isinstance(task, str)
+        or not isinstance(child_agent_ids, list)
+        or not isinstance(input_payload, dict)
+        or not isinstance(completed_run_ids, list)
+    ):
+        raise typer.BadParameter(
+            "source must contain client_id, entity_id, task, child_agent_ids, and an input object"
+        )
+    if any(not isinstance(item, str) for item in child_agent_ids):
+        raise typer.BadParameter("child_agent_ids must contain text values")
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in completed_run_ids):
+        raise typer.BadParameter("completed_run_ids must contain integer values")
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    store = Store(settings.data_path)
+    smart_actions = SmartActionService(store, settings)
+    service = AgentService(store, settings, smart_actions)
+    try:
+        result = execute_supervisor_delegation(
+            client_id=scoped_client_id,
+            entity_id=entity_id,
+            task=task,
+            child_agent_ids=child_agent_ids,
+            definitions=service.list_definitions(scoped_client_id),
+            agent_service=service,
+            store=store,
+            actor=context.approver_id or "cli",
+            actor_role=context.role,
+            input_payload=input_payload,
+            completed_run_ids=completed_run_ids,
+        )
+    except SupervisorPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_delivery_app.command("plan")
+def plan_microsoft_delivery(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "architecture", "evaluation", "governance", "deployment_targets")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter(
+            "source must contain client_id, architecture, evaluation, governance, and deployment_targets"
+        )
+    client_id = payload["client_id"]
+    architecture = payload["architecture"]
+    evaluation = payload["evaluation"]
+    governance = payload["governance"]
+    deployment_targets = payload["deployment_targets"]
+    connector_artifacts = payload.get("connector_artifacts", [])
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(architecture, dict)
+        or not isinstance(evaluation, dict)
+        or not isinstance(governance, dict)
+        or not isinstance(deployment_targets, list)
+        or any(not isinstance(item, str) for item in deployment_targets)
+        or not isinstance(connector_artifacts, list)
+        or any(not isinstance(item, dict) for item in connector_artifacts)
+    ):
+        raise typer.BadParameter("source contains invalid delivery-plan fields")
+    try:
+        result = build_consultant_delivery_plan(
+            client_id=client_id,
+            architecture=architecture,
+            evaluation=evaluation,
+            governance=governance,
+            deployment_targets=deployment_targets,
+            connector_artifacts=connector_artifacts,
+        )
+    except DeliveryPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
 @workflows_app.command("compare-runs")
@@ -3594,6 +4363,24 @@ def _print_m365_response(read_type: str, response: M365GraphReadResponse) -> Non
     )
 
 
+def _print_teams_response(
+    read_type: str,
+    response: TeamsTeamReadResponse | TeamsChannelReadResponse | TeamsMessageReadResponse,
+) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
 def _audit_m365_cli_read(read_type: str, status: str, count: int) -> None:
     _store().add_audit_event("m365.read", read_type, f"{status} count={count}")
 
@@ -3728,6 +4515,36 @@ def _cli_access(settings, token: str | None, minimum: Role):
     if context.role < minimum:
         raise typer.BadParameter("insufficient role")
     return context
+
+
+def _load_openapi_definition(source: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter("source must be a readable JSON OpenAPI definition") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("source must contain a JSON object")
+    return cast(dict[str, object], payload)
+
+
+def _cli_blueprint_client_scope(
+    bound_client_id: str | None,
+    role: Role,
+    requested_client_id: str | None,
+) -> str | None:
+    bound = bound_client_id.strip() if isinstance(bound_client_id, str) and bound_client_id.strip() else None
+    requested = (
+        requested_client_id.strip()
+        if isinstance(requested_client_id, str) and requested_client_id.strip()
+        else None
+    )
+    if role >= Role.ADMIN:
+        return requested or bound
+    if bound is None:
+        return None
+    if requested is not None and requested != bound:
+        raise typer.BadParameter("requested tenant is outside authenticated scope")
+    return bound
 
 
 def _generate_client_report(

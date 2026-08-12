@@ -18,6 +18,7 @@ export const apiProxyRoutes = [
   "/workflows",
   "/workflow-templates",
   "/workflow-runs",
+  "/consultant",
   "/reports",
   "/hardening",
   "/backup",

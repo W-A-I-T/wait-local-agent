@@ -463,6 +463,7 @@ class AgentService:
         entity_id: str,
         actor: str,
         input_payload: dict[str, object],
+        supervisor_context: dict[str, object] | None = None,
         retry_count: int = 0,
         retry_of_run_id: int | None = None,
         actor_role: Role | None = None,
@@ -477,6 +478,11 @@ class AgentService:
         if self.store.get_ticket(entity_id, client_id=client_id) is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
         execution_context = self._build_context(definition, entity_id)
+        if supervisor_context:
+            execution_context = {
+                **execution_context,
+                "supervisor": redact_value(supervisor_context),
+            }
         state: dict[str, object] = {
             "entity_id": entity_id,
             "input": redact_value(input_payload),

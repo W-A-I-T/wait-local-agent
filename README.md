@@ -4,11 +4,15 @@
 [![License](https://img.shields.io/github/license/W-A-I-T/wait-local-agent)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 
-**Local-first MSP and founder automation appliance for tickets, runbooks, approvals, connector drafts, scheduled workflows, and auditable local operations.**
+**WAIT Local Agent is a local-first AI execution and governance runtime for cross-platform business automation.** It connects enterprise systems, AI agents, Microsoft 365, Power Platform artifacts, PSA, RMM, documentation, APIs, and local tools behind inspectable policy, human approval, tenant boundaries, and audit evidence.
+
+**WAIT AI Solutions Architect** turns business requirements into provider-neutral solution blueprints, projects them onto available WAIT-native and external implementation targets, and uses this runtime to safely orchestrate and govern execution. MSP operations remains an important vertical, not the platform's only identity.
 
 See the [capability roadmap](ROADMAP.md) and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first MSP capabilities and the rationale for deferred work.
 
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
+
+The consultant surfaces in this repository are deterministic and review-oriented: blueprint discovery, architecture projections, workflow design, evaluation, governance, MCP boundaries, and Power Platform preparation produce inspectable local artifacts. They do not imply that an external provider is configured or that a design artifact has been deployed. See [docs/status.md](docs/status.md) for the current evidence-backed boundary.
 
 > Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector connection checks must be explicitly enabled, and HaloPSA writes still require an approved draft.
 
@@ -358,6 +362,11 @@ WAIT_RATE_LIMIT_GENERAL=100/minute
 WAIT_RATE_LIMIT_CONNECTOR=10/minute
 WAIT_UPDATE_CHANNEL_URL=
 WAIT_UPDATE_PUBKEYS=
+WAIT_MCP_ALLOWED_ORIGINS=
+WAIT_MCP_CLIENT_ALLOWED_HOSTS=
+WAIT_WORK_IQ_MCP_ENDPOINT=
+WAIT_WORK_IQ_MCP_ACCESS_TOKEN=
+WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS=20
 WAIT_LICENSE_KEY=
 WAIT_LICENSE_SECRET=
 WAIT_PACK_SIGNING_SECRET=

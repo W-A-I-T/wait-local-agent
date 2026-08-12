@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -86,8 +87,19 @@ from wait_local_agent.connectors import (
     update_halopsa_approval_fields,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
+from wait_local_agent.consultant import (
+    BlueprintValidationError,
+    architect_solution_blueprint,
+    blueprint_view,
+    parse_solution_blueprint,
+)
+from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
+from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
+from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
@@ -109,6 +121,14 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.mcp import (
+    MAX_MCP_REQUEST_BYTES,
+    MCP_PROTOCOL_VERSION,
+    McpProtocolError,
+    WaitMcpServer,
+    origin_allowed,
+    protocol_error_response,
+)
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_EVENT_MAX_RETRIES,
@@ -119,6 +139,7 @@ from wait_local_agent.models import (
     AgentDefinition,
     WorkflowRun,
 )
+from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
@@ -128,8 +149,27 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.power_apps import (
+    PowerAppsPlanError,
+    build_power_apps_artifact,
+    build_power_apps_plan,
+)
+from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
+from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
+from wait_local_agent.power_platform_deployment import (
+    PowerPlatformDeploymentError,
+    build_power_platform_deployment_plan,
+    build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_stage,
+)
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
-from wait_local_agent.rbac import AuthContext, Role, require_end_user, require_role
+from wait_local_agent.rbac import (
+    AuthContext,
+    Role,
+    require_end_user,
+    require_role,
+    resolve_auth_context,
+)
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
     build_restore_evidence_report,
@@ -158,17 +198,28 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.supervisor import (
+    SupervisorPlanError,
+    build_supervisor_delegation_plan,
+    execute_supervisor_delegation,
+)
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
+from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
+from wait_local_agent.workflow_designer import (
+    WorkflowDesignError,
+    default_workflow_design,
+)
 from wait_local_agent.workflows import (
     get_workflow_template,
     list_workflow_templates,
     run_workflow_template,
 )
+from wait_local_agent.workiq import WorkIqClient
 
 ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
@@ -320,6 +371,7 @@ class TemplateGalleryCreateRequest(BaseModel):
     provenance: str = Field(min_length=1, max_length=1000)
     display_name: str | None = Field(default=None, max_length=120)
     instructions: str = Field(default="", max_length=4000)
+    definition: dict[str, object] | None = None
     client_id: str | None = None
 
 
@@ -331,6 +383,7 @@ class TemplateGalleryImportRequest(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     provenance: str = Field(min_length=1, max_length=1000)
     instructions: str = Field(default="", max_length=4000)
+    definition: dict[str, object] | None = None
     client_id: str | None = None
 
 
@@ -338,12 +391,118 @@ class TemplateGalleryUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, min_length=1, max_length=2000)
     instructions: str | None = Field(default=None, max_length=4000)
+    definition: dict[str, object] | None = None
     enabled: bool | None = None
     client_id: str | None = None
 
 
 class TemplateGalleryRestoreRequest(BaseModel):
     client_id: str | None = None
+
+
+class SolutionBlueprintRequest(BaseModel):
+    solution: dict[str, object]
+    business_goal: dict[str, object]
+    users: list[object]
+    knowledge: list[object]
+    systems: list[object]
+    agents: list[dict[str, object]]
+    workflows: list[dict[str, object]]
+    approvals: dict[str, object]
+    deployment: list[object]
+    risk: str
+    instructions: str = Field(default="", max_length=4000)
+    intents: list[object] = Field(default_factory=list, max_length=32)
+    skills: list[object] = Field(default_factory=list, max_length=32)
+    model: str = Field(default="", max_length=240)
+    orchestration: str = Field(default="", max_length=32)
+    client_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class OpenApiConnectorRequest(BaseModel):
+    connector_id: str = Field(min_length=1, max_length=64)
+    definition: dict[str, object]
+
+
+class EvaluationRequest(BaseModel):
+    test_set: list[dict[str, object]]
+    observations: dict[str, object]
+
+
+class GovernanceRequest(BaseModel):
+    architecture: dict[str, object]
+    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+
+
+class PowerAppsPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    app_name: str = Field(min_length=1, max_length=120)
+    entities: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    screens: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerAutomatePlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    workflow_id: str = Field(min_length=1, max_length=64)
+    workflow_name: str = Field(min_length=1, max_length=240)
+    trigger: str = Field(min_length=1, max_length=240)
+    steps: list[dict[str, object]] = Field(min_length=1, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoveryRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class SupervisorPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    task: str = Field(min_length=1, max_length=2000)
+    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+
+class SupervisorRunRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    entity_id: str = Field(min_length=1, max_length=100)
+    task: str = Field(min_length=1, max_length=2_000)
+    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    input: dict[str, object] = Field(default_factory=dict, max_length=16)
+    completed_run_ids: list[int] = Field(default_factory=list, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeliveryPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    architecture: dict[str, object]
+    evaluation: dict[str, object]
+    governance: dict[str, object]
+    deployment_targets: list[str] = Field(min_length=1, max_length=8)
+    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformDeploymentRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=64)
+    publisher_name: str = Field(min_length=1, max_length=100)
+    publisher_prefix: str = Field(min_length=2, max_length=8)
+    output_directory: str = Field(min_length=1, max_length=240)
+    deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
+    stage: Literal["build", "dev", "test", "prod"] = "build"
+    model_config = ConfigDict(extra="forbid")
+
+
+class TeamsMessageDraftRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=320)
+    channel_id: str = Field(min_length=1, max_length=320)
+    body: str = Field(min_length=1, max_length=4000)
+    client_id: str | None = Field(default=None, max_length=128)
+    model_config = ConfigDict(extra="forbid")
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -562,6 +721,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     timezest_client = TimeZestClient(active_settings)
     scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
+    teams_client = TeamsGraphClient(active_settings)
+    work_iq_client = WorkIqClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -579,12 +740,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         confluence_client=confluence_client,
         notion_client=notion_client,
         sharepoint_client=sharepoint_client,
+        teams_client=teams_client,
         timezest_client=timezest_client,
         scalepad_client=scalepad_client,
         m365_client=m365_client,
+        work_iq_client=work_iq_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
+    mcp_server = WaitMcpServer(agent_service, smart_action_service)
     event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
         store,
@@ -820,6 +984,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tools")
     def tools(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(tool) for tool in agent_service.list_tools()]
+
+    @app.get("/mcp")
+    def mcp_get() -> Response:
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.post("/mcp")
+    @limiter.limit(active_settings.rate_limit_connector)
+    async def mcp_endpoint(request: Request) -> Response:
+        origin = request.headers.get("origin")
+        request_origin = str(request.base_url).rstrip("/")
+        if not origin_allowed(origin, request_origin, active_settings.mcp_allowed_origins):
+            return JSONResponse(status_code=403, content={"detail": "invalid MCP origin"})
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_MCP_REQUEST_BYTES:
+                    return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "invalid content length"})
+        try:
+            body = await request.body()
+            if len(body) > MAX_MCP_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
+            message = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse(status_code=400, content={"detail": "MCP request must be JSON"})
+        request_id = message.get("id") if isinstance(message, dict) else None
+        try:
+            context = resolve_auth_context(active_settings, request.headers.get("authorization"))
+            protocol_header = request.headers.get("mcp-protocol-version")
+            if protocol_header and protocol_header not in {MCP_PROTOCOL_VERSION, "2025-03-26"}:
+                raise McpProtocolError(-32600, "unsupported MCP protocol version")
+            response, new_session_id = mcp_server.handle(
+                message,
+                context=context,
+                session_id=request.headers.get("mcp-session-id"),
+            )
+        except McpProtocolError as exc:
+            response = protocol_error_response(request_id, exc)
+            new_session_id = None
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": redact_text(str(exc.detail))},
+                headers=dict(exc.headers or {}),
+            )
+        headers = {"MCP-Session-Id": new_session_id} if new_session_id else None
+        if response is None:
+            return Response(status_code=202, headers=headers)
+        return JSONResponse(content=response, headers=headers)
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
@@ -2045,7 +2259,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             existing_approval = store.get_approval_request(request_id)
             if existing_approval is None or not _approval_in_scope(context, existing_approval):
                 raise KeyError(request_id)
-            if existing_approval.action_type.startswith("m365.") and context.role < Role.ADMIN:
+            if (
+                existing_approval.action_type.startswith("m365.")
+                or existing_approval.action_type == "teams.message.send"
+            ) and context.role < Role.ADMIN:
                 raise PermissionError("M365 approvals require admin authority")
             if existing_approval.action_type.startswith("smart_action:"):
                 smart_action_service.update_approval(
@@ -3499,6 +3716,126 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _m365_managed_device_response("managed-devices.list", response)
 
+    @app.get("/connectors/m365/teams")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_teams(request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = teams_client.list_teams(page_size=active_settings.m365_page_size)
+        _audit_m365_read("teams.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.get("/connectors/m365/teams/{team_id}/channels")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_team_channels(
+        team_id: str,
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = teams_client.list_channels(
+            team_id,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        _audit_m365_read("teams.channels.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.get("/connectors/m365/teams/{team_id}/channels/{channel_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_team_messages(
+        team_id: str,
+        channel_id: str,
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = teams_client.list_messages(
+            team_id,
+            channel_id,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        _audit_m365_read("teams.messages.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.post("/connectors/m365/teams/message-drafts", status_code=201)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def draft_m365_team_message(
+        payload: TeamsMessageDraftRequest,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        client_id = _smart_action_client_scope(context, payload.client_id)
+        if client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        approval = store.create_approval_request(
+            subject_id=f"{client_id}:{payload.team_id}:{payload.channel_id}",
+            action_type="teams.message.send",
+            payload={
+                "connector": "m365-teams",
+                "action_type": "message.send",
+                "client_id": client_id,
+                "team_id": payload.team_id,
+                "channel_id": payload.channel_id,
+                "body": payload.body,
+            },
+            client_id=client_id,
+        )
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/teams/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_m365_team_message(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        approval = store.get_approval_request(request_id)
+        if (
+            approval is None
+            or approval.action_type != "teams.message.send"
+            or not _approval_in_scope(context, approval)
+        ):
+            raise HTTPException(status_code=404, detail="Teams message approval request not found")
+        if approval.status != "approved":
+            raise HTTPException(status_code=409, detail="Teams message approval must be approved before execution")
+        payload = _safe_json_object(approval.payload_json)
+        team_id = payload.get("team_id")
+        channel_id = payload.get("channel_id")
+        body = payload.get("body")
+        if not all(isinstance(value, str) for value in (team_id, channel_id, body)):
+            raise HTTPException(status_code=409, detail="Teams message approval payload is invalid")
+        result = teams_client.send_message(
+            team_id=cast(str, team_id),
+            channel_id=cast(str, channel_id),
+            body=cast(str, body),
+        )
+        updated = store.record_approval_execution(
+            request_id,
+            status=result.status,
+            message=result.message,
+            result=asdict(result),
+            audit_event_type="teams.message.send",
+        )
+        return _approval_view(updated)
+
     @app.post("/connectors/m365/users/drafts")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_user_draft(
@@ -3807,6 +4144,351 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
 
+    @app.post("/consultant/blueprints", status_code=201)
+    def create_consultant_blueprint(
+        payload: SolutionBlueprintRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        client_id = _consultant_client_scope(context, payload.client_id)
+        if client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            blueprint = parse_solution_blueprint(
+                payload.model_dump(exclude={"client_id"}),
+                client_id=client_id,
+                created_by=context.approver_id or "api",
+            )
+            return blueprint_view(store.create_solution_blueprint(blueprint))
+        except BlueprintValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/consultant/blueprints")
+    def consultant_blueprints(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return [
+            blueprint_view(blueprint)
+            for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)
+        ]
+
+    @app.get("/consultant/blueprints/{blueprint_id}/architecture")
+    def consultant_blueprint_architecture(
+        blueprint_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+        return architect_solution_blueprint(
+            blueprint,
+            available_tool_ids=(tool.id for tool in agent_service.list_tools()),
+            workflow_templates=list_workflow_templates(),
+        )
+
+    @app.post("/consultant/connectors/openapi/validate")
+    def validate_consultant_openapi_connector(
+        payload: OpenApiConnectorRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            artifact = generate_power_platform_connector(payload.connector_id, payload.definition)
+        except OpenApiDefinitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"valid": True, "connector": artifact}
+
+    @app.post("/consultant/connectors/openapi/generate")
+    def generate_consultant_openapi_connector(
+        payload: OpenApiConnectorRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return generate_power_platform_connector(payload.connector_id, payload.definition)
+        except OpenApiDefinitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/evaluations")
+    def evaluate_consultant_contract(
+        payload: EvaluationRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return evaluate_tool_contract(payload.test_set, payload.observations)
+        except EvaluationValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/governance/evaluate")
+    def evaluate_consultant_governance(
+        payload: GovernanceRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return evaluate_solution_governance(payload.architecture, payload.connector_artifacts)
+        except GovernanceValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-apps/plan")
+    def consultant_power_apps_plan(
+        payload: PowerAppsPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_apps_plan(
+                client_id=scoped_client_id,
+                app_name=payload.app_name,
+                entities=payload.entities,
+                screens=payload.screens,
+                actions=payload.actions,
+            )
+        except PowerAppsPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-apps/build")
+    def consultant_power_apps_build(
+        payload: PowerAppsPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_apps_artifact(
+                client_id=scoped_client_id,
+                app_name=payload.app_name,
+                entities=payload.entities,
+                screens=payload.screens,
+                actions=payload.actions,
+            )
+        except PowerAppsPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/discovery")
+    def consultant_discovery(
+        payload: DiscoveryRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/supervisor/plan")
+    def consultant_supervisor_plan(
+        payload: SupervisorPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definitions = agent_service.list_definitions(scoped_client_id)
+        try:
+            return build_supervisor_delegation_plan(
+                client_id=scoped_client_id,
+                task=payload.task,
+                child_agent_ids=payload.child_agent_ids,
+                definitions=definitions,
+            )
+        except SupervisorPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/supervisor/run")
+    def consultant_supervisor_run(
+        payload: SupervisorRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definitions = agent_service.list_definitions(scoped_client_id)
+        try:
+            return execute_supervisor_delegation(
+                client_id=scoped_client_id,
+                entity_id=payload.entity_id,
+                task=payload.task,
+                child_agent_ids=payload.child_agent_ids,
+                definitions=definitions,
+                agent_service=agent_service,
+                store=store,
+                actor=context.approver_id or "api",
+                actor_role=context.role,
+                input_payload=payload.input,
+                completed_run_ids=payload.completed_run_ids,
+            )
+        except SupervisorPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/delivery-plan")
+    def consultant_delivery_plan(
+        payload: DeliveryPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_consultant_delivery_plan(
+                client_id=scoped_client_id,
+                architecture=payload.architecture,
+                evaluation=payload.evaluation,
+                governance=payload.governance,
+                deployment_targets=payload.deployment_targets,
+                connector_artifacts=payload.connector_artifacts,
+            )
+        except DeliveryPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/solutions/deployment-approvals", status_code=201)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def request_power_platform_deployment_approval(
+        payload: PowerPlatformDeploymentRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = build_power_platform_deployment_plan(
+                solution_name=payload.solution_name,
+                publisher_name=payload.publisher_name,
+                publisher_prefix=payload.publisher_prefix,
+                output_directory=payload.output_directory,
+                deployment_targets=payload.deployment_targets,
+            )
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        approval_payload = {
+            "format": "wait-local-agent.power-platform.deployment-approval",
+            "format_version": 1,
+            "client_id": scoped_client_id,
+            "solution_name": payload.solution_name,
+            "publisher_name": payload.publisher_name,
+            "publisher_prefix": payload.publisher_prefix,
+            "output_directory": payload.output_directory,
+            "deployment_targets": plan["deployment_targets"],
+            "stage": payload.stage,
+            "credentials_included": False,
+        }
+        approval = store.create_approval_request(
+            subject_id=f"{scoped_client_id}:{payload.solution_name}:{payload.stage}",
+            action_type="power_platform.solution_stage",
+            payload=approval_payload,
+            client_id=scoped_client_id,
+        )
+        return {"approval": _approval_view(approval), "plan": plan}
+
+    @app.post("/consultant/solutions/deployment-approvals/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_power_platform_deployment_stage(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        approval = store.get_approval_request(request_id)
+        if (
+            approval is None
+            or approval.action_type != "power_platform.solution_stage"
+            or not _approval_in_scope(context, approval)
+        ):
+            raise HTTPException(status_code=404, detail="deployment approval request not found")
+        if approval.status != "approved":
+            raise HTTPException(status_code=409, detail="deployment approval must be approved before execution")
+        try:
+            payload = _safe_json_object(approval.payload_json)
+            plan = build_power_platform_deployment_plan_from_payload(payload)
+            stage_id = payload.get("stage")
+            if not isinstance(stage_id, str):
+                raise PowerPlatformDeploymentError("deployment approval stage is invalid")
+            result = execute_power_platform_stage(
+                plan,
+                stage_id,
+                active_settings,
+                approved=True,
+            )
+            updated = store.record_approval_execution(
+                request_id,
+                status=cast(str, result["status"]),
+                message=cast(str, result["message"]),
+                result=result,
+                audit_event_type="power_platform.solution_stage",
+            )
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (KeyError, PermissionError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _approval_view(updated)
+
+    @app.get("/consultant/use-cases")
+    def consultant_use_cases(
+        context: ViewerAccess,
+        category: str | None = Query(default=None, max_length=32),
+    ) -> dict[str, object]:
+        del context
+        try:
+            return list_consultant_use_cases(category)
+        except UseCaseCatalogError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/workflows/power-automate/plan")
+    def consultant_power_automate_plan(
+        payload: PowerAutomatePlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_automate_flow_plan(
+                client_id=scoped_client_id,
+                workflow_id=payload.workflow_id,
+                workflow_name=payload.workflow_name,
+                trigger=payload.trigger,
+                steps=payload.steps,
+            )
+        except PowerAutomatePlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/consultant/monitoring/agents")
+    def consultant_agent_monitoring(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return build_agent_health_summary(
+            store.list_agent_runs(scoped_client_id),
+            agent_service.list_definitions(scoped_client_id),
+            client_id=scoped_client_id,
+        )
+
+    @app.get("/consultant/blueprints/{blueprint_id}")
+    def consultant_blueprint_detail(
+        blueprint_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+        return blueprint_view(blueprint)
+
     @app.get("/workflow-templates/gallery")
     def template_gallery(
         context: ViewerAccess,
@@ -3832,14 +4514,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if template is None:
             raise HTTPException(status_code=404, detail="workflow template not found")
         try:
+            definition = payload.definition if payload.definition is not None else default_workflow_design(template)
             entry = store.create_template_gallery_entry(
                 template,
                 provenance=payload.provenance,
                 client_id=scoped_client_id,
                 name=payload.display_name,
                 instructions=payload.instructions,
+                definition=definition,
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(entry)
 
@@ -3873,8 +4557,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 description=payload.description,
                 instructions=payload.instructions,
                 enabled=False,
+                definition=(
+                    payload.definition
+                    if payload.definition is not None
+                    else default_workflow_design(template)
+                ),
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(entry)
 
@@ -3907,9 +4596,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 description=payload.description,
                 instructions=payload.instructions,
                 enabled=payload.enabled,
+                definition=payload.definition,
                 client_id=entry.client_id,
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(updated)
 
@@ -4704,6 +5394,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
+        if request.action_type == "power_platform.solution_stage":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
+            if not active_settings.allow_write_actions:
+                return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            if not active_settings.allow_power_platform_deployment:
+                return False, (
+                    "Power Platform deployment is blocked until "
+                    "WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
+                )
+            if shutil.which("pac") is None:
+                return False, "The pac executable is not available on the local PATH."
+            if not active_settings.power_platform_workspace.expanduser().is_dir():
+                return False, "WAIT_POWER_PLATFORM_WORKSPACE must already exist."
+            return True, ""
+        if request.action_type == "teams.message.send":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
+            write_health = teams_client.write_health()
+            if write_health.status != "ready":
+                return False, write_health.message
+            return True, ""
         if request.action_type.startswith("m365."):
             if request.status != "approved":
                 return False, "Approval must be approved before execution."
@@ -4849,6 +5565,7 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "preview_fields": _safe_json_values(entry.preview_fields_json),
         "provenance": redact_text(entry.provenance),
         "instructions": redact_text(entry.instructions),
+        "definition": _safe_redacted_json_object(entry.definition_json),
         "enabled": entry.enabled,
         "version": entry.version,
         "created_at": entry.created_at,
@@ -4868,6 +5585,7 @@ def _template_gallery_export_view(entry) -> dict[str, object]:
         "description": redact_text(entry.description),
         "provenance": redact_text(entry.provenance),
         "instructions": redact_text(entry.instructions),
+        "definition": _safe_redacted_json_object(entry.definition_json),
         "enabled": entry.enabled,
     }
 
@@ -5440,6 +6158,18 @@ def _approval_in_scope(context: AuthContext, approval) -> bool:
         or approval_client_id is None
         or approval_client_id == scoped_client_id
     )
+
+
+def _consultant_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
+    requested = _normalize_client_id(requested_client_id)
+    bound = _normalize_client_id(context.client_id)
+    if context.role >= Role.ADMIN:
+        return requested or bound
+    if bound is None:
+        return None
+    if requested is not None and requested != bound:
+        raise HTTPException(status_code=403, detail="requested tenant is outside authenticated scope")
+    return bound
 
 
 def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import cast
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -1174,6 +1175,64 @@ def test_approval_detail_handles_invalid_payload_and_missing_write_health(settin
     assert response.json()["block_reason"] == "HaloPSA write health is unavailable."
 
 
+def test_approval_execution_state_covers_governed_connector_branches(settings, monkeypatch, tmp_path) -> None:
+    class ReadyClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "ready", 0)
+
+    monkeypatch.setattr(app_module, "TeamsGraphClient", ReadyClient)
+    monkeypatch.setattr(app_module, "M365GraphClient", ReadyClient)
+
+    def detail(action_type: str, *, execution_status: str = "not_started", app_settings=settings) -> dict:
+        store = Store(app_settings.data_path)
+        approval = store.create_approval_request("TCK-STATE", action_type, {})
+        store.update_approval_request(approval.id or 0, "approved")
+        if execution_status != "not_started":
+            store.record_approval_execution(
+                approval.id or 0,
+                status=execution_status,
+                message="done",
+                result={},
+            )
+        return TestClient(app_module.create_app(app_settings)).get(
+            f"/approval-requests/{approval.id}"
+        ).json()
+
+    assert detail("teams.message.send", execution_status="succeeded")["block_reason"] == (
+        "Approval request has already executed successfully."
+    )
+    assert detail("m365.users.disable", execution_status="succeeded")["block_reason"] == (
+        "Approval request has already executed successfully."
+    )
+    assert detail("teams.message.send")["can_execute"] is True
+    assert detail("m365.users.disable")["can_execute"] is True
+    blocked = detail("power_platform.solution_stage")
+    assert blocked["block_reason"] == "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+    deployment_blocked = detail(
+        "power_platform.solution_stage",
+        app_settings=replace(settings, allow_write_actions=True),
+    )
+    assert deployment_blocked["block_reason"] == (
+        "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
+    )
+    workspace_blocked = detail(
+        "power_platform.solution_stage",
+        app_settings=replace(
+            settings,
+            allow_write_actions=True,
+            allow_power_platform_deployment=True,
+            power_platform_workspace=tmp_path,
+        ),
+    )
+    assert workspace_blocked["block_reason"] in {
+        "The pac executable is not available on the local PATH.",
+        "WAIT_POWER_PLATFORM_WORKSPACE must already exist.",
+    }
+
+
 def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request(
@@ -1348,10 +1407,71 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert bad_search.status_code == 400
     assert missing_ticket_workflow.status_code == 404
     assert app_module._safe_json_object("not-json") == {}
+    assert app_module._safe_json_value('{"ok": true}') == {"ok": True}
+    assert app_module._safe_json_value("not-json") is None
+    empty_summary = app_module._empty_analytics_summary("2026-01-01", "2026-01-31")
+    assert empty_summary["range"] == {"from": "2026-01-01", "to": "2026-01-31"}
+    assert empty_summary["success_rate"] == {"total": 0, "succeeded": 0, "rate": 0.0}
+    model_usage = cast(dict[str, object], empty_summary["model_usage"])
+    assert model_usage["estimate"] is True
     redacted = app_module._redact_payload({"nested": {"token": "x"}, "items": [{"bearer": "x"}]})
     nested = cast(dict[str, object], redacted["nested"])
     assert nested["token"] == "[redacted]"
     assert redacted["items"] == [{"bearer": "[redacted]"}]
+
+    assert app_module._safe_json_list('[{"id": 1}, "ignored", 3]') == [{"id": 1}]
+    assert app_module._safe_json_list("not-json") == []
+    assert app_module._safe_json_list('{"id": 1}') == []
+    assert app_module._safe_json_values('[{"id": 1}, 2]') == [{"id": 1}, 2]
+    assert app_module._safe_json_values("not-json") == []
+    assert app_module._safe_json_values('{"id": 1}') == []
+    assert app_module._redact_json_text('{"api_key": "secret", "ok": true}') == (
+        '{"api_key":"[redacted]","ok":true}'
+    )
+    assert app_module._redact_json_text("not-json") == "[redacted]"
+    assert app_module._safe_redacted_json_object('{"token": "secret"}') == {"token": "[redacted]"}
+    assert app_module._scheduled_ticket_id({"ticket_id": " TCK-1 "}) == " TCK-1 "
+    invalid_params: tuple[dict[str, object], ...] = ({}, {"ticket_id": " "}, {"ticket_id": 1})
+    for params in invalid_params:
+        with pytest.raises(HTTPException, match="include ticket_id"):
+            app_module._scheduled_ticket_id(params)
+
+    assert app_module._redact_request_input(
+        {"license": "secret", "nested": [{"value": "x"}]}, {"license", "value"}
+    ) == {
+        "license": "[redacted]",
+        "nested": [{"value": "[redacted]"}],
+    }
+    assert app_module._redact_request_input("plain", set()) == "plain"
+
+    class ValidationStub(Exception):
+        def errors(self):
+            return [
+                {"loc": ("body", "value"), "input": "secret", "msg": "bad", "type": "value_error"},
+                {"loc": ("body", "other"), "input": {"license": "secret"}, "msg": "bad", "type": "value_error"},
+                {"loc": ("body", "missing"), "msg": "bad", "type": "value_error"},
+            ]
+
+    request = Request({"type": "http", "method": "POST", "path": "/secrets", "headers": []})
+    response = app_module._request_validation_error_handler(request, ValidationStub())
+    body = json.loads(response.body)
+    assert body["detail"][0]["input"] == "[redacted]"
+    assert body["detail"][1]["input"] == {"license": "[redacted]"}
+    assert "input" not in body["detail"][2]
+    contract_response = app_module._founder_contract_error_handler(
+        request, app_module.FounderPackContractError("contract rejected")
+    )
+    assert contract_response.status_code == 502
+    assert json.loads(contract_response.body)["detail"] == "contract rejected"
+    monkeypatch.setattr(app_module, "_rate_limit_exceeded_handler", lambda *_args: Response(status_code=429))
+    assert app_module._rate_limit_handler(request, Exception()).status_code == 429
+    unbound_technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token")
+    with pytest.raises(HTTPException, match="has no tenant"):
+        app_module._scheduled_job_for_context(Store(settings.data_path), 1, unbound_technician)
+    with pytest.raises(HTTPException, match="scheduled job not found"):
+        app_module._scheduled_job_for_context(
+            Store(settings.data_path), 1, AuthContext(role=Role.ADMIN, presented_token="admin")
+        )
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
@@ -2198,6 +2318,80 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
     assert diff.status_code == 404
     assert restore.status_code == 404
     assert run.status_code == 403
+
+
+def test_template_gallery_workflow_design_round_trips_and_restores(settings) -> None:
+    client = TestClient(create_app(settings))
+    design = {
+        "format": "wait-local-agent.workflow-design",
+        "version": 1,
+        "nodes": [
+            {"id": "trigger", "type": "trigger", "label": "Ticket", "config": {}},
+            {"id": "action", "type": "action", "label": "Review", "config": {}},
+            {"id": "end", "type": "end", "label": "Done", "config": {}},
+        ],
+        "edges": [
+            {"from": "trigger", "to": "action"},
+            {"from": "action", "to": "end"},
+        ],
+    }
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "provenance": "designer review",
+            "client_id": "acme",
+            "definition": design,
+        },
+    )
+    assert created.status_code == 200
+    created_definition = created.json()["definition"]
+    assert created_definition["format"] == design["format"]
+    assert created_definition["edges"] == design["edges"]
+    assert created_definition["nodes"][1]["label"] == "Review"
+
+    design_nodes = cast(list[dict[str, object]], design["nodes"])
+    updated_design = {
+        **design,
+        "nodes": [
+            *design_nodes[:-1],
+            {"id": "end", "type": "end", "label": "Complete", "config": {}},
+        ],
+    }
+    updated = client.patch(
+        f"/workflow-templates/gallery/{created.json()['id']}",
+        json={"definition": updated_design, "client_id": "acme"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["definition"]["nodes"][-1]["label"] == "Complete"
+
+    revisions = client.get(
+        f"/workflow-templates/gallery/{created.json()['id']}/revisions",
+        params={"client_id": "acme"},
+    )
+    assert revisions.status_code == 200
+    revision_definition = revisions.json()[0]["definition"]["definition"]
+    assert revision_definition["format"] == updated_design["format"]
+    assert revision_definition["nodes"][-1]["label"] == "Complete"
+
+    restored = client.post(
+        f"/workflow-templates/gallery/{created.json()['id']}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["definition"]["nodes"][1]["label"] == "Review"
+
+    invalid = client.patch(
+        f"/workflow-templates/gallery/{created.json()['id']}",
+        json={
+            "definition": {
+                **design,
+                "edges": [{"from": "trigger", "to": "action"}],
+            },
+            "client_id": "acme",
+        },
+    )
+    assert invalid.status_code == 422
 
 
 def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
@@ -5241,6 +5435,414 @@ def test_execution_steps_are_redacted_at_serialization(settings) -> None:
 
     assert detail.status_code == 200
     assert "legacy-secret" not in detail.text
+
+
+def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    payload = {
+        "solution": {"name": "Employee Onboarding Agent"},
+        "business_goal": {"reduce_manual_onboarding": True},
+        "users": ["HR", "IT"],
+        "knowledge": ["Employee Handbook"],
+        "systems": ["Microsoft Entra"],
+        "agents": [
+            {"id": "onboarding", "name": "Onboarding", "purpose": "Design onboarding"}
+        ],
+        "workflows": [
+            {"id": "create-user", "name": "Create user", "trigger": "HR", "steps": ["Validate"]}
+        ],
+        "approvals": {"create_user": "HR"},
+        "deployment": ["Teams"],
+        "risk": "medium",
+    }
+    client = TestClient(create_app(secure_settings))
+    created = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "acme"},
+    )
+    foreign_create = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "beta"},
+    )
+    viewer_list = client.get("/consultant/blueprints", headers=_auth("viewer-token"))
+    viewer_detail = client.get(
+        f"/consultant/blueprints/{created.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+    viewer_architecture = client.get(
+        f"/consultant/blueprints/{created.json()['id']}/architecture",
+        headers=_auth("viewer-token"),
+    )
+    connector_definition = {
+        "swagger": "2.0",
+        "info": {"title": "Example API", "version": "1"},
+        "host": "api.example.test",
+        "schemes": ["https"],
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "health-check",
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    connector_validation = client.post(
+        "/consultant/connectors/openapi/validate",
+        headers=_auth("tech-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
+    connector_generation = client.post(
+        "/consultant/connectors/openapi/generate",
+        headers=_auth("tech-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
+    connector_viewer = client.post(
+        "/consultant/connectors/openapi/generate",
+        headers=_auth("viewer-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
+    evaluation = client.post(
+        "/consultant/evaluations",
+        headers=_auth("tech-token"),
+        json={
+            "test_set": [
+                {
+                    "id": "onboarding",
+                    "expected_tool_ids": ["m365-user-create"],
+                    "forbidden_tool_ids": [],
+                    "expected_approval_tool_ids": ["m365-user-create"],
+                }
+            ],
+            "observations": {
+                "onboarding": {
+                    "tool_ids": ["m365-user-create"],
+                    "approval_tool_ids": ["m365-user-create"],
+                    "tenant_isolated": True,
+                    "prompt_injection_blocked": True,
+                }
+            },
+        },
+    )
+    governance = client.post(
+        "/consultant/governance/evaluate",
+        headers=_auth("tech-token"),
+        json={
+            "architecture": {
+                "client_id": "acme",
+                "readiness": "ready",
+                "components": [],
+                "open_items": [],
+            },
+            "connector_artifacts": [],
+        },
+    )
+    power_apps = client.post(
+        "/consultant/power-apps/plan",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "app_name": "Onboarding",
+            "entities": [{"logical_name": "employee", "fields": []}],
+            "screens": [{"id": "employee_browse", "entity": "employee"}],
+            "actions": [{"id": "employee_lookup", "connector_id": "m365", "method": "GET"}],
+        },
+    )
+    discovery = client.post(
+        "/consultant/discovery",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "answers": {
+                "business_goal": "Reduce onboarding effort",
+                "users": ["HR"],
+                "knowledge": ["SharePoint policies"],
+                "systems": ["Microsoft Entra"],
+                "reads": ["Employee record"],
+                "changes": ["Create user"],
+                "approvals": ["Create user"],
+                "failure_handling": "Pause for review",
+                "data_location": ["Tenant SharePoint"],
+                "data_leaves_tenant": False,
+            },
+        },
+    )
+    use_cases = client.get(
+        "/consultant/use-cases",
+        headers=_auth("viewer-token"),
+        params={"category": "teams"},
+    )
+    power_automate = client.post(
+        "/consultant/workflows/power-automate/plan",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "workflow_id": "employee_onboarding",
+            "workflow_name": "Employee onboarding",
+            "trigger": "HR request",
+            "steps": [
+                {"id": "validate", "name": "Validate manager", "kind": "condition"},
+                {"id": "create_user", "name": "Create user", "method": "POST", "approval_required": True},
+            ],
+        },
+    )
+    monitoring = client.get(
+        "/consultant/monitoring/agents",
+        headers=_auth("viewer-token"),
+    )
+    admin_create = client.post(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        json={**payload, "client_id": "beta"},
+    )
+    admin_beta = client.get(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        params={"client_id": "beta"},
+    )
+    foreign_detail = client.get(
+        f"/consultant/blueprints/{admin_create.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+    foreign_list = client.get(
+        "/consultant/blueprints",
+        headers=_auth("viewer-token"),
+        params={"client_id": "beta"},
+    )
+    assert created.status_code == 201
+    assert created.json()["client_id"] == "acme"
+    assert created.json()["solution"] == {"name": "Employee Onboarding Agent"}
+    assert created.json()["agents"][0]["tools"] == []
+    assert foreign_create.status_code == 403
+    assert [item["client_id"] for item in viewer_list.json()] == ["acme"]
+    assert viewer_detail.status_code == 200
+    assert viewer_architecture.status_code == 200
+    assert viewer_architecture.json()["readiness"] == "needs_review"
+    assert viewer_architecture.json()["execution_started"] is False
+    assert connector_validation.status_code == 200
+    assert connector_validation.json()["valid"] is True
+    assert connector_generation.json()["credentials_included"] is False
+    assert connector_viewer.status_code == 403
+    assert evaluation.status_code == 200
+    assert evaluation.json()["production_readiness"] == "pass"
+    assert governance.status_code == 200
+    assert governance.json()["status"] == "pass"
+    assert power_apps.status_code == 200
+    assert power_apps.json()["format"] == "wait-local-agent.power-apps-plan"
+    assert power_apps.json()["deployment_started"] is False
+    assert discovery.status_code == 200
+    assert discovery.json()["readiness"] == "ready_for_architecture"
+    assert use_cases.status_code == 200
+    assert use_cases.json()["use_cases"][0]["id"] == "teams-ticket-triage"
+    assert power_automate.status_code == 200
+    assert power_automate.json()["format"] == "wait-local-agent.power-automate-flow-plan"
+    assert power_automate.json()["deployment_started"] is False
+    assert monitoring.status_code == 200
+    assert monitoring.json()["payloads_exposed"] is False
+    assert admin_create.status_code == 201
+    assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
+    assert foreign_detail.status_code == 404
+    assert foreign_list.status_code == 403
+    invalid = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "acme", "risk": "critical"},
+    )
+    assert invalid.status_code == 422
+    assert len(client.get("/consultant/blueprints", headers=_auth("viewer-token")).json()) == 1
+
+
+def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    tech = {"headers": _auth("tech-token")}
+
+    invalid_calls = [
+        ("/consultant/connectors/openapi/generate", {"connector_id": "bad", "definition": {}}),
+        ("/consultant/evaluations", {"test_set": [], "observations": {}}),
+        ("/consultant/governance/evaluate", {"architecture": {"client_id": "acme", "components": "bad"}}),
+        (
+            "/consultant/power-apps/plan",
+            {
+                "client_id": "acme",
+                "app_name": "Onboarding",
+                "entities": [{"logical_name": "employee", "fields": []}],
+                "screens": [{"id": "browse", "entity": "employee"}],
+                "actions": [{"id": "write", "connector_id": "m365", "method": "POST"}],
+            },
+        ),
+        (
+            "/consultant/discovery",
+            {"client_id": "acme", "answers": {"unsupported": "value"}},
+        ),
+        (
+            "/consultant/supervisor/plan",
+            {"client_id": "acme", "task": "Review", "child_agent_ids": ["missing"]},
+        ),
+        (
+            "/consultant/supervisor/run",
+            {
+                "client_id": "acme",
+                "entity_id": "TCK-1",
+                "task": "Review",
+                "child_agent_ids": ["missing"],
+            },
+        ),
+        (
+            "/consultant/delivery-plan",
+            {
+                "client_id": "acme",
+                "architecture": {"client_id": "beta"},
+                "evaluation": {},
+                "governance": {},
+                "deployment_targets": ["Teams"],
+            },
+        ),
+        (
+            "/consultant/workflows/power-automate/plan",
+            {
+                "client_id": "acme",
+                "workflow_id": "onboarding",
+                "workflow_name": "Onboarding",
+                "trigger": "HR",
+                "steps": [{"id": "write", "name": "Write", "method": "POST"}],
+            },
+        ),
+        (
+            "/consultant/solutions/deployment-approvals",
+            {
+                "client_id": "acme",
+                "solution_name": "onboarding",
+                "publisher_name": "WAIT",
+                "publisher_prefix": "wlp",
+                "output_directory": "/tmp/wait-solution",
+                "deployment_targets": [{"name": "dev", "environment_url": "http://unsafe"}],
+            },
+        ),
+    ]
+    for path, payload in invalid_calls:
+        response = client.post(path, json=payload, **tech)
+        assert response.status_code == 422, (path, response.text)
+
+    assert client.get("/consultant/blueprints/missing", headers=_auth("viewer-token")).status_code == 404
+    assert (
+        client.get(
+            "/consultant/blueprints",
+            headers=_auth("viewer-token"),
+            params={"client_id": "beta"},
+        ).status_code
+        == 403
+    )
+
+
+def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    tech = {"headers": _auth("tech-token")}
+    deployment = {
+        "client_id": "acme",
+        "solution_name": "onboarding",
+        "publisher_name": "WAIT",
+        "publisher_prefix": "wlp",
+        "output_directory": "/tmp/wait-solution",
+        "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+        "stage": "build",
+    }
+    power_apps = {
+        "client_id": "acme",
+        "app_name": "Onboarding",
+        "entities": [{"logical_name": "employee", "display_name": "Employee", "fields": []}],
+        "screens": [{"id": "browse", "title": "Browse", "entity": "employee", "mode": "browse"}],
+        "actions": [{"id": "lookup", "connector_id": "m365", "method": "GET"}],
+    }
+
+    built = client.post("/consultant/power-apps/build", json=power_apps, **tech)
+    requested = client.post("/consultant/solutions/deployment-approvals", json=deployment, **tech)
+    request_id = requested.json()["approval"]["id"]
+    pending = client.post(
+        f"/consultant/solutions/deployment-approvals/{request_id}/execute",
+        headers=_auth("admin-token"),
+    )
+    missing = client.post(
+        "/consultant/solutions/deployment-approvals/99999/execute",
+        headers=_auth("admin-token"),
+    )
+
+    assert built.status_code == 200
+    assert built.json()["deployment_started"] is False
+    assert requested.status_code == 201
+    assert requested.json()["plan"]["approval_required_for_every_stage"] is True
+    assert pending.status_code == 409
+    assert missing.status_code == 404
+
+
+def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    minimal = {
+        "solution": {"name": "Design"},
+        "business_goal": {},
+        "users": [],
+        "knowledge": [],
+        "systems": [],
+        "agents": [],
+        "workflows": [],
+        "approvals": {},
+        "deployment": [],
+        "risk": "low",
+    }
+    viewer = client.post("/consultant/blueprints", headers=_auth("viewer-token"), json=minimal)
+    no_tenant = client.post("/consultant/blueprints", headers=_auth("tech-token"), json=minimal)
+    admin = client.post(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        json={**minimal, "client_id": "acme"},
+    )
+    unbound_detail = client.get(
+        f"/consultant/blueprints/{admin.json()['id']}",
+        headers=_auth("viewer-token"),
+    )
+    assert viewer.status_code == 403
+    assert no_tenant.status_code == 403
+    assert admin.status_code == 201
+    assert unbound_detail.status_code == 403
 
 
 def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(settings) -> None:

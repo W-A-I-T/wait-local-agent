@@ -77,6 +77,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "knowledge-search",
         "m365-identity-lookup",
         "m365-live-context",
+        "m365-teams-context",
         "m365-authentication-method-remove",
         "m365-group-membership",
         "m365-user-offboarding",
@@ -170,7 +171,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "scalepad-assessment-lookup",
         "timezest-scheduling-request-create",
         "timezest-scheduling-request-lookup",
-        "dispatch-suggestion",
+        "workiq-fetch",
+            "dispatch-suggestion",
         "collector-preview",
     }
     assert tools["ticket-triage"].access_mode == "read"
@@ -499,6 +501,18 @@ def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> Non
     assert state["context"]["client"] == {"id": "acme", "name": "Northwind Dental"}
     assert state["context"]["knowledge"]["count"] == 1
     assert state["steps"][0]["input"]["_agent_context"] == state["context"]
+
+    supervised = service.run(
+        definition,
+        entity_id="TCK-1001",
+        actor="requester",
+        input_payload={},
+        supervisor_context={"task": "Review onboarding", "prior_results": []},
+    )
+    supervised_run = service.store.get_agent_run(supervised.run_id, client_id="acme")
+    assert supervised_run is not None
+    supervised_state = json.loads(supervised_run.state_json)
+    assert supervised_state["context"]["supervisor"]["task"] == "Review onboarding"
 
     with pytest.raises(AgentDefinitionError, match="unsupported context sources"):
         service.create(

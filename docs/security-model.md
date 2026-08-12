@@ -8,6 +8,7 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | --- | --- | --- |
 | `WAIT_ALLOW_HTTP_PROBING` | `false` | Outbound HTTP calls to PSA, RMM, or knowledge systems |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live connector mutations |
+| `WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT` | `false` | Local `pac solution` stages after an approved request |
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
 | `WAIT_OFFLINE_MODE` | `false` | Deny all remote model calls, even if fallback is configured |
@@ -16,6 +17,12 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
+
+Power Platform solution stages additionally require `WAIT_ALLOW_WRITE_ACTIONS=true`,
+`WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true`, an approved deployment-stage request,
+an authenticated `pac` executable on `PATH`, and a pre-existing
+`WAIT_POWER_PLATFORM_WORKSPACE`. Commands run without a shell and output is
+bounded and redacted; WAIT never accepts credentials in a deployment artifact.
 
 Remote model requests are never part of local-only operation. When explicitly
 enabled, the provider adapter sends only bounded, redacted ticket and local

@@ -1,0 +1,19 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "WAIT onboarding review API",
+    "version": "1.0"
+  },
+  "host": "api.example.invalid",
+  "basePath": "/v1",
+  "schemes": ["https"],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Read service health",
+        "responses": {"200": {"description": "OK"}}
+      }
+    }
+  }
+}

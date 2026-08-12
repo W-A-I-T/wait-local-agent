@@ -6,6 +6,9 @@ from wait_local_agent.vault import SecretVault
 
 def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_ALLOW_WRITE_ACTIONS", raising=False)
+    monkeypatch.delenv("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("WAIT_POWER_PLATFORM_WORKSPACE", raising=False)
+    monkeypatch.delenv("WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_HTTP_PROBING", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_CLOUD_FALLBACK", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_LLM_INFERENCE", raising=False)
@@ -51,11 +54,15 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_SHAREPOINT_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("WAIT_M365_GRAPH_BASE_URL", raising=False)
     monkeypatch.delenv("WAIT_M365_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_WORK_IQ_MCP_ENDPOINT", raising=False)
+    monkeypatch.delenv("WAIT_WORK_IQ_MCP_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_ENABLED", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_GENERAL", raising=False)
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
     monkeypatch.delenv("WAIT_UPDATE_CHANNEL_URL", raising=False)
     monkeypatch.delenv("WAIT_UPDATE_PUBKEYS", raising=False)
+    monkeypatch.delenv("WAIT_MCP_ALLOWED_ORIGINS", raising=False)
     monkeypatch.delenv("WAIT_LICENSE_KEY", raising=False)
     monkeypatch.delenv("WAIT_LICENSE_SECRET", raising=False)
     monkeypatch.delenv("WAIT_PACK_SIGNING_SECRET", raising=False)
@@ -63,6 +70,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.allow_write_actions is False
+    assert settings.allow_power_platform_deployment is False
+    assert str(settings.power_platform_workspace) == ".wait-local-agent/power-platform"
+    assert settings.power_platform_command_timeout_seconds == 600.0
     assert settings.allow_http_probing is False
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
@@ -132,11 +142,15 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.m365_graph_base_url == ""
     assert settings.m365_access_token == ""
     assert settings.m365_page_size == 25
+    assert settings.work_iq_mcp_endpoint == ""
+    assert settings.work_iq_mcp_access_token == ""
+    assert settings.work_iq_mcp_timeout_seconds == 20.0
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_general == "100/minute"
     assert settings.rate_limit_connector == "10/minute"
     assert settings.update_channel_url == ""
     assert settings.update_pubkeys == ()
+    assert settings.mcp_allowed_origins == ()
     assert settings.license_key == ""
     assert settings.license_secret == ""
     assert settings.pack_signing_secret == ""
@@ -154,6 +168,38 @@ def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     assert settings.allow_llm_inference is True
     assert settings.offline_mode is True
     assert settings.demo_mode is False
+
+
+def test_power_platform_deployment_settings_are_explicit(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT", "true")
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_WORKSPACE", "/srv/wait/power-platform")
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", "45")
+
+    settings = load_settings()
+
+    assert settings.allow_power_platform_deployment is True
+    assert str(settings.power_platform_workspace) == "/srv/wait/power-platform"
+    assert settings.power_platform_command_timeout_seconds == 45.0
+
+
+def test_mcp_origin_allowlist_is_loaded_and_normalized(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_MCP_ALLOWED_ORIGINS", " https://console.example/ , http://localhost:5173 ")
+
+    settings = load_settings()
+
+    assert settings.mcp_allowed_origins == ("https://console.example", "http://localhost:5173")
+
+
+def test_work_iq_mcp_configuration_is_loaded(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_WORK_IQ_MCP_ENDPOINT", "https://workiq.example.test/mcp")
+    monkeypatch.setenv("WAIT_WORK_IQ_MCP_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS", "15")
+
+    settings = load_settings()
+
+    assert settings.work_iq_mcp_endpoint == "https://workiq.example.test/mcp"
+    assert settings.work_iq_mcp_access_token == "access-token"
+    assert settings.work_iq_mcp_timeout_seconds == 15.0
 
 
 def test_end_user_branding_env_values_are_loaded(monkeypatch) -> None:

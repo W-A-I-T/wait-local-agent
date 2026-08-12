@@ -92,17 +92,33 @@ from wait_local_agent.smart_actions import (
     SyncroTicketCommentsAction,
     SyncroTicketLookupAction,
     SyncroTicketWriteAction,
+    TeamsGraphContextAction,
     TicketEscalationAction,
     TicketQualityAction,
     TicketSentimentAction,
     TicketSlaAssessmentAction,
     TicketSummaryAction,
     TicketTriageAction,
+    _effective_client_id,
     _json_list,
     _json_object,
+    _parse_ticket_timestamp,
+    _positive_thresholds,
+    _provider_id,
+    _provider_is_ai_assisted,
+    _require_action_role,
     _stored_action_status,
+    _workload_value,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.teams_graph import (
+    TeamsChannel,
+    TeamsChannelReadResponse,
+    TeamsMessage,
+    TeamsMessageReadResponse,
+    TeamsTeam,
+    TeamsTeamReadResponse,
+)
 from wait_local_agent.vault import SecretVault
 
 
@@ -220,6 +236,44 @@ def _action_context(
         provider_available=available,
         collector_service=collector_service,
     )
+
+
+def test_teams_context_action_is_bounded_and_read_only(settings) -> None:
+    provider = SimpleNamespace(
+        list_teams=lambda **_: TeamsTeamReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsTeam("team-1", "Operations", "", "")],
+        ),
+        list_channels=lambda team_id, **_: TeamsChannelReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsChannel("channel-1", team_id, "General", "", "standard", "")],
+        ),
+        list_messages=lambda team_id, channel_id, **_: TeamsMessageReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [TeamsMessage("message-1", team_id, channel_id, "", "token=secret", "Adele", "", "")],
+        ),
+    )
+    context = ActionContext(
+        store=Store(settings.data_path),
+        settings=settings,
+        client_id="acme",
+        teams_client=provider,
+    )
+
+    teams = TeamsGraphContextAction().run(context, {"resource": "teams"})
+    channels = TeamsGraphContextAction().run(
+        context, {"resource": "channels", "team_id": "team-1"}
+    )
+    messages = TeamsGraphContextAction().run(
+        context,
+        {"resource": "messages", "team_id": "team-1", "channel_id": "channel-1"},
+    )
+
+    assert teams.status == channels.status == messages.status == "success"
+    assert teams.output["items"][0]["id"] == "team-1"  # type: ignore[index]
+    assert channels.output["items"][0]["team_id"] == "team-1"  # type: ignore[index]
+    assert messages.output["items"][0]["body"] == "token=[redacted]"  # type: ignore[index]
+    assert messages.evidence[0]["connector"] == "m365-teams"
 
 
 class FakeCollectorPreviewService:
@@ -1016,6 +1070,40 @@ def test_service_edge_guards_and_status_helpers(settings) -> None:
         )
 
 
+def test_smart_action_bound_helpers_cover_invalid_and_normalized_values(settings) -> None:
+    assert _positive_thresholds({" High ": 10}) == {"high": 10}
+    assert _positive_thresholds({"high": 0}) is None
+    assert _positive_thresholds({"high": True}) is None
+    assert _positive_thresholds({1: 10}) is None
+    assert _positive_thresholds([]) is None
+    assert _parse_ticket_timestamp("") is None
+    assert _parse_ticket_timestamp("not-a-date") is None
+    assert _parse_ticket_timestamp("2026-08-11T10:00:00") is not None
+    assert _parse_ticket_timestamp("2026-08-11T10:00:00Z") is not None
+    assert _workload_value({}) == 0.0
+    assert _workload_value({"workload": 2.5}) == 2.5
+
+    context = _action_context(Store(settings.data_path), settings)
+    assert _provider_id(context) == settings.local_model_provider.strip()
+    assert _provider_is_ai_assisted(context) is False
+    context.provider = object()
+    assert _provider_is_ai_assisted(context) is True
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-HELPER', 'Acme', 'Subject', 'Body', 'low', 'open', 'acme')
+            """
+        )
+    assert _effective_client_id(store, {"ticket_id": "TCK-HELPER"}, None) == "acme"
+    assert _effective_client_id(store, {"ticket_id": "missing"}, None) is None
+    assert _effective_client_id(store, {}, " beta ") == "beta"
+    with pytest.raises(PermissionError, match="technician"):
+        _require_action_role(TicketTriageAction().manifest, Role.VIEWER)
+    _require_action_role(TicketTriageAction().manifest, Role.TECHNICIAN)
+
+
 def test_registry_lists_all_seed_actions(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
@@ -1061,6 +1149,7 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "m365-managed-device-sync",
         "m365-password-reset",
         "m365-session-revocation",
+        "m365-teams-context",
         "m365-user-offboarding",
         "m365-user-onboarding",
         "notion-data-source-query",
@@ -1128,8 +1217,41 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "ticket-triage",
         "timezest-scheduling-request-create",
         "timezest-scheduling-request-lookup",
+        "workiq-fetch",
     ]
     assert service.describe("ticket-triage").kind == "deterministic"
+
+
+def test_every_registered_action_handles_empty_input_without_raising(settings) -> None:
+    service = SmartActionService(Store(settings.data_path), settings)
+
+    payloads: tuple[dict[str, object], ...] = ({}, {"client_id": "acme"}, {"unexpected": "value"})
+    for payload in payloads:
+        for manifest in service.list():
+            result = service.invoke(manifest.action_id, payload, "coverage", client_id="acme")
+            assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
+
+
+def test_registered_actions_validate_declared_required_inputs_without_raising(settings) -> None:
+    service = SmartActionService(Store(settings.data_path), settings)
+
+    def value_for(field: str) -> object:
+        lowered = field.casefold()
+        if lowered in {"confirm", "approved", "include_content", "include_history"}:
+            return False
+        if lowered.endswith("_ids") or lowered in {"fields", "sku_ids", "entity_urls"}:
+            return ["example"]
+        if lowered in {"settings", "payload", "thresholds", "filters"}:
+            return {}
+        return "example"
+
+    for manifest in service.list():
+        required = manifest.input_schema.get("required", [])
+        if not isinstance(required, list):
+            continue
+        payload = {field: value_for(field) for field in required if isinstance(field, str)}
+        result = service.invoke(manifest.action_id, payload, "schema-coverage", client_id="acme")
+        assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
 
 
 def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> None:

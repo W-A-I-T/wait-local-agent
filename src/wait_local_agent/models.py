@@ -420,6 +420,7 @@ class TemplateGalleryEntry:
     created_at: str
     updated_at: str
     client_id: str | None = None
+    definition_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -430,6 +431,47 @@ class TemplateGalleryRevision:
     definition_json: str
     created_at: str
     client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class BlueprintAgent:
+    id: str
+    name: str
+    purpose: str
+    tools: tuple[str, ...] = ()
+    knowledge: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BlueprintWorkflow:
+    id: str
+    name: str
+    trigger: str
+    steps: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SolutionBlueprint:
+    id: str
+    client_id: str
+    created_by: str
+    created_at: str
+    updated_at: str
+    solution_name: str
+    business_goal: dict[str, str | bool | int]
+    users: tuple[str, ...]
+    knowledge: tuple[str, ...]
+    systems: tuple[str, ...]
+    agents: tuple[BlueprintAgent, ...]
+    workflows: tuple[BlueprintWorkflow, ...]
+    approvals: dict[str, str]
+    deployment: tuple[str, ...]
+    risk: RiskLevel
+    instructions: str = ""
+    intents: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    model: str = ""
+    orchestration: str = ""
 
 
 @dataclass(frozen=True)

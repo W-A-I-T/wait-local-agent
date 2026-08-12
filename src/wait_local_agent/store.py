@@ -4,10 +4,12 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
@@ -41,6 +43,7 @@ from wait_local_agent.models import (
     RmmExecutionScope,
     ScheduledJob,
     SmartActionRun,
+    SolutionBlueprint,
     TechnicianChatMessage,
     TechnicianChatSession,
     TemplateGalleryEntry,
@@ -51,6 +54,7 @@ from wait_local_agent.models import (
     WorkflowTemplate,
     utc_now,
 )
+from wait_local_agent.workflow_designer import normalize_workflow_design
 
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
@@ -450,6 +454,18 @@ class Store:
                 )
                 """
             )
+            connection.execute(
+                """
+                create table if not exists solution_blueprints (
+                    id text primary key,
+                    client_id text not null,
+                    created_by text not null,
+                    payload_json text not null,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -621,6 +637,7 @@ class Store:
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
             self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
+            self._ensure_column(connection, "template_gallery_entries", "definition_json", "text not null default '{}'")
             self._backfill_template_gallery_revisions(connection)
             connection.execute(
                 """
@@ -1080,6 +1097,7 @@ class Store:
                         description=_redact_text(str(row["description"])),
                         instructions=_redact_text(str(row["instructions"])),
                         enabled=bool(row["enabled"]),
+                        definition_json=str(row["definition_json"]),
                     ),
                     str(row["created_at"]),
                     _normalize_client_id(row["client_id"]),
@@ -2735,6 +2753,89 @@ class Store:
                 ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
 
+    def create_solution_blueprint(self, blueprint: SolutionBlueprint) -> SolutionBlueprint:
+        normalized_client_id = _normalize_client_id(blueprint.client_id)
+        if normalized_client_id is None:
+            raise ValueError("solution blueprint requires a client_id")
+        payload_json = _json_dumps(blueprint_payload(blueprint))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into solution_blueprints
+                  (id, client_id, created_by, payload_json, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    blueprint.id,
+                    normalized_client_id,
+                    blueprint.created_by,
+                    payload_json,
+                    blueprint.created_at,
+                    blueprint.updated_at,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "consultant.blueprint_created",
+                blueprint.id,
+                f"solution blueprint created: {blueprint.solution_name}",
+                client_id=normalized_client_id,
+            )
+            self._add_event_history(
+                connection,
+                "consultant.blueprint_created",
+                blueprint.id,
+                "completed",
+                "solution blueprint persisted locally",
+                payload_json,
+                normalized_client_id,
+            )
+        persisted = self.get_solution_blueprint(blueprint.id, client_id=normalized_client_id)
+        if persisted is None:
+            raise RuntimeError("solution blueprint was not persisted")
+        return persisted
+
+    def get_solution_blueprint(
+        self,
+        blueprint_id: str,
+        *,
+        client_id: str | None = None,
+    ) -> SolutionBlueprint | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from solution_blueprints where id = ?",
+                    (blueprint_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from solution_blueprints
+                    where id = ? and client_id = ?
+                    """,
+                    (blueprint_id, normalized_client_id),
+                ).fetchone()
+        return _solution_blueprint_from_row(row) if row else None
+
+    def list_solution_blueprints(self, client_id: str | None = None) -> list[SolutionBlueprint]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from solution_blueprints order by created_at desc, id desc"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from solution_blueprints
+                    where client_id = ?
+                    order by created_at desc, id desc
+                    """,
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_solution_blueprint_from_row(row) for row in rows]
+
     def create_template_gallery_entry(
         self,
         template: WorkflowTemplate,
@@ -2745,6 +2846,7 @@ class Store:
         instructions: str = "",
         description: str | None = None,
         enabled: bool = True,
+        definition: dict[str, object] | None = None,
     ) -> TemplateGalleryEntry:
         entry_id = f"gallery-{uuid.uuid4().hex}"
         now = utc_now()
@@ -2758,14 +2860,15 @@ class Store:
         )
         safe_instructions = _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
         safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
+        safe_definition = _workflow_definition_json(definition)
         with self._connect() as connection:
             connection.execute(
                 """
                 insert into template_gallery_entries
                   (id, source_template_id, name, trigger, description, action_type,
                    approval_required, risk_level, preview_fields_json, provenance,
-                   instructions, enabled, version, created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   instructions, enabled, definition_json, version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
@@ -2780,6 +2883,7 @@ class Store:
                     safe_provenance,
                     safe_instructions,
                     int(enabled),
+                    safe_definition,
                     1,
                     now,
                     now,
@@ -2795,6 +2899,7 @@ class Store:
                     description=safe_description,
                     instructions=safe_instructions,
                     enabled=bool(enabled),
+                    definition_json=safe_definition,
                 ),
                 now,
                 normalized_client_id,
@@ -2819,6 +2924,7 @@ class Store:
         description: str | None = None,
         instructions: str | None = None,
         enabled: bool | None = None,
+        definition: dict[str, object] | None = None,
         client_id: str | None = None,
     ) -> TemplateGalleryEntry:
         existing = self.get_template_gallery_entry(entry_id, client_id)
@@ -2840,11 +2946,13 @@ class Store:
             else existing.instructions
         )
         next_enabled = existing.enabled if enabled is None else bool(enabled)
+        next_definition = existing.definition_json if definition is None else _workflow_definition_json(definition)
         if (
             next_name == existing.name
             and next_description == existing.description
             and next_instructions == existing.instructions
             and next_enabled == existing.enabled
+            and next_definition == existing.definition_json
         ):
             return existing
         next_version = existing.version + 1
@@ -2854,7 +2962,7 @@ class Store:
             cursor = connection.execute(
                 """
                 update template_gallery_entries
-                set name = ?, description = ?, instructions = ?, enabled = ?,
+                set name = ?, description = ?, instructions = ?, enabled = ?, definition_json = ?,
                     version = ?, updated_at = ?
                 where id = ?
                 """,
@@ -2863,6 +2971,7 @@ class Store:
                     next_description,
                     next_instructions,
                     int(next_enabled),
+                    next_definition,
                     next_version,
                     now,
                     entry_id,
@@ -2879,6 +2988,7 @@ class Store:
                     description=next_description,
                     instructions=next_instructions,
                     enabled=next_enabled,
+                    definition_json=next_definition,
                 ),
                 now,
                 normalized_client_id,
@@ -3006,12 +3116,20 @@ class Store:
             raise KeyError(f"{entry_id}:{version}")
         definition = _json_object_or_empty(revision.definition_json)
         enabled_value = definition.get("enabled")
+        workflow_definition = definition.get("definition")
+        safe_workflow_definition = (
+            workflow_definition
+            if isinstance(workflow_definition, dict)
+            and workflow_definition.get("format") == "wait-local-agent.workflow-design"
+            else None
+        )
         return self.update_template_gallery_entry(
             entry_id,
             name=_gallery_string_or_none(definition.get("name")),
             description=_gallery_string_or_none(definition.get("description")),
             instructions=_gallery_string_or_none(definition.get("instructions")),
             enabled=enabled_value if isinstance(enabled_value, bool) else None,
+            definition=safe_workflow_definition,
             client_id=existing.client_id,
         )
 
@@ -6072,6 +6190,7 @@ def _template_gallery_entry_from_row(row: sqlite3.Row) -> TemplateGalleryEntry:
     payload["preview_fields_json"] = _redact_json_text(str(payload["preview_fields_json"]))
     payload["provenance"] = _redact_text(str(payload["provenance"]))
     payload["instructions"] = _redact_text(str(payload["instructions"]))
+    payload["definition_json"] = _redact_json_text(str(payload.get("definition_json", "{}")))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return TemplateGalleryEntry(**payload)
 
@@ -6089,6 +6208,7 @@ def _template_gallery_definition_json(
     description: str,
     instructions: str,
     enabled: bool,
+    definition_json: str = "{}",
 ) -> str:
     return _json_dumps_value(
         {
@@ -6096,8 +6216,15 @@ def _template_gallery_definition_json(
             "description": description,
             "instructions": instructions,
             "enabled": enabled,
+            "definition": _json_object_or_empty(definition_json),
         }
     )
+
+
+def _workflow_definition_json(definition: dict[str, object] | None) -> str:
+    if definition is None:
+        return "{}"
+    return _json_dumps_value(normalize_workflow_design(definition))
 
 
 def _gallery_text(
@@ -6260,6 +6387,21 @@ def _execution_range_filters(
         params.append(started_to)
     where = f" where {' and '.join(clauses)}" if clauses else ""
     return where, params
+
+
+def _solution_blueprint_from_row(row: sqlite3.Row) -> SolutionBlueprint:
+    try:
+        payload = json.loads(str(row["payload_json"]))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("stored solution blueprint is malformed") from exc
+    blueprint = parse_solution_blueprint(
+        payload,
+        blueprint_id=str(row["id"]),
+        client_id=str(row["client_id"]),
+        created_by=str(row["created_by"]),
+        now=str(row["created_at"]),
+    )
+    return replace(blueprint, updated_at=str(row["updated_at"]))
 
 
 def _approval_range_filters(

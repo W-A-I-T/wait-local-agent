@@ -179,6 +179,142 @@ export type WorkflowTemplate = {
   };
 };
 
+export type ConsultantBlueprint = {
+  id: string;
+  client_id: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  solution: { name: string };
+  risk: string;
+  agents: Array<{ id: string; name: string; purpose: string; tools: string[]; knowledge: string[] }>;
+  workflows: Array<{ id: string; name: string; trigger: string; steps: string[] }>;
+};
+
+export type ConsultantArchitectureComponent = {
+  id: string;
+  kind: string;
+  name?: string;
+  status: string;
+  implementation?: string;
+  trigger?: string;
+  steps?: string[];
+  resolved_tool_ids?: string[];
+  unresolved_tool_ids?: string[];
+  requested_tool_ids?: string[];
+  knowledge_references?: string[];
+};
+
+export type ConsultantArchitecture = {
+  blueprint_id: string;
+  client_id: string;
+  solution: { name: string };
+  risk: string;
+  approval_policy: Record<string, string>;
+  components: ConsultantArchitectureComponent[];
+  open_items: Array<{ kind: string; component_id: string; detail: string }>;
+  readiness: "ready" | "needs_review";
+  execution_started: boolean;
+  deployment_started: boolean;
+  supervisor?: {
+    mode: string;
+    children: Array<{ id: string; kind: string; purpose?: string; context_policy?: string }>;
+    context_policy?: string;
+    execution_started?: boolean;
+  };
+};
+
+export type ConsultantUseCase = {
+  id: string;
+  title: string;
+  category: string;
+  business_goal: string;
+  services: string[];
+  agent_roles: string[];
+  outputs: string[];
+  approval_boundaries: string[];
+};
+
+export type ConsultantUseCaseCatalog = {
+  format: string;
+  format_version: number;
+  category: string | null;
+  execution_started: boolean;
+  deployment_started: boolean;
+  use_cases: ConsultantUseCase[];
+};
+
+export type ConsultantMonitoring = {
+  client_id: string;
+  agent_count: number;
+  total_runs: number;
+  failed_runs: number;
+  failure_rate: number | null;
+  payloads_exposed: boolean;
+};
+
+export type PowerAutomateFlowPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  power_automate: {
+    trigger: { type: string; name: string };
+    actions: Array<{
+      id: string;
+      name: string;
+      kind: string;
+      type: string;
+      tool_id?: string | null;
+      method: string;
+      approval_required: boolean;
+    }>;
+  };
+  requires_approval: boolean;
+  credentials_included: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+  export_status: string;
+};
+
+export type PowerAppsArtifact = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  app_name: string;
+  solution: { unique_name: string; publisher_prefix: string };
+  dataverse: { tables: Array<Record<string, unknown>> };
+  canvas_app: { screens: Array<Record<string, unknown>>; connector_references: Array<Record<string, unknown>> };
+  files: Array<{ path: string; media_type: string; content: unknown }>;
+  requires_approval: boolean;
+  credentials_included: boolean;
+  build_started: boolean;
+  dataverse_write_started: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+  package_status: string;
+};
+
+export type ConsultantDiscoveryResult = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  missing_required: string[];
+  readiness: string;
+  risk_review: { level: string; factors: string[]; evidence_only: boolean };
+  roi_analysis: {
+    status: string;
+    estimated_monthly_hours_saved?: number;
+    estimated_monthly_value?: number;
+    evidence_only?: boolean;
+  };
+  blueprint_candidate: Record<string, unknown>;
+  inference_started: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;
@@ -196,6 +332,29 @@ export type TemplateGalleryEntry = {
   created_at: string;
   updated_at: string;
   client_id?: string | null;
+  definition?: WorkflowDesign;
+};
+
+export type WorkflowNodeType = "trigger" | "action" | "approval" | "condition" | "knowledge" | "connector" | "notification" | "end";
+
+export type WorkflowDesignNode = {
+  id: string;
+  type: WorkflowNodeType;
+  label: string;
+  tool_id?: string | null;
+  config: Record<string, unknown>;
+};
+
+export type WorkflowDesignEdge = {
+  from: string;
+  to: string;
+};
+
+export type WorkflowDesign = {
+  format: "wait-local-agent.workflow-design";
+  version: 1;
+  nodes: WorkflowDesignNode[];
+  edges: WorkflowDesignEdge[];
 };
 
 export type TemplateGalleryRevision = {

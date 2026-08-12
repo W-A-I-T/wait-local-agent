@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+import wait_local_agent.vault as vault_module
 from wait_local_agent.api.app import _redact_payload, create_app
 from wait_local_agent.security import auth_required
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -98,3 +101,26 @@ def test_redaction_covers_launch_key_variants() -> None:
     assert redacted["access_token"] == "[redacted]"
     assert redacted["nested"] == {"password": "[redacted]", "safe": "visible"}
     assert redacted["items"] == [{"token": "[redacted]", "safe": "also-visible"}]
+
+
+def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path, monkeypatch) -> None:
+    vault = SecretVault.initialize(tmp_path / "vault")
+
+    def fail_read(_path: Path) -> bytes:
+        raise OSError("unreadable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_bytes", fail_read)
+        with pytest.raises(SecretVaultError, match="key could not be read"):
+            vault._fernet()  # noqa: SLF001
+
+    vault = SecretVault.initialize(tmp_path / "payload-vault")
+    vault.secrets_path.write_bytes(vault._fernet().encrypt(b"[]"))  # noqa: SLF001
+    with pytest.raises(SecretVaultError, match="payload is malformed"):
+        vault.list_keys()
+
+    def fail_chmod(*_args) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(vault_module.os, "chmod", fail_chmod)
+    vault_module._chmod(tmp_path, 0o700)  # noqa: SLF001

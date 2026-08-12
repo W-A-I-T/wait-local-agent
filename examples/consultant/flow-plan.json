@@ -1,0 +1,11 @@
+{
+  "client_id": "demo",
+  "workflow_id": "employee_onboarding",
+  "workflow_name": "Employee onboarding",
+  "trigger": "HR request",
+  "steps": [
+    {"id": "validate_manager", "name": "Validate manager", "kind": "condition"},
+    {"id": "create_user", "name": "Create Entra user", "tool_id": "m365_user_create", "method": "POST", "approval_required": true},
+    {"id": "notify_manager", "name": "Notify manager", "tool_id": "teams_message", "method": "GET"}
+  ]
+}

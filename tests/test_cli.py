@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
@@ -32,6 +33,7 @@ from wait_local_agent.models import (
     HuduFolder,
 )
 from wait_local_agent.notion import NotionDataSource, NotionDataSourceResponse, NotionPage, NotionReadResponse
+from wait_local_agent.rbac import Role
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
@@ -52,6 +54,148 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "timeout_seconds=20" in result.output
     assert "llm_inference_enabled=False" in result.output
     assert "write_actions_enabled=False" in result.output
+
+
+def test_microsoft_power_apps_build_cli_emits_local_artifact(monkeypatch, tmp_path) -> None:
+    source = Path("examples/consultant/power-apps-build.json")
+    output = tmp_path / "power-apps-artifact.json"
+
+    result = CliRunner().invoke(app, ["microsoft", "power-apps", "build", str(source), "--output", str(output)])
+
+    assert result.exit_code == 0, result.output
+    assert f"artifact={output}" in result.output
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["format"] == "wait-local-agent.power-apps-artifact"
+    assert artifact["credentials_included"] is False
+    assert artifact["deployment_started"] is False
+
+
+def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+    commands = [
+        ["microsoft", "connector", "validate", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "connector", "generate", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "connector", "package", "examples/consultant/connector-openapi.json", "demo"],
+        ["microsoft", "solution", "status"],
+        [
+            "microsoft",
+            "solution",
+            "plan",
+            "onboarding_review",
+            "WAITConsulting",
+            "wlp",
+            str(tmp_path / "solution"),
+        ],
+        ["microsoft", "solution", "deployment-plan", "examples/consultant/deployment.json"],
+        ["microsoft", "evaluation", "run", "examples/consultant/evaluation.json"],
+        ["microsoft", "governance", "evaluate", "examples/consultant/governance.json"],
+        ["microsoft", "monitoring", "agents"],
+        ["microsoft", "power-apps", "plan", "examples/consultant/power-apps-plan.json"],
+        ["microsoft", "power-apps", "build", "examples/consultant/power-apps-build.json"],
+        ["microsoft", "use-cases", "list"],
+        ["microsoft", "workflow", "plan", "examples/consultant/flow-plan.json"],
+        ["microsoft", "discovery", "assess", "examples/consultant/discovery.json"],
+        ["microsoft", "delivery", "plan", "examples/consultant/delivery.json"],
+    ]
+
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0, f"{command}: {result.output}"
+
+
+def test_microsoft_solution_deployment_cli_stays_approval_gated(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+    requested = runner.invoke(
+        app,
+        ["microsoft", "solution", "request-deployment-approval", "examples/consultant/deployment.json"],
+    )
+    assert requested.exit_code == 0, requested.output
+    request_id = json.loads(requested.output)["id"]
+
+    pending = runner.invoke(app, ["microsoft", "solution", "execute-stage", str(request_id)])
+    invalid_stage = runner.invoke(
+        app,
+        [
+            "microsoft",
+            "solution",
+            "request-deployment-approval",
+            "examples/consultant/deployment.json",
+            "--stage",
+            "missing",
+        ],
+    )
+
+    assert pending.exit_code != 0
+    assert "must be approved" in pending.output
+    assert invalid_stage.exit_code != 0
+    assert "stage is not present" in invalid_stage.output
+
+
+def test_microsoft_consultant_cli_rejects_malformed_sources(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}", encoding="utf-8")
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("not-json", encoding="utf-8")
+    runner = CliRunner()
+
+    commands = [
+        ["microsoft", "connector", "validate", str(empty), "demo"],
+        ["microsoft", "connector", "generate", str(empty), "demo"],
+        ["microsoft", "connector", "package", str(empty), "demo"],
+        ["microsoft", "solution", "deployment-plan", str(empty)],
+        ["microsoft", "evaluation", "run", str(empty)],
+        ["microsoft", "governance", "evaluate", str(empty)],
+        ["microsoft", "power-apps", "plan", str(empty)],
+        ["microsoft", "power-apps", "build", str(empty)],
+        ["microsoft", "workflow", "plan", str(empty)],
+        ["microsoft", "discovery", "assess", str(empty)],
+        ["microsoft", "supervisor", "plan", str(empty)],
+        ["microsoft", "supervisor", "run", str(empty)],
+        ["microsoft", "delivery", "plan", str(empty)],
+        ["microsoft", "solution", "request-deployment-approval", str(empty)],
+        ["microsoft", "connector", "validate", str(malformed), "demo"],
+        ["microsoft", "use-cases", "list", "--category", "invalid"],
+        ["microsoft", "solution", "execute-stage", "99999"],
+    ]
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code != 0, f"{command}: {result.output}"
+
+
+def test_cli_boundary_helpers_reject_bad_files_and_scope_tenants(tmp_path) -> None:
+    assert cli_module._load_json_config(None) == {}
+    config = tmp_path / "config.json"
+    config.write_text('{"enabled": true}', encoding="utf-8")
+    assert cli_module._load_json_config(config) == {"enabled": True}
+    config.write_text("[]", encoding="utf-8")
+    with pytest.raises(Exception, match="JSON object"):
+        cli_module._load_json_config(config)
+
+    payload = tmp_path / "payload.json"
+    payload.write_text('{"ticket_id": "TCK-1"}', encoding="utf-8")
+    assert cli_module._load_smart_action_payload(str(payload)) == {"ticket_id": "TCK-1"}
+    assert cli_module._load_smart_action_payload('{"ok": true}') == {"ok": True}
+    for value in ("not-json", "[]"):
+        with pytest.raises(Exception, match="payload must be"):
+            cli_module._load_smart_action_payload(value)
+
+    readable = tmp_path / "readable.json"
+    readable.write_text("{}", encoding="utf-8")
+    assert cli_module._load_openapi_definition(readable) == {}
+    readable.write_text("[]", encoding="utf-8")
+    with pytest.raises(Exception, match="JSON object"):
+        cli_module._load_openapi_definition(readable)
+    with pytest.raises(Exception, match="readable"):
+        cli_module._load_openapi_definition(tmp_path / "missing.json")
+
+    assert cli_module._cli_blueprint_client_scope(" acme ", Role.TECHNICIAN, None) == "acme"
+    assert cli_module._cli_blueprint_client_scope(None, Role.TECHNICIAN, None) is None
+    assert cli_module._cli_blueprint_client_scope("acme", Role.ADMIN, " beta ") == "beta"
+    with pytest.raises(Exception, match="outside authenticated scope"):
+        cli_module._cli_blueprint_client_scope("acme", Role.TECHNICIAN, "beta")
 
 
 def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:
@@ -1899,6 +2043,102 @@ def test_executions_cli_requires_tenant_for_non_admin(monkeypatch, tmp_path) -> 
     assert "no tenant" in no_tenant.output
     assert admin.exit_code == 0
     assert "workflow" in admin.output
+
+
+def test_consultant_blueprint_cli_round_trip_and_tenant_guard(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    monkeypatch.setenv("WAIT_VIEWER_TOKEN", "viewer-token")
+    source = tmp_path / "blueprint.json"
+    source.write_text(
+        json.dumps(
+            {
+                "solution": {"name": "Onboarding"},
+                "business_goal": {"reduce_manual_onboarding": True},
+                "users": ["HR"],
+                "knowledge": ["Handbook"],
+                "systems": ["Entra"],
+                "agents": [],
+                "workflows": [],
+                "approvals": {},
+                "deployment": ["Teams"],
+                "risk": "low",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        ["consultant", "blueprints", "create", str(source), "--token", "tech-token"],
+    )
+    listed = runner.invoke(
+        app,
+        ["consultant", "blueprints", "list", "--token", "viewer-token"],
+    )
+    shown = runner.invoke(
+        app,
+        [
+            "consultant",
+            "blueprints",
+            "show",
+            json.loads(created.output)["id"],
+            "--token",
+            "viewer-token",
+        ],
+    )
+    foreign = runner.invoke(
+        app,
+        [
+            "consultant",
+            "blueprints",
+            "list",
+            "--client-id",
+            "beta",
+            "--token",
+            "tech-token",
+        ],
+    )
+
+    assert created.exit_code == 0
+    assert json.loads(created.output)["client_id"] == "acme"
+    assert listed.exit_code == 0
+    assert len(json.loads(listed.output)) == 1
+    assert shown.exit_code == 0
+    assert json.loads(shown.output)["solution"] == {"name": "Onboarding"}
+    assert foreign.exit_code != 0
+    assert "outside authenticated scope" in foreign.output
+
+
+def test_consultant_blueprint_cli_rejects_non_string_risk(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    source = tmp_path / "invalid-blueprint.json"
+    source.write_text(
+        json.dumps(
+            {
+                "solution": {"name": "Invalid"},
+                "business_goal": {},
+                "users": [],
+                "knowledge": [],
+                "systems": [],
+                "agents": [],
+                "workflows": [],
+                "approvals": {},
+                "deployment": [],
+                "risk": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(app, ["consultant", "blueprints", "create", str(source)])
+
+    assert result.exit_code != 0
+    assert "risk must be one of" in result.output
 
 
 def _hudu_response(items):
