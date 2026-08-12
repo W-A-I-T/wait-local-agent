@@ -480,6 +480,15 @@ export type AgentRunDetail = {
     steps?: Array<Record<string, unknown>>;
     final_result?: Record<string, unknown>;
   };
+  lineage?: {
+    retry_count: number;
+    retry_of_run_id?: number | null;
+    partial_history?: {
+      attempted_steps?: number;
+      completed_steps?: number;
+      partial?: boolean;
+    };
+  };
   revision_version?: number | null;
   client_id?: string | null;
 };

@@ -1624,9 +1624,84 @@ def _normalized_final_result(state: dict[str, object], status: str) -> dict[str,
     final_result = _final_result_from_step(current) if isinstance(current, dict) else {}
     if not final_result:
         final_result = {"status": status, "output": {}, "evidence": [], "error_detail": ""}
+    steps = _state_steps(state)
+    completed_steps = sum(1 for step in steps if step.get("status") == "success")
+    failed_step = next(
+        (step for step in reversed(steps) if step.get("status") not in {"success", "pending_approval"}),
+        None,
+    )
+    final_result["history"] = {
+        "attempted_steps": len(steps),
+        "completed_steps": completed_steps,
+        "partial": bool(completed_steps and status in {"failed", "rejected", "cancelled"}),
+    }
+    retry_count = state.get("retry_count")
+    if isinstance(retry_count, int) and retry_count > 0:
+        final_result["retry_count"] = retry_count
+    retry_of_run_id = state.get("retry_of_run_id")
+    if isinstance(retry_of_run_id, int):
+        final_result["retry_of_run_id"] = retry_of_run_id
     if status in {"failed", "rejected", "cancelled"}:
         final_result["status"] = status
         error_detail = state.get("error_detail", "")
         if error_detail:
             final_result["error_detail"] = redact_value(str(error_detail))
+        final_result["exception"] = _exception_lineage(
+            status,
+            str(error_detail or (failed_step or {}).get("error_detail", "")),
+        )
+    elif status == "pending_approval":
+        final_result["exception"] = _exception_lineage("pending_approval", "")
     return cast(dict[str, object], redact_value(final_result))
+
+
+def _exception_lineage(status: str, error_detail: str) -> dict[str, object]:
+    """Return a small, deterministic recovery hint without exposing model reasoning."""
+    normalized = error_detail.lower()
+    if status == "pending_approval":
+        return {
+            "kind": "approval_required",
+            "recoverable": True,
+            "next_action": "human_approval",
+        }
+    if status == "cancelled":
+        return {
+            "kind": "cancelled",
+            "recoverable": True,
+            "next_action": "explicit_retry",
+        }
+    if status == "rejected":
+        return {
+            "kind": "approval_denied",
+            "recoverable": False,
+            "next_action": "technician_review",
+        }
+    if "timeout" in normalized:
+        return {
+            "kind": "timeout",
+            "recoverable": True,
+            "next_action": "explicit_retry",
+        }
+    if any(term in normalized for term in ("provider", "offline", "unavailable", "not configured")):
+        return {
+            "kind": "provider_failure",
+            "recoverable": True,
+            "next_action": "provider_check_or_retry",
+        }
+    if "malformed" in normalized or "invalid" in normalized:
+        return {
+            "kind": "malformed_output",
+            "recoverable": False,
+            "next_action": "technician_review",
+        }
+    if "author" in normalized or "permission" in normalized:
+        return {
+            "kind": "authorization_denied",
+            "recoverable": False,
+            "next_action": "technician_escalation",
+        }
+    return {
+        "kind": "execution_failure",
+        "recoverable": True,
+        "next_action": "technician_review_or_retry",
+    }

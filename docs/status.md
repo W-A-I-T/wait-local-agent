@@ -250,7 +250,11 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is
   revoked when its agent run is cancelled. Failed and cancelled runs expose a
-  bounded retry route with persisted retry lineage.
+  bounded retry route with persisted retry lineage. Run detail now exposes a
+  deterministic exception class and recovery hint, retry parent/attempt data,
+  and a redacted partial-history summary; the Agents screen uses the existing
+  cancel/retry routes and shows the same step and recovery state. This is
+  observability and controlled recovery, not unrestricted planner autonomy.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, delivery history APIs, and an operator-triggered

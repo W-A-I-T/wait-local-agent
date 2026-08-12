@@ -441,6 +441,11 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
     )
     pending = service.run(approval_definition, entity_id="TCK-1001", actor="requester", input_payload={})
     assert pending.status == "pending_approval"
+    assert pending.final_result["exception"] == {
+        "kind": "approval_required",
+        "recoverable": True,
+        "next_action": "human_approval",
+    }
 
     class UnavailableProvider:
         def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
@@ -477,6 +482,16 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
         failure_definition, entity_id="TCK-1001", actor="requester", input_payload={}
     )
     assert failed.status == "failed"
+    assert failed.final_result["exception"] == {
+        "kind": "provider_failure",
+        "recoverable": True,
+        "next_action": "provider_check_or_retry",
+    }
+    assert failed.final_result["history"] == {
+        "attempted_steps": 1,
+        "completed_steps": 0,
+        "partial": False,
+    }
 
 
 def test_continuation_lineage_is_bounded_and_redacted() -> None:
@@ -1443,6 +1458,18 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
     retry = client.post(f"/agent-runs/{run_id}/retry")
     assert retry.status_code == 200
     assert retry.json()["status"] == "failed"
+    retry_detail = client.get(f"/agent-runs/{retry.json()['run_id']}")
+    assert retry_detail.status_code == 200
+    assert retry_detail.json()["lineage"] == {
+        "retry_count": 1,
+        "retry_of_run_id": run_id,
+        "partial_history": {
+            "attempted_steps": 1,
+            "completed_steps": 0,
+            "partial": False,
+        },
+    }
+    assert retry_detail.json()["state"]["final_result"]["exception"]["kind"] == "provider_failure"
     assert client.post(f"/agent-runs/{run_id}/retry", params={"client_id": "other"}).status_code == 404
 
     successful = client.post(
@@ -2280,6 +2307,11 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert detail.json()["state"]["steps"][0]["tool_id"] == "ticket-triage"
     assert detail.json()["state"]["final_result"]["status"] == "success"
     assert detail.json()["state"]["final_result"]["tool_id"] == "ticket-triage"
+    assert detail.json()["lineage"]["partial_history"] == {
+        "attempted_steps": 1,
+        "completed_steps": 1,
+        "partial": False,
+    }
     assert set(detail.json()["state"]["context"]) == {"ticket", "client"}
     assert detail.json()["revision_version"] == 1
     assert detail.json()["definition_revision"]["version"] == 1
@@ -2305,6 +2337,8 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     cancelled = client.post(f"/agent-runs/{pending.json()['run_id']}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+    cancelled_detail = client.get(f"/agent-runs/{pending.json()['run_id']}")
+    assert cancelled_detail.json()["state"]["final_result"]["exception"]["kind"] == "cancelled"
     retried = client.post(f"/agent-runs/{pending.json()['run_id']}/retry")
     assert retried.status_code == 200
     assert retried.json()["status"] == "pending_approval"

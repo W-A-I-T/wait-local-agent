@@ -250,6 +250,18 @@ export function Agents() {
     }
   }
 
+  async function controlRun(agent: AgentDefinition, detail: AgentRunDetail, action: "cancel" | "retry") {
+    try {
+      const result = await apiFetch<{ run_id: number }>(`/agent-runs/${detail.id}/${action}`, { method: "POST" });
+      const targetRunId = action === "retry" ? result.run_id : detail.id;
+      const updated = await apiFetch<AgentRunDetail>(`/agent-runs/${targetRunId}`);
+      setRunDetails((current) => ({ ...current, [agent.id]: updated }));
+      setMessage(action === "retry" ? `Retried ${agent.name}; the new run is recorded with its parent.` : `Cancelled run ${detail.id}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `Unable to ${action} the agent run.`);
+    }
+  }
+
   async function previewPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!planInstruction.trim() || !planTicket.trim()) {
@@ -346,7 +358,19 @@ export function Agents() {
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
             <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} onClick={() => editAgent(agent)}>Edit</button><button type="button" className="secondary-button" onClick={() => void showRevisions(agent)}>History</button></div>
             {revisions[agent.id] ? <div className="agent-history" aria-live="polite"><strong>Revision history</strong>{revisions[agent.id].map((revision) => <div className="agent-history-row" key={`${agent.id}-${revision.version}`}><span>Version {revision.version} · {revision.created_at}</span><div className="row-actions">{revision.version !== agent.version ? <><button type="button" className="secondary-button" onClick={() => void compareRevision(agent, revision.version)}>Compare to current</button><button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void restoreRevision(agent, revision.version)}>Restore</button></> : <span>current</span>}</div></div>)}{diffs[agent.id] ? <div className="agent-diff"><strong>{diffs[agent.id].changed ? "Changes" : "No changes"}</strong>{diffs[agent.id].changes.length ? diffs[agent.id].changes.map((change) => <div key={change.field}><span>{change.field}</span><small>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</small></div>) : <span>No persisted fields differ.</span>}</div> : null}</div> : null}
-            {detail ? <div className="agent-run-detail"><strong>Run {detail.id}: {detail.status}</strong><span>Revision {detail.revision_version ?? "n/a"}</span><span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span></div> : null}
+            {detail ? <div className="agent-run-detail">
+              <strong>Run {detail.id}: {detail.status}</strong>
+              <span>Revision {detail.revision_version ?? "n/a"}</span>
+              <span>Context loaded: {Object.keys(detail.state?.context ?? {}).join(", ") || "none"}</span>
+              <span>History: {detail.lineage?.partial_history?.completed_steps ?? 0} of {detail.lineage?.partial_history?.attempted_steps ?? detail.state?.steps?.length ?? 0} step(s) completed{detail.lineage?.partial_history?.partial ? " before the failure" : ""}.</span>
+              {detail.lineage?.retry_of_run_id ? <span>Retry of run {detail.lineage.retry_of_run_id} · attempt {detail.lineage.retry_count + 1}</span> : null}
+              {detail.state?.final_result?.exception && typeof detail.state.final_result.exception === "object" ? <span>Recovery: {String((detail.state.final_result.exception as { kind?: unknown }).kind ?? "review required")} · {String((detail.state.final_result.exception as { next_action?: unknown }).next_action ?? "technician review")}</span> : null}
+              {detail.state?.steps?.map((step, index) => <small key={`${detail.id}-step-${index}`}>Step {index + 1}: {String(step.tool_id ?? "unknown")} · {String(step.status ?? "unknown")}{step.error_detail ? ` · ${String(step.error_detail)}` : ""}</small>)}
+              <div className="row-actions">
+                {(detail.status === "queued" || detail.status === "pending_approval") ? <button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "cancel")}>Cancel run</button> : null}
+                {(detail.status === "failed" || detail.status === "cancelled") ? <button type="button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "retry")}>Retry run</button> : null}
+              </div>
+            </div> : null}
           </article>;
         })}
       </section>

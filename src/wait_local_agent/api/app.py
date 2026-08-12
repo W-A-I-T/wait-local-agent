@@ -5941,6 +5941,10 @@ def _agent_revision_diff_view(left, right) -> dict[str, object]:
 
 def _agent_run_view(run) -> dict[str, object]:
     state = _safe_json_object(run.state_json)
+    final_result = state.get("final_result") if isinstance(state.get("final_result"), dict) else {}
+    retry_count = state.get("retry_count") if isinstance(state.get("retry_count"), int) else 0
+    retry_of_run_id = state.get("retry_of_run_id") if isinstance(state.get("retry_of_run_id"), int) else None
+    history = final_result.get("history") if isinstance(final_result, dict) else None
     return cast(
         dict[str, object],
         redact_value(
@@ -5956,6 +5960,11 @@ def _agent_run_view(run) -> dict[str, object]:
                 "finished_at": run.finished_at,
                 "revision_version": run.revision_version,
                 "client_id": run.client_id,
+                "lineage": {
+                    "retry_count": retry_count,
+                    "retry_of_run_id": retry_of_run_id,
+                    "partial_history": history if isinstance(history, dict) else {},
+                },
             }
         ),
     )
