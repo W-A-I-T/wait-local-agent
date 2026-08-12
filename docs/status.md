@@ -8,14 +8,17 @@ reachable API, CLI, UI, test, and execution boundary exists.
 The repository currently provides review-oriented blueprint, discovery,
 architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
 Platform preparation surfaces, including a credential-free Copilot Studio
-handoff plan. External credentials, provider availability, and
-deployment authorization remain explicit prerequisites; artifact generation is
-not deployment. Planned Power Platform stages report no deployment start, and
-TEST/PROD approval requests require explicit preceding-stage, evaluation,
-governance, artifact-digest, and rollback evidence. The preceding-stage
-approval must be same-tenant, approved, successfully executed, and match the
-submitted package digest; live provider verification and rollback execution
-remain unsupported boundaries.
+handoff plan. It also provides a separate staged Power Platform solution
+deployment path with explicit approval and execution records. External
+credentials, provider availability, and deployment authorization remain
+explicit prerequisites; artifact generation and planning are not deployment.
+Planned stages report no deployment start, and TEST/PROD approval requests
+require explicit preceding-stage, evaluation, governance, artifact-digest, and
+rollback evidence. The preceding-stage approval must be same-tenant, approved,
+successfully executed, and match the submitted package digest; live provider
+verification and rollback execution remain unsupported boundaries. See
+[`docs/consultant-power-platform-deployment.md`](consultant-power-platform-deployment.md)
+for the execution boundary.
 
 The repository-wide requirement-to-evidence and release-risk index is
 [`docs/enterprise-validation-matrix.md`](enterprise-validation-matrix.md).
