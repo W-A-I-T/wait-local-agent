@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 
 
-def _plan(**overrides: object) -> dict[str, object]:
+def _plan(**overrides: object) -> dict[str, Any]:
     payload: dict[str, object] = {
         "client_id": "acme",
         "workflow_id": "employee_onboarding",

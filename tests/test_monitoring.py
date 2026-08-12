@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from wait_local_agent.models import AgentDefinition, AgentRun
+from wait_local_agent.models import AgentDefinition, AgentRun, AgentRunStatus
 from wait_local_agent.monitoring import build_agent_health_summary
 
 
@@ -24,7 +24,7 @@ def _definition(agent_id: str, *, enabled: bool = True) -> AgentDefinition:
     )
 
 
-def _run(agent_id: str, status: str, run_id: int) -> AgentRun:
+def _run(agent_id: str, status: AgentRunStatus, run_id: int) -> AgentRun:
     return AgentRun(
         id=run_id,
         agent_id=agent_id,

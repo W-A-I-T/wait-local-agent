@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any, cast
 
 import pytest
 from starlette.requests import Request
@@ -158,11 +159,11 @@ def _call_mcp_raw(
     origin: str | None = None,
     extra_headers: tuple[tuple[bytes, bytes], ...] = (),
 ):
-    route = next(
+    route = cast(Any, next(
         route
         for route in app.routes
         if getattr(route, "path", None) == "/mcp" and "POST" in (route.methods or set())
-    )
+    ))
     headers = [(b"host", b"test")]
     if token:
         headers.append((b"authorization", f"Bearer {token}".encode()))
@@ -194,7 +195,7 @@ def _call_mcp_raw(
     )
     response = asyncio.run(route.endpoint(request))
     assert isinstance(response, Response)
-    return response, json.loads(response.body) if response.body else None
+    return response, json.loads(bytes(response.body)) if response.body else None
 
 
 def test_mcp_lifecycle_lists_and_calls_existing_tools_with_tenant_scope(settings) -> None:
@@ -320,11 +321,11 @@ def test_mcp_requires_auth_session_and_uses_origin_allowlist(settings) -> None:
         token="tech-token",
         origin="https://evil.example",
     )
-    get_route = next(
+    get_route = cast(Any, next(
         route
         for route in app.routes
-        if getattr(route, "path", None) == "/mcp" and "GET" in (route.methods or set())
-    )
+        if getattr(route, "path", None) == "/mcp" and "GET" in (getattr(route, "methods", None) or set())
+    ))
     get = get_route.endpoint()
 
     assert missing_auth_response.status_code == 401

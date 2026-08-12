@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 MAX_FLOW_STEPS = 32
 MAX_FLOW_TEXT = 240
@@ -25,7 +25,7 @@ def build_power_automate_flow_plan(
     workflow_name: str,
     trigger: str,
     steps: list[dict[str, object]],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     flow_id = _identifier(workflow_id, "workflow_id")
     name = _text(workflow_name, "workflow_name", MAX_FLOW_TEXT)

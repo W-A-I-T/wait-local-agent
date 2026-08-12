@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -17,7 +17,7 @@ from wait_local_agent.store import Store
 from wait_local_agent.workflows import list_workflow_templates
 
 
-def _payload() -> dict[str, object]:
+def _payload() -> dict[str, Any]:
     return {
         "solution": {"name": "Employee Onboarding Agent"},
         "business_goal": {"reduce_manual_onboarding": True, "target_users": 500},

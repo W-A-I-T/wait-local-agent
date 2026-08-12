@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import Any, cast
 
 MAX_GOVERNANCE_INPUT_BYTES = 100_000
 MAX_GOVERNANCE_CONNECTORS = 16
@@ -17,7 +17,7 @@ class GovernanceValidationError(ValueError):
 def evaluate_solution_governance(
     architecture: Mapping[str, object],
     connector_artifacts: Sequence[Mapping[str, object]] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Return a review-only governance report for generated consultant artifacts."""
 
     if _json_size(architecture) + _json_size(connector_artifacts or []) > MAX_GOVERNANCE_INPUT_BYTES:

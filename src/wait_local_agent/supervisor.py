@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from wait_local_agent.agents import AgentExecutionResult
 from wait_local_agent.models import AgentDefinition
@@ -47,7 +47,7 @@ def build_supervisor_delegation_plan(
     task: str,
     child_agent_ids: list[str],
     definitions: Sequence[AgentDefinition],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     normalized_task = _text(task, "task", MAX_TASK_TEXT)
     if not isinstance(child_agent_ids, list) or not 1 <= len(child_agent_ids) <= MAX_CHILD_AGENTS:
@@ -126,7 +126,7 @@ def execute_supervisor_delegation(
     actor_role: Role,
     input_payload: dict[str, object] | None = None,
     completed_run_ids: list[int] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Run selected child agents in dependency order using AgentService.
 
     The supervisor owns selection, ordering, bounded context passing, and

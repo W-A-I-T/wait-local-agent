@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -73,7 +74,7 @@ class McpToolDescriptor:
 @dataclass(frozen=True)
 class McpToolCallResult:
     content: list[object]
-    structured_content: dict[str, object] | None
+    structured_content: dict[str, Any] | None
     is_error: bool
 
 

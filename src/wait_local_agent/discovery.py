@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import ROUND_HALF_UP, Decimal
-from typing import cast
+from typing import Any, cast
 
 MAX_DISCOVERY_ANSWERS = 12
 MAX_DISCOVERY_LIST_ITEMS = 16
@@ -41,7 +41,7 @@ class DiscoveryValidationError(ValueError):
     """Raised when discovery evidence is malformed or unsafe."""
 
 
-def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -> dict[str, object]:
+def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if len(set(answers) - {"impact"}) > MAX_DISCOVERY_ANSWERS:
         raise DiscoveryValidationError(f"answers may contain at most {MAX_DISCOVERY_ANSWERS} fields")

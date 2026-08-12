@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Any
 
 MAX_USE_CASES = 16
 _CATEGORIES = {"m365", "teams", "power-apps", "multi-agent"}
@@ -65,7 +66,7 @@ class UseCaseCatalogError(ValueError):
     """Raised when a use-case catalog request is invalid."""
 
 
-def list_consultant_use_cases(category: str | None = None) -> dict[str, object]:
+def list_consultant_use_cases(category: str | None = None) -> dict[str, Any]:
     """Return a bounded, static catalog without tenant data or execution."""
 
     if category is not None:

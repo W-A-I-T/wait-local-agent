@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from wait_local_agent.config import Settings
@@ -37,7 +37,16 @@ WorkIqOperation = Literal["read", "write", "action", "function", "unknown"]
 class WorkIqReadResponse:
     status: WorkIqStatus
     message: str
-    data: dict[str, object]
+    data: dict[str, Any]
+
+
+class WorkIqMcpClient(Protocol):
+    @property
+    def session_id(self) -> str | None: ...
+
+    def initialize(self, *, client_name: str) -> str: ...
+
+    def call_tool(self, name: str, arguments: dict[str, object]) -> McpToolCallResult: ...
 
 
 def classify_work_iq_operation(
@@ -86,7 +95,7 @@ def classify_work_iq_operation(
 class WorkIqClient:
     """Use the configured Work IQ MCP server without exposing mutations."""
 
-    def __init__(self, settings: Settings, *, mcp_client: McpClient | None = None) -> None:
+    def __init__(self, settings: Settings, *, mcp_client: WorkIqMcpClient | None = None) -> None:
         self.settings = settings
         self._mcp_client = mcp_client
         if self._mcp_client is None and settings.work_iq_mcp_endpoint:
@@ -176,7 +185,7 @@ def _validate_entity_path(path: str) -> str:
     return normalized
 
 
-def _result_payload(result: McpToolCallResult) -> dict[str, object]:
+def _result_payload(result: McpToolCallResult) -> dict[str, Any]:
     if result.structured_content is not None:
         safe = redact_value(result.structured_content)
         return cast(dict[str, object], safe) if isinstance(safe, dict) else {}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import pytest
 
@@ -13,7 +14,7 @@ from wait_local_agent.power_platform import (
 )
 
 
-def _definition() -> dict[str, object]:
+def _definition() -> dict[str, Any]:
     return {
         "swagger": "2.0",
         "info": {"title": "Halo API", "version": "1"},

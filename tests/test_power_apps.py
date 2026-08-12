@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_artifact, build_power_apps_plan
 
 
-def _plan(**overrides: object) -> dict[str, object]:
+def _plan(**overrides: object) -> dict[str, Any]:
     payload: dict[str, object] = {
         "client_id": "acme",
         "app_name": "Onboarding workspace",

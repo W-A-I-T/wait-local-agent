@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 MAX_APP_ENTITIES = 16
 MAX_APP_FIELDS = 32
@@ -29,7 +29,7 @@ def build_power_apps_plan(
     entities: list[dict[str, object]],
     screens: list[dict[str, object]],
     actions: list[dict[str, object]],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     normalized_app_name = _text(app_name, "app_name", 120)
     entity_views = _entities(entities)
@@ -56,7 +56,7 @@ def build_power_apps_artifact(
     entities: list[dict[str, object]],
     screens: list[dict[str, object]],
     actions: list[dict[str, object]],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Build a local, reviewable Power Platform artifact manifest.
 
     This produces deterministic JSON payloads that can be reviewed or handed

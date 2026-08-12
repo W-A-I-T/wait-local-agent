@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from wait_local_agent.models import (
@@ -68,7 +68,7 @@ def architect_solution_blueprint(
     *,
     available_tool_ids: Iterable[str],
     workflow_templates: Iterable[WorkflowTemplate],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Resolve a blueprint against existing local catalogs without side effects.
 
     This is deliberately an inspectable architecture view, not a deployment or
@@ -310,7 +310,7 @@ def parse_solution_blueprint(
     )
 
 
-def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, object]:
+def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, Any]:
     payload: dict[str, object] = {
         "solution": {"name": blueprint.solution_name},
         "business_goal": dict(blueprint.business_goal),
@@ -353,7 +353,7 @@ def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, object]:
     return payload
 
 
-def blueprint_view(blueprint: SolutionBlueprint) -> dict[str, object]:
+def blueprint_view(blueprint: SolutionBlueprint) -> dict[str, Any]:
     return {
         "id": blueprint.id,
         "client_id": blueprint.client_id,

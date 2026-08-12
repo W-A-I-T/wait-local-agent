@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import cast
+from typing import Any, cast
 
 from wait_local_agent.models import AgentDefinition, AgentRun
 
@@ -14,7 +14,7 @@ def build_agent_health_summary(
     definitions: Sequence[AgentDefinition],
     *,
     client_id: str | None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Build bounded health metadata without exposing persisted run payloads."""
 
     by_agent: dict[str, list[AgentRun]] = defaultdict(list)

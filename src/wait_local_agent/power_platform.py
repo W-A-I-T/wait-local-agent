@@ -6,7 +6,7 @@ import json
 import re
 import shutil
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 MAX_CONNECTOR_DEFINITION_BYTES = 1_000_000
 MAX_CONNECTOR_ACTIONS = 64
@@ -24,7 +24,7 @@ class OpenApiDefinitionError(ValueError):
 def generate_power_platform_connector(
     connector_id: str,
     definition: Mapping[str, object],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Return a metadata-only custom connector preparation artifact.
 
     The result is suitable for review or a later Power Platform import. It does
@@ -193,7 +193,7 @@ def definition_size_bytes(definition: Mapping[str, object]) -> int:
     return len(json.dumps(definition, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
-def power_platform_cli_status() -> dict[str, object]:
+def power_platform_cli_status() -> dict[str, Any]:
     """Report local ``pac`` availability without starting a process."""
 
     path = shutil.which("pac")
@@ -209,7 +209,7 @@ def build_solution_command_plan(
     publisher_name: str,
     publisher_prefix: str,
     output_directory: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Build a reviewable ``pac solution`` plan without filesystem side effects."""
 
     name = _identifier(solution_name, "solution_name")

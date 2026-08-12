@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 
@@ -20,7 +20,7 @@ class EvaluationValidationError(ValueError):
 def evaluate_tool_contract(
     test_set: list[dict[str, object]],
     observations: Mapping[str, object],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     if not isinstance(test_set, list) or not 1 <= len(test_set) <= MAX_EVALUATION_CASES:
         raise EvaluationValidationError(f"test_set must contain 1-{MAX_EVALUATION_CASES} cases")
     cases: list[dict[str, object]] = []

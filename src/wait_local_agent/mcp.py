@@ -12,12 +12,13 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import asdict
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
-from wait_local_agent.agents import AgentService, ToolDefinition
+from wait_local_agent.agents import ToolDefinition
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
-from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.smart_actions import SmartActionManifest
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SERVER_NAME = "wait-local-agent"
@@ -39,10 +40,30 @@ class McpProtocolError(ValueError):
         self.message = message
 
 
+class McpAgentCatalog(Protocol):
+    def list_tools(self) -> list[ToolDefinition]: ...
+
+
+class McpActionCatalog(Protocol):
+    def describe(self, action_id: str) -> SmartActionManifest: ...
+
+    def invoke(
+        self,
+        action_id: str,
+        payload: dict[str, object],
+        actor: str | None,
+        *,
+        confirm: bool = False,
+        client_id: str | None = None,
+        approval_expiry_seconds: int | None = None,
+        require_approval: bool = False,
+    ) -> Any: ...
+
+
 class WaitMcpServer:
     """Serve the MCP initialize, tools/list, and tools/call methods."""
 
-    def __init__(self, agent_service: AgentService, smart_action_service: SmartActionService) -> None:
+    def __init__(self, agent_service: McpAgentCatalog, smart_action_service: McpActionCatalog) -> None:
         self.agent_service = agent_service
         self.smart_action_service = smart_action_service
         self._sessions: dict[str, bool] = {}
@@ -53,7 +74,7 @@ class WaitMcpServer:
         *,
         context: AuthContext,
         session_id: str | None,
-    ) -> tuple[dict[str, object] | None, str | None]:
+    ) -> tuple[Any, str | None]:
         """Handle one decoded JSON-RPC message.
 
         The second return value is a newly-issued session ID for initialize.
@@ -208,7 +229,7 @@ def _mcp_tool(tool: ToolDefinition) -> dict[str, object]:
     }
 
 
-def _input_schema(schema: dict[str, object]) -> dict[str, object]:
+def _input_schema(schema: dict[str, object]) -> dict[str, Any]:
     normalized = dict(schema)
     normalized.setdefault("type", "object")
     properties = normalized.get("properties")
@@ -219,7 +240,7 @@ def _input_schema(schema: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
-def _output_schema(schema: dict[str, object]) -> dict[str, object]:
+def _output_schema(schema: dict[str, object]) -> dict[str, Any]:
     if schema.get("type"):
         return _input_schema(schema)
     return {
@@ -229,7 +250,7 @@ def _output_schema(schema: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _property_schema(value: object) -> dict[str, object]:
+def _property_schema(value: object) -> dict[str, Any]:
     if isinstance(value, dict):
         return _input_schema(value)
     if not isinstance(value, str):
@@ -276,7 +297,7 @@ def _tool_error(message: str) -> dict[str, object]:
     }
 
 
-def cast_dict(value: object) -> dict[str, object]:
+def cast_dict(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"status": "failed", "error_detail": "invalid result"}
 
 
@@ -301,13 +322,13 @@ def origin_allowed(
     }
 
 
-def protocol_error_response(request_id: object, error: McpProtocolError) -> dict[str, object]:
+def protocol_error_response(request_id: object, error: McpProtocolError) -> dict[str, Any]:
     return _error_response(request_id, error.code, error.message)
 
 
-def _success_response(request_id: object, result: dict[str, object]) -> dict[str, object]:
+def _success_response(request_id: object, result: dict[str, object]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _error_response(request_id: object, code: int, message: str) -> dict[str, object]:
+def _error_response(request_id: object, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}

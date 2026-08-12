@@ -185,7 +185,7 @@ def test_workiq_smart_action_is_tenant_scoped_and_read_only(settings) -> None:
         {"client_id": "acme", "entity_urls": "not-an-array"},
         {"client_id": "acme", "entity_urls": [3]},
     ):
-        invalid = service.invoke("workiq-fetch", payload, "actor", client_id="acme")
+        invalid = service.invoke("workiq-fetch", cast(dict[str, object], payload), "actor", client_id="acme")
         assert invalid.status == "failed"
 
     malformed = SmartActionService(

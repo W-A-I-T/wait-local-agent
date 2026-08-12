@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 MAX_DELIVERY_TARGETS = 8
 MAX_DELIVERY_CONNECTORS = 16
@@ -20,7 +21,7 @@ def build_consultant_delivery_plan(
     governance: Mapping[str, object],
     deployment_targets: Sequence[str],
     connector_artifacts: Sequence[Mapping[str, object]] = (),
-) -> dict[str, object]:
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if architecture.get("client_id") != tenant:
         raise DeliveryPlanError("architecture is outside the requested tenant")
