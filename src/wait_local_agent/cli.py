@@ -88,6 +88,7 @@ from wait_local_agent.consultant import (
     blueprint_view,
     parse_solution_blueprint,
 )
+from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
@@ -173,6 +174,7 @@ microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evalua
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
 microsoft_power_apps_app = typer.Typer(help="Metadata-only Power Apps and Dataverse plans.")
+microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -201,6 +203,7 @@ microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
 microsoft_app.add_typer(microsoft_governance_app, name="governance")
 microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
 microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
+microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2779,6 +2782,17 @@ def plan_microsoft_power_apps(source: Path) -> None:
         )
     except PowerAppsPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_use_cases_app.command("list")
+def list_microsoft_use_cases(
+    category: Annotated[str | None, typer.Option("--category")] = None,
+) -> None:
+    try:
+        result = list_consultant_use_cases(category)
+    except UseCaseCatalogError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--category") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 

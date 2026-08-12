@@ -92,6 +92,7 @@ from wait_local_agent.consultant import (
     blueprint_view,
     parse_solution_blueprint,
 )
+from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
@@ -4032,6 +4033,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 actions=payload.actions,
             )
         except PowerAppsPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/consultant/use-cases")
+    def consultant_use_cases(
+        context: ViewerAccess,
+        category: str | None = Query(default=None, max_length=32),
+    ) -> dict[str, object]:
+        del context
+        try:
+            return list_consultant_use_cases(category)
+        except UseCaseCatalogError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/monitoring/agents")

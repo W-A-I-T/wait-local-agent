@@ -5365,6 +5365,11 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             "actions": [{"id": "employee_lookup", "connector_id": "m365", "method": "GET"}],
         },
     )
+    use_cases = client.get(
+        "/consultant/use-cases",
+        headers=_auth("viewer-token"),
+        params={"category": "teams"},
+    )
     monitoring = client.get(
         "/consultant/monitoring/agents",
         headers=_auth("viewer-token"),
@@ -5409,6 +5414,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert power_apps.status_code == 200
     assert power_apps.json()["format"] == "wait-local-agent.power-apps-plan"
     assert power_apps.json()["deployment_started"] is False
+    assert use_cases.status_code == 200
+    assert use_cases.json()["use_cases"][0]["id"] == "teams-ticket-triage"
     assert monitoring.status_code == 200
     assert monitoring.json()["payloads_exposed"] is False
     assert admin_create.status_code == 201
