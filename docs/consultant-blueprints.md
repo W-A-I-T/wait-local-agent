@@ -53,7 +53,10 @@ targets remain explicit review items unless they are a supported local surface
 `needs_review` and always states that execution and deployment have not started.
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
-within the blueprint tenant; it does not create or run those agents.
+within the blueprint tenant; blueprint creation still does not create or run
+those agents. The separate `/consultant/supervisor/run` operation can execute
+explicitly selected persisted child definitions through the existing approval
+and audit runtime.
 
 Power Platform connector, Power Apps, and Power Automate plans are available as
 separate review-only artifacts. MCP server/client and Work IQ integration are

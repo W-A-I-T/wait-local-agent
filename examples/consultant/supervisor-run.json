@@ -1,0 +1,10 @@
+{
+  "client_id": "acme",
+  "entity_id": "TCK-1001",
+  "task": "Review onboarding prerequisites",
+  "child_agent_ids": ["identity-agent", "security-agent"],
+  "input": {
+    "ticket_id": "TCK-1001"
+  },
+  "completed_run_ids": []
+}

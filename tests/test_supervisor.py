@@ -4,8 +4,15 @@ from dataclasses import replace
 
 import pytest
 
+from wait_local_agent.agents import AgentExecutionResult
 from wait_local_agent.models import AgentDefinition
-from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
+from wait_local_agent.rbac import Role
+from wait_local_agent.store import Store
+from wait_local_agent.supervisor import (
+    SupervisorPlanError,
+    build_supervisor_delegation_plan,
+    execute_supervisor_delegation,
+)
 
 
 def _definition(agent_id: str, *, client_id: str | None = "acme") -> AgentDefinition:
@@ -43,6 +50,48 @@ def test_supervisor_plan_selects_explicit_children_and_bounds_context() -> None:
     assert result["assignments"][0]["input_contract"]["client_id"] == "acme"
     assert result["delegation_started"] is False
     assert result["execution_started"] is False
+    assert result["cross_tenant_context"] is False
+
+
+def test_supervisor_execution_orders_children_and_passes_bounded_prior_results(settings) -> None:
+    identity = _definition("identity")
+    security = replace(identity, id="security", depends_on_agent_ids=["identity"])
+
+    class FakeAgentService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def run(self, definition, *, supervisor_context, **kwargs):
+            self.calls.append((definition.id, supervisor_context))
+            return AgentExecutionResult(
+                run_id=len(self.calls),
+                agent_id=definition.id,
+                status="completed",
+                current_step=1,
+                steps=[],
+                final_result={"summary": f"{definition.id} complete"},
+            )
+
+    service = FakeAgentService()
+    result = execute_supervisor_delegation(
+        client_id="acme",
+        entity_id="TCK-1001",
+        task="Review onboarding",
+        child_agent_ids=["security", "identity"],
+        definitions=[identity, security],
+        agent_service=service,
+        store=Store(settings.data_path),
+        actor="technician",
+        actor_role=Role.TECHNICIAN,
+        input_payload={"ticket_id": "TCK-1001"},
+    )
+
+    assert result["status"] == "completed"
+    assert result["delegation_started"] is True
+    assert result["execution_started"] is True
+    assert result["supervisor"]["ordered_child_agent_ids"] == ["identity", "security"]
+    assert [call[0] for call in service.calls] == ["identity", "security"]
+    assert service.calls[1][1]["prior_results"][0]["agent_id"] == "identity"
     assert result["cross_tenant_context"] is False
 
 

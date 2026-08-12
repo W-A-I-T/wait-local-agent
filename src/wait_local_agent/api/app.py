@@ -194,7 +194,11 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
-from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
+from wait_local_agent.supervisor import (
+    SupervisorPlanError,
+    build_supervisor_delegation_plan,
+    execute_supervisor_delegation,
+)
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
@@ -448,6 +452,16 @@ class SupervisorPlanRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     task: str = Field(min_length=1, max_length=2000)
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+
+class SupervisorRunRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    entity_id: str = Field(min_length=1, max_length=100)
+    task: str = Field(min_length=1, max_length=2_000)
+    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    input: dict[str, object] = Field(default_factory=dict, max_length=16)
+    completed_run_ids: list[int] = Field(default_factory=list, max_length=8)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4256,6 +4270,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task=payload.task,
                 child_agent_ids=payload.child_agent_ids,
                 definitions=definitions,
+            )
+        except SupervisorPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/supervisor/run")
+    def consultant_supervisor_run(
+        payload: SupervisorRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        definitions = agent_service.list_definitions(scoped_client_id)
+        try:
+            return execute_supervisor_delegation(
+                client_id=scoped_client_id,
+                entity_id=payload.entity_id,
+                task=payload.task,
+                child_agent_ids=payload.child_agent_ids,
+                definitions=definitions,
+                agent_service=agent_service,
+                store=store,
+                actor=context.approver_id or "api",
+                actor_role=context.role,
+                input_payload=payload.input,
+                completed_run_ids=payload.completed_run_ids,
             )
         except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

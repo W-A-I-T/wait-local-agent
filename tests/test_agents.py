@@ -502,6 +502,18 @@ def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> Non
     assert state["context"]["knowledge"]["count"] == 1
     assert state["steps"][0]["input"]["_agent_context"] == state["context"]
 
+    supervised = service.run(
+        definition,
+        entity_id="TCK-1001",
+        actor="requester",
+        input_payload={},
+        supervisor_context={"task": "Review onboarding", "prior_results": []},
+    )
+    supervised_run = service.store.get_agent_run(supervised.run_id, client_id="acme")
+    assert supervised_run is not None
+    supervised_state = json.loads(supervised_run.state_json)
+    assert supervised_state["context"]["supervisor"]["task"] == "Review onboarding"
+
     with pytest.raises(AgentDefinitionError, match="unsupported context sources"):
         service.create(
             name="Invalid context",

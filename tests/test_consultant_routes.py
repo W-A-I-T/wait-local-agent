@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 
+from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
+    SupervisorRunRequest,
     TeamsMessageDraftRequest,
     create_app,
 )
 from wait_local_agent.rbac import AuthContext, Role
+from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.store import Store
 
 
 def _endpoint(settings, path: str):
@@ -166,6 +172,56 @@ def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
     assert draft["status"] == "pending"
     assert draft["payload"]["connector"] == "m365-teams"
     assert draft["can_execute"] is False
+
+
+def test_supervisor_run_orders_persisted_children_and_returns_child_runs(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    identity = service.create(
+        name="Identity child",
+        description="Identity review",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    security = service.create(
+        name="Security child",
+        description="Security review",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        depends_on_agent_ids=[identity.id],
+    )
+
+    result = _endpoint(settings, "/consultant/supervisor/run")(
+        SupervisorRunRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            task="Review onboarding",
+            child_agent_ids=[security.id, identity.id],
+            input={"ticket_id": "TCK-1001"},
+        ),
+        _technician(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["supervisor"]["ordered_child_agent_ids"] == [identity.id, security.id]
+    assert [child["status"] for child in result["children"]] == ["completed", "completed"]
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

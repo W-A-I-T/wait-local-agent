@@ -156,7 +156,11 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
-from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
+from wait_local_agent.supervisor import (
+    SupervisorPlanError,
+    build_supervisor_delegation_plan,
+    execute_supervisor_delegation,
+)
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
 from wait_local_agent.teams_graph import (
     TeamsChannelReadResponse,
@@ -3122,6 +3126,60 @@ def plan_microsoft_supervisor(source: Path) -> None:
             task=task,
             child_agent_ids=child_agent_ids,
             definitions=service.list_definitions(client_id),
+        )
+    except SupervisorPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_supervisor_app.command("run")
+def run_microsoft_supervisor(
+    source: Path,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    entity_id = payload.get("entity_id")
+    task = payload.get("task")
+    child_agent_ids = payload.get("child_agent_ids")
+    input_payload = payload.get("input", {})
+    completed_run_ids = payload.get("completed_run_ids", [])
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(entity_id, str)
+        or not isinstance(task, str)
+        or not isinstance(child_agent_ids, list)
+        or not isinstance(input_payload, dict)
+        or not isinstance(completed_run_ids, list)
+    ):
+        raise typer.BadParameter(
+            "source must contain client_id, entity_id, task, child_agent_ids, and an input object"
+        )
+    if any(not isinstance(item, str) for item in child_agent_ids):
+        raise typer.BadParameter("child_agent_ids must contain text values")
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in completed_run_ids):
+        raise typer.BadParameter("completed_run_ids must contain integer values")
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    store = Store(settings.data_path)
+    smart_actions = SmartActionService(store, settings)
+    service = AgentService(store, settings, smart_actions)
+    try:
+        result = execute_supervisor_delegation(
+            client_id=scoped_client_id,
+            entity_id=entity_id,
+            task=task,
+            child_agent_ids=child_agent_ids,
+            definitions=service.list_definitions(scoped_client_id),
+            agent_service=service,
+            store=store,
+            actor=context.approver_id or "cli",
+            actor_role=context.role,
+            input_payload=input_payload,
+            completed_run_ids=completed_run_ids,
         )
     except SupervisorPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
