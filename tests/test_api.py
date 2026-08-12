@@ -5325,6 +5325,73 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert len(client.get("/consultant/blueprints", headers=_auth("viewer-token")).json()) == 1
 
 
+def test_consultant_architect_is_tenant_scoped_and_side_effect_free(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    payload = {
+        "solution": {"name": "Employee Onboarding Agent"},
+        "business_goal": {"reduce_manual_onboarding": True},
+        "users": ["HR", "IT"],
+        "knowledge": ["SharePoint HR Policies"],
+        "systems": ["Microsoft Entra"],
+        "agents": [
+            {
+                "id": "onboarding-supervisor",
+                "name": "Onboarding Supervisor",
+                "purpose": "Coordinate onboarding",
+                "tools": ["ticket-triage"],
+                "knowledge": ["SharePoint HR Policies"],
+            }
+        ],
+        "workflows": [
+            {"id": "ticket-triage", "name": "Triage", "trigger": "HR", "steps": ["Validate"]}
+        ],
+        "approvals": {"create_user": "HR"},
+        "deployment": ["Teams"],
+        "risk": "medium",
+    }
+    client = TestClient(create_app(secure_settings))
+    created = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**payload, "client_id": "acme"},
+    )
+    blueprint_id = created.json()["id"]
+    viewer = client.post(
+        f"/consultant/blueprints/{blueprint_id}/architect",
+        headers=_auth("viewer-token"),
+    )
+    architected = client.post(
+        f"/consultant/blueprints/{blueprint_id}/architect",
+        headers=_auth("tech-token"),
+    )
+    foreign = client.post(
+        f"/consultant/blueprints/{blueprint_id}/architect",
+        headers=_auth("tech-token"),
+        params={"client_id": "beta"},
+    )
+
+    assert created.status_code == 201
+    assert viewer.status_code == 403
+    assert architected.status_code == 200
+    assert architected.json()["mode"] == "deterministic_offline_architecture"
+    assert architected.json()["execution"]["external_calls_made"] is False
+    assert architected.json()["execution"]["writes_performed"] is False
+    assert foreign.status_code == 403
+    assert any(
+        event["event_type"] == "consultant.blueprint_architected"
+        for event in client.get("/audit", headers=_auth("viewer-token")).json()
+    )
+
+
 def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
     secure_settings = settings.__class__(
         **{

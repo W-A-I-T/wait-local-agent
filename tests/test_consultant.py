@@ -8,6 +8,7 @@ import pytest
 
 from wait_local_agent.consultant import (
     BlueprintValidationError,
+    architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
@@ -169,6 +170,61 @@ def test_blueprint_view_includes_identity_and_payload() -> None:
 
     assert view["id"] == blueprint.id
     assert view["solution"] == {"name": blueprint.solution_name}
+
+
+def test_architect_classifies_components_and_reports_unresolved_work(settings) -> None:
+    payload = _payload()
+    payload["systems"] = ["Microsoft Entra", "Payroll ERP"]
+    payload["knowledge"] = ["SharePoint HR Policies"]
+    payload["agents"] = [
+        {
+            "id": "onboarding-supervisor",
+            "name": "Onboarding Supervisor",
+            "purpose": "Coordinate the onboarding solution token=secret-value",
+            "tools": ["ticket-triage", "mcp.workiq.fetch"],
+            "knowledge": ["SharePoint HR Policies"],
+        },
+        {
+            "id": "identity-specialist",
+            "name": "Identity Specialist",
+            "purpose": "Prepare identity work",
+            "tools": ["unknown.identity.tool"],
+            "knowledge": [],
+        },
+    ]
+    blueprint = parse_solution_blueprint(
+        payload,
+        client_id="acme",
+        created_by="architect",
+        blueprint_id="bp_architect",
+    )
+
+    plan = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=("ticket-triage",),
+        available_workflow_ids=("ticket-triage",),
+        now="2026-08-11T00:00:00+00:00",
+    )
+    components = cast(list[dict[str, object]], plan["components"])
+    types_by_id = {str(item["id"]): item["type"] for item in components}
+
+    assert plan["mode"] == "deterministic_offline_architecture"
+    assert types_by_id["agent-onboarding-supervisor"] == "agent"
+    assert types_by_id["agent-identity-specialist"] == "child_agent"
+    assert types_by_id["connector-0"] == "connector"
+    assert types_by_id["tool-0"] == "connector"
+    assert types_by_id["tool-1"] == "mcp_tool"
+    assert types_by_id["workflow-create-user"] == "workflow"
+    assert plan["readiness"] == "needs_review"
+    assert plan["execution"] == {
+        "external_calls_made": False,
+        "writes_performed": False,
+        "deployment_performed": False,
+        "production_deployment_requires_approval": True,
+    }
+    assert "secret-value" not in json.dumps(plan)
+    assert any("Payroll ERP" in item for item in cast(list[str], plan["unresolved"]))
+    assert cast(list[dict[str, object]], plan["approval_boundaries"])[0]["required_before_side_effect"] is True
 
 
 def test_blueprint_store_rejects_malformed_legacy_row(tmp_path) -> None:

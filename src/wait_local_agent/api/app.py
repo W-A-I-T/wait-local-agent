@@ -88,6 +88,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.consultant import (
     BlueprintValidationError,
+    architect_solution_blueprint,
     blueprint_view,
     parse_solution_blueprint,
 )
@@ -3928,6 +3929,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return blueprint_view(store.create_solution_blueprint(blueprint))
         except BlueprintValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/blueprints/{blueprint_id}/architect")
+    def architect_consultant_blueprint(
+        blueprint_id: str,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+        architecture = architect_solution_blueprint(
+            blueprint,
+            available_tool_ids=[tool.id for tool in agent_service.list_tools()],
+            available_workflow_ids=[template.id for template in list_workflow_templates()],
+        )
+        store.add_audit_event(
+            "consultant.blueprint_architected",
+            blueprint.id,
+            "deterministic architecture projection generated",
+            client_id=blueprint.client_id,
+        )
+        return architecture
 
     @app.get("/consultant/blueprints")
     def consultant_blueprints(

@@ -13,6 +13,7 @@ The API exposes the artifact through authenticated routes:
 POST /consultant/blueprints
 GET  /consultant/blueprints
 GET  /consultant/blueprints/{blueprint_id}
+POST /consultant/blueprints/{blueprint_id}/architect
 ```
 
 Technicians can create a blueprint and viewers can inspect it. Every record is
@@ -39,3 +40,13 @@ separate capabilities and are not implied by a stored blueprint. The
 authenticated MCP endpoint is documented in
 [`docs/mcp.md`](mcp.md); storing a blueprint does not expose it or invoke any
 tool.
+
+The architect route produces a deterministic, offline implementation
+projection from a stored blueprint. It classifies proposed components as
+agents, child agents, deterministic workflows, connectors, MCP tools, or
+knowledge sources; identifies reusable WAIT tool/workflow primitives; and
+reports unresolved connector, tool, and runtime decisions. It does not call
+Microsoft services, execute tools, write to providers, or deploy. The result
+always marks production deployment as approval-required.
+
+The component distinctions follow [Microsoft's current tool guidance](https://learn.microsoft.com/en-us/microsoft-copilot-studio/agents-experience/tools-available): connectors target established services, MCP tools target custom or internal services, and workflows target repeated deterministic multi-step processes.
