@@ -82,3 +82,8 @@ blueprint identifiers (for example, `Assign license` becomes
 `assign_license`), while the original labels remain in the stored discovery
 evidence. Promotion records the blueprint and audit event only; it does not
 start agent execution, connector calls, provider operations, or deployment.
+
+When a guided session reaches its final required answer, its response also
+includes the promoted `blueprint_id` and blueprint. The stateless bulk
+promotion route remains available for explicit operator-controlled promotion
+and enforces the same completion and tenant checks.

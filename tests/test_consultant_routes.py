@@ -11,6 +11,7 @@ from starlette.requests import Request
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
+    CopilotStudioPlanRequest,
     DeliveryPlanRequest,
     DiscoveryBlueprintPromotionRequest,
     DiscoveryRequest,
@@ -141,6 +142,29 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert power_apps_artifact["deployment_started"] is False
     assert flow["export_status"] == "review_only"
     assert delivery["production_deployment_requires_approval"] is True
+
+    copilot = _endpoint(settings, "/consultant/copilot-studio/plan")(
+        CopilotStudioPlanRequest(
+            client_id="acme",
+            copilot_name="Employee onboarding copilot",
+            business_goal="Guide HR through an auditable onboarding request.",
+            topics=[
+                {
+                    "id": "onboarding_request",
+                    "name": "Onboarding request",
+                    "trigger_phrases": ["start onboarding"],
+                }
+            ],
+            knowledge_sources=["employee-handbook"],
+            actions=[
+                {"id": "prepare_identity", "connector_id": "m365", "method": "POST", "approval_required": True}
+            ],
+        ),
+        _technician(),
+    )
+    assert copilot["target"] == "microsoft_copilot_studio"
+    assert copilot["generation_status"] == "review_only"
+    assert copilot["deployment_started"] is False
 
 
 def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture(settings) -> None:

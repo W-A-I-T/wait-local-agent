@@ -95,6 +95,7 @@ from wait_local_agent.consultant import (
     promote_discovery_candidate,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import (
     DiscoveryValidationError,
@@ -476,6 +477,17 @@ class PowerAutomatePlanRequest(BaseModel):
     workflow_name: str = Field(min_length=1, max_length=240)
     trigger: str = Field(min_length=1, max_length=240)
     steps: list[dict[str, object]] = Field(min_length=1, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class CopilotStudioPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    copilot_name: str = Field(min_length=1, max_length=240)
+    business_goal: str = Field(min_length=1, max_length=500)
+    topics: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    knowledge_sources: list[object] = Field(default_factory=list, max_length=32)
+    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4669,6 +4681,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=payload.steps,
             )
         except PowerAutomatePlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/copilot-studio/plan")
+    def consultant_copilot_studio_plan(
+        payload: CopilotStudioPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_copilot_studio_plan(
+                client_id=scoped_client_id,
+                copilot_name=payload.copilot_name,
+                business_goal=payload.business_goal,
+                topics=payload.topics,
+                knowledge_sources=payload.knowledge_sources,
+                actions=payload.actions,
+            )
+        except CopilotStudioPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/monitoring/agents")

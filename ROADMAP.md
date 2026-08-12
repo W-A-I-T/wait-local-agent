@@ -59,9 +59,9 @@ credential or undocumented vendor API remains an explicit boundary.
   targets, alternatives, dependencies, permissions, licenses, read/write and
   approval boundaries, risk, data movement, complexity, reversibility, tests,
   deployment requirements, and evidence gaps.
-- Reviewable Power Apps, Power Automate, connector, deployment, and delivery
-  artifacts that preserve the distinction between plan, generate, validate,
-  package, and deploy.
+- Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
+  deployment, and delivery artifacts that preserve the distinction between
+  plan, generate, validate, package, and deploy.
 
 ### Next increments
 
@@ -77,7 +77,8 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Bounded Microsoft Graph and Teams reads/actions, Work IQ read boundaries,
   Power Platform connector artifacts, Power Apps metadata/build artifacts,
-  Power Automate planning, and deployment-stage records. Planned stages remain
+  Power Automate planning, Copilot Studio handoff planning, and
+  deployment-stage records. Planned stages remain
   non-mutating; TEST and PROD approval requests require preceding-stage
   success, passing evaluation/governance, artifact digest, and rollback
   evidence.

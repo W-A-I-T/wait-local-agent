@@ -8,6 +8,7 @@ wait-local-agent microsoft discovery assess examples/consultant/discovery.json
 wait-local-agent microsoft power-apps plan examples/consultant/power-apps-plan.json
 wait-local-agent microsoft power-apps build examples/consultant/power-apps-build.json
 wait-local-agent microsoft workflow plan examples/consultant/flow-plan.json
+wait-local-agent microsoft copilot-studio plan examples/consultant/copilot-studio-plan.json
 wait-local-agent microsoft connector package examples/consultant/connector-openapi.json onboarding-review
 wait-local-agent microsoft solution deployment-plan examples/consultant/deployment.json
 wait-local-agent microsoft evaluation run examples/consultant/evaluation.json

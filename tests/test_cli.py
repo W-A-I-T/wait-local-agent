@@ -95,6 +95,7 @@ def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp
         ["microsoft", "power-apps", "build", "examples/consultant/power-apps-build.json"],
         ["microsoft", "use-cases", "list"],
         ["microsoft", "workflow", "plan", "examples/consultant/flow-plan.json"],
+        ["microsoft", "copilot-studio", "plan", "examples/consultant/copilot-studio-plan.json"],
         ["microsoft", "discovery", "assess", "examples/consultant/discovery.json"],
         ["microsoft", "delivery", "plan", "examples/consultant/delivery.json"],
     ]

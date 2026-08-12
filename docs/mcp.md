@@ -82,9 +82,9 @@ example `wait.ticket-triage`. Invoke a read action with `tools/call`:
 ## Current boundaries
 
 - The server is local-first and bounded. The client framework is present for
-  future integrations, but Work IQ is not yet an adapter and this slice does
-  not include a Power Platform custom-connector generator or deployment
-  packager.
+  future integrations, Work IQ exposes only its bounded read adapter, and
+  Power Platform connector, Power Apps, Power Automate, Copilot Studio
+  handoff, and staged PAC preparation remain separate review surfaces.
 - The current transport returns JSON responses for POST requests. SSE
   streaming, resumable streams, and MCP resource/prompt surfaces are not
   implemented.

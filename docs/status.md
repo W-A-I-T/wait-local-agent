@@ -7,7 +7,8 @@ reachable API, CLI, UI, test, and execution boundary exists.
 
 The repository currently provides review-oriented blueprint, discovery,
 architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
-Platform preparation surfaces. External credentials, provider availability, and
+Platform preparation surfaces, including a credential-free Copilot Studio
+handoff plan. External credentials, provider availability, and
 deployment authorization remain explicit prerequisites; artifact generation is
 not deployment. Planned Power Platform stages report no deployment start, and
 TEST/PROD approval requests require explicit preceding-stage, evaluation,

@@ -89,6 +89,7 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
@@ -202,6 +203,7 @@ microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health sum
 microsoft_power_apps_app = typer.Typer(help="Bounded Power Apps and Dataverse plans and build artifacts.")
 microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
 microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
+microsoft_copilot_studio_app = typer.Typer(help="Review-only Copilot Studio handoff plans.")
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
 microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
 microsoft_delivery_app = typer.Typer(help="Review-only consultant delivery handoffs.")
@@ -235,6 +237,7 @@ microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
 microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
 microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
 microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
+microsoft_app.add_typer(microsoft_copilot_studio_app, name="copilot-studio")
 microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
 microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
 microsoft_app.add_typer(microsoft_delivery_app, name="delivery")
@@ -3175,6 +3178,43 @@ def plan_microsoft_workflow(source: Path) -> None:
         )
     except PowerAutomatePlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_copilot_studio_app.command("plan")
+def plan_microsoft_copilot_studio(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "copilot_name", "business_goal", "topics", "knowledge_sources", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain Copilot Studio plan fields")
+    client_id = payload["client_id"]
+    copilot_name = payload["copilot_name"]
+    business_goal = payload["business_goal"]
+    topics = payload["topics"]
+    knowledge_sources = payload["knowledge_sources"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(copilot_name, str)
+        or not isinstance(business_goal, str)
+        or not isinstance(topics, list)
+        or any(not isinstance(item, dict) for item in topics)
+        or not isinstance(knowledge_sources, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in actions)
+    ):
+        raise typer.BadParameter("Copilot Studio plan fields have invalid types")
+    try:
+        result = build_copilot_studio_plan(
+            client_id=client_id,
+            copilot_name=copilot_name,
+            business_goal=business_goal,
+            topics=topics,
+            knowledge_sources=knowledge_sources,
+            actions=actions,
+        )
+    except CopilotStudioPlanError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
