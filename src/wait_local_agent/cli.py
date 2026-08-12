@@ -105,6 +105,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.power_platform import (
@@ -169,6 +170,7 @@ microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connect
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
 microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
+microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -195,6 +197,7 @@ microsoft_app.add_typer(microsoft_connector_app, name="connector")
 microsoft_app.add_typer(microsoft_solution_app, name="solution")
 microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
 microsoft_app.add_typer(microsoft_governance_app, name="governance")
+microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2726,6 +2729,20 @@ def evaluate_microsoft_governance(source: Path) -> None:
         result = evaluate_solution_governance(architecture, connector_artifacts)
     except GovernanceValidationError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_monitoring_app.command("agents")
+def monitor_microsoft_agents(client_id: str | None = None) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    scoped_client_id = client_id or settings.client_id
+    result = build_agent_health_summary(
+        store.list_agent_runs(scoped_client_id),
+        service.list_definitions(scoped_client_id),
+        client_id=scoped_client_id,
+    )
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 

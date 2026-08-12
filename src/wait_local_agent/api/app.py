@@ -135,6 +135,7 @@ from wait_local_agent.models import (
     AgentDefinition,
     WorkflowRun,
 )
+from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
@@ -4003,6 +4004,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return evaluate_solution_governance(payload.architecture, payload.connector_artifacts)
         except GovernanceValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/consultant/monitoring/agents")
+    def consultant_agent_monitoring(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return build_agent_health_summary(
+            store.list_agent_runs(scoped_client_id),
+            agent_service.list_definitions(scoped_client_id),
+            client_id=scoped_client_id,
+        )
 
     @app.get("/consultant/blueprints/{blueprint_id}")
     def consultant_blueprint_detail(

@@ -5354,6 +5354,10 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             "connector_artifacts": [],
         },
     )
+    monitoring = client.get(
+        "/consultant/monitoring/agents",
+        headers=_auth("viewer-token"),
+    )
     admin_create = client.post(
         "/consultant/blueprints",
         headers=_auth("admin-token"),
@@ -5391,6 +5395,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert evaluation.json()["production_readiness"] == "pass"
     assert governance.status_code == 200
     assert governance.json()["status"] == "pass"
+    assert monitoring.status_code == 200
+    assert monitoring.json()["payloads_exposed"] is False
     assert admin_create.status_code == 201
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404
