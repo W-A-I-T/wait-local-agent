@@ -37,6 +37,30 @@ describe("Consultant", () => {
           deployment_started: false
         }), { status: 200 }));
       }
+      if (path === "/consultant/use-cases") {
+        return Promise.resolve(new Response(JSON.stringify({
+          use_cases: [{
+            id: "teams-ticket-triage",
+            title: "Teams service-desk triage",
+            category: "teams",
+            business_goal: "Triage a request",
+            services: ["Microsoft Teams"],
+            agent_roles: ["supervisor"],
+            outputs: ["approval preview"],
+            approval_boundaries: ["message delivery"]
+          }]
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/monitoring/agents") {
+        return Promise.resolve(new Response(JSON.stringify({
+          client_id: "acme",
+          agent_count: 1,
+          total_runs: 2,
+          failed_runs: 0,
+          failure_rate: 0,
+          payloads_exposed: false
+        }), { status: 200 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -51,5 +75,7 @@ describe("Consultant", () => {
     expect(screen.getByText("Read-only sequence preview from the stored blueprint.")).toBeInTheDocument();
     expect(screen.getByText("Validate manager")).toBeInTheDocument();
     expect(screen.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Consultant use cases" })).toBeInTheDocument();
+    expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
   });
 });

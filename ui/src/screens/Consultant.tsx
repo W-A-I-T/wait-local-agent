@@ -2,20 +2,34 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
-import type { ConsultantArchitecture, ConsultantArchitectureComponent, ConsultantBlueprint } from "../api/types";
+import type {
+  ConsultantArchitecture,
+  ConsultantArchitectureComponent,
+  ConsultantBlueprint,
+  ConsultantMonitoring,
+  ConsultantUseCase,
+} from "../api/types";
 
 export function Consultant() {
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
+  const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
+  const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await apiFetch<ConsultantBlueprint[]>("/consultant/blueprints");
+      const [rows, catalog, health] = await Promise.all([
+        apiFetch<ConsultantBlueprint[]>("/consultant/blueprints"),
+        apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases"),
+        apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents"),
+      ]);
       setBlueprints(rows);
+      setUseCases(catalog.use_cases);
+      setMonitoring(health);
       if (selectedId && rows.some((row) => row.id === selectedId)) return;
       setSelectedId(rows[0]?.id ?? null);
       setArchitecture(null);
@@ -78,6 +92,28 @@ export function Consultant() {
         )}
       </section>
 
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Consultant use cases</h2>
+            <p className="screen-note">Review starting points for Microsoft work. These entries are planning guidance only.</p>
+          </div>
+          {monitoring ? <StatusChip status={monitoring.failed_runs ? "needs_review" : "completed"} /> : null}
+        </div>
+        {monitoring ? (
+          <div className="flag-grid">
+            <span><strong>{monitoring.agent_count}</strong><br />Agents in scope</span>
+            <span><strong>{monitoring.total_runs}</strong><br />Observed runs</span>
+            <span><strong>{monitoring.failed_runs}</strong><br />Failed runs</span>
+          </div>
+        ) : null}
+        {useCases.length > 0 ? (
+          <div className="consultant-component-list">
+            {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
+          </div>
+        ) : <p>No consultant use cases are available.</p>}
+      </section>
+
       {selected && architecture ? (
         <section className="panel">
           <div className="panel-heading">
@@ -120,6 +156,20 @@ export function Consultant() {
         <section className="panel"><p>Choose the blueprint to load its architecture view.</p><button type="button" onClick={() => void inspectBlueprint(selected.id)}>Load architecture</button></section>
       ) : null}
     </div>
+  );
+}
+
+function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
+  return (
+    <article className="consultant-component">
+      <div>
+        <strong>{useCase.title}</strong>
+        <span>{useCase.category} · {useCase.business_goal}</span>
+        <span>Services: {useCase.services.join(", ")}</span>
+        <span>Approval boundaries: {useCase.approval_boundaries.join(", ")}</span>
+      </div>
+      <StatusChip status="evidence_partial" />
+    </article>
   );
 }
 

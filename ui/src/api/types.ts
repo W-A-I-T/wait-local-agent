@@ -218,6 +218,35 @@ export type ConsultantArchitecture = {
   deployment_started: boolean;
 };
 
+export type ConsultantUseCase = {
+  id: string;
+  title: string;
+  category: string;
+  business_goal: string;
+  services: string[];
+  agent_roles: string[];
+  outputs: string[];
+  approval_boundaries: string[];
+};
+
+export type ConsultantUseCaseCatalog = {
+  format: string;
+  format_version: number;
+  category: string | null;
+  execution_started: boolean;
+  deployment_started: boolean;
+  use_cases: ConsultantUseCase[];
+};
+
+export type ConsultantMonitoring = {
+  client_id: string;
+  agent_count: number;
+  total_runs: number;
+  failed_runs: number;
+  failure_rate: number | null;
+  payloads_exposed: boolean;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;
