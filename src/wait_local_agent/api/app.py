@@ -92,6 +92,7 @@ from wait_local_agent.consultant import (
     blueprint_view,
     parse_solution_blueprint,
 )
+from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
@@ -386,6 +387,11 @@ class SolutionBlueprintRequest(BaseModel):
 class OpenApiConnectorRequest(BaseModel):
     connector_id: str = Field(min_length=1, max_length=64)
     definition: dict[str, object]
+
+
+class EvaluationRequest(BaseModel):
+    test_set: list[dict[str, object]]
+    observations: dict[str, object]
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -3970,6 +3976,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return generate_power_platform_connector(payload.connector_id, payload.definition)
         except OpenApiDefinitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/evaluations")
+    def evaluate_consultant_contract(
+        payload: EvaluationRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return evaluate_tool_contract(payload.test_set, payload.observations)
+        except EvaluationValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/blueprints/{blueprint_id}")

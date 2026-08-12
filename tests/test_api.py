@@ -5319,6 +5319,28 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         headers=_auth("viewer-token"),
         json={"connector_id": "example", "definition": connector_definition},
     )
+    evaluation = client.post(
+        "/consultant/evaluations",
+        headers=_auth("tech-token"),
+        json={
+            "test_set": [
+                {
+                    "id": "onboarding",
+                    "expected_tool_ids": ["m365-user-create"],
+                    "forbidden_tool_ids": [],
+                    "expected_approval_tool_ids": ["m365-user-create"],
+                }
+            ],
+            "observations": {
+                "onboarding": {
+                    "tool_ids": ["m365-user-create"],
+                    "approval_tool_ids": ["m365-user-create"],
+                    "tenant_isolated": True,
+                    "prompt_injection_blocked": True,
+                }
+            },
+        },
+    )
     admin_create = client.post(
         "/consultant/blueprints",
         headers=_auth("admin-token"),
@@ -5352,6 +5374,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert connector_validation.json()["valid"] is True
     assert connector_generation.json()["credentials_included"] is False
     assert connector_viewer.status_code == 403
+    assert evaluation.status_code == 200
+    assert evaluation.json()["production_readiness"] == "pass"
     assert admin_create.status_code == 201
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404

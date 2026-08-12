@@ -88,6 +88,7 @@ from wait_local_agent.consultant import (
     blueprint_view,
     parse_solution_blueprint,
 )
+from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -165,6 +166,7 @@ blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
+microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -189,6 +191,7 @@ consultant_app.add_typer(blueprints_app, name="blueprints")
 app.add_typer(consultant_app, name="consultant")
 microsoft_app.add_typer(microsoft_connector_app, name="connector")
 microsoft_app.add_typer(microsoft_solution_app, name="solution")
+microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2693,6 +2696,20 @@ def microsoft_solution_plan(
     except OpenApiDefinitionError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@microsoft_evaluation_app.command("run")
+def run_microsoft_evaluation(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    test_set = payload.get("test_set")
+    observations = payload.get("observations")
+    if not isinstance(test_set, list) or not isinstance(observations, dict):
+        raise typer.BadParameter("source must contain test_set and observations")
+    try:
+        result = evaluate_tool_contract(test_set, observations)
+    except EvaluationValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
 @workflows_app.command("compare-runs")
