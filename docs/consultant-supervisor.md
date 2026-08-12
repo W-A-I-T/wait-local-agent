@@ -29,3 +29,10 @@ child through the existing `/agent-runs/{run_id}/resume` route, then rerun the
 same request with its completed run ID in `completed_run_ids` to continue with
 the remaining children. Only bounded, redacted task and prior-result summaries
 are passed as supervisor context, and cross-tenant context is rejected.
+
+The canonical employee-onboarding child map is
+`examples/consultant/employee-onboarding-child-agent-map.json`. Its target
+tools describe the intended Microsoft/MSP handoffs, while its local fixture
+tool is deliberately `ticket-triage`. This distinction is part of the demo
+contract: the fixture proves bounded orchestration and audit lineage without
+claiming live provider execution, artifact generation, or deployment.

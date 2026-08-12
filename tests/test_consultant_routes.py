@@ -206,6 +206,8 @@ def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture
     ]
     assert result["execution_started"] is False
     assert result["deployment_started"] is False
+    assert result["supervisor"]["mode"] == "supervisor"
+    assert len(result["supervisor"]["children"]) == len(payload["agents"])
     assert {item["chosen_target"] for item in result["decisions"]} >= {
         "microsoft_graph",
         "psa",
@@ -219,6 +221,15 @@ def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture
 
 def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    child_map = json.loads(Path("examples/consultant/employee-onboarding-child-agent-map.json").read_text())
+    blueprint_agents = {agent["id"]: agent for agent in payload["agents"]}
+    assert set(blueprint_agents) == {child["id"] for child in child_map["child_agents"]}
+    assert child_map["mode"] == "local_fixture"
+    assert child_map["live_provider_execution"] is False
+    assert child_map["deployment_started"] is False
+    for child in child_map["child_agents"]:
+        assert child["target_tools"] == blueprint_agents[child["id"]]["tools"]
+        assert child["local_fixture_tools"] == ["ticket-triage"]
     blueprint = _endpoint(settings, "/consultant/blueprints")(
         SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
         _technician(),
@@ -233,6 +244,43 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
+
+    runtime_ids: dict[str, str] = {}
+    for child in child_map["child_agents"]:
+        dependencies = [runtime_ids[dependency_id] for dependency_id in child["depends_on"]]
+        definition = service.create(
+            name=f"{child['role'].title()} onboarding fixture",
+            description="Local fixture child for bounded employee-onboarding orchestration.",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=child["local_fixture_tools"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            depends_on_agent_ids=dependencies,
+        )
+        runtime_ids[child["id"]] = definition.id
+
+    supervisor_result = _endpoint(settings, "/consultant/supervisor/run")(
+        SupervisorRunRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            task=payload["business_goal"]["statement"],
+            child_agent_ids=[runtime_ids[child["id"]] for child in child_map["child_agents"]],
+            input={"ticket_id": "TCK-1001", "fixture_mode": child_map["mode"]},
+        ),
+        _technician(),
+    )
+    assert supervisor_result["status"] == "completed"
+    assert supervisor_result["execution_started"] is True
+    assert supervisor_result["cross_tenant_context"] is False
+    assert len(supervisor_result["children"]) == len(child_map["child_agents"])
+    assert all(child["status"] == "completed" for child in supervisor_result["children"])
+    assert len(store.list_agent_runs(client_id="acme")) == len(child_map["child_agents"])
+
     agent = service.create(
         name="Employee onboarding supervisor fixture",
         description="Synthetic local fixture for the employee onboarding blueprint",
