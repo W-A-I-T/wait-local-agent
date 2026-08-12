@@ -158,6 +158,12 @@ from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
 from wait_local_agent.syncro import SyncroClient, SyncroReadResponse
+from wait_local_agent.teams_graph import (
+    TeamsChannelReadResponse,
+    TeamsGraphClient,
+    TeamsMessageReadResponse,
+    TeamsTeamReadResponse,
+)
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatus, check_for_updates
@@ -292,6 +298,10 @@ def _sharepoint_client() -> SharePointClient:
 
 def _m365_client() -> M365GraphClient:
     return M365GraphClient(load_settings())
+
+
+def _teams_client() -> TeamsGraphClient:
+    return TeamsGraphClient(load_settings())
 
 
 def _timezest_client() -> TimeZestClient:
@@ -954,7 +964,7 @@ def update_approval_request(
             )
         except (PermissionError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
-    elif existing.action_type.startswith("m365."):
+    elif existing.action_type.startswith("m365.") or existing.action_type == "teams.message.send":
         context = _cli_access(load_settings(), token, Role.ADMIN)
         approval = store.update_approval_request(
             request_id,
@@ -2173,6 +2183,113 @@ def m365_health() -> None:
     result = _m365_client().health()
     _audit_m365_cli_read("health", result.status, result.count)
     typer.echo(f"{result.status} count={result.count} {result.message}")
+
+
+@connectors_app.command("m365-teams")
+def m365_teams(cursor: str | None = None, page_size: int | None = None) -> None:
+    response = _teams_client().list_teams(
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.list", response)
+
+
+@connectors_app.command("m365-team-channels")
+def m365_team_channels(
+    team_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    response = _teams_client().list_channels(
+        team_id,
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.channels.list", response)
+
+
+@connectors_app.command("m365-team-messages")
+def m365_team_messages(
+    team_id: str,
+    channel_id: str,
+    cursor: str | None = None,
+    page_size: int | None = None,
+) -> None:
+    response = _teams_client().list_messages(
+        team_id,
+        channel_id,
+        cursor=cursor,
+        page_size=page_size if page_size is not None else load_settings().m365_page_size,
+    )
+    _print_teams_response("teams.messages.list", response)
+
+
+@connectors_app.command("draft-m365-team-message")
+def draft_m365_team_message(
+    team_id: str,
+    channel_id: str,
+    body: str,
+    client_id: str | None = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a client id is required for a Teams message approval")
+    approval = Store(settings.data_path).create_approval_request(
+        subject_id=f"{scoped_client_id}:{team_id}:{channel_id}",
+        action_type="teams.message.send",
+        payload={
+            "connector": "m365-teams",
+            "action_type": "message.send",
+            "client_id": scoped_client_id,
+            "team_id": team_id,
+            "channel_id": channel_id,
+            "body": body,
+        },
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@connectors_app.command("execute-m365-team-message")
+def execute_m365_team_message(
+    request_id: int,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    store = Store(settings.data_path)
+    approval = store.get_approval_request(request_id)
+    if approval is None or approval.action_type != "teams.message.send":
+        raise typer.BadParameter("Teams message approval request not found")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, approval.client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("approval request is outside authenticated scope")
+    if approval.status != "approved":
+        raise typer.BadParameter("Teams message approval must be approved before execution")
+    try:
+        payload = json.loads(approval.payload_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("Teams message approval payload is malformed") from exc
+    if not isinstance(payload, dict) or not all(
+        isinstance(payload.get(key), str) for key in ("team_id", "channel_id", "body")
+    ):
+        raise typer.BadParameter("Teams message approval payload is invalid")
+    result = _teams_client().send_message(
+        team_id=cast(str, payload["team_id"]),
+        channel_id=cast(str, payload["channel_id"]),
+        body=cast(str, payload["body"]),
+    )
+    updated = store.record_approval_execution(
+        request_id,
+        status=result.status,
+        message=result.message,
+        result=asdict(result),
+        audit_event_type="teams.message.send",
+    )
+    typer.echo(json.dumps(_approval_cli_view(updated), sort_keys=True, indent=2))
 
 
 @connectors_app.command("m365-users")
@@ -4123,6 +4240,24 @@ def _print_scalepad_assessment_response(
 
 
 def _print_m365_response(read_type: str, response: M365GraphReadResponse) -> None:
+    _audit_m365_cli_read(read_type, response.result.status, response.result.count)
+    typer.echo(
+        json.dumps(
+            {
+                "result": asdict(response.result),
+                "items": [asdict(item) for item in response.items],
+                "next_cursor": response.next_cursor,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+def _print_teams_response(
+    read_type: str,
+    response: TeamsTeamReadResponse | TeamsChannelReadResponse | TeamsMessageReadResponse,
+) -> None:
     _audit_m365_cli_read(read_type, response.result.status, response.result.count)
     typer.echo(
         json.dumps(

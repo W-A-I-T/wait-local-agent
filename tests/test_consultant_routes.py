@@ -11,6 +11,7 @@ from wait_local_agent.api.app import (
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
+    TeamsMessageDraftRequest,
     create_app,
 )
 from wait_local_agent.rbac import AuthContext, Role
@@ -34,17 +35,19 @@ def _admin(client_id: str = "acme") -> AuthContext:
 
 
 def _request() -> Request:
-    return Request({
-        "type": "http",
-        "method": "POST",
-        "path": "/consultant/solutions/deployment-approvals",
-        "headers": [],
-        "query_string": b"",
-        "scheme": "http",
-        "client": ("test", 1234),
-        "server": ("test", 80),
-        "root_path": "",
-    })
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/consultant/solutions/deployment-approvals",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "client": ("test", 1234),
+            "server": ("test", 80),
+            "root_path": "",
+        }
+    )
 
 
 def test_consultant_planning_routes_are_directly_callable_and_review_only(settings) -> None:
@@ -145,6 +148,24 @@ def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> Non
             _request(),
             _technician("acme"),
         )
+
+
+def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
+    draft = _endpoint(settings, "/connectors/m365/teams/message-drafts")(
+        TeamsMessageDraftRequest(
+            team_id="team-1",
+            channel_id="channel-1",
+            body="Welcome to the team",
+            client_id="acme",
+        ),
+        _request(),
+        _admin(),
+    )
+
+    assert draft["action_type"] == "teams.message.send"
+    assert draft["status"] == "pending"
+    assert draft["payload"]["connector"] == "m365-teams"
+    assert draft["can_execute"] is False
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

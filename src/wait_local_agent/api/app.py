@@ -196,6 +196,7 @@ from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.supervisor import SupervisorPlanError, build_supervisor_delegation_plan
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
+from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
@@ -471,6 +472,14 @@ class PowerPlatformDeploymentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TeamsMessageDraftRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=320)
+    channel_id: str = Field(min_length=1, max_length=320)
+    body: str = Field(min_length=1, max_length=4000)
+    client_id: str | None = Field(default=None, max_length=128)
+    model_config = ConfigDict(extra="forbid")
+
+
 class SmartActionInvokeRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
     confirm: bool = False
@@ -687,6 +696,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     timezest_client = TimeZestClient(active_settings)
     scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
+    teams_client = TeamsGraphClient(active_settings)
     work_iq_client = WorkIqClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
@@ -2223,7 +2233,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             existing_approval = store.get_approval_request(request_id)
             if existing_approval is None or not _approval_in_scope(context, existing_approval):
                 raise KeyError(request_id)
-            if existing_approval.action_type.startswith("m365.") and context.role < Role.ADMIN:
+            if (
+                existing_approval.action_type.startswith("m365.")
+                or existing_approval.action_type == "teams.message.send"
+            ) and context.role < Role.ADMIN:
                 raise PermissionError("M365 approvals require admin authority")
             if existing_approval.action_type.startswith("smart_action:"):
                 smart_action_service.update_approval(
@@ -3676,6 +3689,126 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
         )
         return _m365_managed_device_response("managed-devices.list", response)
+
+    @app.get("/connectors/m365/teams")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_teams(request: Request, _: ViewerAccess) -> dict[str, object]:
+        response = teams_client.list_teams(page_size=active_settings.m365_page_size)
+        _audit_m365_read("teams.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.get("/connectors/m365/teams/{team_id}/channels")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_team_channels(
+        team_id: str,
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = teams_client.list_channels(
+            team_id,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        _audit_m365_read("teams.channels.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.get("/connectors/m365/teams/{team_id}/channels/{channel_id}/messages")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def m365_team_messages(
+        team_id: str,
+        channel_id: str,
+        request: Request,
+        _: ViewerAccess,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, object]:
+        response = teams_client.list_messages(
+            team_id,
+            channel_id,
+            cursor=cursor,
+            page_size=(
+                page_size if page_size is not None else active_settings.m365_page_size
+            ),
+        )
+        _audit_m365_read("teams.messages.list", response.result.status, response.result.count)
+        return {
+            "result": asdict(response.result),
+            "items": [asdict(item) for item in response.items],
+            "next_cursor": response.next_cursor,
+        }
+
+    @app.post("/connectors/m365/teams/message-drafts", status_code=201)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def draft_m365_team_message(
+        payload: TeamsMessageDraftRequest,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        client_id = _smart_action_client_scope(context, payload.client_id)
+        if client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        approval = store.create_approval_request(
+            subject_id=f"{client_id}:{payload.team_id}:{payload.channel_id}",
+            action_type="teams.message.send",
+            payload={
+                "connector": "m365-teams",
+                "action_type": "message.send",
+                "client_id": client_id,
+                "team_id": payload.team_id,
+                "channel_id": payload.channel_id,
+                "body": payload.body,
+            },
+            client_id=client_id,
+        )
+        return _approval_view(approval)
+
+    @app.post("/connectors/m365/teams/approval-requests/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_m365_team_message(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        approval = store.get_approval_request(request_id)
+        if (
+            approval is None
+            or approval.action_type != "teams.message.send"
+            or not _approval_in_scope(context, approval)
+        ):
+            raise HTTPException(status_code=404, detail="Teams message approval request not found")
+        if approval.status != "approved":
+            raise HTTPException(status_code=409, detail="Teams message approval must be approved before execution")
+        payload = _safe_json_object(approval.payload_json)
+        team_id = payload.get("team_id")
+        channel_id = payload.get("channel_id")
+        body = payload.get("body")
+        if not all(isinstance(value, str) for value in (team_id, channel_id, body)):
+            raise HTTPException(status_code=409, detail="Teams message approval payload is invalid")
+        result = teams_client.send_message(
+            team_id=cast(str, team_id),
+            channel_id=cast(str, channel_id),
+            body=cast(str, body),
+        )
+        updated = store.record_approval_execution(
+            request_id,
+            status=result.status,
+            message=result.message,
+            result=asdict(result),
+            audit_event_type="teams.message.send",
+        )
+        return _approval_view(updated)
 
     @app.post("/connectors/m365/users/drafts")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -5198,6 +5331,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return False, "The pac executable is not available on the local PATH."
             if not active_settings.power_platform_workspace.expanduser().is_dir():
                 return False, "WAIT_POWER_PLATFORM_WORKSPACE must already exist."
+            return True, ""
+        if request.action_type == "teams.message.send":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
+            write_health = teams_client.write_health()
+            if write_health.status != "ready":
+                return False, write_health.message
             return True, ""
         if request.action_type.startswith("m365."):
             if request.status != "approved":

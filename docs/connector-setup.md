@@ -988,3 +988,30 @@ wait-local-agent connectors autotask-company <company-id>
 The API mirrors these commands under `/connectors/autotask/health`,
 `/connectors/autotask/tickets`, `/connectors/autotask/companies`, and the
 company detail route `/connectors/autotask/companies/{company_id}`.
+
+### Teams channel reads and approved messages
+
+Teams channel context uses the same configured Graph token and is exposed
+through bounded routes and CLI commands:
+
+```text
+GET  /connectors/m365/teams
+GET  /connectors/m365/teams/{team-id}/channels
+GET  /connectors/m365/teams/{team-id}/channels/{channel-id}/messages
+POST /connectors/m365/teams/message-drafts
+POST /connectors/m365/teams/approval-requests/{request-id}/execute
+```
+
+```bash
+wait-local-agent connectors m365-teams
+wait-local-agent connectors m365-team-channels <team-id>
+wait-local-agent connectors m365-team-messages <team-id> <channel-id>
+```
+
+Reads are capped and return selected metadata plus bounded, redacted message
+text. Message delivery uses the native Graph channel-message endpoint, but it
+is never sent directly from a read route: an admin-scoped draft creates an
+approval record, and execution requires that approval plus both existing live
+HTTP and write gates. The token is never placed in a URL or approval payload.
+Use only the least-privileged Teams permissions required by the delegated or
+application flow ([list joined teams](https://learn.microsoft.com/en-us/graph/api/user-list-joinedteams?view=graph-rest-1.0), [list channels](https://learn.microsoft.com/en-us/graph/api/channel-list?view=graph-rest-1.0), [list channel messages](https://learn.microsoft.com/en-us/graph/api/channel-list-messages?view=graph-rest-1.0), [send channel message](https://learn.microsoft.com/en-us/graph/api/channel-post-messages?view=graph-rest-1.0)).
