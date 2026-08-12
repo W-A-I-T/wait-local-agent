@@ -16,9 +16,9 @@ deployment calls.
 - The CLI malformed-risk regression test passes with the same focused command
   (2 consultant blueprint tests selected).
 - Full repository suite excluding the two environment-inapplicable optional-
-  dependency absence tests — 907 passed, 2 deselected.
-- Coverage suite with the same two exclusions — 95.41% total; project gate is
-  95%.
+  dependency absence tests — passed on the merged branch.
+- Post-merge coverage suite with the same two exclusions — 95.01% total;
+  project gate is 95%.
 - Ruff, compileall, mypy for the new domain/model/store surfaces, and
   `git diff --check` — passed.
 - An unfiltered full suite also exposed two pre-existing environment-sensitive

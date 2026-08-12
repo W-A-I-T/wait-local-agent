@@ -1,5 +1,13 @@
 # Verification
 
+## Post-merge authoritative verification
+
+- Timestamp: 2026-08-12 (after merge with current `origin/main`)
+- Command: `PYTHONPATH=src /home/josephp/wait-local-agent/.venv/bin/python -m pytest --cov=wait_local_agent --cov-report=term -q -k 'not test_docling_parser_missing_dependency_errors_cleanly and not test_qdrant_local_backend_missing_dependency_errors'`
+- Result: passed; all selected tests passed and total coverage was **95.01%**, meeting the repository's 95% gate.
+- Warnings: existing Starlette/httpx deprecation and deprecated HTTP 413 constant.
+- Targeted post-merge checks: consultant domain/API/CLI tests passed; Ruff passed.
+
 - Timestamp: 2026-08-12T00:36:14Z
 
 ## Command
