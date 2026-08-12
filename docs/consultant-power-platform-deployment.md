@@ -27,6 +27,7 @@ The promotion evidence shape is intentionally bounded:
 {
   "source_stage": "dev",
   "source_status": "succeeded",
+  "source_approval_request_id": 123,
   "artifact_digest": "sha256:<64 lowercase hex characters>",
   "evaluation": {"production_readiness": "pass", "case_count": 1},
   "governance": {"status": "pass"},
@@ -37,6 +38,11 @@ The promotion evidence shape is intentionally bounded:
   }
 }
 ```
+
+For TEST and PROD, `source_approval_request_id` must identify an approved,
+same-tenant approval for the immediately preceding stage. Its persisted
+execution result must be successful and contain the same artifact digest; a
+caller cannot promote by submitting a self-declared success record.
 
 The CLI exposes the same boundary:
 

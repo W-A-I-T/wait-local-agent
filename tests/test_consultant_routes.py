@@ -429,6 +429,7 @@ def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(sett
     promotion_evidence = {
         "source_stage": "dev",
         "source_status": "succeeded",
+        "source_approval_request_id": 0,
         "artifact_digest": "sha256:" + "a" * 64,
         "evaluation": {"production_readiness": "pass", "case_count": 1},
         "governance": {"status": "pass"},
@@ -438,6 +439,22 @@ def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(sett
             "artifact_digest": "sha256:" + "b" * 64,
         },
     }
+    source = endpoint(
+        PowerPlatformDeploymentRequest.model_validate({**base, "stage": "dev"}),
+        _request(),
+        _technician(),
+    )
+    source_id = source["approval"]["id"]
+    store = Store(settings.data_path)
+    store.update_approval_request(source_id, "approved", approver_id="admin")
+    store.record_approval_execution(
+        source_id,
+        status="succeeded",
+        message="verified fixture stage",
+        result={"status": "succeeded", "artifact_digest": promotion_evidence["artifact_digest"]},
+        audit_event_type="power_platform.solution_stage",
+    )
+    promotion_evidence["source_approval_request_id"] = source_id
     approved_for_review = endpoint(
         PowerPlatformDeploymentRequest.model_validate(
             {**base, "stage": "test", "promotion_evidence": promotion_evidence}

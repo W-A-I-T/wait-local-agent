@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
+from wait_local_agent.agents import AgentService
 from wait_local_agent.evaluation import (
+    AgentServiceEvaluationExecutor,
     EvaluationValidationError,
     evaluate_tool_contract,
     execute_tool_contract,
 )
+from wait_local_agent.rbac import Role
 
 
 def _case(case_id: str = "onboarding") -> dict[str, object]:
@@ -104,6 +108,45 @@ def test_evaluation_reports_grounding_and_latency_failures() -> None:
     assert result["cases"][0]["passed"] is False
 
 
+def test_evaluation_requires_explicit_security_and_failure_evidence() -> None:
+    case = {
+        **_case(),
+        "required_security_dimensions": [
+            "rbac",
+            "tool_injection",
+            "secret_leakage",
+            "unexpected_writes",
+            "provider_failure",
+            "rollback",
+        ],
+    }
+    evidence = {
+        "rbac": True,
+        "tool_injection": True,
+        "secret_leakage": True,
+        "unexpected_writes": True,
+        "provider_failure": True,
+        "rollback": True,
+    }
+    result = evaluate_tool_contract(
+        [case],
+        {"onboarding": _observation(security_evidence=evidence)},
+    )
+
+    assert result["production_readiness"] == "pass"
+    assert result["dimensions"]["rbac"] == 100.0
+    assert result["dimensions"]["rollback"] == 100.0
+    assert result["cases"][0]["checks"]["unexpected_writes"] is True
+
+    incomplete = evaluate_tool_contract(
+        [case],
+        {"onboarding": _observation(security_evidence={"rbac": True})},
+    )
+    assert incomplete["production_readiness"] == "needs_review"
+    assert incomplete["cases"][0]["checks"]["tool_injection"] is False
+    assert incomplete["cases"][0]["checks"]["rollback"] is False
+
+
 def test_controlled_evaluation_executes_each_case_and_captures_runtime_evidence() -> None:
     class Runner:
         def __init__(self) -> None:
@@ -144,6 +187,134 @@ def test_controlled_evaluation_turns_provider_failure_into_failed_evidence() -> 
 
 
 @pytest.mark.parametrize(
+    "runner",
+    [
+        type("NonMappingRunner", (), {"execute": lambda self, case: []})(),
+        type(
+            "ValidationRunner",
+            (),
+            {"execute": lambda self, case: (_ for _ in ()).throw(EvaluationValidationError("invalid evidence"))},
+        )(),
+    ],
+)
+def test_controlled_evaluation_rejects_invalid_executor_contracts(runner) -> None:
+    with pytest.raises(EvaluationValidationError):
+        execute_tool_contract([_case()], runner)
+
+
+def test_controlled_failure_preserves_all_requested_failure_evidence() -> None:
+    case = {
+        **_case(),
+        "required_citations": ["fixture:source"],
+        "max_latency_ms": 1000,
+        "failure_expected": True,
+        "regression_expected": True,
+        "required_security_dimensions": ["provider_failure", "rollback"],
+    }
+
+    class FailingRunner:
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            raise RuntimeError("provider unavailable")
+
+    result = execute_tool_contract([case], FailingRunner())
+    evidence = result["cases"][0]["execution"]
+    assert evidence["security_evidence"] == {"provider_failure": False, "rollback": False}
+    assert result["cases"][0]["checks"]["failure_handling"] is False
+    assert result["cases"][0]["checks"]["regression"] is False
+
+
+def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -> None:
+    case = {**_case(), "required_security_dimensions": ["rbac"]}
+    missing = evaluate_tool_contract([case], {"onboarding": _observation(security_evidence=None)})
+    assert missing["cases"][0]["checks"]["rbac"] is False
+
+    with pytest.raises(EvaluationValidationError, match="security_evidence must be an object"):
+        evaluate_tool_contract([case], {"onboarding": _observation(security_evidence="nope")})
+    with pytest.raises(EvaluationValidationError, match="test_set must contain"):
+        evaluate_tool_contract([_case()] * 33, {"onboarding": _observation()})
+    with pytest.raises(EvaluationValidationError, match="max_latency_ms must be a number"):
+        evaluate_tool_contract([{**_case(), "max_latency_ms": "fast"}], {"onboarding": _observation()})
+    with pytest.raises(EvaluationValidationError, match="latency_ms must be a number"):
+        evaluate_tool_contract(
+            [{**_case(), "max_latency_ms": 100}],
+            {"onboarding": _observation(latency_ms="fast")},
+        )
+    with pytest.raises(EvaluationValidationError, match="latency_ms must be between"):
+        evaluate_tool_contract(
+            [{**_case(), "max_latency_ms": 100}],
+            {"onboarding": _observation(latency_ms=120001)},
+        )
+    with pytest.raises(EvaluationValidationError, match="required_security_dimensions must contain 0-16"):
+        evaluate_tool_contract(
+            [{**_case(), "required_security_dimensions": ["rbac"] * 17}],
+            {"onboarding": _observation()},
+        )
+
+
+def test_controlled_evaluation_requires_tenant_and_identity_boundaries() -> None:
+    definition = type("Definition", (), {"client_id": "acme"})()
+    with pytest.raises(EvaluationValidationError, match="matching tenant"):
+        AgentServiceEvaluationExecutor(
+            cast(AgentService, object()),
+            definition,
+            entity_id="T-1",
+            actor="tester",
+            actor_role=Role.TECHNICIAN,
+            client_id="beta",
+        )
+    with pytest.raises(EvaluationValidationError, match="entity and actor"):
+        AgentServiceEvaluationExecutor(
+            cast(AgentService, object()),
+            definition,
+            entity_id="",
+            actor="tester",
+            actor_role=Role.TECHNICIAN,
+            client_id="acme",
+        )
+    with pytest.raises(EvaluationValidationError, match="test_set must contain"):
+        execute_tool_contract([_case()] * 33, type("Runner", (), {})())
+
+
+def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
+    class Result:
+        status = "completed"
+        run_id = 9
+        error_detail = ""
+        steps = [
+            {
+                "tool_id": "m365-user-create",
+                "approval_id": 3,
+                "status": "pending_approval",
+                "evidence": ["fixture:source", 4],
+                "error_detail": "",
+            },
+            {"tool_id": None, "evidence": "not-a-list"},
+        ]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False})()
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme"})()
+    executor = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    )
+    result = executor.execute({"failure_expected": False})
+    assert result["tool_ids"] == ["m365-user-create"]
+    assert result["approval_tool_ids"] == ["m365-user-create"]
+    assert result["citations"] == ["fixture:source"]
+    actions = cast(list[dict[str, object]], result["actions"])
+    assert actions[1]["status"] == "failed"
+
+
+@pytest.mark.parametrize(
     ("test_set", "observations", "message"),
     [
         ([], {}, "test_set must contain"),
@@ -166,6 +337,16 @@ def test_controlled_evaluation_turns_provider_failure_into_failed_evidence() -> 
             [{**_case(), "required_citations": ["source"]}],
             {"onboarding": _observation()},
             "citations",
+        ),
+        (
+            [{**_case(), "required_security_dimensions": ["not-a-security-dimension"]}],
+            {"onboarding": _observation()},
+            "unsupported security dimensions",
+        ),
+        (
+            [{**_case(), "required_security_dimensions": ["rbac"]}],
+            {"onboarding": _observation(security_evidence={"rbac": "yes"})},
+            "must be boolean evidence",
         ),
     ],
 )

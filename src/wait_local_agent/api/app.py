@@ -171,6 +171,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
     validate_promotion_evidence,
+    validate_promotion_source,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
@@ -4460,21 +4461,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 deployment_targets=payload.deployment_targets,
             )
             promotion_evidence = validate_promotion_evidence(payload.stage, payload.promotion_evidence)
+            approval_payload = {
+                "format": "wait-local-agent.power-platform.deployment-approval",
+                "format_version": 1,
+                "client_id": scoped_client_id,
+                "solution_name": payload.solution_name,
+                "publisher_name": payload.publisher_name,
+                "publisher_prefix": payload.publisher_prefix,
+                "output_directory": payload.output_directory,
+                "deployment_targets": plan["deployment_targets"],
+                "stage": payload.stage,
+                "promotion_evidence": promotion_evidence,
+                "credentials_included": False,
+            }
+            if promotion_evidence:
+                source_id = cast(int, promotion_evidence["source_approval_request_id"])
+                source_approval = store.get_approval_request(source_id)
+                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                    source_approval = None
+                validate_promotion_source(
+                    payload.stage,
+                    promotion_evidence,
+                    source_approval=_power_platform_source_record(source_approval),
+                    current_payload=approval_payload,
+                )
         except PowerPlatformDeploymentError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        approval_payload = {
-            "format": "wait-local-agent.power-platform.deployment-approval",
-            "format_version": 1,
-            "client_id": scoped_client_id,
-            "solution_name": payload.solution_name,
-            "publisher_name": payload.publisher_name,
-            "publisher_prefix": payload.publisher_prefix,
-            "output_directory": payload.output_directory,
-            "deployment_targets": plan["deployment_targets"],
-            "stage": payload.stage,
-            "promotion_evidence": promotion_evidence,
-            "credentials_included": False,
-        }
         approval = store.create_approval_request(
             subject_id=f"{scoped_client_id}:{payload.solution_name}:{payload.stage}",
             action_type="power_platform.solution_stage",
@@ -4505,6 +4517,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             stage_id = payload.get("stage")
             if not isinstance(stage_id, str):
                 raise PowerPlatformDeploymentError("deployment approval stage is invalid")
+            promotion_evidence = payload.get("promotion_evidence")
+            if isinstance(promotion_evidence, dict) and promotion_evidence:
+                source_id = promotion_evidence.get("source_approval_request_id")
+                if not isinstance(source_id, int) or isinstance(source_id, bool):
+                    raise PowerPlatformDeploymentError("promotion evidence source approval id is invalid")
+                source_approval = store.get_approval_request(source_id)
+                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                    source_approval = None
+                validate_promotion_source(
+                    stage_id,
+                    promotion_evidence,
+                    source_approval=_power_platform_source_record(source_approval),
+                    current_payload=payload,
+                )
             result = execute_power_platform_stage(
                 plan,
                 stage_id,
@@ -6275,6 +6301,20 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _power_platform_source_record(approval) -> dict[str, object] | None:
+    if approval is None or approval.id is None:
+        return None
+    return {
+        "id": approval.id,
+        "client_id": approval.client_id,
+        "action_type": approval.action_type,
+        "status": approval.status,
+        "execution_status": approval.execution_status,
+        "payload": _safe_json_object(approval.payload_json),
+        "execution_result": _safe_json_object(approval.execution_result_json),
+    }
 
 
 def _safe_json_list(payload_json: str) -> list[dict[str, object]]:

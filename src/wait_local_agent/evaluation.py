@@ -19,6 +19,22 @@ _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 MAX_EVALUATION_CASES = 32
 MAX_EXPECTED_TOOLS = 8
 MAX_LATENCY_MS = 120_000
+MAX_SECURITY_DIMENSIONS = 16
+SECURITY_DIMENSIONS = (
+    "rbac",
+    "tool_injection",
+    "secret_leakage",
+    "unexpected_writes",
+    "timeout",
+    "retries",
+    "cancellation",
+    "provider_failure",
+    "malformed_provider_output",
+    "duplicate_prevention",
+    "partial_failure",
+    "rollback",
+)
+_SECURITY_DIMENSION_SET = frozenset(SECURITY_DIMENSIONS)
 
 
 class EvaluationValidationError(ValueError):
@@ -55,6 +71,9 @@ def evaluate_tool_contract(
             "tenant_isolation": cast(bool, observed["tenant_isolated"]),
             "injection_safety": cast(bool, observed["prompt_injection_blocked"]),
         }
+        security_evidence = cast(dict[str, bool], observed.get("security_evidence", {}))
+        for dimension in cast(list[str], case["required_security_dimensions"]):
+            checks[dimension] = security_evidence.get(dimension, False)
         required_citations = set(cast(list[str], case["required_citations"]))
         if required_citations:
             checks["grounding"] = required_citations <= set(cast(list[str], observed["citations"]))
@@ -66,7 +85,9 @@ def evaluate_tool_contract(
         if cast(bool, case["regression_expected"]):
             checks["regression"] = cast(bool, observed["regression_passed"])
         execution_evidence = {
-            key: observed[key] for key in ("actions", "execution_status", "run_id", "error_detail") if key in observed
+            key: observed[key]
+            for key in ("actions", "execution_status", "run_id", "error_detail", "security_evidence")
+            if key in observed
         }
         case_result: dict[str, object] = {
             "id": case_id,
@@ -83,6 +104,7 @@ def evaluate_tool_contract(
         "approval_safety",
         "tenant_isolation",
         "injection_safety",
+        *SECURITY_DIMENSIONS,
         "grounding",
         "latency",
         "failure_handling",
@@ -254,6 +276,7 @@ def _case(value: object) -> dict[str, object]:
         "max_latency_ms",
         "failure_expected",
         "regression_expected",
+        "required_security_dimensions",
     }
     unknown = sorted(set(case) - allowed)
     if unknown:
@@ -274,6 +297,7 @@ def _case(value: object) -> dict[str, object]:
         "max_latency_ms": _latency_limit(case.get("max_latency_ms")),
         "failure_expected": _required_bool(case.get("failure_expected", False), "failure_expected"),
         "regression_expected": _required_bool(case.get("regression_expected", False), "regression_expected"),
+        "required_security_dimensions": _security_dimensions(case.get("required_security_dimensions", [])),
     }
 
 
@@ -297,6 +321,19 @@ def _observation(value: object, case: Mapping[str, object]) -> dict[str, object]
         result["failure_handled"] = _required_bool(observation.get("failure_handled"), "failure_handled")
     if cast(bool, case["regression_expected"]):
         result["regression_passed"] = _required_bool(observation.get("regression_passed"), "regression_passed")
+    raw_security_evidence = observation.get("security_evidence", {})
+    if raw_security_evidence is None:
+        raw_security_evidence = {}
+    if not isinstance(raw_security_evidence, Mapping):
+        raise EvaluationValidationError("observation.security_evidence must be an object")
+    security_evidence: dict[str, bool] = {}
+    for dimension in cast(list[str], case["required_security_dimensions"]):
+        value = raw_security_evidence.get(dimension, False)
+        if not isinstance(value, bool):
+            raise EvaluationValidationError(f"security_evidence.{dimension} must be boolean evidence")
+        security_evidence[dimension] = value
+    if security_evidence:
+        result["security_evidence"] = security_evidence
     for field in ("actions", "execution_status", "run_id", "error_detail"):
         if field in observation:
             result[field] = observation[field]
@@ -327,6 +364,9 @@ def _failed_observation(
         result["failure_handled"] = False
     if cast(bool, case["regression_expected"]):
         result["regression_passed"] = False
+    required_security = cast(list[str], case["required_security_dimensions"])
+    if required_security:
+        result["security_evidence"] = {dimension: False for dimension in required_security}
     return result
 
 
@@ -335,9 +375,9 @@ def _bounded_error(error: Exception) -> str:
     return redact_text(detail)[:240] or error.__class__.__name__
 
 
-def _string_list(value: object, field: str) -> list[str]:
-    if not isinstance(value, list) or len(value) > MAX_EXPECTED_TOOLS:
-        raise EvaluationValidationError(f"{field} must contain 0-{MAX_EXPECTED_TOOLS} items")
+def _string_list(value: object, field: str, maximum: int = MAX_EXPECTED_TOOLS) -> list[str]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise EvaluationValidationError(f"{field} must contain 0-{maximum} items")
     if any(not isinstance(item, str) or not item.strip() for item in value):
         raise EvaluationValidationError(f"{field} must contain non-empty text")
     result = [item.strip() for item in value]
@@ -368,3 +408,11 @@ def _latency_value(value: object) -> float:
     if value < 0 or value > MAX_LATENCY_MS:
         raise EvaluationValidationError(f"latency_ms must be between 0 and {MAX_LATENCY_MS}")
     return float(value)
+
+
+def _security_dimensions(value: object) -> list[str]:
+    dimensions = _string_list(value, "required_security_dimensions", MAX_SECURITY_DIMENSIONS)
+    unknown = sorted(set(dimensions) - _SECURITY_DIMENSION_SET)
+    if unknown:
+        raise EvaluationValidationError(f"unsupported security dimensions: {', '.join(unknown)}")
+    return dimensions

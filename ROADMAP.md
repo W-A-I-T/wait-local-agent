@@ -90,10 +90,10 @@ credential or undocumented vendor API remains an explicit boundary.
 - Complete blueprint-to-artifact validation and packaging across supported
   Copilot Studio, Power Automate, Power Apps/Dataverse, connector, and PAC
   paths.
-- Bind promotion evidence to the generated package and persisted stage result,
-  then complete DEV → TEST → PROD validation with live-provider result
-  verification and rollback execution evidence. Local artifacts still never
-  imply provider success.
+- Complete DEV → TEST → PROD validation with live-provider result verification
+  and rollback execution evidence. Promotion evidence is now bound to a
+  same-tenant persisted preceding-stage approval and matching artifact digest;
+  local artifacts still never imply provider success.
 - Expand Work IQ only for documented operations whose path, function,
   arguments, tenant, identity, and local policy produce a deterministic
   READ/WRITE/ACTION/HIGH-RISK/BLOCKED/UNKNOWN decision. Unknown fails closed.
@@ -136,7 +136,9 @@ comparison** and evidence index. It is not the master product roadmap.
 
 - Review-oriented evaluation contracts plus controlled local-fixture execution
   through the existing AgentService, deterministic governance and DLP mapping,
-  provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries.
+  provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries;
+  bounded explicit evidence dimensions for injection, secret leakage,
+  unexpected writes, provider failure, rollback, and related failure modes.
 
 ### Next increments
 

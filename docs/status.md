@@ -11,7 +11,10 @@ Platform preparation surfaces. External credentials, provider availability, and
 deployment authorization remain explicit prerequisites; artifact generation is
 not deployment. Planned Power Platform stages report no deployment start, and
 TEST/PROD approval requests require explicit preceding-stage, evaluation,
-governance, artifact-digest, and rollback evidence.
+governance, artifact-digest, and rollback evidence. The preceding-stage
+approval must be same-tenant, approved, successfully executed, and match the
+submitted package digest; live provider verification and rollback execution
+remain unsupported boundaries.
 
 Tenant-scoped environment discovery matches explicit system declarations to
 local connector configuration without probing providers; configured,
@@ -28,6 +31,12 @@ bounded one-question turns. It records explicit user answers and the next
 unresolved question, exposes the bounded transcript, and keeps missing
 evidence visible. This is a review/intake workflow; it does not infer
 requirements, execute connectors, or deploy a Microsoft solution.
+
+Evaluation cases can now request explicit, bounded evidence for RBAC,
+tool-injection, secret-leakage, unexpected-write, timeout, retry, cancellation,
+provider-failure, malformed-output, duplicate-prevention, partial-failure, and
+rollback dimensions. Missing evidence fails the requested dimension; the
+contract does not infer live-provider or production evidence from fixtures.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 

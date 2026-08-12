@@ -14,6 +14,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
     validate_promotion_evidence,
+    validate_promotion_source,
 )
 
 
@@ -65,6 +66,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
     evidence = {
         "source_stage": "dev",
         "source_status": "succeeded",
+        "source_approval_request_id": 1,
         "artifact_digest": digest,
         "evaluation": {"production_readiness": "pass", "case_count": 3},
         "governance": {"status": "pass"},
@@ -79,6 +81,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
     assert normalized == {
         "source_stage": "dev",
         "source_status": "succeeded",
+        "source_approval_request_id": 1,
         "artifact_digest": digest,
         "evaluation": {"production_readiness": "pass", "case_count": 3},
         "governance": {"status": "pass"},
@@ -115,6 +118,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "not-a-digest",
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "pass"},
@@ -131,6 +135,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass", "case_count": "one"},
             },
@@ -141,6 +146,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "needs_review"},
@@ -152,6 +158,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "pass"},
@@ -164,6 +171,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "pass"},
@@ -176,6 +184,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "pass"},
@@ -192,6 +201,7 @@ def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> No
             {
                 "source_stage": "dev",
                 "source_status": "succeeded",
+                "source_approval_request_id": 1,
                 "artifact_digest": "sha256:" + "a" * 64,
                 "evaluation": {"production_readiness": "pass"},
                 "governance": {"status": "pass"},
@@ -211,12 +221,78 @@ def test_promotion_evidence_rejects_unsafe_or_incomplete_values(stage, evidence,
         validate_promotion_evidence(stage, evidence)
 
 
+@pytest.mark.parametrize("source_id", [None, 0, -1, True, "1"])
+def test_promotion_evidence_requires_positive_source_approval_id(source_id) -> None:
+    with pytest.raises(PowerPlatformDeploymentError, match="source_approval_request_id"):
+        validate_promotion_evidence(
+            "test",
+            {
+                "source_stage": "dev",
+                "source_status": "succeeded",
+                "source_approval_request_id": source_id,
+                "artifact_digest": "sha256:" + "a" * 64,
+                "evaluation": {"production_readiness": "pass"},
+                "governance": {"status": "pass"},
+                "rollback": {
+                    "available": True,
+                    "strategy": "restore",
+                    "artifact_digest": "sha256:" + "b" * 64,
+                },
+            },
+        )
+
+
+def test_promotion_source_must_match_persisted_successful_stage() -> None:
+    digest = "sha256:" + "a" * 64
+    evidence = {"source_stage": "dev", "source_approval_request_id": 7, "artifact_digest": digest}
+    current = {
+        "client_id": "acme",
+        "solution_name": "onboarding_review",
+        "publisher_name": "WAITConsulting",
+        "publisher_prefix": "wlp",
+        "deployment_targets": _targets(),
+    }
+    source = {
+        "id": 7,
+        "client_id": "acme",
+        "action_type": "power_platform.solution_stage",
+        "status": "approved",
+        "execution_status": "succeeded",
+        "payload": {**current, "stage": "dev"},
+        "execution_result": {"status": "succeeded", "artifact_digest": digest},
+    }
+
+    validate_promotion_source("test", evidence, source_approval=source, current_payload=current)
+    validate_promotion_source("dev", {}, source_approval=None, current_payload=current)
+
+    invalid_sources = [
+        (None, "was not found"),
+        ({**source, "id": 8}, "does not match"),
+        ({**source, "client_id": "beta"}, "outside the tenant"),
+        ({**source, "action_type": "other"}, "wrong action"),
+        ({**source, "status": "pending"}, "not approved"),
+        ({**source, "execution_status": "failed"}, "has not succeeded"),
+        ({**source, "payload": None}, "payload is invalid"),
+        ({**source, "payload": {**current, "stage": "test"}}, "must be dev"),
+        ({**source, "payload": {**current, "stage": "dev", "solution_name": "other"}}, "does not match"),
+        ({**source, "execution_result": {"status": "failed"}}, "result is not succeeded"),
+        (
+            {**source, "execution_result": {"status": "succeeded", "artifact_digest": "sha256:" + "b" * 64}},
+            "does not match",
+        ),
+    ]
+    for invalid_source, message in invalid_sources:
+        with pytest.raises(PowerPlatformDeploymentError, match=message):
+            validate_promotion_source("test", evidence, source_approval=invalid_source, current_payload=current)
+
+
 @pytest.mark.parametrize(
     ("targets", "message"),
     [
         ([], "contain 1-3"),
         ([{"name": "test", "environment_url": "https://test.crm.dynamics.com"}], "ordered"),
         ([{"name": "dev", "environment_url": "https://user:pass@dev.crm.dynamics.com"}], "safe HTTPS"),
+        ([{"name": "dev", "environment_url": "https://dev.crm.dynamics.com\n"}], "safe HTTPS"),
     ],
 )
 def test_deployment_plan_rejects_unsafe_promotion_targets(
@@ -229,6 +305,14 @@ def test_deployment_plan_rejects_unsafe_promotion_targets(
             publisher_prefix="wlp",
             output_directory="/tmp/power-platform/solution",
             deployment_targets=targets,
+        )
+    with pytest.raises(PowerPlatformDeploymentError, match="must be an array"):
+        build_power_platform_deployment_plan(
+            solution_name="onboarding_review",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/power-platform/solution",
+            deployment_targets="not-an-array",  # type: ignore[arg-type]
         )
 
 
@@ -298,6 +382,7 @@ def test_deployment_payload_rebuild_rejects_missing_fields_and_accepts_canonical
         "promotion_evidence": {
             "source_stage": "dev",
             "source_status": "succeeded",
+            "source_approval_request_id": 1,
             "artifact_digest": "sha256:" + "a" * 64,
             "evaluation": {"production_readiness": "pass", "case_count": 1},
             "governance": {"status": "pass"},
@@ -312,6 +397,8 @@ def test_deployment_payload_rebuild_rejects_missing_fields_and_accepts_canonical
     assert promoted["promotion_evidence"]["source_stage"] == "dev"  # type: ignore[index]
     with pytest.raises(PowerPlatformDeploymentError, match="requires promotion_evidence"):
         build_power_platform_deployment_plan_from_payload({**promotion_payload, "promotion_evidence": {}})
+    dev_plan = build_power_platform_deployment_plan_from_payload({**payload, "stage": "dev"})
+    assert "promotion_evidence" not in dev_plan
 
 
 def test_execution_covers_gates_path_confinement_and_command_failures(settings, tmp_path: Path, monkeypatch) -> None:
@@ -344,6 +431,9 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
     monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
     assert execute_power_platform_stage(plan, "unknown", configured, approved=True)["status"] == "blocked"
     assert execute_power_platform_stage(
+        dict(plan, stages=[{"id": "other"}]), "build", configured, approved=True
+    )["status"] == "blocked"
+    assert execute_power_platform_stage(
         dict(plan, stages=None), "build", configured, approved=True
     )["status"] == "blocked"
     assert execute_power_platform_stage(
@@ -357,6 +447,10 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
     )["status"] == "blocked"
     missing_workspace = replace(configured, power_platform_workspace=tmp_path / "missing")
     assert execute_power_platform_stage(plan, "build", missing_workspace, approved=True)["status"] == "blocked"
+    missing_workspace_plan = _plan(str(tmp_path / "missing" / "solution"))
+    assert execute_power_platform_stage(
+        missing_workspace_plan, "build", missing_workspace, approved=True
+    )["status"] == "blocked"
 
     def invalid_command_runner(command, cwd, timeout):
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -385,10 +479,77 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
     )["status"] == "failed"
 
     def success_runner(command, cwd, timeout):
+        artifact = cwd / "solution" / "onboarding_review.zip"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(b"verified solution artifact")
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     succeeded = execute_power_platform_stage(plan, "build", configured, approved=True, runner=success_runner)
     assert succeeded["status"] == "succeeded"
+
+
+def test_execution_requires_verifiable_artifact_and_uses_shell_free_runner(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    plan = _plan(str(workspace / "solution"))
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    result = execute_power_platform_stage(
+        plan,
+        "build",
+        configured,
+        approved=True,
+        runner=lambda command, cwd, timeout: subprocess.CompletedProcess(command, 0, "ok", ""),
+    )
+    assert result["status"] == "failed"
+    assert "verifiable solution artifact" in str(result["message"])
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    monkeypatch.setattr(deployment.subprocess, "run", fake_run)
+    completed = deployment._run_command(["pac", "solution", "check"], workspace, 5.0)
+    assert completed.returncode == 0
+    assert calls[0]["shell"] is False
+
+
+def test_artifact_digest_is_bounded_and_confined(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "solution"
+    output.mkdir(parents=True)
+    plan = _plan(str(output))
+    assert deployment._artifact_digest(dict(plan, solution=None), workspace, output) is None
+    assert deployment._artifact_digest(
+        dict(plan, solution={"name": ""}), workspace, output
+    ) is None
+    assert deployment._artifact_digest(plan, workspace, workspace) is None
+    artifact = output / "onboarding_review.zip"
+    artifact.write_bytes(b"artifact")
+    digest = deployment._artifact_digest(plan, workspace, output)
+    assert isinstance(digest, str) and digest.startswith("sha256:")
+    monkeypatch.setattr(deployment, "MAX_ARTIFACT_BYTES", 1)
+    assert deployment._artifact_digest(plan, workspace, output) is None
+
+    monkeypatch.setattr(deployment, "MAX_ARTIFACT_BYTES", 500_000_000)
+    original_open = Path.open
+
+    def failing_open(path, *args, **kwargs):
+        if path == artifact:
+            raise OSError("artifact disappeared")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+    assert deployment._artifact_digest(plan, workspace, output) is None
 
 
 def test_deployment_shape_guards_cover_target_and_execution_path_edges(settings, tmp_path: Path) -> None:

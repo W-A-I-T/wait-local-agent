@@ -129,6 +129,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
     validate_promotion_evidence,
+    validate_promotion_source,
 )
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -2906,6 +2907,7 @@ def request_microsoft_solution_deployment_approval(
     scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, cast(str, payload["client_id"]))
     if scoped_client_id is None:
         raise typer.BadParameter("authenticated principal has no tenant")
+    store = Store(settings.data_path)
     targets = payload["deployment_targets"]
     if not isinstance(targets, list) or any(not isinstance(item, dict) for item in targets):
         raise typer.BadParameter("deployment_targets must contain objects")
@@ -2920,22 +2922,35 @@ def request_microsoft_solution_deployment_approval(
         if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
             raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
         promotion_evidence = validate_promotion_evidence(stage, payload.get("promotion_evidence", {}))
+        approval_payload = {
+            "format": "wait-local-agent.power-platform.deployment-approval",
+            "format_version": 1,
+            "client_id": scoped_client_id,
+            "solution_name": payload["solution_name"],
+            "publisher_name": payload["publisher_name"],
+            "publisher_prefix": payload["publisher_prefix"],
+            "output_directory": payload["output_directory"],
+            "deployment_targets": plan["deployment_targets"],
+            "stage": stage,
+            "promotion_evidence": promotion_evidence,
+            "credentials_included": False,
+        }
+        if promotion_evidence:
+            source_id = cast(int, promotion_evidence["source_approval_request_id"])
+            source_approval = store.get_approval_request(source_id)
+            if source_approval is not None and _cli_blueprint_client_scope(
+                context.client_id, context.role, source_approval.client_id
+            ) != scoped_client_id:
+                source_approval = None
+            validate_promotion_source(
+                stage,
+                promotion_evidence,
+                source_approval=_power_platform_source_record(source_approval),
+                current_payload=approval_payload,
+            )
     except (PowerPlatformDeploymentError, KeyError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    approval_payload = {
-        "format": "wait-local-agent.power-platform.deployment-approval",
-        "format_version": 1,
-        "client_id": scoped_client_id,
-        "solution_name": payload["solution_name"],
-        "publisher_name": payload["publisher_name"],
-        "publisher_prefix": payload["publisher_prefix"],
-        "output_directory": payload["output_directory"],
-        "deployment_targets": plan["deployment_targets"],
-        "stage": stage,
-        "promotion_evidence": promotion_evidence,
-        "credentials_included": False,
-    }
-    approval = Store(settings.data_path).create_approval_request(
+    approval = store.create_approval_request(
         subject_id=f"{scoped_client_id}:{payload['solution_name']}:{stage}",
         action_type="power_platform.solution_stage",
         payload=approval_payload,
@@ -2968,6 +2983,22 @@ def execute_microsoft_solution_stage(
         stage_id = payload.get("stage")
         if not isinstance(stage_id, str):
             raise PowerPlatformDeploymentError("approval stage is invalid")
+        promotion_evidence = payload.get("promotion_evidence")
+        if isinstance(promotion_evidence, dict) and promotion_evidence:
+            source_id = promotion_evidence.get("source_approval_request_id")
+            if not isinstance(source_id, int) or isinstance(source_id, bool):
+                raise PowerPlatformDeploymentError("promotion evidence source approval id is invalid")
+            source_approval = store.get_approval_request(source_id)
+            if source_approval is not None and _cli_blueprint_client_scope(
+                context.client_id, context.role, source_approval.client_id
+            ) != scoped_client_id:
+                source_approval = None
+            validate_promotion_source(
+                stage_id,
+                promotion_evidence,
+                source_approval=_power_platform_source_record(source_approval),
+                current_payload=payload,
+            )
         result = execute_power_platform_stage(plan, stage_id, settings, approved=True)
         approval = store.record_approval_execution(
             request_id,
@@ -4610,6 +4641,26 @@ def _cli_report_client_scope(context, requested_client_id: str | None) -> str | 
     if not context.client_id:
         raise typer.BadParameter("authenticated principal has no tenant")
     return context.client_id
+
+
+def _power_platform_source_record(approval) -> dict[str, object] | None:
+    if approval is None or approval.id is None:
+        return None
+    try:
+        payload = json.loads(approval.payload_json)
+        execution_result = json.loads(approval.execution_result_json)
+    except json.JSONDecodeError:
+        payload = {}
+        execution_result = {}
+    return {
+        "id": approval.id,
+        "client_id": approval.client_id,
+        "action_type": approval.action_type,
+        "status": approval.status,
+        "execution_status": approval.execution_status,
+        "payload": payload if isinstance(payload, dict) else {},
+        "execution_result": execution_result if isinstance(execution_result, dict) else {},
+    }
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:
