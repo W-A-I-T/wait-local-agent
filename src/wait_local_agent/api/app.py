@@ -114,6 +114,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.mcp_client import McpClient
 from wait_local_agent.mcp_server import (
     MCP_MAX_REQUEST_BYTES,
     McpProtocolError,
@@ -620,6 +621,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
+    mcp_client = McpClient(active_settings)
     event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
         store,
@@ -906,6 +908,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if result is None:
             return Response(status_code=202)
         return JSONResponse(content=result)
+
+    @app.get("/mcp/remote/tools")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def mcp_remote_tools(request: Request, _: AdminAccess) -> dict[str, object]:
+        """Discover an explicitly configured remote MCP server without registering its tools."""
+
+        return asdict(mcp_client.list_tools())
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:

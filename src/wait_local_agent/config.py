@@ -137,6 +137,12 @@ class Settings:
     demo_mode: bool = True
     mcp_enabled: bool = False
     mcp_allowed_origins: tuple[str, ...] = ()
+    mcp_client_enabled: bool = False
+    mcp_client_url: str = ""
+    mcp_client_token: str = ""
+    mcp_client_name: str = "WAIT Local Agent"
+    mcp_client_allowed_hosts: tuple[str, ...] = ()
+    mcp_client_timeout_seconds: float = 20.0
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
     document_parser: str = "basic"
@@ -453,6 +459,22 @@ def load_settings() -> Settings:
             for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
             if value.strip()
         ),
+        mcp_client_enabled=_bool_env("WAIT_MCP_CLIENT_ENABLED", False),
+        mcp_client_url=os.getenv("WAIT_MCP_CLIENT_URL", "").strip(),
+        mcp_client_token=_secret_value(
+            "WAIT_MCP_CLIENT_TOKEN",
+            os.getenv("WAIT_MCP_CLIENT_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        mcp_client_name=os.getenv("WAIT_MCP_CLIENT_NAME", "WAIT Local Agent").strip()
+        or "WAIT Local Agent",
+        mcp_client_allowed_hosts=tuple(
+            value.strip().lower()
+            for value in os.getenv("WAIT_MCP_CLIENT_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        ),
+        mcp_client_timeout_seconds=_float_env("WAIT_MCP_CLIENT_TIMEOUT_SECONDS", 20.0),
         secrets_backend=backend,
         vault_path=vault_path,
         document_parser=os.getenv("WAIT_DOCUMENT_PARSER", "basic"),

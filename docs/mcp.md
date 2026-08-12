@@ -78,4 +78,5 @@ curl -sS http://127.0.0.1:8000/mcp \
 This is a local WAIT integration surface. A Microsoft client can consume a
 remote Streamable HTTP MCP server when its tenant policy, authentication, and
 network exposure are configured separately; this repository does not claim a
-preconfigured Microsoft tenant connection.
+preconfigured Microsoft tenant connection. For optional outbound discovery,
+see [`docs/mcp-client.md`](mcp-client.md).
