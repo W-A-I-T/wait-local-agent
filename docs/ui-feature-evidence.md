@@ -130,6 +130,13 @@ unverifiable product claim.
   unavailable state (and an expected handled network error), not a fake
   success; the broader control, permission, offline, responsive, and
   provider-error matrix remains open.
+- Current Chromium Tickets replay: the panel correctly distinguishes the
+  role-level ability to prepare approval drafts from live provider write health;
+  its status now reads `approval drafts enabled` while the dashboard continues
+  to report blocked live writes when no provider adapter is configured. The
+  approval draft control remains disabled until a ticket is selected and the
+  broader permission, offline, responsive, and provider-error matrix remains
+  open.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.

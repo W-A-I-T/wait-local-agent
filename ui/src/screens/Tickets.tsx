@@ -183,7 +183,7 @@ export function Tickets() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Ticket actions</h2>
-          <span>{canWrite ? "write enabled" : "read-only"}</span>
+          <span>{canWrite ? "approval drafts enabled" : "read-only"}</span>
         </div>
         {validationMessage ? <div className="notice danger">{validationMessage}</div> : null}
         <form className="draft-form" onSubmit={handleSubmit}>

@@ -36,6 +36,7 @@ describe("Tickets customer conversation", () => {
 
   it("loads and adds a tenant-scoped support reply", async () => {
     render(<Tickets />);
+    expect(screen.getByText("approval drafts enabled")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("EUS-..."), { target: { value: "EUS-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Load conversation" }));
