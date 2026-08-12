@@ -7,7 +7,6 @@ from typing import cast
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
-from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from wait_local_agent.agents import AgentService
@@ -19,9 +18,11 @@ from wait_local_agent.api.app import (
     EnvironmentDiscoveryRequest,
     EvaluationExecutionRequest,
     EvaluationRequest,
+    GovernanceRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
+    SolutionBlueprintRequest,
     SupervisorRunRequest,
     TeamsMessageDraftRequest,
     create_app,
@@ -37,6 +38,15 @@ def _endpoint(settings, path: str):
         route.endpoint
         for route in app.routes
         if isinstance(route, APIRoute) and route.path == path and route.methods and "POST" in route.methods
+    )
+
+
+def _get_endpoint(settings, path: str):
+    app = create_app(settings)
+    return next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == path and route.methods and "GET" in route.methods
     )
 
 
@@ -134,20 +144,18 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
 
 def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
-    client = TestClient(create_app(settings))
-
-    created = client.post(
-        "/consultant/blueprints",
-        json={**payload, "client_id": "acme"},
+    created = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
     )
-    assert created.status_code == 201, created.text
-    view = created.json()
+    view = created
     assert view["discovery"]["business_goal"].startswith("Automate auditable")
     assert len(view["environment"]) == 8
 
-    architecture = client.get(f"/consultant/blueprints/{view['id']}/architecture")
-    assert architecture.status_code == 200, architecture.text
-    result = architecture.json()
+    result = _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+        view["id"],
+        _technician(),
+    )
     assert result["readiness"] == "needs_review"
     assert result["open_items"] == [
         {
@@ -186,13 +194,14 @@ def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture
 
 def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
-    client = TestClient(create_app(settings))
-    created = client.post("/consultant/blueprints", json={**payload, "client_id": "acme"})
-    assert created.status_code == 201, created.text
-    blueprint = created.json()
-    architecture_response = client.get(f"/consultant/blueprints/{blueprint['id']}/architecture")
-    assert architecture_response.status_code == 200, architecture_response.text
-    architecture = architecture_response.json()
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
+    )
+    architecture = _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+        blueprint["id"],
+        _technician(),
+    )
 
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
@@ -212,10 +221,9 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
         execution_timeout_seconds=30,
         client_id="acme",
     )
-    evaluation_response = client.post(
-        "/consultant/evaluations",
-        json={
-            "test_set": [
+    evaluation = _endpoint(settings, "/consultant/evaluations")(
+        EvaluationRequest(
+            test_set=[
                 {
                     "id": "employee-onboarding-triage",
                     "expected_tool_ids": ["ticket-triage"],
@@ -223,62 +231,56 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
                     "expected_approval_tool_ids": [],
                 }
             ],
-            "execution": {
-                "agent_id": agent.id,
-                "entity_id": "TCK-1001",
-                "client_id": "acme",
-            },
-        },
+            execution=EvaluationExecutionRequest(
+                agent_id=agent.id,
+                entity_id="TCK-1001",
+                client_id="acme",
+            ),
+        ),
+        _technician(),
     )
-    assert evaluation_response.status_code == 200, evaluation_response.text
-    evaluation = evaluation_response.json()
     assert evaluation["execution_mode"] == "controlled"
     assert evaluation["production_readiness"] == "pass"
     assert evaluation["cases"][0]["execution"]["execution_status"] == "completed"
 
-    governance_response = client.post(
-        "/consultant/governance/evaluate",
-        json={"architecture": architecture, "connector_artifacts": []},
+    governance = _endpoint(settings, "/consultant/governance/evaluate")(
+        GovernanceRequest(architecture=architecture, connector_artifacts=[]),
+        _technician(),
     )
-    assert governance_response.status_code == 200, governance_response.text
-    governance = governance_response.json()
     assert governance["status"] == "needs_review"
     assert governance["deployment_started"] is False
 
-    delivery_response = client.post(
-        "/consultant/delivery-plan",
-        json={
-            "client_id": "acme",
-            "architecture": architecture,
-            "evaluation": evaluation,
-            "governance": governance,
-            "deployment_targets": payload["deployment"],
-        },
+    delivery = _endpoint(settings, "/consultant/delivery-plan")(
+        DeliveryPlanRequest(
+            client_id="acme",
+            architecture=architecture,
+            evaluation=evaluation,
+            governance=governance,
+            deployment_targets=payload["deployment"],
+        ),
+        _technician(),
     )
-    assert delivery_response.status_code == 200, delivery_response.text
-    delivery = delivery_response.json()
     assert delivery["production_readiness"] == "needs_review"
     assert delivery["production_deployment_requires_approval"] is True
     assert delivery["execution_started"] is False
     assert delivery["deployment_started"] is False
 
-    approval_response = client.post(
-        "/consultant/solutions/deployment-approvals",
-        json={
-            "client_id": "acme",
-            "solution_name": "employee_onboarding",
-            "publisher_name": "WAITConsulting",
-            "publisher_prefix": "wlp",
-            "output_directory": "/tmp/wait-employee-onboarding-solution",
-            "deployment_targets": [
+    approval_result = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="employee_onboarding",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-employee-onboarding-solution",
+            deployment_targets=[
                 {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
                 {"name": "test", "environment_url": "https://test.crm.dynamics.com"},
             ],
-            "stage": "dev",
-        },
+            stage="dev",
+        ),
+        _request(),
+        _technician(),
     )
-    assert approval_response.status_code == 201, approval_response.text
-    approval_result = approval_response.json()
     assert approval_result["approval"]["status"] == "pending"
     assert approval_result["approval"]["can_execute"] is False
     assert approval_result["plan"]["deployment_started"] is False
