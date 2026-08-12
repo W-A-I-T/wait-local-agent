@@ -145,6 +145,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
 from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
@@ -399,6 +400,15 @@ class EvaluationRequest(BaseModel):
 class GovernanceRequest(BaseModel):
     architecture: dict[str, object]
     connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+
+
+class PowerAppsPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    app_name: str = Field(min_length=1, max_length=120)
+    entities: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    screens: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    model_config = ConfigDict(extra="forbid")
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -4003,6 +4013,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return evaluate_solution_governance(payload.architecture, payload.connector_artifacts)
         except GovernanceValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-apps/plan")
+    def consultant_power_apps_plan(
+        payload: PowerAppsPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_apps_plan(
+                client_id=scoped_client_id,
+                app_name=payload.app_name,
+                entities=payload.entities,
+                screens=payload.screens,
+                actions=payload.actions,
+            )
+        except PowerAppsPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/monitoring/agents")

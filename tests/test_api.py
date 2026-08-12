@@ -5354,6 +5354,17 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             "connector_artifacts": [],
         },
     )
+    power_apps = client.post(
+        "/consultant/power-apps/plan",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "app_name": "Onboarding",
+            "entities": [{"logical_name": "employee", "fields": []}],
+            "screens": [{"id": "employee_browse", "entity": "employee"}],
+            "actions": [{"id": "employee_lookup", "connector_id": "m365", "method": "GET"}],
+        },
+    )
     monitoring = client.get(
         "/consultant/monitoring/agents",
         headers=_auth("viewer-token"),
@@ -5395,6 +5406,9 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert evaluation.json()["production_readiness"] == "pass"
     assert governance.status_code == 200
     assert governance.json()["status"] == "pass"
+    assert power_apps.status_code == 200
+    assert power_apps.json()["format"] == "wait-local-agent.power-apps-plan"
+    assert power_apps.json()["deployment_started"] is False
     assert monitoring.status_code == 200
     assert monitoring.json()["payloads_exposed"] is False
     assert admin_create.status_code == 201

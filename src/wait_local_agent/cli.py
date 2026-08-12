@@ -108,6 +108,7 @@ from wait_local_agent.m365_graph import (
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
+from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
     build_solution_command_plan,
@@ -171,6 +172,7 @@ microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution co
 microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
+microsoft_power_apps_app = typer.Typer(help="Metadata-only Power Apps and Dataverse plans.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -198,6 +200,7 @@ microsoft_app.add_typer(microsoft_solution_app, name="solution")
 microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
 microsoft_app.add_typer(microsoft_governance_app, name="governance")
 microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
+microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2743,6 +2746,39 @@ def monitor_microsoft_agents(client_id: str | None = None) -> None:
         service.list_definitions(scoped_client_id),
         client_id=scoped_client_id,
     )
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_power_apps_app.command("plan")
+def plan_microsoft_power_apps(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "app_name", "entities", "screens", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, app_name, entities, screens, and actions")
+    client_id = payload["client_id"]
+    app_name = payload["app_name"]
+    entities = payload["entities"]
+    screens = payload["screens"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(app_name, str)
+        or not isinstance(entities, list)
+        or not isinstance(screens, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in entities + screens + actions)
+    ):
+        raise typer.BadParameter("source fields must contain text values and object lists")
+    try:
+        result = build_power_apps_plan(
+            client_id=client_id,
+            app_name=app_name,
+            entities=entities,
+            screens=screens,
+            actions=actions,
+        )
+    except PowerAppsPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
