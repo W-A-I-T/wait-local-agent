@@ -179,6 +179,17 @@ export type WorkflowTemplate = {
   };
 };
 
+export type PowerPlatformConnectorBundle = {
+  format: "wait-local-agent.power-platform-connector";
+  format_version: 1;
+  name: string;
+  auth_type: string;
+  operation_count: number;
+  warnings: string[];
+  api_definition: Record<string, unknown>;
+  api_properties: Record<string, unknown>;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;

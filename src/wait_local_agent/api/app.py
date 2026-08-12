@@ -142,6 +142,10 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.power_platform import (
+    PowerPlatformConnectorError,
+    build_power_platform_connector,
+)
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
     AuthContext,
@@ -386,6 +390,15 @@ class SolutionBlueprintRequest(BaseModel):
     approvals: dict[str, object]
     deployment: list[object]
     risk: str
+    client_id: str | None = None
+
+
+class PowerPlatformConnectorFactoryRequest(BaseModel):
+    openapi: dict[str, object]
+    name: str | None = Field(default=None, max_length=80)
+    publisher: str = Field(default="WAIT", max_length=120)
+    stack_owner: str = Field(default="WAIT", max_length=120)
+    icon_brand_color: str = Field(default="#1f6f55", max_length=7)
     client_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -3961,6 +3974,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client_id=blueprint.client_id,
         )
         return architecture
+
+    @app.post("/consultant/connectors/power-platform")
+    def generate_power_platform_connector(
+        payload: PowerPlatformConnectorFactoryRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            bundle = build_power_platform_connector(
+                payload.openapi,
+                name=payload.name,
+                publisher=payload.publisher,
+                stack_owner=payload.stack_owner,
+                icon_brand_color=payload.icon_brand_color,
+            )
+        except PowerPlatformConnectorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        connector_name = str(bundle["name"])
+        store.add_audit_event(
+            "consultant.power_platform_connector_generated",
+            f"power-platform-connector:{connector_name}",
+            "deterministic Power Platform connector artifacts generated",
+            client_id=scoped_client_id,
+        )
+        return bundle
 
     @app.get("/consultant/blueprints")
     def consultant_blueprints(

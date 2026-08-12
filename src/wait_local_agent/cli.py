@@ -100,6 +100,7 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
+from wait_local_agent.power_platform import PowerPlatformConnectorError, build_power_platform_connector
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -151,6 +152,7 @@ connectors_app = typer.Typer(help="Connector status and safe draft commands.")
 workflows_app = typer.Typer(help="Workflow template and run commands.")
 consultant_app = typer.Typer(help="Local-first solution consultant commands.")
 blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
+power_platform_app = typer.Typer(help="Power Platform connector artifact commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -172,6 +174,7 @@ app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(workflows_app, name="workflows")
 consultant_app.add_typer(blueprints_app, name="blueprints")
+consultant_app.add_typer(power_platform_app, name="power-platform")
 app.add_typer(consultant_app, name="consultant")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2571,6 +2574,57 @@ def show_solution_blueprint(
     if blueprint is None:
         raise typer.BadParameter("solution blueprint not found")
     typer.echo(json.dumps(blueprint_view(blueprint), sort_keys=True, indent=2))
+
+
+@power_platform_app.command("generate")
+def generate_power_platform_connector(
+    source: Path,
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+    name: Annotated[str | None, typer.Option("--name")] = None,
+    publisher: Annotated[str, typer.Option("--publisher")] = "WAIT",
+    stack_owner: Annotated[str, typer.Option("--stack-owner")] = "WAIT",
+    icon_brand_color: Annotated[str, typer.Option("--icon-brand-color")] = "#1f6f55",
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("a tenant client_id is required")
+    try:
+        definition = json.loads(source.read_text(encoding="utf-8"))
+        bundle = build_power_platform_connector(
+            definition,
+            name=name,
+            publisher=publisher,
+            stack_owner=stack_owner,
+            icon_brand_color=icon_brand_color,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "apiDefinition.json").write_text(
+            json.dumps(bundle["api_definition"], sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (output_dir / "apiProperties.json").write_text(
+            json.dumps(bundle["api_properties"], sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest = {key: value for key, value in bundle.items() if key not in {"api_definition", "api_properties"}}
+        (output_dir / "manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise typer.BadParameter("connector source or output directory could not be read or written") from exc
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("connector source must contain a JSON object") from exc
+    except PowerPlatformConnectorError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"output_dir={output_dir} name={bundle['name']} operations={bundle['operation_count']} "
+        f"auth_type={bundle['auth_type']} client_id={scoped_client_id}"
+    )
 
 
 @workflows_app.command("compare-runs")

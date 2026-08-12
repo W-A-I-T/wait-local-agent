@@ -22,6 +22,7 @@ import { NavLink } from "react-router-dom";
 const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/connectors", label: "Connectors", icon: GitBranch },
+  { to: "/connector-factory", label: "Connector Factory", icon: GitBranch },
   { to: "/tickets", label: "Tickets", icon: ClipboardList },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },

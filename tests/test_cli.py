@@ -1997,5 +1997,54 @@ def test_consultant_blueprint_cli_rejects_non_string_risk(monkeypatch, tmp_path)
     assert "risk must be one of" in result.output
 
 
+def test_power_platform_connector_cli_writes_bounded_artifacts(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    source = tmp_path / "openapi.json"
+    source.write_text(
+        json.dumps(
+            {
+                "swagger": "2.0",
+                "info": {"title": "Ticket API", "version": "1.0.0"},
+                "host": "api.example.test",
+                "schemes": ["https"],
+                "paths": {
+                    "/tickets": {
+                        "get": {
+                            "operationId": "ListTickets",
+                            "responses": {"200": {"description": "Tickets"}},
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "connector"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "consultant",
+            "power-platform",
+            "generate",
+            str(source),
+            "--output-dir",
+            str(output_dir),
+            "--token",
+            "tech-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "operations=1" in result.output
+    assert json.loads((output_dir / "apiDefinition.json").read_text(encoding="utf-8"))["swagger"] == "2.0"
+    properties = json.loads((output_dir / "apiProperties.json").read_text(encoding="utf-8"))
+    assert properties["properties"]["publisher"] == "WAIT"
+    assert json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))["operation_count"] == 1
+
+
 def _hudu_response(items):
     return cli_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)

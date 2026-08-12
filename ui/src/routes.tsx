@@ -14,6 +14,7 @@ import { Reports } from "./screens/Reports";
 import { ScheduledJobs } from "./screens/ScheduledJobs";
 import { Workflows } from "./screens/Workflows";
 import { WorkflowDesigner } from "./screens/WorkflowDesigner";
+import { ConnectorFactory } from "./screens/ConnectorFactory";
 import { Tickets } from "./screens/Tickets";
 import { Templates } from "./screens/Templates";
 import { Settings } from "./screens/Settings";
@@ -27,6 +28,7 @@ export function AppRoutes() {
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
       <Route path="workflow-designer" element={<WorkflowDesigner />} />
+      <Route path="connector-factory" element={<ConnectorFactory />} />
       <Route path="templates" element={<Templates />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />

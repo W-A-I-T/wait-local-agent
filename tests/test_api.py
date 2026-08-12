@@ -5466,6 +5466,67 @@ def test_consultant_architect_is_tenant_scoped_and_side_effect_free(settings) ->
     )
 
 
+def test_power_platform_connector_factory_is_tenant_scoped_and_side_effect_free(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+        }
+    )
+    definition = {
+        "swagger": "2.0",
+        "info": {"title": "WAIT Ticket API", "version": "1.0.0"},
+        "host": "api.example.test",
+        "basePath": "/v1",
+        "schemes": ["https"],
+        "paths": {
+            "/tickets": {
+                "get": {
+                    "operationId": "ListTickets",
+                    "responses": {"200": {"description": "Tickets"}},
+                }
+            }
+        },
+    }
+    client = TestClient(create_app(secure_settings))
+    generated = client.post(
+        "/consultant/connectors/power-platform",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "openapi": definition},
+    )
+    viewer = client.post(
+        "/consultant/connectors/power-platform",
+        headers=_auth("viewer-token"),
+        json={"client_id": "acme", "openapi": definition},
+    )
+    foreign = client.post(
+        "/consultant/connectors/power-platform",
+        headers=_auth("tech-token"),
+        json={"client_id": "beta", "openapi": definition},
+    )
+    invalid = client.post(
+        "/consultant/connectors/power-platform",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "openapi": {**definition, "swagger": "3.0"}},
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["operation_count"] == 1
+    assert generated.json()["api_definition"]["swagger"] == "2.0"
+    assert generated.json()["api_properties"]["properties"]["publisher"] == "WAIT"
+    assert viewer.status_code == 403
+    assert foreign.status_code == 403
+    assert invalid.status_code == 422
+    assert any(
+        event["event_type"] == "consultant.power_platform_connector_generated"
+        for event in client.get("/audit", headers=_auth("viewer-token")).json()
+    )
+
+
 def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
     secure_settings = settings.__class__(
         **{
