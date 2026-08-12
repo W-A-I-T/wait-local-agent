@@ -1349,6 +1349,8 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert bad_search.status_code == 400
     assert missing_ticket_workflow.status_code == 404
     assert app_module._safe_json_object("not-json") == {}
+    assert app_module._safe_json_value('{"ok": true}') == {"ok": True}
+    assert app_module._safe_json_value("not-json") is None
     redacted = app_module._redact_payload({"nested": {"token": "x"}, "items": [{"bearer": "x"}]})
     nested = cast(dict[str, object], redacted["nested"])
     assert nested["token"] == "[redacted]"
