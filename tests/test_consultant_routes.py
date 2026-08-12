@@ -3,12 +3,14 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
+from starlette.requests import Request
 
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
+    PowerPlatformDeploymentRequest,
     create_app,
 )
 from wait_local_agent.rbac import AuthContext, Role
@@ -25,6 +27,24 @@ def _endpoint(settings, path: str):
 
 def _technician(client_id: str = "acme") -> AuthContext:
     return AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id=client_id)
+
+
+def _admin(client_id: str = "acme") -> AuthContext:
+    return AuthContext(role=Role.ADMIN, presented_token="admin-token", client_id=client_id)
+
+
+def _request() -> Request:
+    return Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/consultant/solutions/deployment-approvals",
+        "headers": [],
+        "query_string": b"",
+        "scheme": "http",
+        "client": ("test", 1234),
+        "server": ("test", 80),
+        "root_path": "",
+    })
 
 
 def test_consultant_planning_routes_are_directly_callable_and_review_only(settings) -> None:
@@ -81,6 +101,50 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert power_apps["dataverse_write_started"] is False
     assert flow["export_status"] == "review_only"
     assert delivery["production_deployment_requires_approval"] is True
+
+
+def test_power_platform_deployment_route_creates_approval_and_stays_gated(settings) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_review",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[
+                {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+                {"name": "test", "environment_url": "https://test.crm.dynamics.com"},
+            ],
+            stage="dev",
+        ),
+        _request(),
+        _technician(),
+    )
+
+    assert request_approval["plan"]["deployment_started"] is False
+    approval = request_approval["approval"]
+    assert approval["action_type"] == "power_platform.solution_stage"
+    assert approval["status"] == "pending"
+    assert approval["can_execute"] is False
+    assert approval["payload"]["credentials_included"] is False
+
+
+def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> None:
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+            PowerPlatformDeploymentRequest(
+                client_id="beta",
+                solution_name="onboarding_review",
+                publisher_name="WAITConsulting",
+                publisher_prefix="wlp",
+                output_directory="/tmp/wait-consultant-solution",
+                deployment_targets=[
+                    {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+                ],
+            ),
+            _request(),
+            _technician("acme"),
+        )
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

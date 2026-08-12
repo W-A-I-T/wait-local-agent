@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -151,6 +152,12 @@ from wait_local_agent.observability import (
 from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
+from wait_local_agent.power_platform_deployment import (
+    PowerPlatformDeploymentError,
+    build_power_platform_deployment_plan,
+    build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_stage,
+)
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
     AuthContext,
@@ -450,6 +457,17 @@ class DeliveryPlanRequest(BaseModel):
     governance: dict[str, object]
     deployment_targets: list[str] = Field(min_length=1, max_length=8)
     connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformDeploymentRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=64)
+    publisher_name: str = Field(min_length=1, max_length=100)
+    publisher_prefix: str = Field(min_length=2, max_length=8)
+    output_directory: str = Field(min_length=1, max_length=240)
+    deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
+    stage: Literal["build", "dev", "test", "prod"] = "build"
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4128,6 +4146,87 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except DeliveryPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/consultant/solutions/deployment-approvals", status_code=201)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def request_power_platform_deployment_approval(
+        payload: PowerPlatformDeploymentRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = build_power_platform_deployment_plan(
+                solution_name=payload.solution_name,
+                publisher_name=payload.publisher_name,
+                publisher_prefix=payload.publisher_prefix,
+                output_directory=payload.output_directory,
+                deployment_targets=payload.deployment_targets,
+            )
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        approval_payload = {
+            "format": "wait-local-agent.power-platform.deployment-approval",
+            "format_version": 1,
+            "client_id": scoped_client_id,
+            "solution_name": payload.solution_name,
+            "publisher_name": payload.publisher_name,
+            "publisher_prefix": payload.publisher_prefix,
+            "output_directory": payload.output_directory,
+            "deployment_targets": plan["deployment_targets"],
+            "stage": payload.stage,
+            "credentials_included": False,
+        }
+        approval = store.create_approval_request(
+            subject_id=f"{scoped_client_id}:{payload.solution_name}:{payload.stage}",
+            action_type="power_platform.solution_stage",
+            payload=approval_payload,
+            client_id=scoped_client_id,
+        )
+        return {"approval": _approval_view(approval), "plan": plan}
+
+    @app.post("/consultant/solutions/deployment-approvals/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_power_platform_deployment_stage(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        approval = store.get_approval_request(request_id)
+        if (
+            approval is None
+            or approval.action_type != "power_platform.solution_stage"
+            or not _approval_in_scope(context, approval)
+        ):
+            raise HTTPException(status_code=404, detail="deployment approval request not found")
+        if approval.status != "approved":
+            raise HTTPException(status_code=409, detail="deployment approval must be approved before execution")
+        try:
+            payload = _safe_json_object(approval.payload_json)
+            plan = build_power_platform_deployment_plan_from_payload(payload)
+            stage_id = payload.get("stage")
+            if not isinstance(stage_id, str):
+                raise PowerPlatformDeploymentError("deployment approval stage is invalid")
+            result = execute_power_platform_stage(
+                plan,
+                stage_id,
+                active_settings,
+                approved=True,
+            )
+            updated = store.record_approval_execution(
+                request_id,
+                status=cast(str, result["status"]),
+                message=cast(str, result["message"]),
+                result=result,
+                audit_event_type="power_platform.solution_stage",
+            )
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (KeyError, PermissionError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _approval_view(updated)
+
     @app.get("/consultant/use-cases")
     def consultant_use_cases(
         context: ViewerAccess,
@@ -5083,6 +5182,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     def _approval_execution_state(request) -> tuple[bool, str]:
+        if request.action_type == "power_platform.solution_stage":
+            if request.status != "approved":
+                return False, "Approval must be approved before execution."
+            if request.execution_status == "succeeded":
+                return False, "Approval request has already executed successfully."
+            if not active_settings.allow_write_actions:
+                return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+            if not active_settings.allow_power_platform_deployment:
+                return False, (
+                    "Power Platform deployment is blocked until "
+                    "WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
+                )
+            if shutil.which("pac") is None:
+                return False, "The pac executable is not available on the local PATH."
+            if not active_settings.power_platform_workspace.expanduser().is_dir():
+                return False, "WAIT_POWER_PLATFORM_WORKSPACE must already exist."
+            return True, ""
         if request.action_type.startswith("m365."):
             if request.status != "approved":
                 return False, "Approval must be approved before execution."

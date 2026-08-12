@@ -119,6 +119,12 @@ from wait_local_agent.power_platform import (
     generate_power_platform_connector,
     power_platform_cli_status,
 )
+from wait_local_agent.power_platform_deployment import (
+    PowerPlatformDeploymentError,
+    build_power_platform_deployment_plan,
+    build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_stage,
+)
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -2720,6 +2726,131 @@ def microsoft_solution_plan(
     except OpenApiDefinitionError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("deployment-plan")
+def microsoft_solution_deployment_plan(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = (
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+        "deployment_targets",
+    )
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain solution fields and deployment_targets")
+    values = {key: payload[key] for key in required}
+    targets = values.pop("deployment_targets")
+    if (
+        any(not isinstance(values[key], str) for key in values)
+        or not isinstance(targets, list)
+        or any(not isinstance(item, dict) for item in targets)
+    ):
+        raise typer.BadParameter("source contains invalid deployment-plan fields")
+    try:
+        plan = build_power_platform_deployment_plan(
+            **cast(dict[str, str], values),
+            deployment_targets=cast(list[dict[str, object]], targets),
+        )
+    except PowerPlatformDeploymentError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(plan, sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("request-deployment-approval")
+def request_microsoft_solution_deployment_approval(
+    source: Path,
+    stage: str = typer.Option("build", help="Stage to approve: build, dev, test, or prod."),
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    payload = _load_openapi_definition(source)
+    required = (
+        "client_id",
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+        "deployment_targets",
+    )
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, solution fields, and deployment_targets")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, cast(str, payload["client_id"]))
+    if scoped_client_id is None:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    targets = payload["deployment_targets"]
+    if not isinstance(targets, list) or any(not isinstance(item, dict) for item in targets):
+        raise typer.BadParameter("deployment_targets must contain objects")
+    try:
+        plan = build_power_platform_deployment_plan(
+            solution_name=cast(str, payload["solution_name"]),
+            publisher_name=cast(str, payload["publisher_name"]),
+            publisher_prefix=cast(str, payload["publisher_prefix"]),
+            output_directory=cast(str, payload["output_directory"]),
+            deployment_targets=cast(list[dict[str, object]], targets),
+        )
+        if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
+            raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
+    except (PowerPlatformDeploymentError, KeyError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    approval_payload = {
+        "format": "wait-local-agent.power-platform.deployment-approval",
+        "format_version": 1,
+        "client_id": scoped_client_id,
+        "solution_name": payload["solution_name"],
+        "publisher_name": payload["publisher_name"],
+        "publisher_prefix": payload["publisher_prefix"],
+        "output_directory": payload["output_directory"],
+        "deployment_targets": plan["deployment_targets"],
+        "stage": stage,
+        "credentials_included": False,
+    }
+    approval = Store(settings.data_path).create_approval_request(
+        subject_id=f"{scoped_client_id}:{payload['solution_name']}:{stage}",
+        action_type="power_platform.solution_stage",
+        payload=approval_payload,
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("execute-stage")
+def execute_microsoft_solution_stage(
+    request_id: int,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    store = Store(settings.data_path)
+    approval = store.get_approval_request(request_id)
+    if approval is None or approval.action_type != "power_platform.solution_stage":
+        raise typer.BadParameter("Power Platform deployment approval request not found")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, approval.client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("approval request is outside the authenticated tenant scope")
+    if approval.status != "approved":
+        raise typer.BadParameter("deployment approval must be approved before execution")
+    try:
+        payload = json.loads(approval.payload_json)
+        if not isinstance(payload, dict):
+            raise PowerPlatformDeploymentError("approval payload is malformed")
+        plan = build_power_platform_deployment_plan_from_payload(payload)
+        stage_id = payload.get("stage")
+        if not isinstance(stage_id, str):
+            raise PowerPlatformDeploymentError("approval stage is invalid")
+        result = execute_power_platform_stage(plan, stage_id, settings, approved=True)
+        approval = store.record_approval_execution(
+            request_id,
+            status=cast(str, result["status"]),
+            message=cast(str, result["message"]),
+            result=result,
+            audit_event_type="power_platform.solution_stage",
+        )
+    except (PowerPlatformDeploymentError, json.JSONDecodeError, KeyError, PermissionError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
 
 
 @microsoft_evaluation_app.command("run")

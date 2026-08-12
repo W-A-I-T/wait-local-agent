@@ -75,6 +75,7 @@ class Settings:
     local_model_name: str
     local_model_timeout_seconds: float
     vector_backend: str
+    allow_power_platform_deployment: bool = False
     api_token: str = ""
     admin_token: str = ""
     tech_token: str = ""
@@ -137,6 +138,8 @@ class Settings:
     demo_mode: bool = True
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
+    power_platform_workspace: Path = Path(".wait-local-agent/power-platform")
+    power_platform_command_timeout_seconds: float = 600.0
     document_parser: str = "basic"
     allow_ocr: bool = False
     embedding_provider: str = "none"
@@ -227,6 +230,7 @@ def load_settings() -> Settings:
         allow_http_probing=_bool_env("WAIT_ALLOW_HTTP_PROBING"),
         allow_cloud_fallback=_bool_env("WAIT_ALLOW_CLOUD_FALLBACK"),
         allow_llm_inference=_bool_env("WAIT_ALLOW_LLM_INFERENCE"),
+        allow_power_platform_deployment=_bool_env("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT"),
         local_model_provider=os.getenv("WAIT_LOCAL_MODEL_PROVIDER", "deterministic"),
         local_model_base_url=os.getenv("WAIT_LOCAL_MODEL_BASE_URL", "http://127.0.0.1:11434/v1"),
         local_model_name=os.getenv("WAIT_LOCAL_MODEL_NAME", "llama3.1"),
@@ -451,6 +455,12 @@ def load_settings() -> Settings:
         demo_mode=_bool_env("WAIT_DEMO_MODE", True),
         secrets_backend=backend,
         vault_path=vault_path,
+        power_platform_workspace=Path(
+            os.getenv("WAIT_POWER_PLATFORM_WORKSPACE", ".wait-local-agent/power-platform")
+        ),
+        power_platform_command_timeout_seconds=_float_env(
+            "WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", 600.0
+        ),
         document_parser=os.getenv("WAIT_DOCUMENT_PARSER", "basic"),
         allow_ocr=_bool_env("WAIT_ALLOW_OCR"),
         embedding_provider=os.getenv("WAIT_EMBEDDING_PROVIDER", "none"),

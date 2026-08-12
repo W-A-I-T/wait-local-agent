@@ -6,6 +6,9 @@ from wait_local_agent.vault import SecretVault
 
 def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_ALLOW_WRITE_ACTIONS", raising=False)
+    monkeypatch.delenv("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("WAIT_POWER_PLATFORM_WORKSPACE", raising=False)
+    monkeypatch.delenv("WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_HTTP_PROBING", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_CLOUD_FALLBACK", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_LLM_INFERENCE", raising=False)
@@ -67,6 +70,9 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.allow_write_actions is False
+    assert settings.allow_power_platform_deployment is False
+    assert str(settings.power_platform_workspace) == ".wait-local-agent/power-platform"
+    assert settings.power_platform_command_timeout_seconds == 600.0
     assert settings.allow_http_probing is False
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
@@ -162,6 +168,18 @@ def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     assert settings.allow_llm_inference is True
     assert settings.offline_mode is True
     assert settings.demo_mode is False
+
+
+def test_power_platform_deployment_settings_are_explicit(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT", "true")
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_WORKSPACE", "/srv/wait/power-platform")
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", "45")
+
+    settings = load_settings()
+
+    assert settings.allow_power_platform_deployment is True
+    assert str(settings.power_platform_workspace) == "/srv/wait/power-platform"
+    assert settings.power_platform_command_timeout_seconds == 45.0
 
 
 def test_mcp_origin_allowlist_is_loaded_and_normalized(monkeypatch) -> None:

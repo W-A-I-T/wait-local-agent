@@ -1,0 +1,12 @@
+{
+  "client_id": "demo",
+  "solution_name": "onboarding_review",
+  "publisher_name": "WAITConsulting",
+  "publisher_prefix": "wlp",
+  "output_directory": "/tmp/wait-consultant-solution",
+  "deployment_targets": [
+    {"name": "dev", "environment_url": "https://org.crm.dynamics.com"},
+    {"name": "test", "environment_url": "https://org-test.crm.dynamics.com"},
+    {"name": "prod", "environment_url": "https://org-prod.crm.dynamics.com"}
+  ]
+}
