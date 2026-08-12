@@ -531,6 +531,7 @@ class SupervisorPlanRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     task: str = Field(min_length=1, max_length=2000)
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    max_retries: int = Field(default=0, ge=0, le=3)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -541,6 +542,8 @@ class SupervisorRunRequest(BaseModel):
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
     input: dict[str, object] = Field(default_factory=dict, max_length=16)
     completed_run_ids: list[int] = Field(default_factory=list, max_length=8)
+    max_retries: int = Field(default=0, ge=0, le=3)
+    cancel_run_id: int | None = Field(default=None, ge=1)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4495,6 +4498,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task=payload.task,
                 child_agent_ids=payload.child_agent_ids,
                 definitions=definitions,
+                max_retries=payload.max_retries,
             )
         except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4521,6 +4525,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 actor_role=context.role,
                 input_payload=payload.input,
                 completed_run_ids=payload.completed_run_ids,
+                max_retries=payload.max_retries,
+                cancel_run_id=payload.cancel_run_id,
             )
         except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -544,6 +544,7 @@ class AgentService:
         *,
         actor: str,
         actor_role: Role | None = None,
+        supervisor_context: dict[str, object] | None = None,
     ) -> AgentExecutionResult:
         """Retry a failed or cancelled run with a small persisted attempt cap."""
         if run.status not in {"failed", "cancelled"}:
@@ -565,6 +566,7 @@ class AgentService:
             retry_count=retry_count + 1,
             retry_of_run_id=run.id,
             actor_role=actor_role,
+            supervisor_context=supervisor_context,
         )
 
     def resume(

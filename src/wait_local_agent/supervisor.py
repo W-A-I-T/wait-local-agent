@@ -9,7 +9,7 @@ from dataclasses import replace
 from typing import Any, Protocol, cast
 
 from wait_local_agent.agents import AgentExecutionResult
-from wait_local_agent.models import AgentDefinition
+from wait_local_agent.models import AgentDefinition, AgentRun
 from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.store import Store
@@ -20,6 +20,7 @@ MAX_INPUT_KEYS = 16
 MAX_INPUT_BYTES = 16_000
 MAX_PRIOR_RESULTS = 3
 MAX_RESULT_BYTES = 8_000
+MAX_SUPERVISOR_RETRIES = 3
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 
 
@@ -40,6 +41,27 @@ class SupervisorAgentRunner(Protocol):
     ) -> AgentExecutionResult:
         """Run one child through the existing bounded agent runtime."""
 
+    def retry(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+        actor_role: Role | None = None,
+        supervisor_context: dict[str, object] | None = None,
+    ) -> AgentExecutionResult:
+        """Retry one failed child through the existing bounded runtime."""
+
+    def cancel(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        *,
+        actor: str,
+        approver_role: Role,
+    ) -> AgentExecutionResult:
+        """Cancel one queued or approval-paused child through the runtime."""
+
 
 def build_supervisor_delegation_plan(
     *,
@@ -47,9 +69,11 @@ def build_supervisor_delegation_plan(
     task: str,
     child_agent_ids: list[str],
     definitions: Sequence[AgentDefinition],
+    max_retries: int = 0,
 ) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     normalized_task = _text(task, "task", MAX_TASK_TEXT)
+    retry_limit = _retry_limit(max_retries)
     if not isinstance(child_agent_ids, list) or not 1 <= len(child_agent_ids) <= MAX_CHILD_AGENTS:
         raise SupervisorPlanError(f"child_agent_ids must contain 1-{MAX_CHILD_AGENTS} items")
     normalized_ids = [_identifier(value, "child_agent_id") for value in child_agent_ids]
@@ -106,6 +130,16 @@ def build_supervisor_delegation_plan(
             for index, child in enumerate(children, start=1)
         ],
         "context_policy": "pass only bounded structured results within the blueprint tenant",
+        "retry_policy": {
+            "max_retries_per_child": retry_limit,
+            "retryable_statuses": ["failed"],
+            "attempts_are_lineage_bound": True,
+        },
+        "cancellation_policy": {
+            "supported": True,
+            "target": "queued_or_approval_paused_child_run_id",
+            "stops_before_next_child": True,
+        },
         "delegation_started": False,
         "execution_started": False,
         "approval_requests_created": False,
@@ -126,6 +160,8 @@ def execute_supervisor_delegation(
     actor_role: Role,
     input_payload: dict[str, object] | None = None,
     completed_run_ids: list[int] | None = None,
+    max_retries: int = 0,
+    cancel_run_id: int | None = None,
 ) -> dict[str, Any]:
     """Run selected child agents in dependency order using AgentService.
 
@@ -139,12 +175,14 @@ def execute_supervisor_delegation(
     tenant = _text(client_id, "client_id", 128)
     normalized_entity_id = _text(entity_id, "entity_id", 100)
     normalized_task = _text(task, "task", MAX_TASK_TEXT)
+    retry_limit = _retry_limit(max_retries)
     payload = _bounded_payload({} if input_payload is None else input_payload)
     plan = build_supervisor_delegation_plan(
         client_id=tenant,
         task=normalized_task,
         child_agent_ids=child_agent_ids,
         definitions=definitions,
+        max_retries=retry_limit,
     )
     supervisor = cast(dict[str, object], plan["supervisor"])
     children = cast(list[dict[str, object]], supervisor["children"])
@@ -158,6 +196,20 @@ def execute_supervisor_delegation(
     for definition in scoped_definitions.values():
         if not definition.enabled:
             raise SupervisorPlanError(f"child agent is disabled: {definition.id}")
+
+    cancellation_target: AgentRun | None = None
+    if cancel_run_id is not None:
+        if isinstance(cancel_run_id, bool) or not isinstance(cancel_run_id, int) or cancel_run_id < 1:
+            raise SupervisorPlanError("cancel_run_id must be a positive integer")
+        cancellation_target = store.get_agent_run(cancel_run_id, tenant)
+        if (
+            cancellation_target is None
+            or cancellation_target.entity_id != normalized_entity_id
+            or cancellation_target.agent_id not in selected_ids
+        ):
+            raise SupervisorPlanError("cancellation target is outside the supervisor scope")
+        if cancellation_target.status not in {"queued", "pending_approval"}:
+            raise SupervisorPlanError("cancellation target must be queued or approval-paused")
 
     completed = _load_completed_runs(
         completed_run_ids or [],
@@ -179,12 +231,58 @@ def execute_supervisor_delegation(
         definition = scoped_definitions[agent_id]
         if agent_id in completed:
             summary = completed[agent_id]
-            child_results.append({**summary, "sequence": index + 1, "resumed": True})
-            prior_by_agent[agent_id] = summary
+            resumed_summary = {
+                **summary,
+                "sequence": index + 1,
+                "resumed": True,
+                "attempt": 1,
+                "retry_of_run_id": None,
+                "lineage": _lineage(agent_id, index + 1, 1),
+            }
+            child_results.append(resumed_summary)
+            prior_by_agent[agent_id] = resumed_summary
             continue
+        if cancellation_target is not None and cancellation_target.agent_id == agent_id:
+            try:
+                result = agent_service.cancel(
+                    definition,
+                    cancellation_target,
+                    actor=actor,
+                    approver_role=actor_role,
+                )
+            except Exception as exc:  # noqa: BLE001 - return a bounded orchestration failure
+                message = redact_text(str(exc))[:500]
+                child_results.append(
+                    {
+                        "agent_id": agent_id,
+                        "sequence": index + 1,
+                        "status": "failed",
+                        "error_detail": message,
+                        "resumed": False,
+                        "lineage": _lineage(agent_id, index + 1, 1),
+                    }
+                )
+                status = "failed"
+                next_child_agent_id = agent_id
+                break
+            summary = _execution_summary(agent_id, result, index + 1, attempt=1)
+            summary["attempts"] = [summary.copy()]
+            summary["retry_count"] = 0
+            child_results.append(summary)
+            executed_count += 1
+            status = "cancelled" if result.status == "cancelled" else "failed"
+            next_child_agent_id = agent_id
+            pending_run_id = result.run_id if result.status == "pending_approval" else None
+            if result.approval_id is not None:
+                approval_requests_created = True
+            break
         supervisor_context: dict[str, object] = {
             "client_id": tenant,
             "task": normalized_task,
+            "supervisor_id": "consultant-supervisor",
+            "child_agent_id": agent_id,
+            "sequence": index + 1,
+            "attempt": 1,
             "prior_results": [
                 prior_by_agent[dependency_id]
                 for dependency_id in definition.depends_on_agent_ids
@@ -208,20 +306,82 @@ def execute_supervisor_delegation(
                 "status": "failed",
                 "error_detail": message,
                 "resumed": False,
+                "attempt": 1,
+                "retry_of_run_id": None,
+                "lineage": _lineage(agent_id, index + 1, 1),
             }
             child_results.append(summary)
             status = "failed"
             next_child_agent_id = agent_id
             break
         executed_count += 1
-        summary = _execution_summary(agent_id, result, index + 1)
-        child_results.append(summary)
+        attempts = [_execution_summary(agent_id, result, index + 1, attempt=1)]
         if result.approval_id is not None:
             approval_requests_created = True
+        while result.status == "failed" and len(attempts) <= retry_limit:
+            prior_run = store.get_agent_run(result.run_id, tenant)
+            if prior_run is None:
+                attempts.append(
+                    {
+                        "agent_id": agent_id,
+                        "run_id": result.run_id,
+                        "sequence": index + 1,
+                        "attempt": len(attempts) + 1,
+                        "status": "failed",
+                        "error_detail": "failed child run was not found for retry",
+                        "resumed": False,
+                        "lineage": _lineage(agent_id, index + 1, len(attempts) + 1, result.run_id),
+                    }
+                )
+                break
+            retry_context = {
+                **supervisor_context,
+                "attempt": len(attempts) + 1,
+                "retry_of_run_id": prior_run.id,
+            }
+            try:
+                result = agent_service.retry(
+                    definition,
+                    prior_run,
+                    actor=actor,
+                    actor_role=actor_role,
+                    supervisor_context=retry_context,
+                )
+            except Exception as exc:  # noqa: BLE001 - return a bounded orchestration failure
+                attempts.append(
+                    {
+                        "agent_id": agent_id,
+                        "run_id": prior_run.id,
+                        "sequence": index + 1,
+                        "attempt": len(attempts) + 1,
+                        "status": "failed",
+                        "error_detail": redact_text(str(exc))[:500],
+                        "resumed": False,
+                        "retry_of_run_id": prior_run.id,
+                        "lineage": _lineage(agent_id, index + 1, len(attempts) + 1, prior_run.id),
+                    }
+                )
+                break
+            executed_count += 1
+            if result.approval_id is not None:
+                approval_requests_created = True
+            attempts.append(
+                _execution_summary(
+                    agent_id,
+                    result,
+                    index + 1,
+                    attempt=len(attempts) + 1,
+                    retry_of_run_id=prior_run.id,
+                )
+            )
+        summary = {**attempts[-1], "attempts": attempts, "retry_count": len(attempts) - 1}
+        child_results.append(summary)
         if result.status == "completed":
             prior_by_agent[agent_id] = summary
             continue
         status = "pending_approval" if result.status == "pending_approval" else "failed"
+        if result.status == "cancelled":
+            status = "cancelled"
         pending_run_id = result.run_id if result.status == "pending_approval" else None
         next_child_agent_id = agent_id
         break
@@ -242,6 +402,7 @@ def execute_supervisor_delegation(
             "mode": "supervisor",
             "task": normalized_task,
             "ordered_child_agent_ids": ordered_ids,
+            "lineage_contract": "supervisor_id, child_agent_id, sequence, attempt, and retry_of_run_id",
         },
         "children": child_results,
         "resumption": {
@@ -252,6 +413,11 @@ def execute_supervisor_delegation(
         "delegation_started": True,
         "execution_started": bool(executed_count or completed),
         "approval_requests_created": approval_requests_created,
+        "retry_policy": {"max_retries_per_child": retry_limit, "retryable_statuses": ["failed"]},
+        "cancellation": {
+            "requested_run_id": cancel_run_id,
+            "applied": status == "cancelled",
+        },
         "cross_tenant_context": False,
     }
 
@@ -356,6 +522,9 @@ def _execution_summary(
     agent_id: str,
     result: AgentExecutionResult,
     sequence: int,
+    *,
+    attempt: int,
+    retry_of_run_id: int | None = None,
 ) -> dict[str, object]:
     return {
         "agent_id": agent_id,
@@ -367,7 +536,31 @@ def _execution_summary(
         "approval_id": result.approval_id,
         "error_detail": redact_text(result.error_detail)[:500],
         "resumed": False,
+        "attempt": attempt,
+        "retry_of_run_id": retry_of_run_id,
+        "lineage": _lineage(agent_id, sequence, attempt, retry_of_run_id),
     }
+
+
+def _lineage(
+    agent_id: str,
+    sequence: int,
+    attempt: int,
+    retry_of_run_id: int | None = None,
+) -> dict[str, object]:
+    return {
+        "supervisor_id": "consultant-supervisor",
+        "child_agent_id": agent_id,
+        "sequence": sequence,
+        "attempt": attempt,
+        "retry_of_run_id": retry_of_run_id,
+    }
+
+
+def _retry_limit(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_SUPERVISOR_RETRIES:
+        raise SupervisorPlanError(f"max_retries must be between 0 and {MAX_SUPERVISOR_RETRIES}")
+    return value
 
 
 def _bounded_final_result(value: object) -> dict[str, object]:
