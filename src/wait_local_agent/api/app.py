@@ -85,12 +85,12 @@ from wait_local_agent.connectors import (
     update_connectwise_approval_fields,
     update_halopsa_approval_fields,
 )
+from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     blueprint_view,
     parse_solution_blueprint,
 )
-from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
