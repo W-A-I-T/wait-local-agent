@@ -65,16 +65,52 @@ def evaluate_solution_governance(
 
     high_count = sum(finding["severity"] == "high" for finding in findings)
     medium_count = sum(finding["severity"] == "medium" for finding in findings)
+    policy_mapping = _policy_mapping(findings, components, connector_summary)
     return {
         "client_id": client_id,
         "status": "needs_review" if findings else "pass",
         "finding_counts": {"high": high_count, "medium": medium_count, "info": 0},
         "findings": findings,
         "connectors": connector_summary,
+        "policy_mapping": policy_mapping,
         "authorization_changed": False,
         "execution_started": False,
         "deployment_started": False,
     }
+
+
+def _policy_mapping(
+    findings: list[dict[str, object]],
+    components: list[Mapping[str, object]],
+    connectors: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    codes = {str(finding["code"]) for finding in findings}
+    return [
+        {
+            "policy_id": "no_credentials_in_artifacts",
+            "status": "fail" if "credential_material_present" in codes else "pass",
+            "evidence": "credentials_included is false for every reviewed connector",
+        },
+        {
+            "policy_id": "approval_for_state_changes",
+            "status": "needs_review" if "write_approval_boundary_required" in codes else "pass",
+            "evidence": "non-read connector actions are identified for approval review",
+        },
+        {
+            "policy_id": "tenant_scoped_external_access",
+            "status": (
+                "needs_review"
+                if any(component.get("kind") == "system_connector" for component in components)
+                else "pass"
+            ),
+            "evidence": f"{len(connectors)} connector artifact(s) and architecture boundaries reviewed",
+        },
+        {
+            "policy_id": "deployment_requires_human_approval",
+            "status": "pass",
+            "evidence": "governance evaluation never starts deployment",
+        },
+    ]
 
 
 def _review_connector(

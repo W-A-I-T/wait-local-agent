@@ -44,6 +44,7 @@ def test_governance_passes_reviewed_read_only_architecture() -> None:
     assert result["authorization_changed"] is False
     assert result["execution_started"] is False
     assert result["connectors"][0]["review_status"] == "reviewed_read_only"
+    assert {item["status"] for item in result["policy_mapping"]} == {"pass"}
 
 
 def test_governance_flags_open_system_auth_write_and_credentials() -> None:
@@ -62,6 +63,10 @@ def test_governance_flags_open_system_auth_write_and_credentials() -> None:
     } <= codes
     assert result["finding_counts"]["high"] == 2
     assert result["connectors"][0]["write_action_ids"] == ["update"]
+    policies = {item["policy_id"]: item["status"] for item in result["policy_mapping"]}
+    assert policies["no_credentials_in_artifacts"] == "fail"
+    assert policies["approval_for_state_changes"] == "needs_review"
+    assert policies["tenant_scoped_external_access"] == "needs_review"
 
 
 @pytest.mark.parametrize(

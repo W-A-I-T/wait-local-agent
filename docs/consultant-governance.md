@@ -8,6 +8,10 @@ any credential material present in an artifact.
 
 It is a report-only surface. It does not change authorization, approve a write,
 execute a connector, contact a tenant, or deploy a solution.
+It also emits an explicit policy mapping for credential absence, approval for
+state changes, tenant-scoped external access, and human approval before
+deployment. `pass` means the supplied evidence satisfied that policy for the
+review; `needs_review` is not an authorization grant.
 
 API:
 
