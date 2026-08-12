@@ -322,6 +322,7 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
                     "expected_tool_ids": ["ticket-triage"],
                     "forbidden_tool_ids": [],
                     "expected_approval_tool_ids": [],
+                    "required_security_dimensions": ["rbac", "unexpected_writes"],
                 }
             ],
             execution=EvaluationExecutionRequest(
@@ -334,6 +335,8 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     )
     assert evaluation["execution_mode"] == "controlled"
     assert evaluation["production_readiness"] == "pass"
+    assert evaluation["dimensions"]["rbac"] == 100.0
+    assert evaluation["dimensions"]["unexpected_writes"] == 100.0
     assert evaluation["cases"][0]["execution"]["execution_status"] == "completed"
 
     governance = _endpoint(settings, "/consultant/governance/evaluate")(

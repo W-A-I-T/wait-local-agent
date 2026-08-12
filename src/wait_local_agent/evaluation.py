@@ -235,6 +235,13 @@ class AgentServiceEvaluationExecutor:
                     "error": redact_text(str(raw_step.get("error_detail", "")))[:240],
                 }
             )
+        security_evidence = _controlled_security_evidence(
+            self.agent_service,
+            result.steps,
+            actor_role=self.actor_role,
+            client_id=self.client_id,
+            definition_client_id=self.definition.client_id,
+        )
         # Deterministic local execution does not pass untrusted ticket text to
         # a model. If model inference is enabled, the runtime must supply an
         # explicit injection result rather than this adapter claiming safety.
@@ -252,6 +259,7 @@ class AgentServiceEvaluationExecutor:
             "execution_status": result.status,
             "run_id": result.run_id,
             "error_detail": redact_text(result.error_detail)[:240],
+            "security_evidence": security_evidence,
         }
 
 
@@ -374,6 +382,49 @@ def _failed_observation(
     if required_security:
         result["security_evidence"] = {dimension: False for dimension in required_security}
     return result
+
+
+def _controlled_security_evidence(
+    agent_service: AgentService,
+    steps: list[dict[str, object]],
+    *,
+    actor_role: Role,
+    client_id: str,
+    definition_client_id: str | None,
+) -> dict[str, bool]:
+    """Return only security facts the local runtime can prove deterministically.
+
+    This intentionally does not infer provider failure, rollback, injection, or
+    secret safety from a successful fixture run. Those dimensions remain
+    explicit evidence requirements and therefore fail closed unless a caller
+    supplies dedicated evidence.
+    """
+
+    raw_tools: list[Any] = getattr(agent_service, "list_tools", lambda: [])()
+    tools = {tool.id: tool for tool in raw_tools if isinstance(getattr(tool, "id", None), str)}
+    rbac_safe = definition_client_id == client_id
+    unexpected_write = False
+    for step in steps:
+        tool_id = step.get("tool_id")
+        tool = tools.get(tool_id) if isinstance(tool_id, str) else None
+        if tool is None or not _role_allows(getattr(tool, "required_role", None), actor_role):
+            rbac_safe = False
+        if (
+            tool is not None
+            and getattr(tool, "access_mode", None) == "write"
+            and step.get("status") == "success"
+        ):
+            unexpected_write = True
+    writes_disabled = not bool(getattr(agent_service.settings, "allow_write_actions", True))
+    return {
+        "rbac": rbac_safe,
+        "unexpected_writes": writes_disabled and not unexpected_write,
+    }
+
+
+def _role_allows(required_role: object, actor_role: Role) -> bool:
+    levels = {"end_user": 0, "viewer": 1, "technician": 2, "admin": 3}
+    return isinstance(required_role, str) and levels.get(required_role.casefold(), -1) <= int(actor_role)
 
 
 def _bounded_error(error: Exception) -> str:

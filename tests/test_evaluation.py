@@ -297,7 +297,12 @@ def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
         ]
 
     class Service:
-        settings = type("Settings", (), {"allow_llm_inference": False})()
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return [
+                type("Tool", (), {"id": "m365-user-create", "required_role": "technician", "access_mode": "write"})()
+            ]
 
         def run(self, *args, **kwargs):
             return Result()
@@ -317,6 +322,35 @@ def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
     assert result["citations"] == ["fixture:source"]
     actions = cast(list[dict[str, object]], result["actions"])
     assert actions[1]["status"] == "failed"
+    assert result["security_evidence"] == {"rbac": False, "unexpected_writes": True}
+
+
+def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_enabled_writes() -> None:
+    class Result:
+        status = "completed"
+        run_id = 10
+        error_detail = ""
+        steps = [{"tool_id": "unknown", "status": "success", "evidence": []}]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": True})()
+
+        def list_tools(self):
+            return []
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme"})()
+    result = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    ).execute({"failure_expected": False})
+    assert result["security_evidence"] == {"rbac": False, "unexpected_writes": False}
 
 
 @pytest.mark.parametrize(
