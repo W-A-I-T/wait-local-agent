@@ -44,7 +44,10 @@ deployment unstarted.
 The same composition is available to an authenticated technician through
 `POST /consultant/demos/employee-onboarding` when the appliance is in local
 demo mode with writes disabled. The request must include the tenant-scoped
-blueprint and an existing ticket/entity ID; the endpoint never seeds a ticket,
+blueprint ID (or an explicitly supplied blueprint for script-style callers)
+and an existing ticket/entity ID; the endpoint resolves persisted blueprints in
+tenant scope without creating duplicates. The Consultant screen exposes this
+as “Run local onboarding walkthrough.” The endpoint never seeds a ticket,
 calls an external provider, generates deployment artifacts, or starts a
-deployment. Outside that mode it returns a conflict, and a ticket from another
-tenant is not eligible for the fixture.
+deployment. Outside that mode it returns a conflict, and a ticket or blueprint
+from another tenant is not eligible for the fixture.

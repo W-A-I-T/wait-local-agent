@@ -57,6 +57,8 @@ def run_employee_onboarding_demo(
     blueprint_payload: Mapping[str, object],
     client_id: str = "acme",
     entity_id: str = "TCK-1001",
+    blueprint_id: str | None = None,
+    persist_blueprint: bool = True,
 ) -> dict[str, Any]:
     """Run the bounded employee-onboarding scenario through existing services.
 
@@ -75,6 +77,7 @@ def run_employee_onboarding_demo(
             dict(blueprint_payload),
             client_id=client_id,
             created_by="employee-onboarding-demo",
+            blueprint_id=blueprint_id,
         )
         environment = discover_environment(
             client_id=client_id,
@@ -95,7 +98,9 @@ def run_employee_onboarding_demo(
         environment=tuple(cast(list[dict[str, object]], environment["systems"])),
         discovery=cast(dict[str, object], discovery["answered"]),
     )
-    persisted_blueprint = store.create_solution_blueprint(discovered_blueprint)
+    persisted_blueprint = (
+        store.create_solution_blueprint(discovered_blueprint) if persist_blueprint else discovered_blueprint
+    )
 
     smart_actions = SmartActionService(store, settings)
     agent_service = AgentService(store, settings, smart_actions)

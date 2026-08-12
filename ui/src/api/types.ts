@@ -253,6 +253,30 @@ export type ConsultantMonitoring = {
   payloads_exposed: boolean;
 };
 
+export type ConsultantEmployeeOnboardingDemo = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  entity_id: string;
+  mode: "local_fixture" | string;
+  stages: {
+    blueprint: { id: string; solution_name: string; risk: string };
+    supervisor: { status: string; children?: Array<{ status?: string }> };
+    evaluation: { production_readiness: string; execution_started: boolean };
+    governance: { status: string };
+    delivery: { production_readiness: string; deployment_started: boolean };
+  };
+  boundaries: {
+    live_provider_execution: boolean;
+    artifact_generation: boolean;
+    deployment_started: boolean;
+    production_deployment_requires_approval: boolean;
+    external_systems_require_environment_verification: boolean;
+    sensitive_operations_require_human_approval: boolean;
+  };
+  audit: { audit_event_count: number; agent_run_count: number };
+};
+
 export type PowerAutomateFlowPlan = {
   format: string;
   format_version: number;

@@ -22,6 +22,7 @@ from wait_local_agent.api.app import (
     EvaluationExecutionRequest,
     EvaluationRequest,
     GovernanceRequest,
+    OpenApiConnectorRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
@@ -839,6 +840,31 @@ def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(setti
     assert result["boundaries"]["deployment_started"] is False
 
 
+def test_employee_onboarding_demo_endpoint_resolves_persisted_blueprint_in_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
+    )
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = _endpoint(settings, "/consultant/demos/employee-onboarding")(
+        EmployeeOnboardingDemoRequest(
+            client_id="acme",
+            blueprint_id=blueprint["id"],
+            entity_id="TCK-1001",
+        ),
+        _technician(),
+    )
+
+    assert result["client_id"] == "acme"
+    assert result["stages"]["blueprint"]["id"] == blueprint["id"]
+    assert len(Store(settings.data_path).list_solution_blueprints(client_id="acme")) == 1
+
+
 def test_employee_onboarding_demo_endpoint_enforces_local_mode_and_tenant_scope(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
     request = EmployeeOnboardingDemoRequest(client_id="acme", blueprint=payload)
@@ -854,6 +880,18 @@ def test_employee_onboarding_demo_endpoint_enforces_local_mode_and_tenant_scope(
     with pytest.raises(HTTPException, match="local demo mode"):
         _endpoint(secured_settings, "/consultant/demos/employee-onboarding")(request, _technician())
 
+    with pytest.raises(HTTPException, match="exactly one"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint_id="bp_missing", blueprint=payload),
+            _technician(),
+        )
+
+    with pytest.raises(HTTPException, match="solution blueprint not found"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint_id="bp_missing"),
+            _technician(),
+        )
+
 
 def test_employee_onboarding_demo_endpoint_does_not_invent_fixture_ticket(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
@@ -864,6 +902,67 @@ def test_employee_onboarding_demo_endpoint_does_not_invent_fixture_ticket(settin
             _technician(),
         )
     assert missing_ticket.value.status_code == 422
+
+
+def test_consultant_blueprint_reads_preserve_tenant_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
+    )
+
+    with pytest.raises(HTTPException, match="no tenant") as missing_scope:
+        _get_endpoint(settings, "/consultant/blueprints")(_technician(client_id=""), "acme")
+    assert missing_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="no tenant") as architecture_scope:
+        _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+            blueprint["id"],
+            _technician(client_id=""),
+        )
+    assert architecture_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="not found") as missing_blueprint:
+        _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+            "bp-missing",
+            _technician(),
+        )
+    assert missing_blueprint.value.status_code == 404
+
+
+def test_consultant_routes_reject_missing_tenant_and_invalid_connector_definitions(settings) -> None:
+    power_apps_request = PowerAppsPlanRequest(
+        client_id="acme",
+        app_name="Onboarding",
+        entities=[],
+        screens=[],
+        actions=[],
+    )
+    with pytest.raises(HTTPException, match="no tenant"):
+        _endpoint(settings, "/consultant/power-apps/plan")(power_apps_request, _technician(client_id=""))
+    with pytest.raises(HTTPException, match="no tenant"):
+        _endpoint(settings, "/consultant/power-apps/build")(power_apps_request, _technician(client_id=""))
+
+    connector_request = OpenApiConnectorRequest(connector_id="employee-api", definition={})
+    with pytest.raises(HTTPException, match="OpenAPI") as validation_error:
+        _endpoint(settings, "/consultant/connectors/openapi/validate")(connector_request, _technician())
+    assert validation_error.value.status_code == 422
+    with pytest.raises(HTTPException, match="OpenAPI") as generation_error:
+        _endpoint(settings, "/consultant/connectors/openapi/generate")(connector_request, _technician())
+    assert generation_error.value.status_code == 422
+
+    with pytest.raises(HTTPException, match="no tenant") as discovery_error:
+        _endpoint(settings, "/consultant/discovery")(
+            DiscoveryRequest(client_id="acme", answers={}),
+            _technician(client_id=""),
+        )
+    assert discovery_error.value.status_code == 403
+    with pytest.raises(HTTPException, match="no tenant") as promotion_error:
+        _endpoint(settings, "/consultant/discovery/promote")(
+            DiscoveryBlueprintPromotionRequest(client_id="acme", solution_name="Onboarding", risk="medium", answers={}),
+            _technician(client_id=""),
+        )
+    assert promotion_error.value.status_code == 403
 
 
 def test_environment_discovery_route_returns_explicit_local_evidence(settings) -> None:

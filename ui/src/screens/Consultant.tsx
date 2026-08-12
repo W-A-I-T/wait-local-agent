@@ -10,6 +10,7 @@ import type {
   ConsultantBlueprintPromotionResult,
   ConsultantDiscoveryResult,
   ConsultantDiscoverySession,
+  ConsultantEmployeeOnboardingDemo,
   ConsultantMonitoring,
   ConsultantUseCase,
   PowerAppsArtifact,
@@ -43,6 +44,9 @@ export function Consultant() {
   const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, { trigger: string; steps: string[] }>>({});
   const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
   const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
+  const [employeeOnboardingDemo, setEmployeeOnboardingDemo] = useState<ConsultantEmployeeOnboardingDemo | null>(null);
+  const [employeeOnboardingEntityId, setEmployeeOnboardingEntityId] = useState("TCK-1001");
+  const [employeeOnboardingLoading, setEmployeeOnboardingLoading] = useState(false);
   const [flowPlan, setFlowPlan] = useState<PowerAutomateFlowPlan | null>(null);
   const [powerAppsArtifact, setPowerAppsArtifact] = useState<PowerAppsArtifact | null>(null);
   const [powerAppsLoading, setPowerAppsLoading] = useState(false);
@@ -340,6 +344,32 @@ export function Consultant() {
     }
   }
 
+  async function runEmployeeOnboardingDemo() {
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
+      setMessage("Select a saved blueprint and provide an existing tenant-scoped ticket before running the local walkthrough.");
+      return;
+    }
+    setEmployeeOnboardingLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantEmployeeOnboardingDemo>("/consultant/demos/employee-onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          blueprint_id: selected.id,
+          entity_id: employeeOnboardingEntityId.trim(),
+        }),
+      });
+      setEmployeeOnboardingDemo(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to run the local employee-onboarding walkthrough.");
+    } finally {
+      setEmployeeOnboardingLoading(false);
+    }
+  }
+
   const selected = blueprints.find((blueprint) => blueprint.id === selectedId);
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
@@ -372,6 +402,42 @@ export function Consultant() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Employee onboarding walkthrough</h2>
+            <p className="screen-note">Run the canonical bounded local fixture through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
+          </div>
+          {employeeOnboardingDemo ? <StatusChip status="completed" /> : null}
+        </div>
+        <div className="notice">
+          <strong>Local fixture only.</strong>{" "}
+          No Microsoft, PSA, RMM, documentation, Teams, artifact-generation, or deployment call is started. The walkthrough requires an existing tenant-scoped ticket and never seeds one.
+        </div>
+        <div className="grid">
+          <label>
+            Existing ticket or entity ID
+            <input
+              value={employeeOnboardingEntityId}
+              onChange={(event) => setEmployeeOnboardingEntityId(event.target.value)}
+              placeholder="TCK-1001"
+            />
+          </label>
+        </div>
+        <button type="button" onClick={() => void runEmployeeOnboardingDemo()} disabled={!canWrite || employeeOnboardingLoading || !selected}>
+          {employeeOnboardingLoading ? "Running local walkthrough…" : "Run local onboarding walkthrough"}
+        </button>
+        {!selected ? <p className="screen-note">Select a saved blueprint above before running the walkthrough.</p> : null}
+        {!canWrite ? <p className="screen-note">Technician access is required to run the local fixture.</p> : null}
+        {employeeOnboardingDemo ? (
+          <div className="notice">
+            <strong>{employeeOnboardingDemo.stages.blueprint.solution_name} completed in {employeeOnboardingDemo.mode} mode.</strong>{" "}
+            Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}.
+            <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"}.
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

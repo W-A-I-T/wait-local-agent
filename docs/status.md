@@ -53,8 +53,10 @@ Microsoft/PSA/RMM/documentation/Teams actions, live provider execution,
 artifact generation, and deployment remain explicit review or approval gates.
 
 The same walkthrough is reachable through a tenant-scoped technician API
-endpoint in local demo mode. It requires an existing scoped fixture ticket and
-keeps live provider execution, artifact generation, and deployment disabled.
+endpoint and the Consultant screen in local demo mode. It resolves a selected
+persisted blueprint without duplicating it, requires an existing scoped fixture
+ticket, and keeps live provider execution, artifact generation, and deployment
+disabled.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 

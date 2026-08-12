@@ -90,6 +90,7 @@ from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadRespo
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     architect_solution_blueprint,
+    blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
     promote_discovery_candidate,
@@ -464,7 +465,8 @@ class EvaluationRequest(BaseModel):
 class EmployeeOnboardingDemoRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     entity_id: str = Field(default="TCK-1001", min_length=1, max_length=100)
-    blueprint: dict[str, object] = Field(max_length=32)
+    blueprint_id: str | None = Field(default=None, min_length=1, max_length=64)
+    blueprint: dict[str, object] | None = Field(default=None, max_length=32)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -4134,13 +4136,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _consultant_client_scope(context, payload.client_id)
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="employee-onboarding demo requires a tenant scope")
+        if (payload.blueprint_id is None) == (payload.blueprint is None):
+            raise HTTPException(status_code=422, detail="provide exactly one of blueprint_id or blueprint")
         try:
+            if payload.blueprint_id is not None:
+                persisted = store.get_solution_blueprint(payload.blueprint_id, client_id=scoped_client_id)
+                if persisted is None:
+                    raise HTTPException(status_code=404, detail="solution blueprint not found in tenant scope")
+                blueprint: dict[str, object] = blueprint_payload(persisted)
+            else:
+                blueprint = cast(dict[str, object], payload.blueprint)
             return run_employee_onboarding_demo(
                 store=store,
                 settings=active_settings,
-                blueprint_payload=payload.blueprint,
+                blueprint_payload=blueprint,
                 client_id=scoped_client_id,
                 entity_id=payload.entity_id,
+                blueprint_id=payload.blueprint_id,
+                persist_blueprint=payload.blueprint_id is None,
             )
         except EmployeeOnboardingDemoError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
