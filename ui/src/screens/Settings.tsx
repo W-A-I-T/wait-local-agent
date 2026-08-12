@@ -407,11 +407,11 @@ export function Settings() {
             <h3>Add secret</h3>
             <label>
               Secret name
-              <input value={secretName} onChange={(event) => setSecretName(event.target.value)} />
+              <input autoComplete="off" name="secret-name" value={secretName} onChange={(event) => setSecretName(event.target.value)} />
             </label>
             <label>
               Secret value
-              <input type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} />
+              <input autoComplete="new-password" name="new-password" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} />
             </label>
             <button type="submit">Save</button>
           </form>

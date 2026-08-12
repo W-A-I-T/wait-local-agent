@@ -66,6 +66,7 @@ describe("App", () => {
     renderApp();
 
     expect(await screen.findByRole("heading", { name: "HaloPSA Live Operations" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("local-appliance")).toHaveAttribute("autocomplete", "username");
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connector Readiness" })).toBeInTheDocument();

@@ -175,6 +175,12 @@ def _status_view(
     elif status.status == "blocked":
         projected = "permission-limited"
         limitation = "local policy prevents provider probing; provider authorization is unknown"
+    elif status.status == "failed":
+        projected = "unavailable"
+        limitation = (
+            "connector health reported a failure; provider availability is not being treated "
+            "as an empty environment"
+        )
     elif status.status in {"configured", "ready"}:
         projected = "configured"
         limitation = "provider reachability, authentication, and authorization have not been probed"

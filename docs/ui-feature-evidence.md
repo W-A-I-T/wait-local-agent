@@ -57,7 +57,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 24 files, 104 tests passed.
+- UI tests: 24 files, 106 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
@@ -121,10 +121,20 @@ unverifiable product claim.
   and reported zero console errors and zero warnings. The broader route,
   responsive, accessibility, denied, offline, and provider-error matrix
   remains open.
+- Current Chromium route sweep: all 20 operator and direct-link end-user
+  destinations loaded through the local Vite/API stack. The Settings route
+  initially exposed an accessibility warning for the admin secret and API
+  token forms; both forms now declare `autocomplete` semantics, the focused UI
+  tests cover the contract, and the replay reports zero warnings. The Founder
+  Pack's expected `409 not configured` response remains an explicit
+  unavailable state (and an expected handled network error), not a fake
+  success; the broader control, permission, offline, responsive, and
+  provider-error matrix remains open.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.
-- Current repository backend validation: full pytest passed 2,128 tests; the
+- Current repository backend validation: full pytest passed 2,159 tests at the
+  repository's 95% coverage threshold; the
   existing FastAPI/Starlette and founder-surface deprecation warnings remain
   non-failing warnings.
 

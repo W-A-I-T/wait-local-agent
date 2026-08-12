@@ -36,6 +36,10 @@ describe("wla-wp17 Launch Passport UI", () => {
     render(<MemoryRouter><Settings /></MemoryRouter>);
 
     expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Secret name")).toHaveAttribute("autocomplete", "off");
+    expect(screen.getByLabelText("Secret name")).toHaveAttribute("name", "secret-name");
+    expect(screen.getByLabelText("Secret value")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText("Secret value")).toHaveAttribute("name", "new-password");
     expect(screen.getByText(/ready to use on its own/i)).toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
   });

@@ -60,6 +60,20 @@ def test_environment_discovery_does_not_claim_other_tenant_configuration() -> No
     assert "not explicitly bound" in system["limitation"]
 
 
+def test_environment_discovery_preserves_failed_connector_as_unavailable() -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["ConnectWise"],
+        connector_statuses=[_status("connectwise", "ConnectWise", "failed")],
+        configured_client_id="acme",
+    )
+
+    system = result["systems"][0]
+    assert system["status"] == "unavailable"
+    assert "not being treated as an empty environment" in system["limitation"]
+    assert result["readiness"] == "needs_environment_verification"
+
+
 def test_environment_discovery_deduplicates_aliases_and_projects_unrequested_ready_connector() -> None:
     result = discover_environment(
         client_id="acme",
