@@ -139,6 +139,10 @@ describe("Consultant", () => {
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
     expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    const planCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/workflows/power-automate/plan");
+    expect(planCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"workflow_id":"onboarding_flow"'),
+    });
     fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });

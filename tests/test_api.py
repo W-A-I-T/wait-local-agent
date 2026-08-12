@@ -5829,7 +5829,7 @@ def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None
     turn = client.post(
         f"/consultant/discovery/sessions/{session_id}/turn",
         headers=_auth("tech-token"),
-        json={"field": "users", "answer": ["HR"]},
+        json={"client_id": "acme", "field": "users", "answer": ["HR"]},
     )
     assert turn.status_code == 200
     assert turn.json()["answered"]["users"] == ["HR"]
@@ -5845,7 +5845,7 @@ def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None
     foreign = TestClient(create_app(beta_settings)).post(
         f"/consultant/discovery/sessions/{session_id}/turn",
         headers=_auth("beta-token"),
-        json={"field": "knowledge", "answer": ["Handbook"]},
+        json={"client_id": "beta", "field": "knowledge", "answer": ["Handbook"]},
     )
     assert foreign.status_code == 404
 

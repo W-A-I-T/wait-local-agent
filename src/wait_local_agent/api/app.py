@@ -492,6 +492,7 @@ class DiscoverySessionStartRequest(BaseModel):
 
 
 class DiscoveryTurnRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
     field: str = Field(min_length=1, max_length=64)
     answer: object
     model_config = ConfigDict(extra="forbid")
@@ -4295,7 +4296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoveryTurnRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, None)
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"

@@ -21,6 +21,7 @@ visible here instead of being presented as a completed UI feature.
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
 | `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render; import control is enabled only after a JSON artifact is selected and imports a disabled local copy for review |
+| `/consultant` | Tenant-scoped blueprint review, explicit discovery intake, guided discovery, workflow design, and review-only Power Platform artifacts | `/consultant/*` | Chromium evidence on 2026-08-12 loaded a synthetic local blueprint, exercised incomplete discovery, guided-session validation and continuation, Power Automate planning, Power Apps artifact build, and malformed JSON recovery; external execution/deployment remains unavailable |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
@@ -56,7 +57,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 22 files, 91 tests passed.
+- UI tests: 24 files, 104 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
@@ -90,19 +91,27 @@ unverifiable product claim.
   explicit configured-adapter requirement from the demo-local server. Browser
   network requests returned HTTP 200 and the console reported zero errors and
   zero warnings.
-- Current branch TimeZest create slice: focused backend tests passed with
+- Earlier TimeZest create slice: focused backend tests passed with
   97.70% module coverage; the full UI suite passed 22 files and 91 tests; the
   UI production build passed; Ruff, mypy, compileall, Bandit, and the public
   surface audit passed. The available local Python environment cannot complete
   the full backend suite because its FastAPI/Starlette TestClient hangs on an
   existing agent API test; a clean locked environment could not be hydrated
   because package DNS is unavailable in this sandbox.
+- Current branch Chromium consultant slice on 2026-08-12: the local
+  `/consultant` route loaded a synthetic credential-free blueprint and returned
+  HTTP 200 for blueprint, architecture, discovery, guided-session start and
+  turn, Power Automate planning, and Power Apps artifact build. Empty guided
+  answers and malformed Dataverse JSON surfaced explicit alerts without fake
+  success. The browser initially exposed two wiring defects (tenant omitted
+  from guided turns and hyphenated blueprint IDs rejected by the Power
+  Automate contract); both were fixed and replayed with zero console errors.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.
-- Backend full pytest: the local environment's FastAPI/Starlette `TestClient`
-  hangs even on a minimal FastAPI health app; the application suite therefore
-  needs a clean CI run before it can be called fully verified.
+- Current repository backend validation: full pytest passed 2,128 tests; the
+  existing FastAPI/Starlette and founder-surface deprecation warnings remain
+  non-failing warnings.
 
 Expected safety states remain visible: connector probing and writes are shown
 as blocked when their explicit flags or credentials are absent, and optional

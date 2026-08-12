@@ -301,7 +301,7 @@ def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None
 
     turn = _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
         start["session_id"],
-        DiscoveryTurnRequest(field="users", answer=["HR operations"]),
+        DiscoveryTurnRequest(client_id="acme", field="users", answer=["HR operations"]),
         _technician(),
     )
     assert turn["answered"]["users"] == ["HR operations"]
@@ -311,7 +311,7 @@ def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None
     with pytest.raises(HTTPException) as foreign:
         _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
             start["session_id"],
-            DiscoveryTurnRequest(field="knowledge", answer=["Handbook"]),
+            DiscoveryTurnRequest(client_id="beta", field="knowledge", answer=["Handbook"]),
             _technician("beta"),
         )
     assert foreign.value.status_code == 404
@@ -339,7 +339,7 @@ def test_guided_discovery_session_turn_is_bounded(settings) -> None:
     with pytest.raises(HTTPException) as bounded:
         _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
             session_id,
-            DiscoveryTurnRequest(field="users", answer=["HR"]),
+            DiscoveryTurnRequest(client_id="acme", field="users", answer=["HR"]),
             _technician(),
         )
     assert bounded.value.status_code == 422
@@ -354,10 +354,28 @@ def test_guided_discovery_session_rejects_impact_side_channel(settings) -> None:
     with pytest.raises(HTTPException) as rejected:
         _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
             start["session_id"],
-            DiscoveryTurnRequest(field="impact", answer={"monthly_runs": 1}),
+            DiscoveryTurnRequest(client_id="acme", field="impact", answer={"monthly_runs": 1}),
             _technician(),
         )
     assert rejected.value.status_code == 422
+
+
+def test_guided_discovery_admin_can_continue_explicit_tenant_without_bound_context(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            opening_message="Review onboarding",
+        ),
+        _admin(client_id=""),
+    )
+
+    turn = _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+        start["session_id"],
+        DiscoveryTurnRequest(client_id="acme", field="users", answer=["HR"]),
+        _admin(client_id=""),
+    )
+
+    assert turn["answered"]["users"] == ["HR"]
 
 
 def test_power_platform_deployment_route_creates_approval_and_stays_gated(settings) -> None:

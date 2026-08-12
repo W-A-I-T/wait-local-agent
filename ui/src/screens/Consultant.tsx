@@ -130,7 +130,7 @@ export function Consultant() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_id: selected.client_id,
-          workflow_id: workflow.id,
+          workflow_id: powerAutomateIdentifier(workflow.id),
           workflow_name: workflow.name ?? workflow.id,
           trigger: draft.trigger || "Manual review request",
           steps: draft.steps.map((name, index) => ({
@@ -235,7 +235,7 @@ export function Consultant() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field: question.id, answer }),
+          body: JSON.stringify({ client_id: clientId, field: question.id, answer }),
         },
       );
       setDiscoverySession(result);
@@ -560,6 +560,10 @@ export function Consultant() {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function powerAutomateIdentifier(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 function parseJsonArray(value: string, label: string): Record<string, unknown>[] {
