@@ -6,8 +6,10 @@ import pytest
 
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
+    build_solution_command_plan,
     definition_size_bytes,
     generate_power_platform_connector,
+    power_platform_cli_status,
 )
 
 
@@ -185,3 +187,32 @@ def test_connector_generation_rejects_large_documents() -> None:
     value["x-padding"] = "x" * 1_000_001
     with pytest.raises(OpenApiDefinitionError, match="1 MB"):
         generate_power_platform_connector("halo", value)
+
+
+def test_solution_plan_is_reviewable_and_does_not_execute(monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.power_platform.shutil.which", lambda _: "/usr/bin/pac")
+    assert power_platform_cli_status() == {
+        "available": True,
+        "path": "/usr/bin/pac",
+        "commands_executed": False,
+    }
+    plan = build_solution_command_plan("onboarding", "WAIT_Dev", "wait", "/tmp/onboarding")
+    assert plan["execution_started"] is False
+    assert plan["deployment_started"] is False
+    assert plan["commands"][-1][:3] == ["pac", "solution", "check"]
+
+
+@pytest.mark.parametrize(
+    ("prefix", "message"),
+    [("w", "2-8"), ("1wait", "2-8"), ("wait!", "2-8")],
+)
+def test_solution_plan_rejects_unsafe_publisher_prefix(prefix, message) -> None:
+    with pytest.raises(OpenApiDefinitionError, match=message):
+        build_solution_command_plan("onboarding", "WAIT_Dev", prefix, "/tmp/onboarding")
+
+
+def test_solution_plan_rejects_unsafe_publisher_and_output() -> None:
+    with pytest.raises(OpenApiDefinitionError, match="publisher_name"):
+        build_solution_command_plan("onboarding", "WAIT Dev", "wait", "/tmp/onboarding")
+    with pytest.raises(OpenApiDefinitionError, match="too long or contains control"):
+        build_solution_command_plan("onboarding", "WAIT_Dev", "wait", "/tmp/onboard\ning")

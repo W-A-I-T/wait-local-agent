@@ -105,7 +105,12 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
-from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
+from wait_local_agent.power_platform import (
+    OpenApiDefinitionError,
+    build_solution_command_plan,
+    generate_power_platform_connector,
+    power_platform_cli_status,
+)
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -159,6 +164,7 @@ consultant_app = typer.Typer(help="Local-first solution consultant commands.")
 blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
+microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -182,6 +188,7 @@ app.add_typer(workflows_app, name="workflows")
 consultant_app.add_typer(blueprints_app, name="blueprints")
 app.add_typer(consultant_app, name="consultant")
 microsoft_app.add_typer(microsoft_connector_app, name="connector")
+microsoft_app.add_typer(microsoft_solution_app, name="solution")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2662,6 +2669,30 @@ def package_microsoft_connector(source: Path, connector_id: str) -> None:
             indent=2,
         )
     )
+
+
+@microsoft_solution_app.command("status")
+def microsoft_solution_status() -> None:
+    typer.echo(json.dumps(power_platform_cli_status(), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("plan")
+def microsoft_solution_plan(
+    solution_name: str,
+    publisher_name: str,
+    publisher_prefix: str,
+    output_directory: str,
+) -> None:
+    try:
+        plan = build_solution_command_plan(
+            solution_name,
+            publisher_name,
+            publisher_prefix,
+            output_directory,
+        )
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(plan, sort_keys=True, indent=2))
 
 
 @workflows_app.command("compare-runs")

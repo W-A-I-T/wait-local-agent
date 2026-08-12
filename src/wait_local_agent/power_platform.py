@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Mapping
 from typing import cast
 
@@ -190,3 +191,54 @@ def _identifier(value: object, field: str) -> str:
 
 def definition_size_bytes(definition: Mapping[str, object]) -> int:
     return len(json.dumps(definition, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def power_platform_cli_status() -> dict[str, object]:
+    """Report local ``pac`` availability without starting a process."""
+
+    path = shutil.which("pac")
+    return {
+        "available": path is not None,
+        "path": path,
+        "commands_executed": False,
+    }
+
+
+def build_solution_command_plan(
+    solution_name: str,
+    publisher_name: str,
+    publisher_prefix: str,
+    output_directory: str,
+) -> dict[str, object]:
+    """Build a reviewable ``pac solution`` plan without filesystem side effects."""
+
+    name = _identifier(solution_name, "solution_name")
+    publisher = _text(publisher_name, "publisher_name", max_length=100)
+    if not re.fullmatch(r"[A-Za-z0-9_]+", publisher):
+        raise OpenApiDefinitionError("publisher_name may contain only letters, numbers, and underscores")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,7}", publisher_prefix):
+        raise OpenApiDefinitionError("publisher_prefix must be 2-8 alphanumeric characters and start with a letter")
+    directory = _text(output_directory, "output_directory", max_length=240)
+    return {
+        "solution_name": name,
+        "publisher_name": publisher,
+        "publisher_prefix": publisher_prefix,
+        "output_directory": directory,
+        "commands": [
+            [
+                "pac",
+                "solution",
+                "init",
+                "--publisher-name",
+                publisher,
+                "--publisher-prefix",
+                publisher_prefix,
+                "--outputDirectory",
+                directory,
+            ],
+            ["pac", "solution", "pack", "--folder", directory, "--zipfile", f"{directory}/{name}.zip"],
+            ["pac", "solution", "check", "--path", f"{directory}/{name}.zip"],
+        ],
+        "execution_started": False,
+        "deployment_started": False,
+    }

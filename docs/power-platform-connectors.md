@@ -30,5 +30,17 @@ Definitions must use HTTPS, contain at least one supported action with a unique
 like parameter names. The package output is explicitly `review_only`; Power
 Platform import and deployment remain future governed steps.
 
+WAIT also exposes a no-side-effect `pac` planning surface:
+
+```bash
+wait-local-agent microsoft solution status
+wait-local-agent microsoft solution plan onboarding WAIT_Dev wait /workspace/onboarding
+```
+
+`status` checks whether the executable is discoverable on the local PATH without
+starting it. `plan` emits the proposed `pac solution init`, `pack`, and `check`
+arguments. It does not create directories, overwrite files, contact Dataverse,
+or execute a subprocess.
+
 See Microsoft's [custom connector OpenAPI definition guidance](https://learn.microsoft.com/en-us/connectors/custom-connectors/define-openapi-definition)
 for the external import contract.
