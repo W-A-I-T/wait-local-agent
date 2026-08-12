@@ -65,10 +65,11 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Next increments
 
-- Broader guided discovery ergonomics, including resumable operator views,
-  richer transcript review, and a verified flagship employee-onboarding
-  fixture that demonstrates local fixture mode, artifact generation, provider
-  execution, approvals, evaluation, and deployment as distinct states.
+- Broader guided discovery ergonomics, including resumable operator views and
+  richer transcript review. The canonical employee-onboarding fixture now
+  demonstrates discovery-to-architecture promotion, controlled local
+  evaluation, governance, delivery, and approval creation; live provider
+  execution and deployment remain separate evidence-gated increments.
 
 ## Microsoft / Power Platform
 

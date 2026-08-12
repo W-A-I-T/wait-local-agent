@@ -1,0 +1,82 @@
+{
+  "solution": {"name": "Employee onboarding supervisor"},
+  "business_goal": {
+    "statement": "Automate auditable employee onboarding for a 500-person company",
+    "target_population": 500
+  },
+  "users": ["HR", "IT", "Hiring managers"],
+  "knowledge": [],
+  "systems": [
+    "Microsoft 365",
+    "Entra",
+    "Intune",
+    "SharePoint",
+    "Teams",
+    "ConnectWise",
+    "NinjaOne",
+    "Hudu"
+  ],
+  "agents": [
+    {
+      "id": "onboarding-supervisor",
+      "name": "Onboarding Supervisor",
+      "purpose": "Coordinate reviewed onboarding steps and hand off bounded results.",
+      "tools": ["ticket-triage"],
+      "knowledge": ["employee-handbook"]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "m365-user-onboarding-review",
+      "name": "Microsoft 365 user onboarding review",
+      "trigger": "HR onboarding request",
+      "steps": ["Validate manager", "Prepare identity and license approval", "Notify manager"]
+    }
+  ],
+  "approvals": {
+    "identity_creation": "IT",
+    "license_assignment": "IT",
+    "rmm_operation": "IT",
+    "manager_notification": "HR"
+  },
+  "deployment": ["Teams", "Power Automate", "Power Apps", "Dataverse"],
+  "risk": "high",
+  "orchestration": "supervisor",
+  "discovery": {
+    "solution_name": "Employee onboarding supervisor",
+    "business_goal": "Automate auditable employee onboarding for a 500-person company",
+    "current_process": "HR submits an onboarding request and IT manually provisions identity, licenses, devices, documentation, and notifications.",
+    "users": ["HR", "IT", "Hiring managers"],
+    "owners": ["HR operations", "IT operations"],
+    "approvers": ["IT manager", "HR operations lead"],
+    "systems": ["Microsoft 365", "Entra", "Intune", "SharePoint", "Teams", "ConnectWise", "NinjaOne", "Hudu"],
+    "knowledge": ["Employee handbook", "IT onboarding runbook"],
+    "reads": ["Employee record", "Manager record", "Onboarding runbook"],
+    "changes": ["Prepare identity", "Assign license", "Update PSA", "Notify manager"],
+    "sensitive_operations": ["Identity creation", "License assignment", "RMM operation"],
+    "approvals": ["Identity creation", "License assignment", "RMM operation", "Manager notification"],
+    "failure_handling": "Pause the affected step, preserve evidence, and create a human review task.",
+    "compliance": ["Least privilege", "Audit trail", "Approval before state change"],
+    "data_location": ["Microsoft 365 tenant", "PSA tenant", "RMM tenant", "local WAIT evidence store"],
+    "data_residency": ["Customer tenant and approved local WAIT workspace"],
+    "data_leaves_tenant": false,
+    "licenses": ["Microsoft 365 E3 or equivalent", "Power Automate licensing to be confirmed"],
+    "existing_apis": ["Microsoft Graph", "ConnectWise API", "NinjaOne API", "Hudu API"],
+    "existing_automation": ["Existing HR request process"],
+    "channels": ["Teams", "PSA ticket", "manager notification"],
+    "expected_volume": "Up to 40 onboarding events per month",
+    "business_value": "Reduce manual provisioning time while preserving approvals and audit evidence.",
+    "success_metrics": ["Time to provision", "Approval completion rate", "Failed-step recovery rate"],
+    "rollback_expectations": "No irreversible provider write is allowed without approval; failed steps must be resumable or manually reversible."
+  },
+  "environment": [
+    {"id": "m365", "name": "Microsoft 365", "kind": "m365", "connector_id": "m365", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "entra", "name": "Entra", "kind": "m365", "connector_id": "m365", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "intune", "name": "Intune", "kind": "m365", "connector_id": "m365", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "sharepoint", "name": "SharePoint", "kind": "sharepoint", "connector_id": "sharepoint", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "teams", "name": "Teams", "kind": "m365", "connector_id": "m365", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "connectwise", "name": "ConnectWise", "kind": "psa", "connector_id": "connectwise", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "ninjaone", "name": "NinjaOne", "kind": "rmm", "connector_id": "rmm", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false},
+    {"id": "hudu", "name": "Hudu", "kind": "documentation", "connector_id": "hudu", "status": "authorized", "evidence": ["local_fixture_environment"], "tenant_scope": "acme", "provider_status": "local_fixture", "http_probing_enabled": false, "write_actions_enabled": false}
+  ]
+}

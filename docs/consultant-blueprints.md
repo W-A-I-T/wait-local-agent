@@ -66,6 +66,12 @@ identity, connector boundary when known, status, evidence, and limitations.
 `configured`, `detected`, and `permission-limited` are not equivalent to
 provider authorization; the architecture view preserves that distinction and
 requires review until provider evidence reaches a supported verified state.
+The canonical synthetic employee-onboarding fixture at
+`examples/consultant/employee-onboarding-blueprint.json` demonstrates this
+promotion boundary across discovery, environment evidence, architecture,
+controlled local evaluation, governance, delivery, and approval creation. Its
+Power Platform targets intentionally remain `needs_review`; the fixture does
+not claim live provider access or deployment.
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
 within the blueprint tenant; blueprint creation still does not create or run

@@ -425,6 +425,8 @@ class SolutionBlueprintRequest(BaseModel):
     skills: list[object] = Field(default_factory=list, max_length=32)
     model: str = Field(default="", max_length=240)
     orchestration: str = Field(default="", max_length=32)
+    environment: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    discovery: dict[str, object] = Field(default_factory=dict)
     client_id: str | None = None
     model_config = ConfigDict(extra="forbid")
 
