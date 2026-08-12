@@ -179,6 +179,45 @@ export type WorkflowTemplate = {
   };
 };
 
+export type ConsultantBlueprint = {
+  id: string;
+  client_id: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  solution: { name: string };
+  risk: string;
+  agents: Array<{ id: string; name: string; purpose: string; tools: string[]; knowledge: string[] }>;
+  workflows: Array<{ id: string; name: string; trigger: string; steps: string[] }>;
+};
+
+export type ConsultantArchitectureComponent = {
+  id: string;
+  kind: string;
+  name?: string;
+  status: string;
+  implementation?: string;
+  trigger?: string;
+  steps?: string[];
+  resolved_tool_ids?: string[];
+  unresolved_tool_ids?: string[];
+  requested_tool_ids?: string[];
+  knowledge_references?: string[];
+};
+
+export type ConsultantArchitecture = {
+  blueprint_id: string;
+  client_id: string;
+  solution: { name: string };
+  risk: string;
+  approval_policy: Record<string, string>;
+  components: ConsultantArchitectureComponent[];
+  open_items: Array<{ kind: string; component_id: string; detail: string }>;
+  readiness: "ready" | "needs_review";
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;

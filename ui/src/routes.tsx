@@ -5,6 +5,7 @@ import { Agents } from "./screens/Agents";
 import { Backfills } from "./screens/Backfills";
 import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
+import { Consultant } from "./screens/Consultant";
 import { Collectors } from "./screens/Collectors";
 import { FounderJourney } from "./surfaces/founder/FounderJourney";
 import { Knowledge } from "./screens/Knowledge";
@@ -26,6 +27,7 @@ export function AppRoutes() {
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
       <Route path="templates" element={<Templates />} />
+      <Route path="consultant" element={<Consultant />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
       <Route path="audit" element={<Audit />} />

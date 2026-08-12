@@ -339,6 +339,94 @@ nav a:hover {
   gap: 18px;
 }
 
+.consultant-blueprint-list,
+.consultant-component-list,
+.workflow-graph-list {
+  display: grid;
+  gap: 10px;
+}
+
+.consultant-blueprint {
+  align-items: flex-start;
+  background: #f7faf8;
+  border: 1px solid #dce5e1;
+  color: #253633;
+  display: grid;
+  gap: 4px;
+  justify-content: stretch;
+  padding: 12px;
+  text-align: left;
+}
+
+.consultant-blueprint.selected {
+  border-color: #1f8261;
+  box-shadow: inset 0 0 0 1px #1f8261;
+}
+
+.consultant-blueprint span,
+.consultant-blueprint em,
+.consultant-component span {
+  color: #60706a;
+  font-size: 0.86rem;
+  font-style: normal;
+}
+
+.consultant-component {
+  align-items: center;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.consultant-component div {
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-graph {
+  border-top: 1px solid #e8efec;
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.workflow-graph-nodes {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-graph-node {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  padding: 10px;
+  position: relative;
+}
+
+.workflow-graph-node:not(:last-child)::after {
+  color: #60706a;
+  content: "→";
+  font-weight: 900;
+  position: absolute;
+  right: -15px;
+  top: 25px;
+}
+
+.workflow-graph-node span {
+  color: #60706a;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

@@ -30,6 +30,10 @@ wait-local-agent consultant blueprints show bp_<id>
 wait-local-agent consultant blueprints architect bp_<id>
 ```
 
+The dashboard's **Consultant** page provides the same tenant-scoped list and a
+read-only architecture/workflow sequence view. It does not create credentials,
+invoke tools, run workflows, or deploy solutions.
+
 Blueprint validation is deterministic and rejects unknown fields, unbounded
 collections, invalid identifiers, unsupported risk values, and credential-like
 fields. This surface intentionally does not accept connector credentials or
