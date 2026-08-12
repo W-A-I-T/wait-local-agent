@@ -1184,7 +1184,8 @@ def test_registry_lists_all_seed_actions(settings) -> None:
 def test_every_registered_action_handles_empty_input_without_raising(settings) -> None:
     service = SmartActionService(Store(settings.data_path), settings)
 
-    for payload in ({}, {"client_id": "acme"}, {"unexpected": "value"}):
+    payloads: tuple[dict[str, object], ...] = ({}, {"client_id": "acme"}, {"unexpected": "value"})
+    for payload in payloads:
         for manifest in service.list():
             result = service.invoke(manifest.action_id, payload, "coverage", client_id="acme")
             assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
