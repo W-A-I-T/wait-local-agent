@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -61,7 +62,17 @@ def test_supervisor_execution_orders_children_and_passes_bounded_prior_results(s
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, object]]] = []
 
-        def run(self, definition, *, supervisor_context, **kwargs):
+        def run(
+            self,
+            definition: AgentDefinition,
+            *,
+            entity_id: str,
+            actor: str,
+            input_payload: dict[str, object],
+            supervisor_context: dict[str, object] | None = None,
+            actor_role: Role | None = None,
+        ) -> AgentExecutionResult:
+            assert supervisor_context is not None
             self.calls.append((definition.id, supervisor_context))
             return AgentExecutionResult(
                 run_id=len(self.calls),
@@ -89,9 +100,11 @@ def test_supervisor_execution_orders_children_and_passes_bounded_prior_results(s
     assert result["status"] == "completed"
     assert result["delegation_started"] is True
     assert result["execution_started"] is True
-    assert result["supervisor"]["ordered_child_agent_ids"] == ["identity", "security"]
+    supervisor_result = cast(dict[str, object], result["supervisor"])
+    assert supervisor_result["ordered_child_agent_ids"] == ["identity", "security"]
     assert [call[0] for call in service.calls] == ["identity", "security"]
-    assert service.calls[1][1]["prior_results"][0]["agent_id"] == "identity"
+    prior_results = cast(list[dict[str, object]], service.calls[1][1]["prior_results"])
+    assert prior_results[0]["agent_id"] == "identity"
     assert result["cross_tenant_context"] is False
 
 
