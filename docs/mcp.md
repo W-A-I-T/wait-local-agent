@@ -37,6 +37,16 @@ an `Origin` is checked against the request origin, localhost, or
 comma-separated list. Tokens remain server-side and must never be put in
 client-side bundles.
 
+## Optional MCP client framework
+
+`wait_local_agent.mcp_client.McpClient` provides the matching client-side
+protocol layer for future external MCP integrations. It is transport-injected
+for deterministic tests, validates HTTPS/local-only HTTP endpoints, refuses
+embedded URL credentials, bounds requests/responses and catalog pagination,
+and keeps bearer tokens in request headers. It supports initialize,
+`notifications/initialized`, `tools/list`, and `tools/call`; it does not yet
+register a provider or persist remote credentials.
+
 ## Minimal request sequence
 
 ```http
@@ -71,8 +81,10 @@ example `wait.ticket-triage`. Invoke a read action with `tools/call`:
 
 ## Current boundaries
 
-- The server is local-first and bounded; it is not an MCP client, Work IQ
-  adapter, Power Platform custom-connector generator, or deployment packager.
+- The server is local-first and bounded. The client framework is present for
+  future integrations, but Work IQ is not yet an adapter and this slice does
+  not include a Power Platform custom-connector generator or deployment
+  packager.
 - The current transport returns JSON responses for POST requests. SSE
   streaming, resumable streams, and MCP resource/prompt surfaces are not
   implemented.
