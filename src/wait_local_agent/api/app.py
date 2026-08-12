@@ -142,6 +142,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
     AuthContext,
@@ -379,8 +380,12 @@ class SolutionBlueprintRequest(BaseModel):
     deployment: list[object]
     risk: str
     client_id: str | None = None
-
     model_config = ConfigDict(extra="forbid")
+
+
+class OpenApiConnectorRequest(BaseModel):
+    connector_id: str = Field(min_length=1, max_length=64)
+    definition: dict[str, object]
 
 
 class SmartActionInvokeRequest(BaseModel):
@@ -3945,6 +3950,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             available_tool_ids=(tool.id for tool in agent_service.list_tools()),
             workflow_templates=list_workflow_templates(),
         )
+
+    @app.post("/consultant/connectors/openapi/validate")
+    def validate_consultant_openapi_connector(
+        payload: OpenApiConnectorRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            artifact = generate_power_platform_connector(payload.connector_id, payload.definition)
+        except OpenApiDefinitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"valid": True, "connector": artifact}
+
+    @app.post("/consultant/connectors/openapi/generate")
+    def generate_consultant_openapi_connector(
+        payload: OpenApiConnectorRequest,
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        try:
+            return generate_power_platform_connector(payload.connector_id, payload.definition)
+        except OpenApiDefinitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/blueprints/{blueprint_id}")
     def consultant_blueprint_detail(

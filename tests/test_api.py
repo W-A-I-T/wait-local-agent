@@ -5290,6 +5290,35 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         f"/consultant/blueprints/{created.json()['id']}/architecture",
         headers=_auth("viewer-token"),
     )
+    connector_definition = {
+        "swagger": "2.0",
+        "info": {"title": "Example API", "version": "1"},
+        "host": "api.example.test",
+        "schemes": ["https"],
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "health-check",
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    connector_validation = client.post(
+        "/consultant/connectors/openapi/validate",
+        headers=_auth("tech-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
+    connector_generation = client.post(
+        "/consultant/connectors/openapi/generate",
+        headers=_auth("tech-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
+    connector_viewer = client.post(
+        "/consultant/connectors/openapi/generate",
+        headers=_auth("viewer-token"),
+        json={"connector_id": "example", "definition": connector_definition},
+    )
     admin_create = client.post(
         "/consultant/blueprints",
         headers=_auth("admin-token"),
@@ -5319,6 +5348,10 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert viewer_architecture.status_code == 200
     assert viewer_architecture.json()["readiness"] == "needs_review"
     assert viewer_architecture.json()["execution_started"] is False
+    assert connector_validation.status_code == 200
+    assert connector_validation.json()["valid"] is True
+    assert connector_generation.json()["credentials_included"] is False
+    assert connector_viewer.status_code == 403
     assert admin_create.status_code == 201
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404

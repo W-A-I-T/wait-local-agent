@@ -105,6 +105,7 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
+from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -156,6 +157,8 @@ connectors_app = typer.Typer(help="Connector status and safe draft commands.")
 workflows_app = typer.Typer(help="Workflow template and run commands.")
 consultant_app = typer.Typer(help="Local-first solution consultant commands.")
 blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
+microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
+microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -178,6 +181,8 @@ app.add_typer(connectors_app, name="connectors")
 app.add_typer(workflows_app, name="workflows")
 consultant_app.add_typer(blueprints_app, name="blueprints")
 app.add_typer(consultant_app, name="consultant")
+microsoft_app.add_typer(microsoft_connector_app, name="connector")
+app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
 app.add_typer(backup_app, name="backup")
@@ -2606,6 +2611,59 @@ def architect_solution_blueprint_command(
     typer.echo(json.dumps(architecture, sort_keys=True, indent=2))
 
 
+@microsoft_connector_app.command("validate")
+def validate_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(
+        json.dumps(
+            {
+                "valid": True,
+                "connector_id": artifact["connector_id"],
+                "action_count": len(cast(list[object], artifact["actions"])),
+                "credentials_included": artifact["credentials_included"],
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+@microsoft_connector_app.command("generate")
+def generate_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(artifact, sort_keys=True, indent=2))
+
+
+@microsoft_connector_app.command("package")
+def package_microsoft_connector(source: Path, connector_id: str) -> None:
+    definition = _load_openapi_definition(source)
+    try:
+        artifact = generate_power_platform_connector(connector_id, definition)
+    except OpenApiDefinitionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(
+        json.dumps(
+            {
+                "format": "wait-local-agent.power-platform.connector-package",
+                "format_version": 1,
+                "connector": artifact,
+                "package_status": "review_only",
+                "deployment_started": False,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
 @workflows_app.command("compare-runs")
 def compare_workflow_runs(
     from_run_id: int,
@@ -3827,6 +3885,16 @@ def _cli_access(settings, token: str | None, minimum: Role):
     if context.role < minimum:
         raise typer.BadParameter("insufficient role")
     return context
+
+
+def _load_openapi_definition(source: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter("source must be a readable JSON OpenAPI definition") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("source must contain a JSON object")
+    return cast(dict[str, object], payload)
 
 
 def _cli_blueprint_client_scope(
