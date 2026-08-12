@@ -606,6 +606,48 @@ def test_power_platform_deployment_route_creates_approval_and_stays_gated(settin
     assert approval["payload"]["credentials_included"] is False
 
 
+def test_power_platform_deployment_route_records_approved_execution(settings, monkeypatch) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_execution",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+            stage="build",
+        ),
+        _request(),
+        _technician(),
+    )
+    approval_id = request_approval["approval"]["id"]
+    Store(settings.data_path).update_approval_request(approval_id, "approved", approver_id="admin")
+
+    def fake_execute(*args, **kwargs):
+        assert kwargs["approved"] is True
+        return {
+            "status": "succeeded",
+            "message": "bounded PAC fixture succeeded",
+            "stage": "build",
+            "artifact_digest": "sha256:" + "a" * 64,
+        }
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    result = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")(
+        approval_id,
+        _request(),
+        _admin(),
+    )
+
+    assert result["status"] == "approved"
+    assert result["execution_status"] == "succeeded"
+    assert result["output"]["status"] == "succeeded"
+    persisted = Store(settings.data_path).get_approval_request(approval_id)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.execution_status == "succeeded"
+
+
 def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> None:
     with pytest.raises(HTTPException, match="outside authenticated scope"):
         _endpoint(settings, "/consultant/solutions/deployment-approvals")(
