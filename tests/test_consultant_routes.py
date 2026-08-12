@@ -167,6 +167,24 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert copilot["deployment_started"] is False
 
 
+def test_copilot_studio_plan_route_scopes_tenant_and_maps_validation(settings) -> None:
+    endpoint = _endpoint(settings, "/consultant/copilot-studio/plan")
+    request = CopilotStudioPlanRequest(
+        client_id="acme",
+        copilot_name="Employee onboarding copilot",
+        business_goal="Guide HR through an auditable onboarding request.",
+        actions=[{"id": "write", "connector_id": "m365", "method": "POST", "approval_required": False}],
+    )
+
+    with pytest.raises(HTTPException) as forbidden:
+        endpoint(request, _technician(client_id="other"))
+    assert forbidden.value.status_code == 403
+
+    with pytest.raises(HTTPException) as invalid:
+        endpoint(request, _technician())
+    assert invalid.value.status_code == 422
+
+
 def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
     created = _endpoint(settings, "/consultant/blueprints")(
