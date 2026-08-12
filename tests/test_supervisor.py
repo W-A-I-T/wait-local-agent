@@ -226,6 +226,7 @@ def test_supervisor_retries_failed_child_with_bounded_lineage(settings, monkeypa
     assert child_result["retry_count"] == 1
     assert [attempt["status"] for attempt in child_result["attempts"]] == ["failed", "completed"]
     assert child_result["lineage"]["retry_of_run_id"] == 41
+    assert service.retry_context is not None
     assert service.retry_context["supervisor_id"] == "consultant-supervisor"
     assert service.retry_context["retry_of_run_id"] == 41
 

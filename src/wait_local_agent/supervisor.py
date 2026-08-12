@@ -41,27 +41,6 @@ class SupervisorAgentRunner(Protocol):
     ) -> AgentExecutionResult:
         """Run one child through the existing bounded agent runtime."""
 
-    def retry(
-        self,
-        definition: AgentDefinition,
-        run: AgentRun,
-        *,
-        actor: str,
-        actor_role: Role | None = None,
-        supervisor_context: dict[str, object] | None = None,
-    ) -> AgentExecutionResult:
-        """Retry one failed child through the existing bounded runtime."""
-
-    def cancel(
-        self,
-        definition: AgentDefinition,
-        run: AgentRun,
-        *,
-        actor: str,
-        approver_role: Role,
-    ) -> AgentExecutionResult:
-        """Cancel one queued or approval-paused child through the runtime."""
-
 
 def build_supervisor_delegation_plan(
     *,
@@ -244,7 +223,7 @@ def execute_supervisor_delegation(
             continue
         if cancellation_target is not None and cancellation_target.agent_id == agent_id:
             try:
-                result = agent_service.cancel(
+                result = _runner_method(agent_service, "cancel")(
                     definition,
                     cancellation_target,
                     actor=actor,
@@ -340,7 +319,7 @@ def execute_supervisor_delegation(
                 "retry_of_run_id": prior_run.id,
             }
             try:
-                result = agent_service.retry(
+                result = _runner_method(agent_service, "retry")(
                     definition,
                     prior_run,
                     actor=actor,
@@ -561,6 +540,14 @@ def _retry_limit(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_SUPERVISOR_RETRIES:
         raise SupervisorPlanError(f"max_retries must be between 0 and {MAX_SUPERVISOR_RETRIES}")
     return value
+
+
+def _runner_method(runner: object, method_name: str) -> Any:
+    """Resolve an optional runtime capability without widening the base protocol."""
+    method = getattr(runner, method_name, None)
+    if not callable(method):
+        raise SupervisorPlanError(f"agent runtime does not support supervisor {method_name}")
+    return method
 
 
 def _bounded_final_result(value: object) -> dict[str, object]:
