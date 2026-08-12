@@ -1191,6 +1191,28 @@ def test_every_registered_action_handles_empty_input_without_raising(settings) -
             assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
 
 
+def test_registered_actions_validate_declared_required_inputs_without_raising(settings) -> None:
+    service = SmartActionService(Store(settings.data_path), settings)
+
+    def value_for(field: str) -> object:
+        lowered = field.casefold()
+        if lowered in {"confirm", "approved", "include_content", "include_history"}:
+            return False
+        if lowered.endswith("_ids") or lowered in {"fields", "sku_ids", "entity_urls"}:
+            return ["example"]
+        if lowered in {"settings", "payload", "thresholds", "filters"}:
+            return {}
+        return "example"
+
+    for manifest in service.list():
+        required = manifest.input_schema.get("required", [])
+        if not isinstance(required, list):
+            continue
+        payload = {field: value_for(field) for field in required if isinstance(field, str)}
+        result = service.invoke(manifest.action_id, payload, "schema-coverage", client_id="acme")
+        assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
+
+
 def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> None:
     class FakeAutotaskWrites:
         def __init__(self, *, health_status="ready", result_status="succeeded"):
