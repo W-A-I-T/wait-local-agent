@@ -22,3 +22,21 @@ The demo inputs are under `examples/consultant/`. They contain no credentials,
 provider tokens, or real customer data. The output is suitable for review and
 handoff; all state-changing actions remain behind the existing approval
 boundary.
+
+## Employee-onboarding walkthrough
+
+The canonical employee-onboarding scenario composes the existing discovery,
+environment projection, blueprint, architecture, supervisor, evaluation,
+governance, delivery, and audit primitives in one isolated local fixture:
+
+```bash
+scripts/demo_employee_onboarding.sh
+```
+
+The fixture seeds only `TCK-1001` for tenant `acme`. Specialist agents execute
+the existing bounded `ticket-triage` action; their target Microsoft, PSA, RMM,
+documentation, and Teams tools are architecture declarations, not live calls.
+The result reports environment verification and governance as review gates when
+external credentials are absent, records local supervisor/evaluation evidence,
+and explicitly leaves artifact generation, live provider execution, and
+deployment unstarted.

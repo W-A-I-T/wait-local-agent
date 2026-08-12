@@ -80,8 +80,10 @@ def discover_environment(
         key = _normalize(name)
         if key in seen:
             continue
-        seen.add(key)
         matched_status: ConnectorStatus | None = by_alias.get(key)
+        if matched_status is not None and matched_status.id in seen:
+            continue
+        seen.add(key)
         if matched_status is not None:
             seen.add(matched_status.id)
         systems.append(_declared_system(name, matched_status, tenant, configured_client_id))

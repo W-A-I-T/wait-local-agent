@@ -249,6 +249,11 @@ def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -
             [{**_case(), "required_security_dimensions": ["rbac"] * 17}],
             {"onboarding": _observation()},
         )
+    with pytest.raises(EvaluationValidationError, match="case ids must not contain duplicates"):
+        evaluate_tool_contract(
+            [_case("duplicate"), _case("duplicate")],
+            {"duplicate": _observation()},
+        )
 
 
 def test_controlled_evaluation_requires_tenant_and_identity_boundaries() -> None:

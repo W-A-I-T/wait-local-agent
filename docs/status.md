@@ -39,6 +39,13 @@ provider-failure, malformed-output, duplicate-prevention, partial-failure, and
 rollback dimensions. Missing evidence fails the requested dimension; the
 contract does not infer live-provider or production evidence from fixtures.
 
+The canonical employee-onboarding walkthrough now composes the existing
+discovery, environment, blueprint, architecture, supervisor, controlled
+evaluation, governance, delivery, and audit primitives in an isolated local
+fixture. It executes only the bounded local `ticket-triage` stand-in; target
+Microsoft/PSA/RMM/documentation/Teams actions, live provider execution,
+artifact generation, and deployment remain explicit review or approval gates.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

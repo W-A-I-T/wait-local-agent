@@ -52,11 +52,9 @@ def evaluate_tool_contract(
     test_set: list[dict[str, object]],
     observations: Mapping[str, object],
 ) -> dict[str, Any]:
-    if not isinstance(test_set, list) or not 1 <= len(test_set) <= MAX_EVALUATION_CASES:
-        raise EvaluationValidationError(f"test_set must contain 1-{MAX_EVALUATION_CASES} cases")
+    normalized_cases = _validated_cases(test_set)
     cases: list[dict[str, object]] = []
-    for raw_case in test_set:
-        case = _case(raw_case)
+    for case in normalized_cases:
         case_id = cast(str, case["id"])
         observed = _observation(observations.get(case_id), case)
         expected_tools = set(cast(list[str], case["expected_tool_ids"]))
@@ -146,7 +144,7 @@ def execute_tool_contract(
     than passing or disappearing as empty results.
     """
 
-    normalized_cases = [_case(raw_case) for raw_case in _validate_test_set(test_set)]
+    normalized_cases = _validated_cases(test_set)
     observations: dict[str, object] = {}
     execution_errors: list[dict[str, str]] = []
     for case in normalized_cases:
@@ -261,6 +259,14 @@ def _validate_test_set(test_set: object) -> list[object]:
     if not isinstance(test_set, list) or not 1 <= len(test_set) <= MAX_EVALUATION_CASES:
         raise EvaluationValidationError(f"test_set must contain 1-{MAX_EVALUATION_CASES} cases")
     return test_set
+
+
+def _validated_cases(test_set: object) -> list[dict[str, object]]:
+    cases = [_case(raw_case) for raw_case in _validate_test_set(test_set)]
+    identifiers = [cast(str, case["id"]) for case in cases]
+    if len(set(identifiers)) != len(identifiers):
+        raise EvaluationValidationError("test_set case ids must not contain duplicates")
+    return cases
 
 
 def _case(value: object) -> dict[str, object]:
