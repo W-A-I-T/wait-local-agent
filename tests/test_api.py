@@ -1175,6 +1175,64 @@ def test_approval_detail_handles_invalid_payload_and_missing_write_health(settin
     assert response.json()["block_reason"] == "HaloPSA write health is unavailable."
 
 
+def test_approval_execution_state_covers_governed_connector_branches(settings, monkeypatch, tmp_path) -> None:
+    class ReadyClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def write_health(self) -> ConnectorReadResult:
+            return ConnectorReadResult("ready", "ready", 0)
+
+    monkeypatch.setattr(app_module, "TeamsGraphClient", ReadyClient)
+    monkeypatch.setattr(app_module, "M365GraphClient", ReadyClient)
+
+    def detail(action_type: str, *, execution_status: str = "not_started", app_settings=settings) -> dict:
+        store = Store(app_settings.data_path)
+        approval = store.create_approval_request("TCK-STATE", action_type, {})
+        store.update_approval_request(approval.id or 0, "approved")
+        if execution_status != "not_started":
+            store.record_approval_execution(
+                approval.id or 0,
+                status=execution_status,
+                message="done",
+                result={},
+            )
+        return TestClient(app_module.create_app(app_settings)).get(
+            f"/approval-requests/{approval.id}"
+        ).json()
+
+    assert detail("teams.message.send", execution_status="succeeded")["block_reason"] == (
+        "Approval request has already executed successfully."
+    )
+    assert detail("m365.users.disable", execution_status="succeeded")["block_reason"] == (
+        "Approval request has already executed successfully."
+    )
+    assert detail("teams.message.send")["can_execute"] is True
+    assert detail("m365.users.disable")["can_execute"] is True
+    blocked = detail("power_platform.solution_stage")
+    assert blocked["block_reason"] == "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
+    deployment_blocked = detail(
+        "power_platform.solution_stage",
+        app_settings=replace(settings, allow_write_actions=True),
+    )
+    assert deployment_blocked["block_reason"] == (
+        "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
+    )
+    workspace_blocked = detail(
+        "power_platform.solution_stage",
+        app_settings=replace(
+            settings,
+            allow_write_actions=True,
+            allow_power_platform_deployment=True,
+            power_platform_workspace=tmp_path,
+        ),
+    )
+    assert workspace_blocked["block_reason"] in {
+        "The pac executable is not available on the local PATH.",
+        "WAIT_POWER_PLATFORM_WORKSPACE must already exist.",
+    }
+
+
 def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request(
