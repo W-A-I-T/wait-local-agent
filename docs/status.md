@@ -100,8 +100,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   After each successful step, the executor supplies only the redacted operational
   result and remaining catalog to the configured provider, validates one returned
   tool against the definition, and falls back to the reviewed sequence when the
-  provider is unavailable or malformed. The default remains the fixed reviewed
-  sequence.
+  provider is unavailable or malformed. Each continuation step also records
+  bounded previous-step lineage (tool, status, index, and redacted error) without
+  duplicating raw tool output; failed or approval-paused paths remain explicit.
+  The default remains the fixed reviewed sequence.
 - API-backed dashboard for HaloPSA tickets, approval queue, event history, knowledge, workflows, connectors, and provider health.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent SQLite volume.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.

@@ -354,6 +354,20 @@ def test_result_aware_agent_uses_model_selection_and_never_repeats_tools(setting
         cast(dict[str, object], step["continuation"]).get("selection_mode")
         for step in result.steps
     ] == ["model", "model"]
+    first_lineage = cast(dict[str, object], result.steps[0]["continuation"])["lineage"]
+    second_lineage = cast(dict[str, object], result.steps[1]["continuation"])["lineage"]
+    assert first_lineage == {
+        "previous_step_index": None,
+        "previous_tool_id": None,
+        "previous_status": None,
+        "previous_error": "",
+    }
+    assert second_lineage == {
+        "previous_step_index": 0,
+        "previous_tool_id": "ticket-summary",
+        "previous_status": "success",
+        "previous_error": "",
+    }
     assert definition.result_aware is True
     persisted = service.store.get_agent_definition(definition.id, client_id="acme")
     assert persisted is not None and persisted.result_aware is True
@@ -463,6 +477,22 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
         failure_definition, entity_id="TCK-1001", actor="requester", input_payload={}
     )
     assert failed.status == "failed"
+
+
+def test_continuation_lineage_is_bounded_and_redacted() -> None:
+    assert agents_module._continuation_lineage(  # noqa: SLF001 - exercise the persisted evidence contract.
+        {
+            "index": True,
+            "tool_id": 123,
+            "status": 456,
+            "error_detail": "token: secret-value",
+        }
+    ) == {
+        "previous_step_index": None,
+        "previous_tool_id": None,
+        "previous_status": "",
+        "previous_error": "token: [redacted]",
+    }
 
 
 def test_agent_context_sources_are_selected_scoped_and_recorded(settings) -> None:

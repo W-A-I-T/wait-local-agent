@@ -27,7 +27,7 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.rbac import Role
-from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
 from wait_local_agent.store import Store, _normalize_client_id
@@ -949,6 +949,7 @@ class AgentService:
                 "continuation": {
                     "selection_mode": selection_mode,
                     "reason": "selected from the remaining reviewed tool catalog",
+                    "lineage": _continuation_lineage(steps[-1] if steps else None),
                 },
             }
             if approval_policy is not None:
@@ -1597,6 +1598,25 @@ def _bounded_step_result(step: dict[str, object] | None) -> dict[str, object]:
             }
         ),
     )
+
+
+def _continuation_lineage(step: dict[str, object] | None) -> dict[str, object]:
+    """Persist bounded decision lineage without duplicating tool output."""
+
+    if not step:
+        return {
+            "previous_step_index": None,
+            "previous_tool_id": None,
+            "previous_status": None,
+            "previous_error": "",
+        }
+    index = step.get("index")
+    return {
+        "previous_step_index": index if isinstance(index, int) and not isinstance(index, bool) else None,
+        "previous_tool_id": step.get("tool_id") if isinstance(step.get("tool_id"), str) else None,
+        "previous_status": step.get("status") if isinstance(step.get("status"), str) else "",
+        "previous_error": redact_text(str(step.get("error_detail", "")))[:240],
+    }
 
 
 def _normalized_final_result(state: dict[str, object], status: str) -> dict[str, object]:
