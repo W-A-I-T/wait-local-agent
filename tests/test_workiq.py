@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import cast
 
+import pytest
+
 from wait_local_agent.mcp_client import McpClientError, McpToolCallResult
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -10,6 +12,8 @@ from wait_local_agent.workiq import (
     MAX_WORKIQ_ENTITY_PATHS,
     MAX_WORKIQ_RESULT_BYTES,
     WorkIqClient,
+    WorkIqValidationError,
+    _validate_entity_path,
     classify_work_iq_operation,
 )
 
@@ -153,6 +157,20 @@ def test_workiq_validation_edges_and_configured_endpoint(settings) -> None:
     assert WorkIqClient(settings).fetch(["/admin/messages"]).status == "failed"
     assert WorkIqClient(settings).get_fetch_schema("relative").status == "failed"
     assert WorkIqClient(settings).get_fetch_schema("").status == "failed"
+
+
+def test_workiq_operation_classifier_and_path_validation_fail_closed(settings) -> None:
+    assert classify_work_iq_operation(None) == "unknown"
+    assert classify_work_iq_operation("do_action") == "action"
+    assert classify_work_iq_operation("fetch", resource_paths=[3]) == "unknown"
+    assert classify_work_iq_operation("fetch", resource_paths=[], operation="write") == "unknown"
+    assert classify_work_iq_operation("get_schema", resource_paths=3) == "unknown"
+    assert classify_work_iq_operation("get_schema", resource_paths="/admin/items") == "unknown"
+    client = WorkIqClient(settings, mcp_client=FakeMcpClient(_result({})))
+    assert client._read("create_entity", {"path": "/me/items"}).status == "failed"  # noqa: SLF001
+    for value in (None, "", "x" * 501, "https://graph.example/me/items", "/me/\x01items"):
+        with pytest.raises(WorkIqValidationError):
+            _validate_entity_path(value)  # type: ignore[arg-type]
 
 
 def test_workiq_smart_action_is_tenant_scoped_and_read_only(settings) -> None:

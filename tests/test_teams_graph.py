@@ -164,3 +164,28 @@ def test_teams_private_bounds_reject_unsafe_values() -> None:
     assert teams_module._payload_rows([]) == []
     assert teams_module._next_cursor({"@odata.nextLink": "https://graph.example/teams"}) == ""
     assert teams_module._string_value("not-an-object", "id") == ""
+
+
+def test_teams_health_and_write_guards_cover_blocked_and_ready_states(settings) -> None:
+    blocked_http = TeamsGraphClient(_configured(settings, allow_http_probing=False))
+    assert blocked_http.health().status == "blocked"
+    assert blocked_http.write_health().status == "blocked"
+    blocked_write = TeamsGraphClient(replace(_configured(settings), allow_write_actions=False))
+    assert blocked_write.write_health().status == "blocked"
+    with pytest.raises(teams_module.TeamsGraphReadError, match="blocked"):
+        blocked_http._get("me/joinedTeams", params={"$top": 1})  # noqa: SLF001
+    with pytest.raises(teams_module.TeamsGraphReadError, match="require"):
+        blocked_write._post("teams/team/channels/channel/messages", payload={})  # noqa: SLF001
+
+
+def test_teams_http_error_and_invalid_base_url_paths_are_bounded(settings) -> None:
+    def http_error(_: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("read failed")
+
+    client = TeamsGraphClient(_configured(settings), transport=httpx.MockTransport(http_error))
+    assert client.list_teams().result.status == "failed"
+    invalid_base = TeamsGraphClient(
+        replace(_configured(settings), m365_graph_base_url="https://user:pass@graph.example"),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"value": []})),
+    )
+    assert invalid_base.list_teams().result.status == "failed"

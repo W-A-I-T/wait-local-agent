@@ -1353,6 +1353,23 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert nested["token"] == "[redacted]"
     assert redacted["items"] == [{"bearer": "[redacted]"}]
 
+    assert app_module._safe_json_list('[{"id": 1}, "ignored", 3]') == [{"id": 1}]
+    assert app_module._safe_json_list("not-json") == []
+    assert app_module._safe_json_list('{"id": 1}') == []
+    assert app_module._safe_json_values('[{"id": 1}, 2]') == [{"id": 1}, 2]
+    assert app_module._safe_json_values("not-json") == []
+    assert app_module._safe_json_values('{"id": 1}') == []
+    assert app_module._redact_json_text('{"api_key": "secret", "ok": true}') == (
+        '{"api_key":"[redacted]","ok":true}'
+    )
+    assert app_module._redact_json_text("not-json") == "[redacted]"
+    assert app_module._safe_redacted_json_object('{"token": "secret"}') == {"token": "[redacted]"}
+    assert app_module._scheduled_ticket_id({"ticket_id": " TCK-1 "}) == " TCK-1 "
+    invalid_params: tuple[dict[str, object], ...] = ({}, {"ticket_id": " "}, {"ticket_id": 1})
+    for params in invalid_params:
+        with pytest.raises(HTTPException, match="include ticket_id"):
+            app_module._scheduled_ticket_id(params)
+
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
     secure_settings = settings.__class__(

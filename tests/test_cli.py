@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
@@ -32,6 +33,7 @@ from wait_local_agent.models import (
     HuduFolder,
 )
 from wait_local_agent.notion import NotionDataSource, NotionDataSourceResponse, NotionPage, NotionReadResponse
+from wait_local_agent.rbac import Role
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.servicenow import ServiceNowReadResponse
 from wait_local_agent.sharepoint import SharePointDocument, SharePointReadResponse
@@ -161,6 +163,39 @@ def test_microsoft_consultant_cli_rejects_malformed_sources(monkeypatch, tmp_pat
     for command in commands:
         result = runner.invoke(app, command)
         assert result.exit_code != 0, f"{command}: {result.output}"
+
+
+def test_cli_boundary_helpers_reject_bad_files_and_scope_tenants(tmp_path) -> None:
+    assert cli_module._load_json_config(None) == {}
+    config = tmp_path / "config.json"
+    config.write_text('{"enabled": true}', encoding="utf-8")
+    assert cli_module._load_json_config(config) == {"enabled": True}
+    config.write_text("[]", encoding="utf-8")
+    with pytest.raises(Exception, match="JSON object"):
+        cli_module._load_json_config(config)
+
+    payload = tmp_path / "payload.json"
+    payload.write_text('{"ticket_id": "TCK-1"}', encoding="utf-8")
+    assert cli_module._load_smart_action_payload(str(payload)) == {"ticket_id": "TCK-1"}
+    assert cli_module._load_smart_action_payload('{"ok": true}') == {"ok": True}
+    for value in ("not-json", "[]"):
+        with pytest.raises(Exception, match="payload must be"):
+            cli_module._load_smart_action_payload(value)
+
+    readable = tmp_path / "readable.json"
+    readable.write_text("{}", encoding="utf-8")
+    assert cli_module._load_openapi_definition(readable) == {}
+    readable.write_text("[]", encoding="utf-8")
+    with pytest.raises(Exception, match="JSON object"):
+        cli_module._load_openapi_definition(readable)
+    with pytest.raises(Exception, match="readable"):
+        cli_module._load_openapi_definition(tmp_path / "missing.json")
+
+    assert cli_module._cli_blueprint_client_scope(" acme ", Role.TECHNICIAN, None) == "acme"
+    assert cli_module._cli_blueprint_client_scope(None, Role.TECHNICIAN, None) is None
+    assert cli_module._cli_blueprint_client_scope("acme", Role.ADMIN, " beta ") == "beta"
+    with pytest.raises(Exception, match="outside authenticated scope"):
+        cli_module._cli_blueprint_client_scope("acme", Role.TECHNICIAN, "beta")
 
 
 def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:

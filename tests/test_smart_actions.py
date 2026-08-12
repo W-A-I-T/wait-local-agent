@@ -99,9 +99,16 @@ from wait_local_agent.smart_actions import (
     TicketSlaAssessmentAction,
     TicketSummaryAction,
     TicketTriageAction,
+    _effective_client_id,
     _json_list,
     _json_object,
+    _parse_ticket_timestamp,
+    _positive_thresholds,
+    _provider_id,
+    _provider_is_ai_assisted,
+    _require_action_role,
     _stored_action_status,
+    _workload_value,
 )
 from wait_local_agent.store import Store
 from wait_local_agent.teams_graph import (
@@ -1061,6 +1068,40 @@ def test_service_edge_guards_and_status_helpers(settings) -> None:
         SmartActionService(null_approval_store, settings).invoke(
             "dispatch-suggestion", {"ticket_id": "TCK-1001"}, "actor"
         )
+
+
+def test_smart_action_bound_helpers_cover_invalid_and_normalized_values(settings) -> None:
+    assert _positive_thresholds({" High ": 10}) == {"high": 10}
+    assert _positive_thresholds({"high": 0}) is None
+    assert _positive_thresholds({"high": True}) is None
+    assert _positive_thresholds({1: 10}) is None
+    assert _positive_thresholds([]) is None
+    assert _parse_ticket_timestamp("") is None
+    assert _parse_ticket_timestamp("not-a-date") is None
+    assert _parse_ticket_timestamp("2026-08-11T10:00:00") is not None
+    assert _parse_ticket_timestamp("2026-08-11T10:00:00Z") is not None
+    assert _workload_value({}) == 0.0
+    assert _workload_value({"workload": 2.5}) == 2.5
+
+    context = _action_context(Store(settings.data_path), settings)
+    assert _provider_id(context) == settings.local_model_provider.strip()
+    assert _provider_is_ai_assisted(context) is False
+    context.provider = object()
+    assert _provider_is_ai_assisted(context) is True
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values ('TCK-HELPER', 'Acme', 'Subject', 'Body', 'low', 'open', 'acme')
+            """
+        )
+    assert _effective_client_id(store, {"ticket_id": "TCK-HELPER"}, None) == "acme"
+    assert _effective_client_id(store, {"ticket_id": "missing"}, None) is None
+    assert _effective_client_id(store, {}, " beta ") == "beta"
+    with pytest.raises(PermissionError, match="technician"):
+        _require_action_role(TicketTriageAction().manifest, Role.VIEWER)
+    _require_action_role(TicketTriageAction().manifest, Role.TECHNICIAN)
 
 
 def test_registry_lists_all_seed_actions(settings) -> None:

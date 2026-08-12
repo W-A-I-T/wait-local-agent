@@ -11,6 +11,12 @@ from wait_local_agent.rbac import Role
 from wait_local_agent.store import Store
 from wait_local_agent.supervisor import (
     SupervisorPlanError,
+    _bounded_final_result,
+    _bounded_payload,
+    _dependency_order,
+    _identifier,
+    _scoped_definition,
+    _text,
     build_supervisor_delegation_plan,
     execute_supervisor_delegation,
 )
@@ -213,3 +219,38 @@ def test_supervisor_resumes_completed_run_and_rejects_malformed_or_foreign_state
             definitions=[child], agent_service=Runner(), store=store, actor="tech", actor_role=Role.TECHNICIAN,
             completed_run_ids=[12],
         )
+
+
+def test_supervisor_private_bounds_and_dependency_guards() -> None:
+    identity = _definition("identity")
+    dependent = replace(identity, id="dependent", depends_on_agent_ids=["identity"])
+    assert _dependency_order(["dependent", "identity"], {"identity": identity, "dependent": dependent}) == [
+        "identity",
+        "dependent",
+    ]
+    with pytest.raises(SupervisorPlanError, match="not found"):
+        _dependency_order(["missing"], {})
+    assert _scoped_definition(replace(identity, client_id=None), "acme").client_id == "acme"
+    with pytest.raises(SupervisorPlanError, match="outside"):
+        _scoped_definition(replace(identity, client_id="beta"), "acme")
+
+    assert _bounded_payload({"note": "token=secret"})["note"] == "token=[redacted]"
+    with pytest.raises(SupervisorPlanError, match="at most 16"):
+        _bounded_payload({str(index): index for index in range(17)})
+    with pytest.raises(SupervisorPlanError, match="field names"):
+        _bounded_payload({"": "value"})
+    with pytest.raises(SupervisorPlanError, match="JSON-compatible"):
+        _bounded_payload({"value": object()})
+    with pytest.raises(SupervisorPlanError, match="at most 16000"):
+        _bounded_payload({"value": "x" * 16_001})
+
+    assert _bounded_final_result("not-an-object") == {}
+    assert _bounded_final_result({"summary": "ok"}) == {"summary": "ok"}
+    assert _bounded_final_result({"value": object()}) == {"truncated": True}
+    assert _bounded_final_result({"value": "x" * 8_001}) == {"truncated": True}
+    with pytest.raises(SupervisorPlanError, match="identifier"):
+        _identifier("not valid", "agent_id")
+    with pytest.raises(SupervisorPlanError, match="non-empty"):
+        _text("", "task", 10)
+    with pytest.raises(SupervisorPlanError, match="control"):
+        _text("bad\nvalue", "task", 10)
