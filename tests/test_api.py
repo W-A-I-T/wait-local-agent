@@ -2200,6 +2200,80 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
     assert run.status_code == 403
 
 
+def test_template_gallery_workflow_design_round_trips_and_restores(settings) -> None:
+    client = TestClient(create_app(settings))
+    design = {
+        "format": "wait-local-agent.workflow-design",
+        "version": 1,
+        "nodes": [
+            {"id": "trigger", "type": "trigger", "label": "Ticket", "config": {}},
+            {"id": "action", "type": "action", "label": "Review", "config": {}},
+            {"id": "end", "type": "end", "label": "Done", "config": {}},
+        ],
+        "edges": [
+            {"from": "trigger", "to": "action"},
+            {"from": "action", "to": "end"},
+        ],
+    }
+    created = client.post(
+        "/workflow-templates/gallery",
+        json={
+            "source_template_id": "ticket-triage",
+            "provenance": "designer review",
+            "client_id": "acme",
+            "definition": design,
+        },
+    )
+    assert created.status_code == 200
+    created_definition = created.json()["definition"]
+    assert created_definition["format"] == design["format"]
+    assert created_definition["edges"] == design["edges"]
+    assert created_definition["nodes"][1]["label"] == "Review"
+
+    design_nodes = cast(list[dict[str, object]], design["nodes"])
+    updated_design = {
+        **design,
+        "nodes": [
+            *design_nodes[:-1],
+            {"id": "end", "type": "end", "label": "Complete", "config": {}},
+        ],
+    }
+    updated = client.patch(
+        f"/workflow-templates/gallery/{created.json()['id']}",
+        json={"definition": updated_design, "client_id": "acme"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["definition"]["nodes"][-1]["label"] == "Complete"
+
+    revisions = client.get(
+        f"/workflow-templates/gallery/{created.json()['id']}/revisions",
+        params={"client_id": "acme"},
+    )
+    assert revisions.status_code == 200
+    revision_definition = revisions.json()[0]["definition"]["definition"]
+    assert revision_definition["format"] == updated_design["format"]
+    assert revision_definition["nodes"][-1]["label"] == "Complete"
+
+    restored = client.post(
+        f"/workflow-templates/gallery/{created.json()['id']}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["definition"]["nodes"][1]["label"] == "Review"
+
+    invalid = client.patch(
+        f"/workflow-templates/gallery/{created.json()['id']}",
+        json={
+            "definition": {
+                **design,
+                "edges": [{"from": "trigger", "to": "action"}],
+            },
+            "client_id": "acme",
+        },
+    )
+    assert invalid.status_code == 422
+
+
 def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

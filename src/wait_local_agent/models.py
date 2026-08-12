@@ -420,6 +420,7 @@ class TemplateGalleryEntry:
     created_at: str
     updated_at: str
     client_id: str | None = None
+    definition_json: str = "{}"
 
 
 @dataclass(frozen=True)

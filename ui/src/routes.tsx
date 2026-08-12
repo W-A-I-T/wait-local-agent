@@ -13,6 +13,7 @@ import { Audit } from "./screens/Audit";
 import { Reports } from "./screens/Reports";
 import { ScheduledJobs } from "./screens/ScheduledJobs";
 import { Workflows } from "./screens/Workflows";
+import { WorkflowDesigner } from "./screens/WorkflowDesigner";
 import { Tickets } from "./screens/Tickets";
 import { Templates } from "./screens/Templates";
 import { Settings } from "./screens/Settings";
@@ -25,6 +26,7 @@ export function AppRoutes() {
       <Route path="connectors" element={<Connectors />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
+      <Route path="workflow-designer" element={<WorkflowDesigner />} />
       <Route path="templates" element={<Templates />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />

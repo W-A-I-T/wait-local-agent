@@ -54,6 +54,7 @@ from wait_local_agent.models import (
     WorkflowTemplate,
     utc_now,
 )
+from wait_local_agent.workflow_designer import normalize_workflow_design
 
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
@@ -636,6 +637,7 @@ class Store:
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
             self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
             self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
+            self._ensure_column(connection, "template_gallery_entries", "definition_json", "text not null default '{}'")
             self._backfill_template_gallery_revisions(connection)
             connection.execute(
                 """
@@ -1095,6 +1097,7 @@ class Store:
                         description=_redact_text(str(row["description"])),
                         instructions=_redact_text(str(row["instructions"])),
                         enabled=bool(row["enabled"]),
+                        definition_json=str(row["definition_json"]),
                     ),
                     str(row["created_at"]),
                     _normalize_client_id(row["client_id"]),
@@ -2843,6 +2846,7 @@ class Store:
         instructions: str = "",
         description: str | None = None,
         enabled: bool = True,
+        definition: dict[str, object] | None = None,
     ) -> TemplateGalleryEntry:
         entry_id = f"gallery-{uuid.uuid4().hex}"
         now = utc_now()
@@ -2856,14 +2860,15 @@ class Store:
         )
         safe_instructions = _gallery_text(instructions, field="instructions", limit=4000, allow_empty=True)
         safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
+        safe_definition = _workflow_definition_json(definition)
         with self._connect() as connection:
             connection.execute(
                 """
                 insert into template_gallery_entries
                   (id, source_template_id, name, trigger, description, action_type,
                    approval_required, risk_level, preview_fields_json, provenance,
-                   instructions, enabled, version, created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   instructions, enabled, definition_json, version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
@@ -2878,6 +2883,7 @@ class Store:
                     safe_provenance,
                     safe_instructions,
                     int(enabled),
+                    safe_definition,
                     1,
                     now,
                     now,
@@ -2893,6 +2899,7 @@ class Store:
                     description=safe_description,
                     instructions=safe_instructions,
                     enabled=bool(enabled),
+                    definition_json=safe_definition,
                 ),
                 now,
                 normalized_client_id,
@@ -2917,6 +2924,7 @@ class Store:
         description: str | None = None,
         instructions: str | None = None,
         enabled: bool | None = None,
+        definition: dict[str, object] | None = None,
         client_id: str | None = None,
     ) -> TemplateGalleryEntry:
         existing = self.get_template_gallery_entry(entry_id, client_id)
@@ -2938,11 +2946,13 @@ class Store:
             else existing.instructions
         )
         next_enabled = existing.enabled if enabled is None else bool(enabled)
+        next_definition = existing.definition_json if definition is None else _workflow_definition_json(definition)
         if (
             next_name == existing.name
             and next_description == existing.description
             and next_instructions == existing.instructions
             and next_enabled == existing.enabled
+            and next_definition == existing.definition_json
         ):
             return existing
         next_version = existing.version + 1
@@ -2952,7 +2962,7 @@ class Store:
             cursor = connection.execute(
                 """
                 update template_gallery_entries
-                set name = ?, description = ?, instructions = ?, enabled = ?,
+                set name = ?, description = ?, instructions = ?, enabled = ?, definition_json = ?,
                     version = ?, updated_at = ?
                 where id = ?
                 """,
@@ -2961,6 +2971,7 @@ class Store:
                     next_description,
                     next_instructions,
                     int(next_enabled),
+                    next_definition,
                     next_version,
                     now,
                     entry_id,
@@ -2977,6 +2988,7 @@ class Store:
                     description=next_description,
                     instructions=next_instructions,
                     enabled=next_enabled,
+                    definition_json=next_definition,
                 ),
                 now,
                 normalized_client_id,
@@ -3104,12 +3116,20 @@ class Store:
             raise KeyError(f"{entry_id}:{version}")
         definition = _json_object_or_empty(revision.definition_json)
         enabled_value = definition.get("enabled")
+        workflow_definition = definition.get("definition")
+        safe_workflow_definition = (
+            workflow_definition
+            if isinstance(workflow_definition, dict)
+            and workflow_definition.get("format") == "wait-local-agent.workflow-design"
+            else None
+        )
         return self.update_template_gallery_entry(
             entry_id,
             name=_gallery_string_or_none(definition.get("name")),
             description=_gallery_string_or_none(definition.get("description")),
             instructions=_gallery_string_or_none(definition.get("instructions")),
             enabled=enabled_value if isinstance(enabled_value, bool) else None,
+            definition=safe_workflow_definition,
             client_id=existing.client_id,
         )
 
@@ -6170,6 +6190,7 @@ def _template_gallery_entry_from_row(row: sqlite3.Row) -> TemplateGalleryEntry:
     payload["preview_fields_json"] = _redact_json_text(str(payload["preview_fields_json"]))
     payload["provenance"] = _redact_text(str(payload["provenance"]))
     payload["instructions"] = _redact_text(str(payload["instructions"]))
+    payload["definition_json"] = _redact_json_text(str(payload.get("definition_json", "{}")))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return TemplateGalleryEntry(**payload)
 
@@ -6187,6 +6208,7 @@ def _template_gallery_definition_json(
     description: str,
     instructions: str,
     enabled: bool,
+    definition_json: str = "{}",
 ) -> str:
     return _json_dumps_value(
         {
@@ -6194,8 +6216,15 @@ def _template_gallery_definition_json(
             "description": description,
             "instructions": instructions,
             "enabled": enabled,
+            "definition": _json_object_or_empty(definition_json),
         }
     )
+
+
+def _workflow_definition_json(definition: dict[str, object] | None) -> str:
+    if definition is None:
+        return "{}"
+    return _json_dumps_value(normalize_workflow_design(definition))
 
 
 def _gallery_text(
