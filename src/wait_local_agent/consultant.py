@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import uuid4
 
-from wait_local_agent.models import BlueprintAgent, BlueprintWorkflow, SolutionBlueprint
+from wait_local_agent.models import (
+    BlueprintAgent,
+    BlueprintWorkflow,
+    SolutionBlueprint,
+    WorkflowTemplate,
+)
 
 BlueprintRisk = Literal["low", "medium", "high"]
 
@@ -42,6 +48,158 @@ _TOP_LEVEL_FIELDS = {
 
 class BlueprintValidationError(ValueError):
     """Raised when an offline solution blueprint is not structurally safe."""
+
+
+def architect_solution_blueprint(
+    blueprint: SolutionBlueprint,
+    *,
+    available_tool_ids: Iterable[str],
+    workflow_templates: Iterable[WorkflowTemplate],
+) -> dict[str, object]:
+    """Resolve a blueprint against existing local catalogs without side effects.
+
+    This is deliberately an inspectable architecture view, not a deployment or
+    execution operation. Anything that cannot be resolved from the local tool
+    and workflow catalogs remains an explicit review item.
+    """
+
+    tool_ids = set(_ordered_unique(item.strip() for item in available_tool_ids if item.strip()))
+    templates = {template.id: template for template in workflow_templates}
+    open_items: list[dict[str, str]] = []
+    components: list[dict[str, object]] = []
+
+    for agent in blueprint.agents:
+        requested = list(_ordered_unique(agent.tools))
+        resolved = [tool_id for tool_id in requested if tool_id in tool_ids]
+        unresolved = [tool_id for tool_id in requested if tool_id not in tool_ids]
+        for tool_id in unresolved:
+            open_items.append(
+                {
+                    "kind": "tool",
+                    "component_id": agent.id,
+                    "detail": f"tool '{tool_id}' is not in the local smart-action catalog",
+                }
+            )
+        components.append(
+            {
+                "id": agent.id,
+                "kind": "agent",
+                "name": agent.name,
+                "purpose": agent.purpose,
+                "implementation": "existing_agent_runtime",
+                "requested_tool_ids": requested,
+                "resolved_tool_ids": resolved,
+                "unresolved_tool_ids": unresolved,
+                "knowledge_references": list(agent.knowledge),
+                "status": "ready" if not unresolved else "needs_review",
+            }
+        )
+
+    for workflow in blueprint.workflows:
+        template = templates.get(workflow.id)
+        if template is None:
+            open_items.append(
+                {
+                    "kind": "workflow_template",
+                    "component_id": workflow.id,
+                    "detail": "workflow id has no exact match in the local template catalog",
+                }
+            )
+        template_view = (
+            {
+                "id": template.id,
+                "name": template.name,
+                "trigger": template.trigger,
+                "approval_required": template.approval_required,
+                "risk_level": template.risk_level,
+                "tool_id": template.tool_id,
+            }
+            if template is not None
+            else None
+        )
+        components.append(
+            {
+                "id": workflow.id,
+                "kind": "workflow",
+                "name": workflow.name,
+                "trigger": workflow.trigger,
+                "steps": list(workflow.steps),
+                "implementation": "existing_workflow_template" if template else "design_only",
+                "template": template_view,
+                "status": "ready" if template else "needs_review",
+            }
+        )
+
+    for name in blueprint.knowledge:
+        open_items.append(
+            {
+                "kind": "knowledge_source",
+                "component_id": name,
+                "detail": "source binding is not inferred from a display name",
+            }
+        )
+        components.append(
+            {
+                "id": name,
+                "kind": "knowledge_source",
+                "name": name,
+                "implementation": "local_knowledge_or_external_source",
+                "status": "needs_review",
+            }
+        )
+
+    for name in blueprint.systems:
+        open_items.append(
+            {
+                "kind": "system_connector",
+                "component_id": name,
+                "detail": "connector selection and configuration are not inferred",
+            }
+        )
+        components.append(
+            {
+                "id": name,
+                "kind": "system_connector",
+                "name": name,
+                "implementation": "existing_connector_or_mcp_boundary",
+                "status": "needs_review",
+            }
+        )
+
+    supported_surfaces = {"api", "cli", "agents", "mcp", "local"}
+    for target in blueprint.deployment:
+        normalized_target = target.casefold()
+        supported = normalized_target in supported_surfaces
+        if not supported:
+            open_items.append(
+                {
+                    "kind": "deployment",
+                    "component_id": target,
+                    "detail": "deployment target is recorded but not provisioned by this local runtime",
+                }
+            )
+        components.append(
+            {
+                "id": target,
+                "kind": "deployment",
+                "name": target,
+                "implementation": "existing_local_surface" if supported else "requested_only",
+                "status": "ready" if supported else "needs_review",
+            }
+        )
+
+    return {
+        "blueprint_id": blueprint.id,
+        "client_id": blueprint.client_id,
+        "solution": {"name": blueprint.solution_name},
+        "risk": blueprint.risk,
+        "approval_policy": dict(blueprint.approvals),
+        "components": components,
+        "open_items": open_items,
+        "readiness": "ready" if not open_items else "needs_review",
+        "execution_started": False,
+        "deployment_started": False,
+    }
 
 
 def parse_solution_blueprint(
@@ -139,6 +297,16 @@ def blueprint_view(blueprint: SolutionBlueprint) -> dict[str, object]:
         "updated_at": blueprint.updated_at,
         **blueprint_payload(blueprint),
     }
+
+
+def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return tuple(result)
 
 
 def _object(value: object, field: str) -> dict[str, object]:

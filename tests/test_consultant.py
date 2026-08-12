@@ -8,11 +8,13 @@ import pytest
 
 from wait_local_agent.consultant import (
     BlueprintValidationError,
+    architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.workflows import list_workflow_templates
 
 
 def _payload() -> dict[str, object]:
@@ -169,6 +171,65 @@ def test_blueprint_view_includes_identity_and_payload() -> None:
 
     assert view["id"] == blueprint.id
     assert view["solution"] == {"name": blueprint.solution_name}
+
+
+def test_architect_resolves_existing_catalogs_and_reports_open_items() -> None:
+    payload = _payload()
+    payload["agents"][0]["tools"] = ["knowledge.search", "ticket-triage"]
+    payload["workflows"][0]["id"] = "ticket-triage"
+    payload["deployment"] = ["local", "Teams"]
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=["ticket-triage", "ticket-triage"],
+        workflow_templates=list_workflow_templates(),
+    )
+
+    assert architecture["client_id"] == "acme"
+    assert architecture["readiness"] == "needs_review"
+    assert architecture["execution_started"] is False
+    assert architecture["deployment_started"] is False
+    agent = next(item for item in architecture["components"] if item["kind"] == "agent")
+    assert agent["resolved_tool_ids"] == ["ticket-triage"]
+    assert agent["unresolved_tool_ids"] == ["knowledge.search"]
+    workflow = next(item for item in architecture["components"] if item["kind"] == "workflow")
+    assert workflow["implementation"] == "existing_workflow_template"
+    assert any(item["kind"] == "system_connector" for item in architecture["components"])
+    assert any(item["component_id"] == "Teams" for item in architecture["open_items"])
+
+    unresolved = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+    assert any(
+        item["kind"] == "workflow_template" and item["component_id"] == "ticket-triage"
+        for item in unresolved["open_items"]
+    )
+
+
+def test_architect_can_be_ready_for_empty_local_design() -> None:
+    payload = _payload()
+    payload.update(
+        {
+            "knowledge": [],
+            "systems": [],
+            "agents": [],
+            "workflows": [],
+            "deployment": ["local", "api", "cli", "agents", "mcp"],
+        }
+    )
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    assert architecture["readiness"] == "ready"
+    assert architecture["open_items"] == []
 
 
 def test_blueprint_store_rejects_malformed_legacy_row(tmp_path) -> None:

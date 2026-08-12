@@ -82,7 +82,12 @@ from wait_local_agent.connectors import (
     validate_connector_credentials,
 )
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
-from wait_local_agent.consultant import BlueprintValidationError, blueprint_view, parse_solution_blueprint
+from wait_local_agent.consultant import (
+    BlueprintValidationError,
+    architect_solution_blueprint,
+    blueprint_view,
+    parse_solution_blueprint,
+)
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -2302,7 +2307,12 @@ def import_workflow_gallery(
     ):
         raise typer.BadParameter("unsupported template artifact", param_hint="artifact_path")
     source_template_id = artifact.get("source_template_id")
-    if not isinstance(source_template_id, str) or get_workflow_template(source_template_id) is None:
+    template = (
+        get_workflow_template(source_template_id)
+        if isinstance(source_template_id, str)
+        else None
+    )
+    if template is None:
         raise typer.BadParameter("workflow template source is unavailable", param_hint="artifact_path")
     name = artifact.get("name")
     description = artifact.get("description")
@@ -2315,7 +2325,7 @@ def import_workflow_gallery(
     provenance = cast(str, provenance)
     instructions = cast(str, instructions)
     entry = _store().create_template_gallery_entry(
-        get_workflow_template(source_template_id),  # type: ignore[arg-type]
+        template,
         provenance=provenance,
         client_id=client_id,
         name=name,
@@ -2571,6 +2581,29 @@ def show_solution_blueprint(
     if blueprint is None:
         raise typer.BadParameter("solution blueprint not found")
     typer.echo(json.dumps(blueprint_view(blueprint), sort_keys=True, indent=2))
+
+
+@blueprints_app.command("architect")
+def architect_solution_blueprint_command(
+    blueprint_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.VIEWER)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, None)
+    if scoped_client_id is None and context.role < Role.ADMIN:
+        raise typer.BadParameter("a tenant client_id is required")
+    store = Store(settings.data_path)
+    blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+    if blueprint is None:
+        raise typer.BadParameter("solution blueprint not found")
+    agent_service = AgentService(store, settings, SmartActionService(store, settings))
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=(tool.id for tool in agent_service.list_tools()),
+        workflow_templates=list_workflow_templates(),
+    )
+    typer.echo(json.dumps(architecture, sort_keys=True, indent=2))
 
 
 @workflows_app.command("compare-runs")

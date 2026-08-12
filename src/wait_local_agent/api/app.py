@@ -88,6 +88,7 @@ from wait_local_agent.connectors import (
 from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
 from wait_local_agent.consultant import (
     BlueprintValidationError,
+    architect_solution_blueprint,
     blueprint_view,
     parse_solution_blueprint,
 )
@@ -3926,6 +3927,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             blueprint_view(blueprint)
             for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)
         ]
+
+    @app.get("/consultant/blueprints/{blueprint_id}/architecture")
+    def consultant_blueprint_architecture(
+        blueprint_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+        return architect_solution_blueprint(
+            blueprint,
+            available_tool_ids=(tool.id for tool in agent_service.list_tools()),
+            workflow_templates=list_workflow_templates(),
+        )
 
     @app.get("/consultant/blueprints/{blueprint_id}")
     def consultant_blueprint_detail(

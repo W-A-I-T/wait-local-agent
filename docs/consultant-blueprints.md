@@ -13,6 +13,7 @@ The API exposes the artifact through authenticated routes:
 POST /consultant/blueprints
 GET  /consultant/blueprints
 GET  /consultant/blueprints/{blueprint_id}
+GET  /consultant/blueprints/{blueprint_id}/architecture
 ```
 
 Technicians can create a blueprint and viewers can inspect it. Every record is
@@ -26,6 +27,7 @@ The CLI accepts the same bounded structure as a JSON file:
 wait-local-agent consultant blueprints create blueprint.json --client-id acme
 wait-local-agent consultant blueprints list --client-id acme
 wait-local-agent consultant blueprints show bp_<id>
+wait-local-agent consultant blueprints architect bp_<id>
 ```
 
 Blueprint validation is deterministic and rejects unknown fields, unbounded
@@ -36,3 +38,10 @@ when the JSON payload is persisted or exported, so secret-like text in valid
 free-text fields may be redacted. Natural-language discovery, Microsoft Graph,
 Copilot Studio, MCP, Power Platform packaging, deployment, and execution are
 follow-up capabilities and are not implied by a stored blueprint.
+
+The `architecture` view is the next governed design step. It resolves requested
+agent tools and workflow IDs against the existing local smart-action and
+workflow-template catalogs. Knowledge sources, external systems, and deployment
+targets remain explicit review items unless they are a supported local surface
+(`local`, `api`, `cli`, `agents`, or `mcp`). The response reports `ready` or
+`needs_review` and always states that execution and deployment have not started.

@@ -5286,6 +5286,10 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         f"/consultant/blueprints/{created.json()['id']}",
         headers=_auth("viewer-token"),
     )
+    viewer_architecture = client.get(
+        f"/consultant/blueprints/{created.json()['id']}/architecture",
+        headers=_auth("viewer-token"),
+    )
     admin_create = client.post(
         "/consultant/blueprints",
         headers=_auth("admin-token"),
@@ -5312,6 +5316,9 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert foreign_create.status_code == 403
     assert [item["client_id"] for item in viewer_list.json()] == ["acme"]
     assert viewer_detail.status_code == 200
+    assert viewer_architecture.status_code == 200
+    assert viewer_architecture.json()["readiness"] == "needs_review"
+    assert viewer_architecture.json()["execution_started"] is False
     assert admin_create.status_code == 201
     assert [item["client_id"] for item in admin_beta.json()] == ["beta"]
     assert foreign_detail.status_code == 404
