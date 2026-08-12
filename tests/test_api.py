@@ -5630,6 +5630,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert viewer_architecture.status_code == 200
     assert viewer_architecture.json()["readiness"] == "needs_review"
     assert viewer_architecture.json()["execution_started"] is False
+    assert viewer_architecture.json()["decision_engine"]["execution_started"] is False
+    assert viewer_architecture.json()["decisions"]
     assert connector_validation.status_code == 200
     assert connector_validation.json()["valid"] is True
     assert connector_generation.json()["credentials_included"] is False

@@ -16,6 +16,11 @@ local connector configuration without probing providers; configured,
 not-configured, detected, permission-limited, and unknown states remain
 explicit and flow into blueprint candidates and architecture review.
 
+Architecture projections now include deterministic per-component decisions.
+They select only existing local/runtime boundaries, retain alternatives and
+dependencies, and report unknown permissions, licenses, data movement, and
+provider evidence as review gaps rather than inferred facts.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

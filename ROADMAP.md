@@ -53,6 +53,10 @@ credential or undocumented vendor API remains an explicit boundary.
   existing connector catalog, preserves configured/detected/
   permission-limited/not-configured/unknown states, and carries evidence into
   the blueprint candidate and architecture review.
+- Deterministic architecture decisions for blueprint components, with explicit
+  targets, alternatives, dependencies, permissions, licenses, read/write and
+  approval boundaries, risk, data movement, complexity, reversibility, tests,
+  deployment requirements, and evidence gaps.
 - Reviewable Power Apps, Power Automate, connector, deployment, and delivery
   artifacts that preserve the distinction between plan, generate, validate,
   package, and deploy.
@@ -62,11 +66,6 @@ credential or undocumented vendor API remains an explicit boundary.
 - Conversational discovery that asks only unresolved questions and records
   missing information instead of inferring systems, licenses, permissions, or
   deployment targets.
-- Governed environment discovery with explicit configured/detected/reachable/
-  authenticated/authorized/permission-limited/unavailable/unknown states.
-- Architecture decisions that record alternatives, dependencies, permissions,
-  licenses, data movement, risk, complexity, reversibility, tests, deployment
-  gates, and evidence requirements.
 - A verified flagship employee-onboarding fixture that demonstrates local
   fixture mode, artifact generation, provider execution, approvals, evaluation,
   and deployment as distinct states.
