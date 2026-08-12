@@ -17,6 +17,9 @@ approval must be same-tenant, approved, successfully executed, and match the
 submitted package digest; live provider verification and rollback execution
 remain unsupported boundaries.
 
+The repository-wide requirement-to-evidence and release-risk index is
+[`docs/enterprise-validation-matrix.md`](enterprise-validation-matrix.md).
+
 Tenant-scoped environment discovery matches explicit system declarations to
 local connector configuration without probing providers; configured,
 not-configured, detected, permission-limited, and unknown states remain
