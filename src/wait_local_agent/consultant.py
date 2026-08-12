@@ -195,10 +195,33 @@ def architect_solution_blueprint(
         "risk": blueprint.risk,
         "approval_policy": dict(blueprint.approvals),
         "components": components,
+        "supervisor": _supervisor_plan(blueprint),
         "open_items": open_items,
         "readiness": "ready" if not open_items else "needs_review",
         "execution_started": False,
         "deployment_started": False,
+    }
+
+
+def _supervisor_plan(blueprint: SolutionBlueprint) -> dict[str, object]:
+    """Describe bounded child-agent delegation without creating agent records."""
+
+    children = [
+        {
+            "id": agent.id,
+            "kind": "child_agent" if len(blueprint.agents) > 1 else "agent",
+            "purpose": agent.purpose,
+            "tool_ids": list(agent.tools),
+            "knowledge_references": list(agent.knowledge),
+            "context_policy": "tenant_scoped_structured_result_only",
+        }
+        for agent in blueprint.agents
+    ]
+    return {
+        "mode": "supervisor" if len(children) > 1 else "single_agent",
+        "children": children,
+        "context_policy": "pass only bounded structured results within the blueprint tenant",
+        "execution_started": False,
     }
 
 

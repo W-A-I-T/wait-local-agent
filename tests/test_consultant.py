@@ -190,6 +190,7 @@ def test_architect_resolves_existing_catalogs_and_reports_open_items() -> None:
     assert architecture["readiness"] == "needs_review"
     assert architecture["execution_started"] is False
     assert architecture["deployment_started"] is False
+    assert architecture["supervisor"]["mode"] == "single_agent"
     agent = next(item for item in architecture["components"] if item["kind"] == "agent")
     assert agent["resolved_tool_ids"] == ["ticket-triage"]
     assert agent["unresolved_tool_ids"] == ["knowledge.search"]
@@ -230,6 +231,35 @@ def test_architect_can_be_ready_for_empty_local_design() -> None:
 
     assert architecture["readiness"] == "ready"
     assert architecture["open_items"] == []
+
+
+def test_architect_describes_multi_agent_supervisor_boundary() -> None:
+    payload = _payload()
+    payload["agents"].append(
+        {
+            "id": "security-reviewer",
+            "name": "Security reviewer",
+            "purpose": "Review onboarding risk",
+            "tools": [],
+            "knowledge": ["Employee Handbook"],
+        }
+    )
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    supervisor = architecture["supervisor"]
+    assert supervisor["mode"] == "supervisor"
+    assert [child["kind"] for child in supervisor["children"]] == ["child_agent", "child_agent"]
+    assert all(
+        child["context_policy"] == "tenant_scoped_structured_result_only"
+        for child in supervisor["children"]
+    )
+    assert supervisor["execution_started"] is False
 
 
 def test_blueprint_store_rejects_malformed_legacy_row(tmp_path) -> None:
