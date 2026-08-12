@@ -657,6 +657,49 @@ def parse_solution_blueprint(
     )
 
 
+def promote_discovery_candidate(
+    candidate: Mapping[str, object],
+    *,
+    client_id: str,
+    solution_name: str,
+    risk: str,
+    created_by: str,
+) -> SolutionBlueprint:
+    """Persist a blueprint-shaped discovery candidate after explicit review.
+
+    Discovery labels are evidence, not identifiers. Approval labels such as
+    ``Assign license`` are converted to bounded blueprint identifiers while
+    the original label remains in the stored discovery evidence. The caller
+    must provide the solution name and risk; neither is inferred here.
+    """
+
+    payload = dict(candidate)
+    payload["solution"] = {"name": solution_name}
+    payload["risk"] = risk
+    raw_approvals = payload.get("approvals")
+    if not isinstance(raw_approvals, Mapping):
+        raise BlueprintValidationError("discovery candidate approvals must be an object")
+    approvals: dict[str, object] = {}
+    for raw_action, approver in raw_approvals.items():
+        if not isinstance(raw_action, str):
+            raise BlueprintValidationError("approval action must be text")
+        raw_action_text = _text(raw_action, "approval action")
+        if _has_forbidden_key(raw_action_text):
+            raise BlueprintValidationError("approval action contains secret material")
+        normalized_action = re.sub(r"[^a-z0-9_.:-]+", "_", raw_action_text.casefold()).strip("_")
+        if not normalized_action or not re.match(r"^[a-z0-9]", normalized_action):
+            raise BlueprintValidationError("approval action must contain a usable identifier")
+        if normalized_action in approvals:
+            raise BlueprintValidationError(f"approval action identifiers collide: {normalized_action}")
+        approvals[normalized_action] = approver
+    payload["approvals"] = approvals
+    return parse_solution_blueprint(
+        payload,
+        client_id=client_id,
+        created_by=created_by,
+    )
+
+
 def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, Any]:
     payload: dict[str, object] = {
         "solution": {"name": blueprint.solution_name},

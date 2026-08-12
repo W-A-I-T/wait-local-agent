@@ -92,6 +92,7 @@ from wait_local_agent.consultant import (
     architect_solution_blueprint,
     blueprint_view,
     parse_solution_blueprint,
+    promote_discovery_candidate,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
@@ -481,6 +482,15 @@ class PowerAutomatePlanRequest(BaseModel):
 class DiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoveryBlueprintPromotionRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=240)
+    risk: Literal["low", "medium", "high"]
+    answers: dict[str, object] = Field(default_factory=dict, max_length=28)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4233,6 +4243,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return _consultant_discovery_result(scoped_client_id, payload.answers)
         except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/discovery/promote", status_code=201)
+    def consultant_discovery_promote(
+        payload: DiscoveryBlueprintPromotionRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            discovery = _consultant_discovery_result(scoped_client_id, payload.answers)
+            missing = cast(list[object], discovery["missing_required"])
+            if missing:
+                fields = ", ".join(str(item) for item in missing)
+                raise DiscoveryValidationError(f"discovery is missing required answers: {fields}")
+            candidate = discovery.get("blueprint_candidate")
+            if not isinstance(candidate, dict):
+                raise DiscoveryValidationError("discovery blueprint candidate is invalid")
+            blueprint = promote_discovery_candidate(
+                candidate,
+                client_id=scoped_client_id,
+                solution_name=payload.solution_name,
+                risk=payload.risk,
+                created_by=context.approver_id or "api",
+            )
+            persisted = store.create_solution_blueprint(blueprint)
+            return {
+                "blueprint": blueprint_view(persisted),
+                "discovery": discovery,
+                "execution_started": False,
+                "deployment_started": False,
+            }
+        except (BlueprintValidationError, DiscoveryValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/consultant/discovery/sessions")

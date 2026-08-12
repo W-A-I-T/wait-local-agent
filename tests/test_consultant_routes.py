@@ -12,6 +12,7 @@ from starlette.requests import Request
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
+    DiscoveryBlueprintPromotionRequest,
     DiscoveryRequest,
     DiscoverySessionStartRequest,
     DiscoveryTurnRequest,
@@ -284,6 +285,69 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     assert approval_result["approval"]["status"] == "pending"
     assert approval_result["approval"]["can_execute"] is False
     assert approval_result["plan"]["deployment_started"] is False
+
+
+def test_discovery_promotion_persists_blueprint_without_starting_execution(settings) -> None:
+    result = _endpoint(settings, "/consultant/discovery/promote")(
+        DiscoveryBlueprintPromotionRequest(
+            client_id="acme",
+            solution_name="Employee onboarding review",
+            risk="high",
+            answers={
+                "solution_name": "Employee onboarding",
+                "business_goal": "Reduce manual onboarding work",
+                "users": ["HR", "IT"],
+                "knowledge": ["SharePoint HR policies"],
+                "systems": ["Microsoft Entra", "Teams"],
+                "reads": ["Employee record", "HR policy"],
+                "changes": ["Create user", "Assign license"],
+                "approvals": ["Assign license"],
+                "failure_handling": "Pause and create an approval review",
+                "licenses": ["Microsoft 365 E3"],
+                "data_location": ["Tenant SharePoint"],
+                "data_leaves_tenant": False,
+            },
+        ),
+        _technician(),
+    )
+
+    assert result["blueprint"]["client_id"] == "acme"
+    assert result["blueprint"]["solution"] == {"name": "Employee onboarding review"}
+    assert result["blueprint"]["risk"] == "high"
+    assert result["blueprint"]["approvals"] == {"assign_license": "human_review_required"}
+    assert result["discovery"]["blueprint_candidate"]["approvals"] == {
+        "Assign license": "human_review_required"
+    }
+    assert result["execution_started"] is False
+    assert result["deployment_started"] is False
+    persisted = Store(settings.data_path).list_solution_blueprints(client_id="acme")
+    assert any(item.solution_name == "Employee onboarding review" for item in persisted)
+
+
+def test_discovery_promotion_requires_complete_answers_and_tenant_scope(settings) -> None:
+    with pytest.raises(HTTPException) as incomplete:
+        _endpoint(settings, "/consultant/discovery/promote")(
+            DiscoveryBlueprintPromotionRequest(
+                client_id="acme",
+                solution_name="Onboarding",
+                risk="medium",
+                answers={"business_goal": "Review onboarding"},
+            ),
+            _technician(),
+        )
+    assert incomplete.value.status_code == 422
+
+    with pytest.raises(HTTPException) as foreign:
+        _endpoint(settings, "/consultant/discovery/promote")(
+            DiscoveryBlueprintPromotionRequest(
+                client_id="beta",
+                solution_name="Onboarding",
+                risk="medium",
+                answers={},
+            ),
+            _technician("acme"),
+        )
+    assert foreign.value.status_code == 403
 
 
 def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None:

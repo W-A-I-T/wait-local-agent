@@ -13,7 +13,9 @@ from wait_local_agent.consultant import (
     blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
+    promote_discovery_candidate,
 )
+from wait_local_agent.discovery import build_solution_discovery
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import list_workflow_templates
 
@@ -98,6 +100,57 @@ def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets()
         parse_solution_blueprint(
             {**_payload(), "discovery": {"business_goal": "token=secret"}},
             client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_discovery_candidate_promotion_normalizes_labels_and_preserves_evidence() -> None:
+    answers = {
+        "solution_name": "Employee onboarding",
+        "business_goal": "Reduce manual onboarding work",
+        "users": ["HR", "IT"],
+        "knowledge": ["SharePoint HR policies"],
+        "systems": ["Microsoft Entra", "Teams"],
+        "reads": ["Employee record", "HR policy"],
+        "changes": ["Create user", "Assign license"],
+        "approvals": ["Assign license"],
+        "failure_handling": "Pause and create an approval review",
+        "licenses": ["Microsoft 365 E3"],
+        "data_location": ["Tenant SharePoint"],
+        "data_leaves_tenant": False,
+    }
+    candidate = build_solution_discovery(client_id="acme", answers=answers)["blueprint_candidate"]
+
+    blueprint = promote_discovery_candidate(
+        candidate,
+        client_id="acme",
+        solution_name="Employee onboarding review",
+        risk="high",
+        created_by="architect",
+    )
+
+    assert blueprint.solution_name == "Employee onboarding review"
+    assert blueprint.risk == "high"
+    assert blueprint.approvals == {"assign_license": "human_review_required"}
+    assert blueprint.discovery["approvals"] == ["Assign license"]
+
+
+@pytest.mark.parametrize(
+    ("raw_action", "message"),
+    [
+        ("api_key", "secret material"),
+        ("!!!", "usable identifier"),
+        ("Assign\u0000license", "unsupported control characters"),
+    ],
+)
+def test_discovery_candidate_promotion_rejects_unsafe_approval_labels(raw_action: str, message: str) -> None:
+    candidate = {**_payload(), "approvals": {raw_action: "HR"}}
+    with pytest.raises(BlueprintValidationError, match=message):
+        promote_discovery_candidate(
+            candidate,
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
             created_by="architect",
         )
 

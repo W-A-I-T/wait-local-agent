@@ -321,6 +321,13 @@ export type ConsultantDiscoveryResult = {
   deployment_started: boolean;
 };
 
+export type ConsultantBlueprintPromotionResult = {
+  blueprint: ConsultantBlueprint;
+  discovery: ConsultantDiscoveryResult;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
 export type ConsultantDiscoveryQuestion = {
   id: string;
   prompt: string;

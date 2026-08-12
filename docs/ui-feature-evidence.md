@@ -21,7 +21,7 @@ visible here instead of being presented as a completed UI feature.
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
 | `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render; import control is enabled only after a JSON artifact is selected and imports a disabled local copy for review |
-| `/consultant` | Tenant-scoped blueprint review, explicit discovery intake, guided discovery, workflow design, and review-only Power Platform artifacts | `/consultant/*` | Chromium evidence on 2026-08-12 loaded a synthetic local blueprint, exercised incomplete discovery, guided-session validation and continuation, Power Automate planning, Power Apps artifact build, and malformed JSON recovery; external execution/deployment remains unavailable |
+| `/consultant` | Tenant-scoped blueprint review, explicit discovery intake and promotion, guided discovery, workflow design, and review-only Power Platform artifacts | `/consultant/*` | Chromium evidence on 2026-08-12 loaded a synthetic local blueprint, exercised incomplete discovery, guided-session validation and continuation, Power Automate planning, Power Apps artifact build, and malformed JSON recovery; focused UI/API regression coverage now verifies complete discovery can persist a named, risk-reviewed blueprint without execution or deployment; external execution/deployment remains unavailable |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
@@ -106,6 +106,14 @@ unverifiable product claim.
   success. The browser initially exposed two wiring defects (tenant omitted
   from guided turns and hyphenated blueprint IDs rejected by the Power
   Automate contract); both were fixed and replayed with zero console errors.
+- Current discovery promotion slice: complete discovery answers are recomputed
+  server-side, require an explicit solution name and risk, remain tenant
+  scoped, and persist a blueprint with normalized approval identifiers while
+  retaining the original labels as discovery evidence. Focused backend and UI
+  tests verify the review-only boundary; execution, provider calls, and
+  deployment remain false. This is not evidence that the broader route,
+  responsive, accessibility, denied, offline, or provider-error matrix is
+  complete.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.
