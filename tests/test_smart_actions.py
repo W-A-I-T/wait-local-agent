@@ -1181,6 +1181,15 @@ def test_registry_lists_all_seed_actions(settings) -> None:
     assert service.describe("ticket-triage").kind == "deterministic"
 
 
+def test_every_registered_action_handles_empty_input_without_raising(settings) -> None:
+    service = SmartActionService(Store(settings.data_path), settings)
+
+    for payload in ({}, {"client_id": "acme"}, {"unexpected": "value"}):
+        for manifest in service.list():
+            result = service.invoke(manifest.action_id, payload, "coverage", client_id="acme")
+            assert result.status in {"failed", "success", "blocked", "pending", "not_authorized"}
+
+
 def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> None:
     class FakeAutotaskWrites:
         def __init__(self, *, health_status="ready", result_status="succeeded"):
