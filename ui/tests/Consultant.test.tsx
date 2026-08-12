@@ -106,9 +106,12 @@ describe("Consultant", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
 
     expect(await screen.findByRole("heading", { name: "Employee onboarding" })).toBeInTheDocument();
-    expect(screen.getByText("Read-only sequence preview from the stored blueprint.")).toBeInTheDocument();
+    expect(screen.getByText(/Edit a bounded local draft before preparing the Power Automate review artifact/)).toBeInTheDocument();
     expect(screen.getByText("Validate manager")).toBeInTheDocument();
     expect(screen.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "HR approval request" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+    expect(screen.getByDisplayValue("New action")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Consultant use cases" })).toBeInTheDocument();
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));

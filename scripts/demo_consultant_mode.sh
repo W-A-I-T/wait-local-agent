@@ -7,6 +7,8 @@ wait-local-agent microsoft use-cases list --category teams
 wait-local-agent microsoft discovery assess examples/consultant/discovery.json
 wait-local-agent microsoft power-apps plan examples/consultant/power-apps-plan.json
 wait-local-agent microsoft workflow plan examples/consultant/flow-plan.json
+wait-local-agent microsoft connector package examples/consultant/connector-openapi.json onboarding-review
+wait-local-agent microsoft solution plan onboarding_review WAITConsulting wlp /tmp/wait-consultant-solution
 wait-local-agent microsoft evaluation run examples/consultant/evaluation.json
 wait-local-agent microsoft governance evaluate examples/consultant/governance.json
 wait-local-agent microsoft delivery plan examples/consultant/delivery.json

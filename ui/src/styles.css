@@ -393,6 +393,33 @@ nav a:hover {
   padding-top: 14px;
 }
 
+.workflow-draft-editor {
+  background: #fbfdfc;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.workflow-draft-editor label,
+.workflow-step-editor {
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-step-editor {
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workflow-draft-editor input {
+  border: 1px solid #b8c9c1;
+  border-radius: 6px;
+  color: #253633;
+  padding: 8px 10px;
+}
+
 .workflow-graph-nodes {
   align-items: stretch;
   display: flex;

@@ -18,6 +18,7 @@ export function Consultant() {
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
+  const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, { trigger: string; steps: string[] }>>({});
   const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
   const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
   const [flowPlan, setFlowPlan] = useState<PowerAutomateFlowPlan | null>(null);
@@ -71,6 +72,14 @@ export function Consultant() {
         `/consultant/blueprints/${encodeURIComponent(blueprintId)}/architecture`
       );
       setArchitecture(result);
+      setWorkflowDrafts(Object.fromEntries(
+        result.components
+          .filter((component) => component.kind === "workflow")
+          .map((component) => [component.id, {
+            trigger: component.trigger ?? "",
+            steps: [...(component.steps ?? [])],
+          }]),
+      ));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to build the architecture view.");
     }
@@ -78,6 +87,10 @@ export function Consultant() {
 
   async function preparePowerAutomatePlan(workflow: ConsultantArchitectureComponent) {
     if (!selected) return;
+    const draft = workflowDrafts[workflow.id] ?? {
+      trigger: workflow.trigger ?? "Manual review request",
+      steps: workflow.steps ?? [],
+    };
     setFlowLoading(true);
     setMessage("");
     try {
@@ -88,8 +101,8 @@ export function Consultant() {
           client_id: selected.client_id,
           workflow_id: workflow.id,
           workflow_name: workflow.name ?? workflow.id,
-          trigger: workflow.trigger ?? "Manual review request",
-          steps: (workflow.steps ?? []).map((name, index) => ({
+          trigger: draft.trigger || "Manual review request",
+          steps: draft.steps.map((name, index) => ({
             id: `step_${index + 1}`,
             name,
             kind: "action",
@@ -103,6 +116,10 @@ export function Consultant() {
     } finally {
       setFlowLoading(false);
     }
+  }
+
+  function updateWorkflowDraft(workflowId: string, draft: { trigger: string; steps: string[] }) {
+    setWorkflowDrafts((current) => ({ ...current, [workflowId]: draft }));
   }
 
   async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
@@ -275,17 +292,22 @@ export function Consultant() {
           </div>
           {workflowComponents.length > 0 ? (
             <div className="panel-subsection">
-              <h3>Workflow design</h3>
-              <p className="screen-note">Read-only sequence preview from the stored blueprint.</p>
+              <h3>Workflow designer</h3>
+              <p className="screen-note">Edit a bounded local draft before preparing the Power Automate review artifact. Changes are not persisted or executed.</p>
               <div className="workflow-graph-list">
                 {workflowComponents.map((workflow) => (
                   <div key={workflow.id}>
-                    <WorkflowGraph component={workflow} />
+                    <WorkflowGraph
+                      component={workflow}
+                      draft={workflowDrafts[workflow.id]}
+                      editable={canWrite}
+                      onChange={(draft) => updateWorkflowDraft(workflow.id, draft)}
+                    />
                     <button
                       type="button"
                       className="icon-button"
                       onClick={() => void preparePowerAutomatePlan(workflow)}
-                      disabled={!canWrite || flowLoading || !(workflow.steps?.length)}
+                      disabled={!canWrite || flowLoading || !(workflowDrafts[workflow.id]?.steps.length)}
                     >
                       {flowLoading ? "Preparing plan…" : "Prepare Power Automate plan"}
                     </button>
@@ -359,11 +381,62 @@ function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
   );
 }
 
-function WorkflowGraph({ component }: { component: ConsultantArchitectureComponent }) {
-  const nodes = [component.trigger ?? "Trigger", ...(component.steps ?? [])];
+function WorkflowGraph({
+  component,
+  draft,
+  editable,
+  onChange,
+}: {
+  component: ConsultantArchitectureComponent;
+  draft?: { trigger: string; steps: string[] };
+  editable: boolean;
+  onChange: (draft: { trigger: string; steps: string[] }) => void;
+}) {
+  const current = draft ?? { trigger: component.trigger ?? "", steps: component.steps ?? [] };
+  const nodes = [current.trigger || "Trigger", ...current.steps];
   return (
     <article className="workflow-graph">
       <strong>{component.name ?? component.id}</strong>
+      {editable ? (
+        <div className="workflow-draft-editor">
+          <label>
+            Trigger
+            <input
+              value={current.trigger}
+              onChange={(event) => onChange({ ...current, trigger: event.target.value })}
+            />
+          </label>
+          {current.steps.map((step, index) => (
+            <div className="workflow-step-editor" key={`${component.id}:edit:${index}`}>
+              <label>
+                Step {index + 1}
+                <input
+                  value={step}
+                  onChange={(event) => {
+                    const steps = [...current.steps];
+                    steps[index] = event.target.value;
+                    onChange({ ...current, steps });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => onChange({ ...current, steps: current.steps.filter((_, stepIndex) => stepIndex !== index) })}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => onChange({ ...current, steps: [...current.steps, "New action"] })}
+          >
+            Add step
+          </button>
+        </div>
+      ) : null}
       <div className="workflow-graph-nodes">
         {nodes.map((node, index) => (
           <div className="workflow-graph-node" key={`${component.id}:${index}`}>
