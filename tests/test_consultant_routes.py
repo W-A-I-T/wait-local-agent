@@ -11,6 +11,8 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
+    EvaluationExecutionRequest,
+    EvaluationRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
@@ -234,6 +236,69 @@ def test_supervisor_run_orders_persisted_children_and_returns_child_runs(setting
     assert result["status"] == "completed"
     assert result["supervisor"]["ordered_child_agent_ids"] == [identity.id, security.id]
     assert [child["status"] for child in result["children"]] == ["completed", "completed"]
+
+
+def test_controlled_evaluation_runs_existing_agent_in_local_fixture_mode(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    agent = service.create(
+        name="Triage fixture",
+        description="Local evaluation fixture",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    result = _endpoint(settings, "/consultant/evaluations")(
+        EvaluationRequest(
+            test_set=[
+                {
+                    "id": "triage",
+                    "expected_tool_ids": ["ticket-triage"],
+                    "forbidden_tool_ids": [],
+                    "expected_approval_tool_ids": [],
+                }
+            ],
+            execution=EvaluationExecutionRequest(
+                agent_id=agent.id,
+                entity_id="TCK-1001",
+                client_id="acme",
+            ),
+        ),
+        _technician(),
+    )
+
+    assert result["execution_started"] is True
+    assert result["execution_mode"] == "controlled"
+    assert result["production_readiness"] == "pass"
+    assert result["cases"][0]["execution"]["execution_status"] == "completed"
+
+
+def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settings) -> None:
+    production_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
+    endpoint = _endpoint(production_settings, "/consultant/evaluations")
+
+    with pytest.raises(HTTPException, match="local demo mode"):
+        endpoint(
+            EvaluationRequest(
+                test_set=[{"id": "triage"}],
+                execution=EvaluationExecutionRequest(
+                    agent_id="fixture",
+                    entity_id="TCK-1",
+                    client_id="acme",
+                ),
+            ),
+            _technician(),
+        )
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

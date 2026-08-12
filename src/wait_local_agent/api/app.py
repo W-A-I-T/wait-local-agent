@@ -96,7 +96,12 @@ from wait_local_agent.consultant import (
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
-from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
+from wait_local_agent.evaluation import (
+    AgentServiceEvaluationExecutor,
+    EvaluationValidationError,
+    evaluate_tool_contract,
+    execute_tool_contract,
+)
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
@@ -425,9 +430,21 @@ class OpenApiConnectorRequest(BaseModel):
     definition: dict[str, object]
 
 
+class EvaluationExecutionRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=64)
+    entity_id: str = Field(min_length=1, max_length=100)
+    client_id: str = Field(min_length=1, max_length=128)
+    input: dict[str, object] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class EvaluationRequest(BaseModel):
     test_set: list[dict[str, object]]
-    observations: dict[str, object]
+    observations: dict[str, object] = Field(default_factory=dict)
+    execution: EvaluationExecutionRequest | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class GovernanceRequest(BaseModel):
@@ -4217,9 +4234,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/consultant/evaluations")
     def evaluate_consultant_contract(
         payload: EvaluationRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
+            if payload.execution is not None:
+                if not active_settings.demo_mode or active_settings.allow_write_actions:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="controlled evaluation execution requires local demo mode with writes disabled",
+                    )
+                scoped_client_id = _consultant_client_scope(context, payload.execution.client_id)
+                if scoped_client_id is None:
+                    raise HTTPException(status_code=403, detail="evaluation execution requires a tenant scope")
+                definition = agent_service.get(payload.execution.agent_id, scoped_client_id)
+                if definition is None or definition.client_id != scoped_client_id:
+                    raise HTTPException(status_code=404, detail="evaluation agent was not found in tenant scope")
+                executor = AgentServiceEvaluationExecutor(
+                    agent_service,
+                    definition,
+                    entity_id=payload.execution.entity_id,
+                    actor=context.approver_id or "evaluation",
+                    actor_role=context.role,
+                    input_payload=payload.execution.input,
+                    client_id=scoped_client_id,
+                )
+                return execute_tool_contract(payload.test_set, executor)
             return evaluate_tool_contract(payload.test_set, payload.observations)
         except EvaluationValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
