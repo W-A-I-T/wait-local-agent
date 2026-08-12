@@ -1400,6 +1400,13 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     assert json.loads(contract_response.body)["detail"] == "contract rejected"
     monkeypatch.setattr(app_module, "_rate_limit_exceeded_handler", lambda *_args: Response(status_code=429))
     assert app_module._rate_limit_handler(request, Exception()).status_code == 429
+    unbound_technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token")
+    with pytest.raises(HTTPException, match="has no tenant"):
+        app_module._scheduled_job_for_context(Store(settings.data_path), 1, unbound_technician)
+    with pytest.raises(HTTPException, match="scheduled job not found"):
+        app_module._scheduled_job_for_context(
+            Store(settings.data_path), 1, AuthContext(role=Role.ADMIN, presented_token="admin")
+        )
 
 
 def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
