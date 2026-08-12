@@ -40,3 +40,11 @@ The result reports environment verification and governance as review gates when
 external credentials are absent, records local supervisor/evaluation evidence,
 and explicitly leaves artifact generation, live provider execution, and
 deployment unstarted.
+
+The same composition is available to an authenticated technician through
+`POST /consultant/demos/employee-onboarding` when the appliance is in local
+demo mode with writes disabled. The request must include the tenant-scoped
+blueprint and an existing ticket/entity ID; the endpoint never seeds a ticket,
+calls an external provider, generates deployment artifacts, or starts a
+deployment. Outside that mode it returns a conflict, and a ticket from another
+tenant is not eligible for the fixture.

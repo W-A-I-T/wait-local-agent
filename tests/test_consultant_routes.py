@@ -17,6 +17,7 @@ from wait_local_agent.api.app import (
     DiscoveryRequest,
     DiscoverySessionStartRequest,
     DiscoveryTurnRequest,
+    EmployeeOnboardingDemoRequest,
     EnvironmentDiscoveryRequest,
     EvaluationExecutionRequest,
     EvaluationRequest,
@@ -812,6 +813,57 @@ def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settin
             ),
             _technician(),
         )
+
+
+def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = _endpoint(settings, "/consultant/demos/employee-onboarding")(
+        EmployeeOnboardingDemoRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            blueprint=payload,
+        ),
+        _technician(),
+    )
+
+    assert result["format"] == "wait-local-agent.employee-onboarding-demo"
+    assert result["mode"] == "local_fixture"
+    assert result["stages"]["supervisor"]["status"] == "completed"
+    assert result["stages"]["evaluation"]["production_readiness"] == "pass"
+    assert result["boundaries"]["live_provider_execution"] is False
+    assert result["boundaries"]["deployment_started"] is False
+
+
+def test_employee_onboarding_demo_endpoint_enforces_local_mode_and_tenant_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    request = EmployeeOnboardingDemoRequest(client_id="acme", blueprint=payload)
+
+    with pytest.raises(HTTPException, match="tenant scope") as missing_scope:
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(request, _technician(client_id=""))
+    assert missing_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(request, _technician(client_id="beta"))
+
+    secured_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
+    with pytest.raises(HTTPException, match="local demo mode"):
+        _endpoint(secured_settings, "/consultant/demos/employee-onboarding")(request, _technician())
+
+
+def test_employee_onboarding_demo_endpoint_does_not_invent_fixture_ticket(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+
+    with pytest.raises(HTTPException, match="tenant-scoped ticket") as missing_ticket:
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint=payload),
+            _technician(),
+        )
+    assert missing_ticket.value.status_code == 422
 
 
 def test_environment_discovery_route_returns_explicit_local_evidence(settings) -> None:

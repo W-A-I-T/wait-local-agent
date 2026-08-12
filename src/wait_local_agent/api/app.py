@@ -102,6 +102,10 @@ from wait_local_agent.discovery import (
     build_solution_discovery,
     discover_solution_environment,
 )
+from wait_local_agent.employee_onboarding_demo import (
+    EmployeeOnboardingDemoError,
+    run_employee_onboarding_demo,
+)
 from wait_local_agent.evaluation import (
     AgentServiceEvaluationExecutor,
     EvaluationValidationError,
@@ -453,6 +457,14 @@ class EvaluationRequest(BaseModel):
     test_set: list[dict[str, object]]
     observations: dict[str, object] = Field(default_factory=dict)
     execution: EvaluationExecutionRequest | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class EmployeeOnboardingDemoRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    entity_id: str = Field(default="TCK-1001", min_length=1, max_length=100)
+    blueprint: dict[str, object] = Field(max_length=32)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -4107,6 +4119,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             return blueprint_view(store.create_solution_blueprint(blueprint))
         except BlueprintValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/demos/employee-onboarding")
+    def run_consultant_employee_onboarding_demo(
+        payload: EmployeeOnboardingDemoRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        if not active_settings.demo_mode or active_settings.allow_write_actions:
+            raise HTTPException(
+                status_code=409,
+                detail="employee-onboarding fixture requires local demo mode with writes disabled",
+            )
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="employee-onboarding demo requires a tenant scope")
+        try:
+            return run_employee_onboarding_demo(
+                store=store,
+                settings=active_settings,
+                blueprint_payload=payload.blueprint,
+                client_id=scoped_client_id,
+                entity_id=payload.entity_id,
+            )
+        except EmployeeOnboardingDemoError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/blueprints")
