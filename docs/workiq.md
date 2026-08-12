@@ -1,9 +1,12 @@
 # Work IQ MCP adapter
 
-Work IQ is an optional Microsoft 365 MCP integration. Microsoft documents the
-service as a preview MCP endpoint with a generic tool surface: entity paths
-are passed to tools such as `fetch`, while `search_paths` and `get_schema`
-provide runtime discovery. See Microsoft's [Work IQ overview](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview)
+Work IQ is an optional Microsoft 365 integration. Current Microsoft
+documentation describes a path-based MCP surface with generic entity tools
+(`fetch`, `create_entity`, `update_entity`, `delete_entity`, `do_action`, and
+`call_function`), Copilot tools, and schema discovery. Microsoft also documents
+the Work IQ CLI/MCP experience as generally available from June 16, 2026. See
+the [Work IQ overview](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview),
+[entity model](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/entity-model),
 and [tool reference](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/tool-reference).
 
 WAIT currently exposes one governed smart action, `workiq-fetch`, through the
@@ -12,6 +15,12 @@ existing API, CLI, Agents catalog, and MCP server. It accepts a local
 redacted read results. The adapter permits only `/me/`, `/users/`, and `/sites/`
 paths, blocks authentication and service-principal paths, and rejects
 `$skip`/`$skiptoken` pagination parameters.
+
+WAIT intentionally exposes only a read-only subset in this slice. Operation
+risk is not inferred from a tool name alone: resource path, requested
+operation, tenant scope, authenticated identity, and arguments must remain
+inside the local policy boundary. Unknown or side-effecting operations remain
+blocked rather than being guessed from remote metadata.
 
 Configuration is optional:
 

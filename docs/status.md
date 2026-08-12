@@ -1,5 +1,16 @@
 # Status
 
+WAIT Local Agent is the local-first execution, orchestration, policy, approval,
+connector, evidence, and governance runtime underneath WAIT AI Solutions
+Architect. The consultant capabilities listed below are only claimed where a
+reachable API, CLI, UI, test, and execution boundary exists.
+
+The repository currently provides review-oriented blueprint, discovery,
+architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
+Platform preparation surfaces. External credentials, provider availability, and
+deployment authorization remain explicit prerequisites; artifact generation is
+not deployment.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

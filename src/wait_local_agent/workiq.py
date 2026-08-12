@@ -30,6 +30,7 @@ class WorkIqValidationError(ValueError):
 
 
 WorkIqStatus = Literal["ready", "not_configured", "failed"]
+WorkIqOperation = Literal["read", "write", "action", "function", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,49 @@ class WorkIqReadResponse:
     status: WorkIqStatus
     message: str
     data: dict[str, object]
+
+
+def classify_work_iq_operation(
+    tool_name: object,
+    *,
+    resource_paths: object = None,
+    operation: object = None,
+) -> WorkIqOperation:
+    """Classify a Work IQ request using the tool, path, and operation together.
+
+    The remote catalog is untrusted. Only the explicitly supported read
+    subset is returned as ``read``; generic mutation, action, function, and
+    unknown requests fail closed for this adapter.
+    """
+
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return "unknown"
+    normalized = tool_name.strip().casefold()
+    if normalized in {"create_entity", "update_entity", "delete_entity"}:
+        return "write"
+    if normalized == "do_action":
+        return "action"
+    if normalized == "call_function":
+        return "function"
+    if normalized not in {"fetch", "search_paths", "get_schema"}:
+        return "unknown"
+    if operation is not None and operation not in {normalized, "fetch", "read"}:
+        return "unknown"
+    if normalized == "fetch":
+        if not isinstance(resource_paths, list) or any(not isinstance(path, str) for path in resource_paths):
+            return "unknown"
+        try:
+            _validate_entity_paths(cast(list[str], resource_paths))
+        except WorkIqValidationError:
+            return "unknown"
+    elif normalized == "get_schema":
+        if not isinstance(resource_paths, str):
+            return "unknown"
+        try:
+            _validate_entity_path(resource_paths)
+        except WorkIqValidationError:
+            return "unknown"
+    return "read"
 
 
 class WorkIqClient:
@@ -81,6 +125,9 @@ class WorkIqClient:
         )
 
     def _read(self, tool_name: str, arguments: dict[str, object]) -> WorkIqReadResponse:
+        resource_paths = arguments.get("entityUrls") if tool_name == "fetch" else arguments.get("path")
+        if classify_work_iq_operation(tool_name, resource_paths=resource_paths) != "read":
+            return _failed("Work IQ operation is blocked by local policy")
         if self._mcp_client is None:
             return WorkIqReadResponse(
                 "not_configured",

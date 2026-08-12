@@ -10,6 +10,7 @@ from wait_local_agent.workiq import (
     MAX_WORKIQ_ENTITY_PATHS,
     MAX_WORKIQ_RESULT_BYTES,
     WorkIqClient,
+    classify_work_iq_operation,
 )
 
 
@@ -57,6 +58,15 @@ def test_workiq_fetch_is_bounded_and_uses_relative_read_paths(settings) -> None:
     ):
         assert client.fetch([path]).status == "failed"
     assert client.fetch(["/me/messages"] * (MAX_WORKIQ_ENTITY_PATHS + 1)).status == "failed"
+
+
+def test_workiq_operation_policy_fails_closed_for_generic_or_unknown_requests() -> None:
+    assert classify_work_iq_operation("fetch", resource_paths=["/me/messages"]) == "read"
+    assert classify_work_iq_operation("get_schema", resource_paths="/sites/example") == "read"
+    assert classify_work_iq_operation("call_function", resource_paths="/search/query") == "function"
+    assert classify_work_iq_operation("create_entity", resource_paths="/me/events") == "write"
+    assert classify_work_iq_operation("unexpected", resource_paths="/me/messages") == "unknown"
+    assert classify_work_iq_operation("fetch", resource_paths=["/authentication/methods"]) == "unknown"
 
 
 def test_workiq_schema_search_not_configured_and_remote_failures(settings) -> None:
