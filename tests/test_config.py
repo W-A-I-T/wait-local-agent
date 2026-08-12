@@ -56,6 +56,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_RATE_LIMIT_CONNECTOR", raising=False)
     monkeypatch.delenv("WAIT_UPDATE_CHANNEL_URL", raising=False)
     monkeypatch.delenv("WAIT_UPDATE_PUBKEYS", raising=False)
+    monkeypatch.delenv("WAIT_MCP_ALLOWED_ORIGINS", raising=False)
     monkeypatch.delenv("WAIT_LICENSE_KEY", raising=False)
     monkeypatch.delenv("WAIT_LICENSE_SECRET", raising=False)
     monkeypatch.delenv("WAIT_PACK_SIGNING_SECRET", raising=False)
@@ -137,6 +138,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.rate_limit_connector == "10/minute"
     assert settings.update_channel_url == ""
     assert settings.update_pubkeys == ()
+    assert settings.mcp_allowed_origins == ()
     assert settings.license_key == ""
     assert settings.license_secret == ""
     assert settings.pack_signing_secret == ""
@@ -154,6 +156,14 @@ def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:
     assert settings.allow_llm_inference is True
     assert settings.offline_mode is True
     assert settings.demo_mode is False
+
+
+def test_mcp_origin_allowlist_is_loaded_and_normalized(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_MCP_ALLOWED_ORIGINS", " https://console.example/ , http://localhost:5173 ")
+
+    settings = load_settings()
+
+    assert settings.mcp_allowed_origins == ("https://console.example", "http://localhost:5173")
 
 
 def test_end_user_branding_env_values_are_loaded(monkeypatch) -> None:

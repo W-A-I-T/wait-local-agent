@@ -151,6 +151,7 @@ class Settings:
     rate_limit_connector: str = "10/minute"
     update_channel_url: str = ""
     update_pubkeys: tuple[str, ...] = ()
+    mcp_allowed_origins: tuple[str, ...] = ()
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -463,6 +464,11 @@ def load_settings() -> Settings:
         update_pubkeys=tuple(
             value.strip()
             for value in os.getenv("WAIT_UPDATE_PUBKEYS", "").split(",")
+            if value.strip()
+        ),
+        mcp_allowed_origins=tuple(
+            value.strip().rstrip("/")
+            for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
             if value.strip()
         ),
         halopsa_base_url=_secret_value(

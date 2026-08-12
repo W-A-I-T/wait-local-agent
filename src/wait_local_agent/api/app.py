@@ -114,6 +114,14 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.mcp import (
+    MAX_MCP_REQUEST_BYTES,
+    MCP_PROTOCOL_VERSION,
+    McpProtocolError,
+    WaitMcpServer,
+    origin_allowed,
+    protocol_error_response,
+)
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_EVENT_MAX_RETRIES,
@@ -134,7 +142,13 @@ from wait_local_agent.observability import (
     build_analytics_summary,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
-from wait_local_agent.rbac import AuthContext, Role, require_end_user, require_role
+from wait_local_agent.rbac import (
+    AuthContext,
+    Role,
+    require_end_user,
+    require_role,
+    resolve_auth_context,
+)
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
     build_restore_evidence_report,
@@ -606,6 +620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)
+    mcp_server = WaitMcpServer(agent_service, smart_action_service)
     event_dispatcher = EventDispatcher(store, agent_service)
     scheduler = SchedulerManager(
         store,
@@ -841,6 +856,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tools")
     def tools(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(tool) for tool in agent_service.list_tools()]
+
+    @app.get("/mcp")
+    def mcp_get() -> Response:
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.post("/mcp")
+    @limiter.limit(active_settings.rate_limit_connector)
+    async def mcp_endpoint(request: Request) -> Response:
+        origin = request.headers.get("origin")
+        request_origin = str(request.base_url).rstrip("/")
+        if not origin_allowed(origin, request_origin, active_settings.mcp_allowed_origins):
+            return JSONResponse(status_code=403, content={"detail": "invalid MCP origin"})
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_MCP_REQUEST_BYTES:
+                    return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "invalid content length"})
+        try:
+            body = await request.body()
+            if len(body) > MAX_MCP_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
+            message = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return JSONResponse(status_code=400, content={"detail": "MCP request must be JSON"})
+        request_id = message.get("id") if isinstance(message, dict) else None
+        try:
+            context = resolve_auth_context(active_settings, request.headers.get("authorization"))
+            protocol_header = request.headers.get("mcp-protocol-version")
+            if protocol_header and protocol_header not in {MCP_PROTOCOL_VERSION, "2025-03-26"}:
+                raise McpProtocolError(-32600, "unsupported MCP protocol version")
+            response, new_session_id = mcp_server.handle(
+                message,
+                context=context,
+                session_id=request.headers.get("mcp-session-id"),
+            )
+        except McpProtocolError as exc:
+            response = protocol_error_response(request_id, exc)
+            new_session_id = None
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": redact_text(str(exc.detail))},
+                headers=dict(exc.headers or {}),
+            )
+        headers = {"MCP-Session-Id": new_session_id} if new_session_id else None
+        if response is None:
+            return Response(status_code=202, headers=headers)
+        return JSONResponse(content=response, headers=headers)
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
