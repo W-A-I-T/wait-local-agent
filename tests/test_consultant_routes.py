@@ -85,6 +85,16 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
         ),
         _technician(),
     )
+    power_apps_artifact = _endpoint(settings, "/consultant/power-apps/build")(
+        PowerAppsPlanRequest(
+            client_id="acme",
+            app_name="Onboarding",
+            entities=[{"logical_name": "employee", "fields": []}],
+            screens=[{"id": "browse", "entity": "employee"}],
+            actions=[{"id": "lookup", "connector_id": "m365", "method": "GET"}],
+        ),
+        _technician(),
+    )
     flow = _endpoint(settings, "/consultant/workflows/power-automate/plan")(
         PowerAutomatePlanRequest(
             client_id="acme",
@@ -108,6 +118,8 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
 
     assert discovery["readiness"] == "ready_for_architecture"
     assert power_apps["dataverse_write_started"] is False
+    assert power_apps_artifact["format"] == "wait-local-agent.power-apps-artifact"
+    assert power_apps_artifact["deployment_started"] is False
     assert flow["export_status"] == "review_only"
     assert delivery["production_deployment_requires_approval"] is True
 
@@ -228,5 +240,16 @@ def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:
     with pytest.raises(HTTPException, match="outside authenticated scope"):
         _endpoint(settings, "/consultant/discovery")(
             DiscoveryRequest(client_id="beta", answers={}),
+            _technician("acme"),
+        )
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/power-apps/build")(
+            PowerAppsPlanRequest(
+                client_id="beta",
+                app_name="Onboarding",
+                entities=[],
+                screens=[],
+                actions=[],
+            ),
             _technician("acme"),
         )

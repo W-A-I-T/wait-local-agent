@@ -10,8 +10,28 @@ import type {
   ConsultantDiscoveryResult,
   ConsultantMonitoring,
   ConsultantUseCase,
+  PowerAppsArtifact,
   PowerAutomateFlowPlan,
 } from "../api/types";
+
+const DEFAULT_POWER_APPS_ENTITIES = JSON.stringify([
+  {
+    logical_name: "employee",
+    display_name: "Employee",
+    fields: [
+      { name: "display_name", type: "string", required: true },
+      { name: "start_date", type: "date", required: true },
+    ],
+  },
+], null, 2);
+const DEFAULT_POWER_APPS_SCREENS = JSON.stringify([
+  { id: "employee_browse", title: "Employees", entity: "employee", mode: "browse" },
+  { id: "employee_edit", title: "Edit employee", entity: "employee", mode: "edit" },
+], null, 2);
+const DEFAULT_POWER_APPS_ACTIONS = JSON.stringify([
+  { id: "employee_lookup", connector_id: "m365", method: "GET" },
+  { id: "employee_create", connector_id: "m365", method: "POST", approval_required: true },
+], null, 2);
 
 export function Consultant() {
   const { canWrite } = useDashboard();
@@ -22,6 +42,12 @@ export function Consultant() {
   const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
   const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
   const [flowPlan, setFlowPlan] = useState<PowerAutomateFlowPlan | null>(null);
+  const [powerAppsArtifact, setPowerAppsArtifact] = useState<PowerAppsArtifact | null>(null);
+  const [powerAppsLoading, setPowerAppsLoading] = useState(false);
+  const [powerAppsName, setPowerAppsName] = useState("Employee onboarding workspace");
+  const [powerAppsEntities, setPowerAppsEntities] = useState(DEFAULT_POWER_APPS_ENTITIES);
+  const [powerAppsScreens, setPowerAppsScreens] = useState(DEFAULT_POWER_APPS_SCREENS);
+  const [powerAppsActions, setPowerAppsActions] = useState(DEFAULT_POWER_APPS_ACTIONS);
   const [flowLoading, setFlowLoading] = useState(false);
   const [discoveryGoal, setDiscoveryGoal] = useState("");
   const [discoveryUsers, setDiscoveryUsers] = useState("");
@@ -159,6 +185,38 @@ export function Consultant() {
     }
   }
 
+  async function buildPowerAppsArtifact(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    if (!clientId || !powerAppsName.trim()) {
+      setMessage("Choose a blueprint tenant and provide an app name before building the artifact.");
+      return;
+    }
+    try {
+      const entities = parseJsonArray(powerAppsEntities, "Dataverse tables");
+      const screens = parseJsonArray(powerAppsScreens, "Canvas screens");
+      const actions = parseJsonArray(powerAppsActions, "Connector actions");
+      setPowerAppsLoading(true);
+      setMessage("");
+      const result = await apiFetch<PowerAppsArtifact>("/consultant/power-apps/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          app_name: powerAppsName,
+          entities,
+          screens,
+          actions,
+        }),
+      });
+      setPowerAppsArtifact(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to build the Power Apps artifact.");
+    } finally {
+      setPowerAppsLoading(false);
+    }
+  }
+
   const selected = blueprints.find((blueprint) => blueprint.id === selectedId);
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
@@ -276,6 +334,47 @@ export function Consultant() {
         ) : <p>No consultant use cases are available.</p>}
       </section>
 
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Power Apps builder</h2>
+            <p className="screen-note">Generate a local Dataverse and Canvas app handoff for review. No Microsoft write or deployment starts.</p>
+          </div>
+          {powerAppsArtifact ? <StatusChip status="completed" /> : null}
+        </div>
+        <form className="draft-form" onSubmit={(event) => void buildPowerAppsArtifact(event)}>
+          <label>
+            App name
+            <input aria-label="Power Apps app name" value={powerAppsName} onChange={(event) => setPowerAppsName(event.target.value)} />
+          </label>
+          <div className="grid">
+            <label>
+              Dataverse tables (JSON)
+              <textarea rows={8} value={powerAppsEntities} onChange={(event) => setPowerAppsEntities(event.target.value)} />
+            </label>
+            <label>
+              Canvas screens (JSON)
+              <textarea rows={8} value={powerAppsScreens} onChange={(event) => setPowerAppsScreens(event.target.value)} />
+            </label>
+            <label>
+              Connector actions (JSON)
+              <textarea rows={8} value={powerAppsActions} onChange={(event) => setPowerAppsActions(event.target.value)} />
+            </label>
+          </div>
+          <button type="submit" disabled={!canWrite || powerAppsLoading || !powerAppsName.trim()}>
+            {powerAppsLoading ? "Building artifact…" : "Build local artifact"}
+          </button>
+          {!canWrite ? <p className="screen-note">Technician access is required to build an artifact.</p> : null}
+        </form>
+        {powerAppsArtifact ? (
+          <div className="notice">
+            <strong>Power Apps artifact ready for review.</strong>{" "}
+            {powerAppsArtifact.files.length} files · {powerAppsArtifact.requires_approval ? "approval required for writes" : "read-only actions"}.
+            <br />Credentials, Dataverse writes, execution, and deployment were not started.
+          </div>
+        ) : null}
+      </section>
+
       {selected && architecture ? (
         <section className="panel">
           <div className="panel-heading">
@@ -365,6 +464,19 @@ export function Consultant() {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseJsonArray(value: string, label: string): Record<string, unknown>[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON.`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+    throw new Error(`${label} must be a JSON array of objects.`);
+  }
+  return parsed as Record<string, unknown>[];
 }
 
 function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {

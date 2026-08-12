@@ -6,6 +6,7 @@ set -euo pipefail
 wait-local-agent microsoft use-cases list --category teams
 wait-local-agent microsoft discovery assess examples/consultant/discovery.json
 wait-local-agent microsoft power-apps plan examples/consultant/power-apps-plan.json
+wait-local-agent microsoft power-apps build examples/consultant/power-apps-build.json
 wait-local-agent microsoft workflow plan examples/consultant/flow-plan.json
 wait-local-agent microsoft connector package examples/consultant/connector-openapi.json onboarding-review
 wait-local-agent microsoft solution deployment-plan examples/consultant/deployment.json

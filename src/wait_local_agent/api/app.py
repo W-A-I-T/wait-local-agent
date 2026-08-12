@@ -149,7 +149,11 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
-from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
+from wait_local_agent.power_apps import (
+    PowerAppsPlanError,
+    build_power_apps_artifact,
+    build_power_apps_plan,
+)
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
 from wait_local_agent.power_platform_deployment import (
@@ -4233,6 +4237,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
             return build_power_apps_plan(
+                client_id=scoped_client_id,
+                app_name=payload.app_name,
+                entities=payload.entities,
+                screens=payload.screens,
+                actions=payload.actions,
+            )
+        except PowerAppsPlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-apps/build")
+    def consultant_power_apps_build(
+        payload: PowerAppsPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_apps_artifact(
                 client_id=scoped_client_id,
                 app_name=payload.app_name,
                 entities=payload.entities,

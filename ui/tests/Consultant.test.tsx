@@ -80,6 +80,29 @@ describe("Consultant", () => {
           export_status: "review_only"
         }), { status: 200 }));
       }
+      if (path === "/consultant/power-apps/build") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.power-apps-artifact",
+          format_version: 1,
+          client_id: "acme",
+          app_name: "Employee onboarding workspace",
+          solution: { unique_name: "wait_acme_employee_onboarding", publisher_prefix: "wait" },
+          dataverse: { tables: [] },
+          canvas_app: { screens: [], connector_references: [] },
+          files: [
+            { path: "dataverse/schema.json", media_type: "application/json", content: {} },
+            { path: "canvas-app/manifest.json", media_type: "application/json", content: {} },
+            { path: "README.md", media_type: "text/markdown", content: "review" },
+          ],
+          requires_approval: true,
+          credentials_included: false,
+          build_started: true,
+          dataverse_write_started: false,
+          execution_started: false,
+          deployment_started: false,
+          package_status: "review_only",
+        }), { status: 200 }));
+      }
       if (path === "/consultant/discovery") {
         return Promise.resolve(new Response(JSON.stringify({
           format: "wait-local-agent.solution-discovery",
@@ -116,6 +139,8 @@ describe("Consultant", () => {
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
     expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
+    expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
     expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();

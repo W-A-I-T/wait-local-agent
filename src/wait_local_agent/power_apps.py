@@ -1,7 +1,8 @@
-"""Metadata-only Power Apps and Dataverse builder plans."""
+"""Bounded Power Apps and Dataverse plans and local build artifacts."""
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from typing import cast
@@ -10,6 +11,7 @@ MAX_APP_ENTITIES = 16
 MAX_APP_FIELDS = 32
 MAX_APP_SCREENS = 16
 MAX_APP_ACTIONS = 32
+MAX_ARTIFACT_BYTES = 256_000
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _FIELD_TYPES = {"string", "integer", "boolean", "date", "datetime", "choice"}
 _SCREEN_MODES = {"browse", "display", "edit"}
@@ -45,6 +47,143 @@ def build_power_apps_plan(
         "deployment_started": False,
         "dataverse_write_started": False,
     }
+
+
+def build_power_apps_artifact(
+    *,
+    client_id: str,
+    app_name: str,
+    entities: list[dict[str, object]],
+    screens: list[dict[str, object]],
+    actions: list[dict[str, object]],
+) -> dict[str, object]:
+    """Build a local, reviewable Power Platform artifact manifest.
+
+    This produces deterministic JSON payloads that can be reviewed or handed
+    to a later Power Platform packager. It is not an ``.msapp`` or Dataverse
+    solution zip and never calls Microsoft services or ``pac``.
+    """
+
+    plan = build_power_apps_plan(
+        client_id=client_id,
+        app_name=app_name,
+        entities=entities,
+        screens=screens,
+        actions=actions,
+    )
+    dataverse_tables = cast(dict[str, object], plan["dataverse"])["tables"]
+    canvas = cast(dict[str, object], plan["canvas_app"])
+    tables = cast(list[dict[str, object]], dataverse_tables)
+    canvas_screens = cast(list[dict[str, object]], canvas["screens"])
+    canvas_actions = cast(list[dict[str, object]], canvas["actions"])
+    schema = {
+        "schema_version": 1,
+        "tables": [
+            {
+                "logical_name": table["logical_name"],
+                "display_name": table["display_name"],
+                "columns": [
+                    {
+                        "logical_name": field["name"],
+                        "display_name": field["name"],
+                        "type": _dataverse_type(field["type"]),
+                        "required": field["required"],
+                    }
+                    for field in cast(list[dict[str, object]], table["fields"])
+                ],
+            }
+            for table in tables
+        ],
+    }
+    manifest = {
+        "manifest_version": 1,
+        "name": plan["app_name"],
+        "data_sources": [table["logical_name"] for table in tables],
+        "screens": [
+            {
+                "name": screen["id"],
+                "display_name": screen["title"],
+                "mode": screen["mode"],
+                "data_source": screen["entity"],
+                "controls": _screen_controls(screen),
+            }
+            for screen in canvas_screens
+        ],
+        "connector_references": [
+            {
+                "id": action["id"],
+                "connector_id": action["connector_id"],
+                "method": action["method"],
+                "approval_required": action["approval_required"],
+            }
+            for action in canvas_actions
+        ],
+    }
+    solution_name = _solution_identifier(cast(str, plan["client_id"]), cast(str, plan["app_name"]))
+    files = [
+        {
+            "path": "dataverse/schema.json",
+            "media_type": "application/json",
+            "content": schema,
+        },
+        {
+            "path": "canvas-app/manifest.json",
+            "media_type": "application/json",
+            "content": manifest,
+        },
+        {
+            "path": "README.md",
+            "media_type": "text/markdown",
+            "content": (
+                f"# {plan['app_name']}\n\n"
+                "Generated locally for review. This artifact contains no credentials, "
+                "does not call Microsoft services, and has not been deployed.\n"
+            ),
+        },
+    ]
+    artifact: dict[str, object] = {
+        "format": "wait-local-agent.power-apps-artifact",
+        "format_version": 1,
+        "client_id": plan["client_id"],
+        "app_name": plan["app_name"],
+        "solution": {"unique_name": solution_name, "publisher_prefix": "wait"},
+        "dataverse": schema,
+        "canvas_app": manifest,
+        "files": files,
+        "requires_approval": plan["requires_approval"],
+        "credentials_included": False,
+        "build_started": True,
+        "dataverse_write_started": False,
+        "execution_started": False,
+        "deployment_started": False,
+        "package_status": "review_only",
+    }
+    if len(json.dumps(artifact, sort_keys=True, separators=(",", ":"))) > MAX_ARTIFACT_BYTES:
+        raise PowerAppsPlanError("Power Apps artifact exceeds the bounded output size")
+    return artifact
+
+
+def _dataverse_type(value: object) -> str:
+    return {
+        "string": "String",
+        "integer": "Integer",
+        "boolean": "Boolean",
+        "date": "DateOnly",
+        "datetime": "DateTime",
+        "choice": "Choice",
+    }.get(str(value), "String")
+
+
+def _screen_controls(screen: dict[str, object]) -> list[dict[str, object]]:
+    mode = str(screen["mode"])
+    if mode == "browse":
+        return [{"name": f"{screen['id']}_gallery", "type": "gallery", "data_source": screen["entity"]}]
+    return [{"name": f"{screen['id']}_form", "type": "form", "mode": mode, "data_source": screen["entity"]}]
+
+
+def _solution_identifier(client_id: str, app_name: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "_", f"{client_id}_{app_name}".casefold()).strip("_")
+    return f"wait_{value[:72]}" if value else "wait_solution"
 
 
 def _entities(value: object) -> list[dict[str, object]]:

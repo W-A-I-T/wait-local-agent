@@ -111,7 +111,11 @@ from wait_local_agent.m365_graph import (
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
-from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
+from wait_local_agent.power_apps import (
+    PowerAppsPlanError,
+    build_power_apps_artifact,
+    build_power_apps_plan,
+)
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
@@ -193,7 +197,7 @@ microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution co
 microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
-microsoft_power_apps_app = typer.Typer(help="Metadata-only Power Apps and Dataverse plans.")
+microsoft_power_apps_app = typer.Typer(help="Bounded Power Apps and Dataverse plans and build artifacts.")
 microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
 microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
@@ -3047,6 +3051,53 @@ def plan_microsoft_power_apps(source: Path) -> None:
     except PowerAppsPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_power_apps_app.command("build")
+def build_microsoft_power_apps(
+    source: Path,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Write the local artifact manifest to this file."),
+    ] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "app_name", "entities", "screens", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, app_name, entities, screens, and actions")
+    client_id = payload["client_id"]
+    app_name = payload["app_name"]
+    entities = payload["entities"]
+    screens = payload["screens"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(app_name, str)
+        or not isinstance(entities, list)
+        or not isinstance(screens, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in entities + screens + actions)
+    ):
+        raise typer.BadParameter("source fields must contain text values and object lists")
+    try:
+        artifact = build_power_apps_artifact(
+            client_id=client_id,
+            app_name=app_name,
+            entities=entities,
+            screens=screens,
+            actions=actions,
+        )
+    except PowerAppsPlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    rendered = json.dumps(artifact, sort_keys=True, indent=2) + "\n"
+    if output is not None:
+        try:
+            output.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            raise typer.BadParameter("unable to write artifact output", param_hint="--output") from exc
+        typer.echo(f"artifact={output}")
+        return
+    typer.echo(rendered, nl=False)
 
 
 @microsoft_use_cases_app.command("list")

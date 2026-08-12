@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
-from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
+from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_artifact, build_power_apps_plan
 
 
 def _plan(**overrides: object) -> dict[str, object]:
@@ -41,6 +43,44 @@ def test_power_apps_plan_is_metadata_only_and_approval_aware() -> None:
     assert result["requires_approval"] is True
     assert result["deployment_started"] is False
     assert result["dataverse_write_started"] is False
+
+
+def test_power_apps_artifact_builds_bounded_reviewable_files_without_deployment() -> None:
+    payload = _plan(
+        screens=[
+            {"id": "employee_browse", "title": "Employees", "entity": "employee", "mode": "browse"},
+            {"id": "employee_edit", "title": "Edit employee", "entity": "employee", "mode": "edit"},
+        ],
+        actions=[
+            {"id": "employee_lookup", "connector_id": "m365", "method": "GET"},
+            {"id": "employee_create", "connector_id": "m365", "method": "POST", "approval_required": True},
+        ],
+    )
+    result = build_power_apps_artifact(
+        client_id=cast(str, payload["client_id"]),
+        app_name=cast(str, payload["app_name"]),
+        entities=cast(list[dict[str, object]], payload["entities"]),
+        screens=cast(list[dict[str, object]], payload["screens"]),
+        actions=cast(list[dict[str, object]], payload["actions"]),
+    )
+    solution = cast(dict[str, object], result["solution"])
+    dataverse = cast(dict[str, object], result["dataverse"])
+    tables = cast(list[dict[str, object]], dataverse["tables"])
+    first_table = tables[0]
+    columns = cast(list[dict[str, object]], first_table["columns"])
+    canvas_app = cast(dict[str, object], result["canvas_app"])
+    screens = cast(list[dict[str, object]], canvas_app["screens"])
+    files = cast(list[dict[str, object]], result["files"])
+
+    assert result["format"] == "wait-local-agent.power-apps-artifact"
+    assert solution["publisher_prefix"] == "wait"
+    assert columns[0]["type"] == "String"
+    assert cast(list[dict[str, object]], screens[0]["controls"])[0]["type"] == "gallery"
+    assert cast(list[dict[str, object]], screens[1]["controls"])[0]["type"] == "form"
+    assert len(files) == 3
+    assert result["credentials_included"] is False
+    assert result["build_started"] is True
+    assert result["deployment_started"] is False
 
 
 @pytest.mark.parametrize(

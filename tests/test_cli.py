@@ -54,6 +54,20 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "write_actions_enabled=False" in result.output
 
 
+def test_microsoft_power_apps_build_cli_emits_local_artifact(monkeypatch, tmp_path) -> None:
+    source = Path("examples/consultant/power-apps-build.json")
+    output = tmp_path / "power-apps-artifact.json"
+
+    result = CliRunner().invoke(app, ["microsoft", "power-apps", "build", str(source), "--output", str(output)])
+
+    assert result.exit_code == 0, result.output
+    assert f"artifact={output}" in result.output
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["format"] == "wait-local-agent.power-apps-artifact"
+    assert artifact["credentials_included"] is False
+    assert artifact["deployment_started"] is False
+
+
 def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()

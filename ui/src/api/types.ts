@@ -278,6 +278,24 @@ export type PowerAutomateFlowPlan = {
   export_status: string;
 };
 
+export type PowerAppsArtifact = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  app_name: string;
+  solution: { unique_name: string; publisher_prefix: string };
+  dataverse: { tables: Array<Record<string, unknown>> };
+  canvas_app: { screens: Array<Record<string, unknown>>; connector_references: Array<Record<string, unknown>> };
+  files: Array<{ path: string; media_type: string; content: unknown }>;
+  requires_approval: boolean;
+  credentials_included: boolean;
+  build_started: boolean;
+  dataverse_write_started: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+  package_status: string;
+};
+
 export type ConsultantDiscoveryResult = {
   format: string;
   format_version: number;
