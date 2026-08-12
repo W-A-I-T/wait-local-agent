@@ -39,9 +39,9 @@ collections, invalid identifiers, unsupported risk values, and credential-like
 fields. This surface intentionally does not accept connector credentials or
 arbitrary extension blobs. The existing local Store redaction also applies
 when the JSON payload is persisted or exported, so secret-like text in valid
-free-text fields may be redacted. Natural-language discovery, Microsoft Graph,
-Copilot Studio, MCP, Power Platform packaging, deployment, and execution are
-follow-up capabilities and are not implied by a stored blueprint.
+free-text fields may be redacted. The separate discovery intake captures
+explicit requirements and produces a reviewable candidate without inferring
+systems, permissions, or deployment targets.
 
 The `architecture` view is the next governed design step. It resolves requested
 agent tools and workflow IDs against the existing local smart-action and
@@ -52,3 +52,10 @@ targets remain explicit review items unless they are a supported local surface
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
 within the blueprint tenant; it does not create or run those agents.
+
+Power Platform connector, Power Apps, and Power Automate plans are available as
+separate review-only artifacts. MCP server/client and Work IQ integration are
+also available behind explicit configuration. None of those plans or adapters
+implicitly call Microsoft services, acquire credentials, or deploy a solution;
+live Copilot Studio channel integration and production deployment remain
+explicitly separate operations.

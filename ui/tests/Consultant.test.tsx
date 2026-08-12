@@ -3,6 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
+vi.mock("../src/app/DashboardContext", () => ({
+  useDashboard: () => ({ canWrite: true })
+}));
+
 describe("Consultant", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -61,6 +65,36 @@ describe("Consultant", () => {
           payloads_exposed: false
         }), { status: 200 }));
       }
+      if (path === "/consultant/workflows/power-automate/plan") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.power-automate-flow-plan",
+          format_version: 1,
+          client_id: "acme",
+          workflow_id: "onboarding-flow",
+          workflow_name: "Onboarding flow",
+          power_automate: { trigger: { type: "manual_review_trigger", name: "HR request" }, actions: [] },
+          requires_approval: false,
+          credentials_included: false,
+          execution_started: false,
+          deployment_started: false,
+          export_status: "review_only"
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/discovery") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.solution-discovery",
+          format_version: 1,
+          client_id: "acme",
+          missing_required: [],
+          readiness: "ready_for_architecture",
+          risk_review: { level: "medium", factors: [], evidence_only: true },
+          roi_analysis: { status: "needs_estimates" },
+          blueprint_candidate: {},
+          inference_started: false,
+          execution_started: false,
+          deployment_started: false
+        }), { status: 200 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -77,5 +111,10 @@ describe("Consultant", () => {
     expect(screen.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Consultant use cases" })).toBeInTheDocument();
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
+    expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
+    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
   });
 });

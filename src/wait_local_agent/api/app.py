@@ -93,6 +93,7 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
@@ -147,6 +148,7 @@ from wait_local_agent.observability import (
     build_analytics_summary,
 )
 from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
+from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
@@ -409,6 +411,21 @@ class PowerAppsPlanRequest(BaseModel):
     entities: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     screens: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerAutomatePlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    workflow_id: str = Field(min_length=1, max_length=64)
+    workflow_name: str = Field(min_length=1, max_length=240)
+    trigger: str = Field(min_length=1, max_length=240)
+    steps: list[dict[str, object]] = Field(min_length=1, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoveryRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    answers: dict[str, object] = Field(default_factory=dict)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4035,6 +4052,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PowerAppsPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/consultant/discovery")
+    def consultant_discovery(
+        payload: DiscoveryRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/consultant/use-cases")
     def consultant_use_cases(
         context: ViewerAccess,
@@ -4044,6 +4074,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return list_consultant_use_cases(category)
         except UseCaseCatalogError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/workflows/power-automate/plan")
+    def consultant_power_automate_plan(
+        payload: PowerAutomatePlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_automate_flow_plan(
+                client_id=scoped_client_id,
+                workflow_id=payload.workflow_id,
+                workflow_name=payload.workflow_name,
+                trigger=payload.trigger,
+                steps=payload.steps,
+            )
+        except PowerAutomatePlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/monitoring/agents")

@@ -89,6 +89,7 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
@@ -110,6 +111,7 @@ from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_plan
+from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
     build_solution_command_plan,
@@ -175,6 +177,8 @@ microsoft_governance_app = typer.Typer(help="Review-only consultant governance c
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
 microsoft_power_apps_app = typer.Typer(help="Metadata-only Power Apps and Dataverse plans.")
 microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
+microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
+microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -204,6 +208,8 @@ microsoft_app.add_typer(microsoft_governance_app, name="governance")
 microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
 microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
 microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
+microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
+microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -2793,6 +2799,53 @@ def list_microsoft_use_cases(
         result = list_consultant_use_cases(category)
     except UseCaseCatalogError as exc:
         raise typer.BadParameter(str(exc), param_hint="--category") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_workflow_app.command("plan")
+def plan_microsoft_workflow(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "workflow_id", "workflow_name", "trigger", "steps")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain client_id, workflow_id, workflow_name, trigger, and steps")
+    client_id = payload["client_id"]
+    workflow_id = payload["workflow_id"]
+    workflow_name = payload["workflow_name"]
+    trigger = payload["trigger"]
+    steps = payload["steps"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(workflow_id, str)
+        or not isinstance(workflow_name, str)
+        or not isinstance(trigger, str)
+        or not isinstance(steps, list)
+        or any(not isinstance(item, dict) for item in steps)
+    ):
+        raise typer.BadParameter("source fields must contain text values and an object list")
+    try:
+        result = build_power_automate_flow_plan(
+            client_id=client_id,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            trigger=trigger,
+            steps=steps,
+        )
+    except PowerAutomatePlanError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_discovery_app.command("assess")
+def assess_microsoft_discovery(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    client_id = payload.get("client_id")
+    answers = payload.get("answers")
+    if not isinstance(client_id, str) or not isinstance(answers, dict):
+        raise typer.BadParameter("source must contain client_id and an answers object")
+    try:
+        result = build_solution_discovery(client_id=client_id, answers=answers)
+    except DiscoveryValidationError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 

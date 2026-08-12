@@ -58,6 +58,46 @@ def test_evaluation_reports_failed_security_and_forbidden_tool_checks() -> None:
     assert result["cases"][1]["passed"] is False
 
 
+def test_evaluation_supports_grounding_latency_failure_and_regression_evidence() -> None:
+    case = {
+        **_case(),
+        "required_citations": ["sharepoint:handbook"],
+        "max_latency_ms": 1000,
+        "failure_expected": True,
+        "regression_expected": True,
+    }
+    result = evaluate_tool_contract(
+        [case],
+        {
+            "onboarding": _observation(
+                citations=["sharepoint:handbook"],
+                latency_ms=240,
+                failure_handled=True,
+                regression_passed=True,
+            )
+        },
+    )
+
+    assert result["production_readiness"] == "pass"
+    assert result["dimensions"]["grounding"] == 100.0
+    assert result["dimensions"]["latency"] == 100.0
+    assert result["dimensions"]["failure_handling"] == 100.0
+    assert result["dimensions"]["regression"] == 100.0
+
+
+def test_evaluation_reports_grounding_and_latency_failures() -> None:
+    case = {**_case(), "required_citations": ["sharepoint:handbook"], "max_latency_ms": 100}
+    result = evaluate_tool_contract(
+        [case],
+        {"onboarding": _observation(citations=["other:source"], latency_ms=101)},
+    )
+
+    assert result["production_readiness"] == "needs_review"
+    assert result["dimensions"]["grounding"] == 0.0
+    assert result["dimensions"]["latency"] == 0.0
+    assert result["cases"][0]["passed"] is False
+
+
 @pytest.mark.parametrize(
     ("test_set", "observations", "message"),
     [
@@ -71,6 +111,17 @@ def test_evaluation_reports_failed_security_and_forbidden_tool_checks() -> None:
         ([_case()], {"onboarding": {**_observation(), "tool_ids": ["x"] * 9}}, "contain 0-8"),
         ([_case()], {"onboarding": {**_observation(), "tool_ids": [1]}}, "non-empty text"),
         ([_case()], {"onboarding": {**_observation(), "tool_ids": ["x", "x"]}}, "duplicates"),
+        ([{**_case(), "max_latency_ms": 120001}], {"onboarding": _observation()}, "max_latency_ms"),
+        (
+            [{**_case(), "failure_expected": "yes"}],
+            {"onboarding": _observation()},
+            "failure_expected",
+        ),
+        (
+            [{**_case(), "required_citations": ["source"]}],
+            {"onboarding": _observation()},
+            "citations",
+        ),
     ],
 )
 def test_evaluation_rejects_malformed_contracts(test_set, observations, message) -> None:

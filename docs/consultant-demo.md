@@ -7,10 +7,11 @@ artifacts only:
 scripts/demo_consultant_mode.sh
 ```
 
-It lists the Teams use case, builds a metadata-only Power Apps/Dataverse plan,
-evaluates an observed tool contract, reviews governance, reports Power
-Platform packaging status, and summarizes local agent health. It does not call
-Microsoft Graph, Teams, Dataverse, a connector host, or a deployment command.
+It lists the Teams use case, assesses explicit discovery evidence, builds
+metadata-only Power Apps/Dataverse and Power Automate plans, evaluates an
+observed tool contract, reviews governance, reports Power Platform packaging
+status, and summarizes local agent health. It does not call Microsoft Graph,
+Teams, Dataverse, a connector host, or a deployment command.
 
 The demo inputs are under `examples/consultant/`. They contain no credentials,
 provider tokens, or real customer data. The output is suitable for review and

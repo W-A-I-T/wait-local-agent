@@ -5365,10 +5365,43 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             "actions": [{"id": "employee_lookup", "connector_id": "m365", "method": "GET"}],
         },
     )
+    discovery = client.post(
+        "/consultant/discovery",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "answers": {
+                "business_goal": "Reduce onboarding effort",
+                "users": ["HR"],
+                "knowledge": ["SharePoint policies"],
+                "systems": ["Microsoft Entra"],
+                "reads": ["Employee record"],
+                "changes": ["Create user"],
+                "approvals": ["Create user"],
+                "failure_handling": "Pause for review",
+                "data_location": ["Tenant SharePoint"],
+                "data_leaves_tenant": False,
+            },
+        },
+    )
     use_cases = client.get(
         "/consultant/use-cases",
         headers=_auth("viewer-token"),
         params={"category": "teams"},
+    )
+    power_automate = client.post(
+        "/consultant/workflows/power-automate/plan",
+        headers=_auth("tech-token"),
+        json={
+            "client_id": "acme",
+            "workflow_id": "employee_onboarding",
+            "workflow_name": "Employee onboarding",
+            "trigger": "HR request",
+            "steps": [
+                {"id": "validate", "name": "Validate manager", "kind": "condition"},
+                {"id": "create_user", "name": "Create user", "method": "POST", "approval_required": True},
+            ],
+        },
     )
     monitoring = client.get(
         "/consultant/monitoring/agents",
@@ -5414,8 +5447,13 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert power_apps.status_code == 200
     assert power_apps.json()["format"] == "wait-local-agent.power-apps-plan"
     assert power_apps.json()["deployment_started"] is False
+    assert discovery.status_code == 200
+    assert discovery.json()["readiness"] == "ready_for_architecture"
     assert use_cases.status_code == 200
     assert use_cases.json()["use_cases"][0]["id"] == "teams-ticket-triage"
+    assert power_automate.status_code == 200
+    assert power_automate.json()["format"] == "wait-local-agent.power-automate-flow-plan"
+    assert power_automate.json()["deployment_started"] is False
     assert monitoring.status_code == 200
     assert monitoring.json()["payloads_exposed"] is False
     assert admin_create.status_code == 201

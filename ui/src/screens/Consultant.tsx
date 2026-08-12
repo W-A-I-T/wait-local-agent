@@ -1,21 +1,38 @@
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
+import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import type {
   ConsultantArchitecture,
   ConsultantArchitectureComponent,
   ConsultantBlueprint,
+  ConsultantDiscoveryResult,
   ConsultantMonitoring,
   ConsultantUseCase,
+  PowerAutomateFlowPlan,
 } from "../api/types";
 
 export function Consultant() {
+  const { canWrite } = useDashboard();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
   const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
   const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
+  const [flowPlan, setFlowPlan] = useState<PowerAutomateFlowPlan | null>(null);
+  const [flowLoading, setFlowLoading] = useState(false);
+  const [discoveryGoal, setDiscoveryGoal] = useState("");
+  const [discoveryUsers, setDiscoveryUsers] = useState("");
+  const [discoverySystems, setDiscoverySystems] = useState("");
+  const [discoveryKnowledge, setDiscoveryKnowledge] = useState("");
+  const [discoveryChanges, setDiscoveryChanges] = useState("");
+  const [discoveryApprovals, setDiscoveryApprovals] = useState("");
+  const [discoveryFailure, setDiscoveryFailure] = useState("");
+  const [discoveryDataLocation, setDiscoveryDataLocation] = useState("");
+  const [discoveryLeavesTenant, setDiscoveryLeavesTenant] = useState(false);
+  const [discoveryResult, setDiscoveryResult] = useState<ConsultantDiscoveryResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -47,6 +64,7 @@ export function Consultant() {
   async function inspectBlueprint(blueprintId: string) {
     setSelectedId(blueprintId);
     setArchitecture(null);
+    setFlowPlan(null);
     setMessage("");
     try {
       const result = await apiFetch<ConsultantArchitecture>(
@@ -55,6 +73,72 @@ export function Consultant() {
       setArchitecture(result);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to build the architecture view.");
+    }
+  }
+
+  async function preparePowerAutomatePlan(workflow: ConsultantArchitectureComponent) {
+    if (!selected) return;
+    setFlowLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<PowerAutomateFlowPlan>("/consultant/workflows/power-automate/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: selected.client_id,
+          workflow_id: workflow.id,
+          workflow_name: workflow.name ?? workflow.id,
+          trigger: workflow.trigger ?? "Manual review request",
+          steps: (workflow.steps ?? []).map((name, index) => ({
+            id: `step_${index + 1}`,
+            name,
+            kind: "action",
+            method: "GET",
+          })),
+        }),
+      });
+      setFlowPlan(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to prepare the Power Automate plan.");
+    } finally {
+      setFlowLoading(false);
+    }
+  }
+
+  async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    if (!clientId || !discoveryGoal.trim()) {
+      setMessage("Choose a blueprint tenant and provide a business goal before assessing discovery.");
+      return;
+    }
+    setDiscoveryLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantDiscoveryResult>("/consultant/discovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          answers: {
+            business_goal: discoveryGoal,
+            users: splitList(discoveryUsers),
+            systems: splitList(discoverySystems),
+            knowledge: splitList(discoveryKnowledge),
+            reads: splitList(discoveryKnowledge),
+            changes: splitList(discoveryChanges),
+            approvals: splitList(discoveryApprovals),
+            failure_handling: discoveryFailure || undefined,
+            data_location: splitList(discoveryDataLocation),
+            data_leaves_tenant: discoveryLeavesTenant,
+          },
+        }),
+      });
+      setDiscoveryResult(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to assess discovery.");
+    } finally {
+      setDiscoveryLoading(false);
     }
   }
 
@@ -90,6 +174,67 @@ export function Consultant() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Solution discovery</h2>
+            <p className="screen-note">Capture explicit requirements before architecture review. Missing answers stay visible.</p>
+          </div>
+          {discoveryResult ? <StatusChip status={discoveryResult.readiness === "ready_for_architecture" ? "completed" : "evidence_partial"} /> : null}
+        </div>
+        <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
+          <div className="grid">
+            <label>
+              Business goal
+              <textarea rows={2} value={discoveryGoal} onChange={(event) => setDiscoveryGoal(event.target.value)} placeholder="Reduce manual onboarding work" />
+            </label>
+            <label>
+              Users or owners
+              <input value={discoveryUsers} onChange={(event) => setDiscoveryUsers(event.target.value)} placeholder="HR, IT" />
+            </label>
+            <label>
+              Systems
+              <input value={discoverySystems} onChange={(event) => setDiscoverySystems(event.target.value)} placeholder="Entra, Teams" />
+            </label>
+            <label>
+              Knowledge sources
+              <input value={discoveryKnowledge} onChange={(event) => setDiscoveryKnowledge(event.target.value)} placeholder="SharePoint HR policies" />
+            </label>
+            <label>
+              Allowed changes
+              <input value={discoveryChanges} onChange={(event) => setDiscoveryChanges(event.target.value)} placeholder="Create user, assign license" />
+            </label>
+            <label>
+              Required approvals
+              <input value={discoveryApprovals} onChange={(event) => setDiscoveryApprovals(event.target.value)} placeholder="Assign license" />
+            </label>
+            <label>
+              Failure handling
+              <input value={discoveryFailure} onChange={(event) => setDiscoveryFailure(event.target.value)} placeholder="Pause for review" />
+            </label>
+            <label>
+              Data location
+              <input value={discoveryDataLocation} onChange={(event) => setDiscoveryDataLocation(event.target.value)} placeholder="Tenant SharePoint" />
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={discoveryLeavesTenant} onChange={(event) => setDiscoveryLeavesTenant(event.target.checked)} />
+              Information may leave the tenant
+            </label>
+          </div>
+          <button type="submit" disabled={!canWrite || discoveryLoading || !discoveryGoal.trim()}>
+            {discoveryLoading ? "Assessing…" : "Assess discovery"}
+          </button>
+          {!canWrite ? <p className="screen-note">Technician access is required to submit discovery evidence.</p> : null}
+        </form>
+        {discoveryResult ? (
+          <div className="notice">
+            <strong>{discoveryResult.readiness === "ready_for_architecture" ? "Ready for architecture review." : "More discovery is required."}</strong>{" "}
+            {discoveryResult.missing_required.length ? `Missing: ${discoveryResult.missing_required.join(", ")}. ` : "All required answers are present. "}
+            Risk review: {discoveryResult.risk_review.level}. ROI estimate: {discoveryResult.roi_analysis.status}.
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -133,8 +278,28 @@ export function Consultant() {
               <h3>Workflow design</h3>
               <p className="screen-note">Read-only sequence preview from the stored blueprint.</p>
               <div className="workflow-graph-list">
-                {workflowComponents.map((workflow) => <WorkflowGraph component={workflow} key={workflow.id} />)}
+                {workflowComponents.map((workflow) => (
+                  <div key={workflow.id}>
+                    <WorkflowGraph component={workflow} />
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => void preparePowerAutomatePlan(workflow)}
+                      disabled={!canWrite || flowLoading || !(workflow.steps?.length)}
+                    >
+                      {flowLoading ? "Preparing plan…" : "Prepare Power Automate plan"}
+                    </button>
+                  </div>
+                ))}
               </div>
+              {!canWrite ? <p className="screen-note">Technician access is required to prepare an export plan.</p> : null}
+              {flowPlan ? (
+                <div className="notice">
+                  <strong>Power Automate plan ready for review.</strong>{" "}
+                  {flowPlan.power_automate.actions.length} actions · {flowPlan.requires_approval ? "approval required" : "read-only steps"}.
+                  <br />No credentials, execution, or deployment was started.
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="panel-subsection">
@@ -157,6 +322,10 @@ export function Consultant() {
       ) : null}
     </div>
   );
+}
+
+function splitList(value: string): string[] {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {

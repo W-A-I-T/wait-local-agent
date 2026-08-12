@@ -247,6 +247,50 @@ export type ConsultantMonitoring = {
   payloads_exposed: boolean;
 };
 
+export type PowerAutomateFlowPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  power_automate: {
+    trigger: { type: string; name: string };
+    actions: Array<{
+      id: string;
+      name: string;
+      kind: string;
+      type: string;
+      tool_id?: string | null;
+      method: string;
+      approval_required: boolean;
+    }>;
+  };
+  requires_approval: boolean;
+  credentials_included: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+  export_status: string;
+};
+
+export type ConsultantDiscoveryResult = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  missing_required: string[];
+  readiness: string;
+  risk_review: { level: string; factors: string[]; evidence_only: boolean };
+  roi_analysis: {
+    status: string;
+    estimated_monthly_hours_saved?: number;
+    estimated_monthly_value?: number;
+    evidence_only?: boolean;
+  };
+  blueprint_candidate: Record<string, unknown>;
+  inference_started: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
 export type TemplateGalleryEntry = {
   id: string;
   source_template_id: string;
