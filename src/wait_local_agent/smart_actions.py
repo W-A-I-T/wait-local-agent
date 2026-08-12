@@ -60,6 +60,7 @@ from wait_local_agent.sharepoint import SharePointClientProtocol
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.syncro import SyncroReadProvider, SyncroWriteProvider
 from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider, TimeZestWriteProvider
+from wait_local_agent.workiq import WorkIqClient
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorPreview
@@ -328,6 +329,7 @@ class ActionContext:
     confluence_client: ConfluenceClientProtocol | None = None
     notion_client: NotionClientProtocol | None = None
     sharepoint_client: SharePointClientProtocol | None = None
+    work_iq_client: WorkIqClient | None = None
     m365_client: (
         M365GraphReadProvider
         | M365LifecycleWriteProvider
@@ -8268,6 +8270,82 @@ class DispatchSuggestionAction:
         )
 
 
+class WorkIqFetchAction:
+    manifest = SmartActionManifest(
+        action_id="workiq-fetch",
+        title="Work IQ bounded Microsoft 365 read",
+        description=(
+            "Read bounded Microsoft 365 entities through the configured Work IQ MCP "
+            "server using tenant-allowed relative paths."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["client_id", "entity_urls"],
+            "properties": {
+                "client_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "entity_urls": {"type": "array", "minItems": 1, "maxItems": 10},
+            },
+        },
+        output_schema={
+            "client_id": "string",
+            "results": "array",
+            "count": "integer",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=5,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 120:
+            return _failed("client_id must be a non-empty string of at most 120 characters")
+        scoped_client_id = client_id.strip()
+        if context.client_id is not None and scoped_client_id != context.client_id:
+            return _failed("client_id is outside the tenant scope")
+        entity_urls = payload.get("entity_urls")
+        if not isinstance(entity_urls, list):
+            return _failed("entity_urls must be an array")
+        if any(not isinstance(path, str) for path in entity_urls):
+            return _failed("each entity URL must be text")
+        provider = context.work_iq_client or WorkIqClient(context.settings)
+        try:
+            response = provider.fetch(cast(list[str], entity_urls))
+        except Exception:
+            return _failed("Work IQ read failed")
+        output: dict[str, object] = {
+            "client_id": scoped_client_id,
+            "connector_status": response.status,
+            "results": [],
+            "count": 0,
+        }
+        if response.status != "ready":
+            return ActionResult(status="failed", output=output, error_detail=redact_text(response.message))
+        results = response.data.get("results")
+        if not isinstance(results, list):
+            return _failed("Work IQ returned malformed entity results")
+        safe_results = [cast(object, redact_value(item)) for item in results[:10]]
+        output["results"] = safe_results
+        output["count"] = len(safe_results)
+        return ActionResult(
+            status="success",
+            output=output,
+            evidence=[
+                {
+                    "type": "connector_read",
+                    "connector": "work_iq",
+                    "operation": "fetch",
+                    "client_id": scoped_client_id,
+                    "paths": len(entity_urls),
+                }
+            ],
+        )
+
+
 def _build_default_registry() -> SmartActionRegistry:
     registry = SmartActionRegistry()
     for action in (
@@ -8452,6 +8530,7 @@ def _build_default_registry() -> SmartActionRegistry:
         NotionPageCommentAction(),
         SharePointDocumentationSearchAction(),
         SharePointDocumentationContentAction(),
+        WorkIqFetchAction(),
         TimeZestSchedulingRequestLookupAction(),
         TimeZestSchedulingRequestCreateAction(),
         ScalePadClientLookupAction(),
@@ -8545,6 +8624,7 @@ class SmartActionService:
         confluence_client: ConfluenceClientProtocol | None = None,
         notion_client: NotionClientProtocol | None = None,
         sharepoint_client: SharePointClientProtocol | None = None,
+        work_iq_client: WorkIqClient | None = None,
         timezest_client: TimeZestReadProvider | TimeZestWriteProvider | None = None,
         scalepad_client: ScalePadReadProvider | None = None,
         m365_client: (
@@ -8580,6 +8660,7 @@ class SmartActionService:
         self.confluence_client = confluence_client
         self.notion_client = notion_client
         self.sharepoint_client = sharepoint_client
+        self.work_iq_client = work_iq_client
         self.timezest_client = timezest_client
         self.scalepad_client = scalepad_client
         self.m365_client = m365_client
@@ -8590,7 +8671,7 @@ class SmartActionService:
             if communication_provider is None
             else communication_provider
             if hasattr(communication_provider, "send")
-            else None  # type: ignore[assignment]
+            else None
         )
         self.provider_configured = (
             bool(provider_configured) and not isinstance(self.provider, DeterministicLocalProvider)
@@ -8950,6 +9031,7 @@ class SmartActionService:
             confluence_client=self.confluence_client,
             notion_client=self.notion_client,
             sharepoint_client=self.sharepoint_client,
+            work_iq_client=self.work_iq_client,
             timezest_client=self.timezest_client,
             scalepad_client=self.scalepad_client,
             m365_client=self.m365_client,

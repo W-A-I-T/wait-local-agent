@@ -3,8 +3,8 @@
 WAIT Local Agent exposes a bounded Model Context Protocol (MCP) server at
 `POST /mcp`. This is the first MCP vertical slice: it publishes the existing
 WAIT smart-action catalog and routes calls through `SmartActionService`. It
-does not add a second execution engine or claim to be a Power Platform, Graph,
-SharePoint, or Work IQ connector.
+does not add a second execution engine or claim to be a Power Platform,
+SharePoint, or deployment platform.
 
 The endpoint implements the MCP lifecycle plus `tools/list` and `tools/call`
 over JSON-RPC 2.0. Clients must initialize a session, send
@@ -93,3 +93,8 @@ example `wait.ticket-triage`. Invoke a read action with `tools/call`:
 - Tool catalog capabilities are inherited from WAIT's existing registry. A
   provider that is not configured remains unavailable, and unsupported writes
   remain unavailable.
+- Work IQ access is optional and preview-only. WAIT currently exposes only the
+  bounded `workiq-fetch` read action through the existing smart-action
+  catalog. Configure an externally acquired Entra access token with
+  `WAIT_WORK_IQ_MCP_ACCESS_TOKEN`; automatic OAuth acquisition is not
+  implemented.

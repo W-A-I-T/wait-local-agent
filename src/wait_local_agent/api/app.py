@@ -188,6 +188,7 @@ from wait_local_agent.workflows import (
     list_workflow_templates,
     run_workflow_template,
 )
+from wait_local_agent.workiq import WorkIqClient
 
 ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
@@ -597,6 +598,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     timezest_client = TimeZestClient(active_settings)
     scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
+    work_iq_client = WorkIqClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
     report_service = ReportService(store)
     collector_service = CollectorService(store, default_registry)
@@ -617,6 +619,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         timezest_client=timezest_client,
         scalepad_client=scalepad_client,
         m365_client=m365_client,
+        work_iq_client=work_iq_client,
         communication_provider=ConfiguredCommunicationProvider(active_settings),
     )
     agent_service = AgentService(store, active_settings, smart_action_service)

@@ -170,7 +170,8 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "scalepad-assessment-lookup",
         "timezest-scheduling-request-create",
         "timezest-scheduling-request-lookup",
-        "dispatch-suggestion",
+        "workiq-fetch",
+            "dispatch-suggestion",
         "collector-preview",
     }
     assert tools["ticket-triage"].access_mode == "read"

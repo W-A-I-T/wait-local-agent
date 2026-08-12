@@ -179,6 +179,9 @@ class Settings:
     sharepoint_base_url: str = ""
     sharepoint_access_token: str = ""
     sharepoint_page_size: int = 25
+    work_iq_mcp_endpoint: str = ""
+    work_iq_mcp_access_token: str = ""
+    work_iq_mcp_timeout_seconds: float = 20.0
     m365_graph_base_url: str = ""
     m365_access_token: str = ""
     m365_page_size: int = 25
@@ -575,6 +578,19 @@ def load_settings() -> Settings:
             vault_path=vault_path,
         ),
         sharepoint_page_size=_int_env("WAIT_SHAREPOINT_PAGE_SIZE", 25),
+        work_iq_mcp_endpoint=_secret_value(
+            "WAIT_WORK_IQ_MCP_ENDPOINT",
+            os.getenv("WAIT_WORK_IQ_MCP_ENDPOINT", "").strip(),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        work_iq_mcp_access_token=_secret_value(
+            "WAIT_WORK_IQ_MCP_ACCESS_TOKEN",
+            os.getenv("WAIT_WORK_IQ_MCP_ACCESS_TOKEN", ""),
+            backend=backend,
+            vault_path=vault_path,
+        ),
+        work_iq_mcp_timeout_seconds=_float_env("WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS", 20.0),
         m365_graph_base_url=_secret_value(
             "WAIT_M365_GRAPH_BASE_URL",
             os.getenv("WAIT_M365_GRAPH_BASE_URL", ""),
