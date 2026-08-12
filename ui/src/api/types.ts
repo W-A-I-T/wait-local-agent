@@ -332,6 +332,29 @@ export type TemplateGalleryEntry = {
   created_at: string;
   updated_at: string;
   client_id?: string | null;
+  definition?: WorkflowDesign;
+};
+
+export type WorkflowNodeType = "trigger" | "action" | "approval" | "condition" | "knowledge" | "connector" | "notification" | "end";
+
+export type WorkflowDesignNode = {
+  id: string;
+  type: WorkflowNodeType;
+  label: string;
+  tool_id?: string | null;
+  config: Record<string, unknown>;
+};
+
+export type WorkflowDesignEdge = {
+  from: string;
+  to: string;
+};
+
+export type WorkflowDesign = {
+  format: "wait-local-agent.workflow-design";
+  version: 1;
+  nodes: WorkflowDesignNode[];
+  edges: WorkflowDesignEdge[];
 };
 
 export type TemplateGalleryRevision = {

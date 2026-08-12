@@ -210,6 +210,10 @@ from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
+from wait_local_agent.workflow_designer import (
+    WorkflowDesignError,
+    default_workflow_design,
+)
 from wait_local_agent.workflows import (
     get_workflow_template,
     list_workflow_templates,
@@ -367,6 +371,7 @@ class TemplateGalleryCreateRequest(BaseModel):
     provenance: str = Field(min_length=1, max_length=1000)
     display_name: str | None = Field(default=None, max_length=120)
     instructions: str = Field(default="", max_length=4000)
+    definition: dict[str, object] | None = None
     client_id: str | None = None
 
 
@@ -378,6 +383,7 @@ class TemplateGalleryImportRequest(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     provenance: str = Field(min_length=1, max_length=1000)
     instructions: str = Field(default="", max_length=4000)
+    definition: dict[str, object] | None = None
     client_id: str | None = None
 
 
@@ -385,6 +391,7 @@ class TemplateGalleryUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, min_length=1, max_length=2000)
     instructions: str | None = Field(default=None, max_length=4000)
+    definition: dict[str, object] | None = None
     enabled: bool | None = None
     client_id: str | None = None
 
@@ -4507,14 +4514,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if template is None:
             raise HTTPException(status_code=404, detail="workflow template not found")
         try:
+            definition = payload.definition if payload.definition is not None else default_workflow_design(template)
             entry = store.create_template_gallery_entry(
                 template,
                 provenance=payload.provenance,
                 client_id=scoped_client_id,
                 name=payload.display_name,
                 instructions=payload.instructions,
+                definition=definition,
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(entry)
 
@@ -4548,8 +4557,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 description=payload.description,
                 instructions=payload.instructions,
                 enabled=False,
+                definition=(
+                    payload.definition
+                    if payload.definition is not None
+                    else default_workflow_design(template)
+                ),
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(entry)
 
@@ -4582,9 +4596,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 description=payload.description,
                 instructions=payload.instructions,
                 enabled=payload.enabled,
+                definition=payload.definition,
                 client_id=entry.client_id,
             )
-        except ValueError as exc:
+        except (ValueError, WorkflowDesignError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _template_gallery_view(updated)
 
@@ -5550,6 +5565,7 @@ def _template_gallery_view(entry) -> dict[str, object]:
         "preview_fields": _safe_json_values(entry.preview_fields_json),
         "provenance": redact_text(entry.provenance),
         "instructions": redact_text(entry.instructions),
+        "definition": _safe_redacted_json_object(entry.definition_json),
         "enabled": entry.enabled,
         "version": entry.version,
         "created_at": entry.created_at,
@@ -5569,6 +5585,7 @@ def _template_gallery_export_view(entry) -> dict[str, object]:
         "description": redact_text(entry.description),
         "provenance": redact_text(entry.provenance),
         "instructions": redact_text(entry.instructions),
+        "definition": _safe_redacted_json_object(entry.definition_json),
         "enabled": entry.enabled,
     }
 
