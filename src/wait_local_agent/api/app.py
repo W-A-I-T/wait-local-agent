@@ -170,6 +170,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_promotion_evidence,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
@@ -537,6 +538,7 @@ class PowerPlatformDeploymentRequest(BaseModel):
     output_directory: str = Field(min_length=1, max_length=240)
     deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
     stage: Literal["build", "dev", "test", "prod"] = "build"
+    promotion_evidence: dict[str, object] = Field(default_factory=dict)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4457,6 +4459,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 output_directory=payload.output_directory,
                 deployment_targets=payload.deployment_targets,
             )
+            promotion_evidence = validate_promotion_evidence(payload.stage, payload.promotion_evidence)
         except PowerPlatformDeploymentError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         approval_payload = {
@@ -4469,6 +4472,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "output_directory": payload.output_directory,
             "deployment_targets": plan["deployment_targets"],
             "stage": payload.stage,
+            "promotion_evidence": promotion_evidence,
             "credentials_included": False,
         }
         approval = store.create_approval_request(

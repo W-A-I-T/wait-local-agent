@@ -9,7 +9,9 @@ The repository currently provides review-oriented blueprint, discovery,
 architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
 Platform preparation surfaces. External credentials, provider availability, and
 deployment authorization remain explicit prerequisites; artifact generation is
-not deployment.
+not deployment. Planned Power Platform stages report no deployment start, and
+TEST/PROD approval requests require explicit preceding-stage, evaluation,
+governance, artifact-digest, and rollback evidence.
 
 Tenant-scoped environment discovery matches explicit system declarations to
 local connector configuration without probing providers; configured,

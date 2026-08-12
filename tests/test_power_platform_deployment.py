@@ -13,6 +13,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_promotion_evidence,
 )
 
 
@@ -43,6 +44,56 @@ def test_deployment_plan_is_staged_and_metadata_only() -> None:
     assert plan["credentials_included"] is False
     assert plan["execution_started"] is False
     assert plan["deployment_started"] is False
+    stages = cast(list[dict[str, object]], plan["stages"])
+    assert all(stage["deployment_started"] is False for stage in stages)
+    assert cast(dict[str, object], plan["promotion_policy"])["test"] == {
+        "required": True,
+        "source_stage": "dev",
+        "evidence": [
+            "source_stage_success",
+            "artifact_digest",
+            "evaluation_pass",
+            "governance_pass",
+            "rollback_metadata",
+        ],
+    }
+
+
+def test_promotion_evidence_is_required_and_normalized_for_test_and_prod() -> None:
+    digest = "sha256:" + "a" * 64
+    rollback_digest = "sha256:" + "b" * 64
+    evidence = {
+        "source_stage": "dev",
+        "source_status": "succeeded",
+        "artifact_digest": digest,
+        "evaluation": {"production_readiness": "pass", "case_count": 3},
+        "governance": {"status": "pass"},
+        "rollback": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": rollback_digest,
+        },
+    }
+
+    normalized = validate_promotion_evidence("test", evidence)
+    assert normalized == {
+        "source_stage": "dev",
+        "source_status": "succeeded",
+        "artifact_digest": digest,
+        "evaluation": {"production_readiness": "pass", "case_count": 3},
+        "governance": {"status": "pass"},
+        "rollback": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": rollback_digest,
+        },
+    }
+    with pytest.raises(PowerPlatformDeploymentError, match="requires promotion_evidence"):
+        validate_promotion_evidence("test", {})
+    with pytest.raises(PowerPlatformDeploymentError, match="source_stage must be test"):
+        validate_promotion_evidence("prod", evidence)
+    with pytest.raises(PowerPlatformDeploymentError, match="production_readiness=pass"):
+        validate_promotion_evidence("test", {**evidence, "evaluation": {"production_readiness": "needs_review"}})
 
 
 @pytest.mark.parametrize(
@@ -125,6 +176,27 @@ def test_deployment_payload_rebuild_rejects_missing_fields_and_accepts_canonical
     invalid_targets = dict(payload, deployment_targets=["dev"])
     with pytest.raises(PowerPlatformDeploymentError, match="deployment_targets"):
         build_power_platform_deployment_plan_from_payload(invalid_targets)
+
+    promotion_payload = {
+        **payload,
+        "stage": "test",
+        "promotion_evidence": {
+            "source_stage": "dev",
+            "source_status": "succeeded",
+            "artifact_digest": "sha256:" + "a" * 64,
+            "evaluation": {"production_readiness": "pass", "case_count": 1},
+            "governance": {"status": "pass"},
+            "rollback": {
+                "available": True,
+                "strategy": "reimport_previous_package",
+                "artifact_digest": "sha256:" + "b" * 64,
+            },
+        },
+    }
+    promoted = build_power_platform_deployment_plan_from_payload(promotion_payload)
+    assert promoted["promotion_evidence"]["source_stage"] == "dev"  # type: ignore[index]
+    with pytest.raises(PowerPlatformDeploymentError, match="requires promotion_evidence"):
+        build_power_platform_deployment_plan_from_payload({**promotion_payload, "promotion_evidence": {}})
 
 
 def test_execution_covers_gates_path_confinement_and_command_failures(settings, tmp_path: Path, monkeypatch) -> None:

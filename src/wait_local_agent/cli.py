@@ -128,6 +128,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_promotion_evidence,
 )
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -2918,6 +2919,7 @@ def request_microsoft_solution_deployment_approval(
         )
         if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
             raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
+        promotion_evidence = validate_promotion_evidence(stage, payload.get("promotion_evidence", {}))
     except (PowerPlatformDeploymentError, KeyError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     approval_payload = {
@@ -2930,6 +2932,7 @@ def request_microsoft_solution_deployment_approval(
         "output_directory": payload["output_directory"],
         "deployment_targets": plan["deployment_targets"],
         "stage": stage,
+        "promotion_evidence": promotion_evidence,
         "credentials_included": False,
     }
     approval = Store(settings.data_path).create_approval_request(

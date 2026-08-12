@@ -404,6 +404,50 @@ def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> Non
         )
 
 
+def test_power_platform_promotion_route_requires_evidence_for_test_and_prod(settings) -> None:
+    client = TestClient(create_app(settings))
+    base = {
+        "client_id": "acme",
+        "solution_name": "onboarding_review",
+        "publisher_name": "WAITConsulting",
+        "publisher_prefix": "wlp",
+        "output_directory": "/tmp/wait-consultant-solution",
+        "deployment_targets": [
+            {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+            {"name": "test", "environment_url": "https://test.crm.dynamics.com"},
+            {"name": "prod", "environment_url": "https://prod.crm.dynamics.com"},
+        ],
+    }
+    missing = client.post(
+        "/consultant/solutions/deployment-approvals",
+        json={**base, "stage": "test"},
+    )
+    assert missing.status_code == 422
+    assert "requires promotion_evidence" in missing.json()["detail"]
+
+    promotion_evidence = {
+        "source_stage": "dev",
+        "source_status": "succeeded",
+        "artifact_digest": "sha256:" + "a" * 64,
+        "evaluation": {"production_readiness": "pass", "case_count": 1},
+        "governance": {"status": "pass"},
+        "rollback": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": "sha256:" + "b" * 64,
+        },
+    }
+    approved_for_review = client.post(
+        "/consultant/solutions/deployment-approvals",
+        json={**base, "stage": "test", "promotion_evidence": promotion_evidence},
+    )
+    assert approved_for_review.status_code == 201, approved_for_review.text
+    approval = approved_for_review.json()["approval"]
+    assert approval["status"] == "pending"
+    assert approval["payload"]["promotion_evidence"]["source_stage"] == "dev"
+    assert approved_for_review.json()["plan"]["deployment_started"] is False
+
+
 def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
     draft = _endpoint(settings, "/connectors/m365/teams/message-drafts")(
         TeamsMessageDraftRequest(

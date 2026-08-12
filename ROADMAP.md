@@ -77,7 +77,10 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Bounded Microsoft Graph and Teams reads/actions, Work IQ read boundaries,
   Power Platform connector artifacts, Power Apps metadata/build artifacts,
-  Power Automate planning, and deployment-stage records.
+  Power Automate planning, and deployment-stage records. Planned stages remain
+  non-mutating; TEST and PROD approval requests require preceding-stage
+  success, passing evaluation/governance, artifact digest, and rollback
+  evidence.
 - PAC execution is allowlisted, fixed-argument, approval-gated, bounded,
   digest-bound, shell-disabled, and reports unavailable credentials or tools
   explicitly.
@@ -87,9 +90,10 @@ credential or undocumented vendor API remains an explicit boundary.
 - Complete blueprint-to-artifact validation and packaging across supported
   Copilot Studio, Power Automate, Power Apps/Dataverse, connector, and PAC
   paths.
-- Promotion gates for DEV → TEST → PROD with explicit human approval,
-  evaluation evidence, rollback metadata, and no inference of live success from
-  local artifacts.
+- Bind promotion evidence to the generated package and persisted stage result,
+  then complete DEV → TEST → PROD validation with live-provider result
+  verification and rollback execution evidence. Local artifacts still never
+  imply provider success.
 - Expand Work IQ only for documented operations whose path, function,
   arguments, tenant, identity, and local policy produce a deterministic
   READ/WRITE/ACTION/HIGH-RISK/BLOCKED/UNKNOWN decision. Unknown fails closed.
