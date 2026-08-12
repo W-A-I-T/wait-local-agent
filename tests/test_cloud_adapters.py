@@ -87,6 +87,15 @@ def test_safe_cloud_outcomes_classify_provider_failures_and_bounds() -> None:
     class _StatusError(Exception):
         status_code = 403
 
+    class _NestedCode:
+        code = "UnauthorizedOperation"
+
+    class _NestedError(Exception):
+        error = _NestedCode()
+
+    class _ResponseError(Exception):
+        response = {"Error": {"Code": "AccessDenied"}}
+
     assert safe_module.provider_outcome(
         "aws", PermissionError(), permission_hint="check IAM"
     )["status"] == "not_authorized"
@@ -95,6 +104,12 @@ def test_safe_cloud_outcomes_classify_provider_failures_and_bounds() -> None:
     )["status"] == "not_authorized"
     assert safe_module.provider_outcome(
         "aws", _StatusError(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", _NestedError(), permission_hint="check IAM"
+    )["status"] == "not_authorized"
+    assert safe_module.provider_outcome(
+        "aws", _ResponseError(), permission_hint="check IAM"
     )["status"] == "not_authorized"
     assert safe_module.provider_outcome(
         "aws", ImportError(), permission_hint="check IAM"

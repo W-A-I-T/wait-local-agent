@@ -1382,7 +1382,7 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     class ValidationStub(Exception):
         def errors(self):
             return [
-                {"loc": ("body", "license"), "input": "secret", "msg": "bad", "type": "value_error"},
+                {"loc": ("body", "value"), "input": "secret", "msg": "bad", "type": "value_error"},
                 {"loc": ("body", "other"), "input": {"license": "secret"}, "msg": "bad", "type": "value_error"},
             ]
 
