@@ -84,6 +84,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   documented model-list contract, report missing models and malformed or
   unavailable responses explicitly, and never probe remote providers while
   offline or when remote fallback is disabled.
+- The local CLI exposes the same readiness boundary through
+  `wait-local-agent microsoft provider health`, labeling local/remote scope,
+  provider, model, probe mode, status, and offline state while auditing only
+  status labels.
 - Model completion, planning, and continuation requests retry only transient
   rate-limit, timeout, server, or transport failures within a fixed two-retry
   budget; non-retryable failures stop immediately, and redacted provider
@@ -261,7 +265,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Fallback cycles and unconfigured targets are rejected; attempts, policy, and
   partial history remain redacted and auditable. The API run detail, CLI agent
   listing, execution metadata, audit event, and Agents screen expose the same
-  bounded policy outcome.
+  bounded policy outcome. The CLI also exposes `agents run`, `agents show-run`,
+  `agents cancel`, `agents retry`, and `agents resume` through the same
+  tenant-scoped AgentService lifecycle.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, delivery history APIs, and an operator-triggered

@@ -25,6 +25,12 @@ dimension; it is never treated as a pass. These fields define the evaluation
 contract and evidence boundary. They do not claim that a local fixture has
 performed live-provider, rollback, or production-deployment verification.
 
+Each case reports `security_evidence_provenance` alongside requested security
+evidence. `observation` means the value was explicitly supplied by the fixture
+payload, `runtime` means the bounded local runtime derived it from the captured
+run, and `unsupported` means no evidence was available. Provenance is
+descriptive and cannot turn a false value into a pass.
+
 For example:
 
 ```json
@@ -85,6 +91,17 @@ observation mode:
 wait-local-agent microsoft evaluation run evaluation.json
 ```
 
+Operators can inspect configured model-provider readiness without exposing
+credentials or response bodies:
+
+```bash
+wait-local-agent microsoft provider health
+```
+
+The output labels local and remote scope, provider, model, status, probe mode,
+and offline state. A remote probe is only attempted when the existing explicit
+cloud opt-ins allow it; offline mode reports `blocked_offline` without making a
+network request.
 The same command accepts the controlled execution shape used by the API. It
 reuses a tenant-scoped persisted agent and the existing AgentService, and
 requires local demo mode with writes disabled:
