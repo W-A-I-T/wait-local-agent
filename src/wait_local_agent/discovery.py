@@ -151,8 +151,9 @@ def discover_solution_environment(
     systems: Sequence[object],
     connector_statuses: Iterable[ConnectorStatus],
     configured_client_id: str | None = None,
+    probe_results: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
-    """Build environment evidence for a discovery request without probing."""
+    """Build environment evidence from declarations and optional health results."""
 
     try:
         return discover_environment(
@@ -160,6 +161,7 @@ def discover_solution_environment(
             requested_systems=systems,
             connector_statuses=connector_statuses,
             configured_client_id=configured_client_id,
+            probe_results=probe_results,
         )
     except EnvironmentDiscoveryError as exc:
         raise DiscoveryValidationError(str(exc)) from exc

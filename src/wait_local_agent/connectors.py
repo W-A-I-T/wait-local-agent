@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
@@ -43,7 +44,7 @@ from wait_local_agent.models import (
     SecretRecord,
 )
 from wait_local_agent.notion import NotionClient
-from wait_local_agent.reports.renderers import redact_value
+from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.scalepad import ScalePadClient
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
@@ -1038,6 +1039,98 @@ def validate_connector_credentials(
     else:
         raise ValueError(f"unsupported connector: {connector}")
     return _classify_validation_result(connector, result.status, result.message)
+
+
+def probe_connector_health(
+    connector_ids: Iterable[str],
+    settings: Settings,
+    *,
+    halopsa_client: HaloPSAClient | None = None,
+    hudu_client: HuduClient | None = None,
+    connectwise_client: ConnectWiseClient | None = None,
+    syncro_client: SyncroClient | None = None,
+    servicenow_client: ServiceNowClient | None = None,
+    autotask_client: AutotaskClient | None = None,
+    itglue_client: ItGlueClient | None = None,
+    confluence_client: ConfluenceClient | None = None,
+    notion_client: NotionClient | None = None,
+    sharepoint_client: SharePointClient | None = None,
+    m365_client: M365GraphClient | None = None,
+    timezest_client: TimeZestClient | None = None,
+    scalepad_client: ScalePadClient | None = None,
+) -> dict[str, dict[str, object]]:
+    """Run bounded read-only health checks for explicitly requested connectors.
+
+    This is deliberately separate from ``list_connector_statuses``. That
+    function only reports local configuration, while this function performs a
+    provider call only when the operator has enabled HTTP probing. It accepts
+    the same fixed connector allowlist as ``validate_connector_credentials``;
+    unsupported surfaces remain explicit rather than falling back to arbitrary
+    URLs or commands.
+    """
+
+    allowed = {
+        "halopsa",
+        "hudu",
+        "itglue",
+        "confluence",
+        "notion",
+        "sharepoint",
+        "connectwise",
+        "syncro",
+        "servicenow",
+        "autotask",
+        "m365",
+        "timezest",
+        "scalepad",
+    }
+    unique_ids = list(dict.fromkeys(item.strip() for item in connector_ids if isinstance(item, str) and item.strip()))
+    results: dict[str, dict[str, object]] = {}
+    for connector_id in unique_ids:
+        if connector_id not in allowed:
+            results[connector_id] = {
+                "passed": False,
+                "layer": "connector",
+                "message": "provider health probing is not available for this connector boundary",
+            }
+            continue
+        if not settings.allow_http_probing:
+            results[connector_id] = {
+                "passed": False,
+                "layer": "safety",
+                "message": "provider health probing is blocked by local policy",
+            }
+            continue
+        try:
+            validation = validate_connector_credentials(
+                connector_id,
+                settings,
+                halopsa_client=halopsa_client,
+                hudu_client=hudu_client,
+                connectwise_client=connectwise_client,
+                syncro_client=syncro_client,
+                servicenow_client=servicenow_client,
+                autotask_client=autotask_client,
+                itglue_client=itglue_client,
+                confluence_client=confluence_client,
+                notion_client=notion_client,
+                sharepoint_client=sharepoint_client,
+                m365_client=m365_client,
+                timezest_client=timezest_client,
+                scalepad_client=scalepad_client,
+            )
+            results[connector_id] = {
+                "passed": validation.passed,
+                "layer": validation.layer,
+                "message": redact_text(" ".join(validation.message.split()))[:240],
+            }
+        except Exception as exc:  # noqa: BLE001 - health failures become explicit evidence.
+            results[connector_id] = {
+                "passed": False,
+                "layer": "connector",
+                "message": redact_text(" ".join(str(exc).split()))[:240] or exc.__class__.__name__,
+            }
+    return results
 
 
 def draft_halopsa_ticket_action(

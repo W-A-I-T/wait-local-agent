@@ -27,9 +27,13 @@ The repository-wide requirement-to-evidence and release-risk index is
 [`docs/enterprise-validation-matrix.md`](enterprise-validation-matrix.md).
 
 Tenant-scoped environment discovery matches explicit system declarations to
-local connector configuration without probing providers; configured,
+local connector configuration by default without probing providers; configured,
 not-configured, detected, permission-limited, and unknown states remain
-explicit and flow into blueprint candidates and architecture review.
+explicit and flow into blueprint candidates and architecture review. An
+explicit `{ "probe": true }` request reuses the fixed, read-only connector
+health contracts only when HTTP probing is enabled, promotes only positive
+tenant-bound health evidence to `authorized`, and preserves auth/connectivity/
+policy failures as non-empty states with audit evidence.
 
 Architecture projections now include deterministic per-component decisions.
 They select only existing local/runtime boundaries, retain alternatives and

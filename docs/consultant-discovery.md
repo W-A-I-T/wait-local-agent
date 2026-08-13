@@ -60,14 +60,19 @@ POST /consultant/environment-discovery
 ```
 
 It matches customer-declared systems only to the existing local connector
-catalog and includes locally configured connector surfaces when present. This
-operation does not call a provider. A configured connector therefore remains
+catalog and includes locally configured connector surfaces when present. By
+default this is a no-probe operation. A configured connector therefore remains
 `configured` with an explicit limitation that reachability, authentication, and
-authorization were not probed. When local HTTP probing is disabled, the result
-is `permission-limited` and says that provider authorization is unknown. An
-unknown customer declaration is `detected`, not silently treated as an empty or
-supported environment. A connector configured for another or unbound tenant is
-also `permission-limited`.
+authorization were not probed. An operator may explicitly request the existing
+allowlisted, read-only connector health contracts with `{ "probe": true }`.
+Only a positive provider health response promotes a tenant-bound system to
+`authorized`; authentication, connectivity, malformed-response, and local
+policy failures remain `permission-limited`, `unavailable`, or `unknown` with
+the failure evidence retained. No write action is available through this probe.
+When local HTTP probing is disabled, the request records `probe_requested` but
+does not make a network call. An unknown customer declaration is `detected`,
+not silently treated as an empty or supported environment. A connector
+configured for another or unbound tenant is also `permission-limited`.
 
 If the local connector health record is `failed` for a tenant-bound connector,
 the projection is `unavailable` with the failure retained as a limitation. It
