@@ -15,6 +15,7 @@ from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.store import Store
 
 MAX_CHILD_AGENTS = 8
+MAX_SUPERVISOR_DEPTH = 1
 MAX_TASK_TEXT = 2_000
 MAX_INPUT_KEYS = 16
 MAX_INPUT_BYTES = 16_000
@@ -92,6 +93,8 @@ def build_supervisor_delegation_plan(
         "supervisor": {
             "id": "consultant-supervisor",
             "mode": "supervisor",
+            "max_depth": MAX_SUPERVISOR_DEPTH,
+            "recursion": "disabled",
             "task": normalized_task,
             "children": children,
             "selection": "explicit_child_agent_ids",
@@ -379,6 +382,8 @@ def execute_supervisor_delegation(
         "supervisor": {
             "id": "consultant-supervisor",
             "mode": "supervisor",
+            "max_depth": MAX_SUPERVISOR_DEPTH,
+            "recursion": "disabled",
             "task": normalized_task,
             "ordered_child_agent_ids": ordered_ids,
             "lineage_contract": "supervisor_id, child_agent_id, sequence, attempt, and retry_of_run_id",

@@ -54,6 +54,8 @@ def test_supervisor_plan_selects_explicit_children_and_bounds_context() -> None:
 
     assert result["format"] == "wait-local-agent.supervisor-delegation-plan"
     assert result["supervisor"]["children"][1]["depends_on_agent_ids"] == ["identity"]
+    assert result["supervisor"]["max_depth"] == 1
+    assert result["supervisor"]["recursion"] == "disabled"
     assert result["assignments"][0]["input_contract"]["client_id"] == "acme"
     assert result["delegation_started"] is False
     assert result["execution_started"] is False
