@@ -191,7 +191,12 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_evidence,
     validate_promotion_source,
 )
-from wait_local_agent.providers import probe_model_providers, provider_from_settings
+from wait_local_agent.providers import (
+    PROVIDER_CONFIGURATION_SCOPE,
+    PROVIDER_REQUEST_CONTEXT_SCOPE,
+    probe_model_providers,
+    provider_from_settings,
+)
 from wait_local_agent.rbac import (
     AuthContext,
     Role,
@@ -989,6 +994,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_model_base_url": active_settings.local_model_base_url,
             "local_model_name": active_settings.local_model_name,
             "local_model_timeout_seconds": active_settings.local_model_timeout_seconds,
+            "provider_scope": PROVIDER_CONFIGURATION_SCOPE,
+            "context_scope": PROVIDER_REQUEST_CONTEXT_SCOPE,
             "llm_inference_enabled": active_settings.allow_llm_inference,
             "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
             "offline_mode": active_settings.offline_mode,

@@ -150,6 +150,8 @@ def test_provider_settings_and_tickets_list(settings) -> None:
     assert providers.json()["vector_backend"] == "sqlite"
     assert providers.json()["llm_inference_enabled"] is False
     assert providers.json()["local_model_timeout_seconds"] == 20.0
+    assert providers.json()["provider_scope"] == "appliance-wide"
+    assert providers.json()["context_scope"] == "tenant-scoped"
     assert providers.json()["offline_mode"] is False
     assert providers.json()["remote_model_enabled"] is False
     assert providers.json()["model_input_cost_usd_per_million_tokens"] is None

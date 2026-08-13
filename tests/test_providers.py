@@ -669,11 +669,21 @@ def test_fallback_provider_draft_and_safe_metadata(tmp_path: Path) -> None:
     settings = _settings(tmp_path, allow_llm_inference=False)
 
     assert FallbackModelProvider(local, remote).draft_response(_ticket(), [])
-    assert provider_metadata(settings) == {"provider": "openai-compatible", "model": "llama3.1"}
+    assert provider_metadata(settings) == {
+        "provider": "openai-compatible",
+        "model": "llama3.1",
+        "scope": "appliance-wide",
+        "context_scope": "tenant-scoped",
+    }
     fallback_metadata = provider_metadata(settings, FallbackModelProvider(local, remote))
     assert fallback_metadata["fallback_provider"] == "deepseek"
     assert "remote-secret" not in str(fallback_metadata)
-    assert provider_metadata(settings, remote) == {"provider": "deepseek", "model": "documented-model"}
+    assert provider_metadata(settings, remote) == {
+        "provider": "deepseek",
+        "model": "documented-model",
+        "scope": "appliance-wide",
+        "context_scope": "tenant-scoped",
+    }
 
 
 def test_provider_metadata_records_reported_usage_without_inventing_cost(tmp_path: Path) -> None:
@@ -829,6 +839,7 @@ def test_provider_health_keeps_deterministic_mode_local(tmp_path: Path) -> None:
     assert result["local"] == {
         "provider": "openai-compatible",
         "model": "llama3.1",
+        "scope": "appliance-wide",
         "status": "ready",
         "probe": "not_required",
         "detail": "deterministic local mode",
@@ -925,6 +936,7 @@ def test_provider_health_denies_remote_probe_in_offline_mode(tmp_path: Path) -> 
     assert result["remote"] == {
         "provider": "deepseek",
         "model": "documented-model",
+        "scope": "appliance-wide",
         "status": "blocked_offline",
         "probe": "not_run",
     }
