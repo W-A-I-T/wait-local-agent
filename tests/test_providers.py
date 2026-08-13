@@ -165,6 +165,45 @@ def test_openai_provider_selects_bounded_catalog_tools(tmp_path: Path) -> None:
     assert "Shared Mailbox Runbook" in prompt
 
 
+def test_openai_provider_caches_plan_and_records_planner_transport_failure(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def success_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '{"tool_ids":["ticket-summary"]}'}},
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(success_handler),
+    )
+    assert provider.select_tools("Investigate", _ticket(), [], [], max_tools=1) == [
+        "ticket-summary"
+    ]
+    assert provider.select_tools("Investigate", _ticket(), [], [], max_tools=1) == [
+        "ticket-summary"
+    ]
+    assert len(requests) == 1
+
+    failing = OpenAICompatibleLocalProvider(
+        _profile(tmp_path),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(503, json={"error": "unavailable"})
+        ),
+    )
+    with pytest.raises(ProviderUnavailableError, match="tool selection"):
+        failing.select_tools("Investigate", _ticket(), [], [], max_tools=1)
+    assert failing._last_call_metadata["usage_status"] == "provider_error"
+
+
 def test_remote_provider_plan_redacts_ticket_and_source_context() -> None:
     requests: list[httpx.Request] = []
 
@@ -212,6 +251,110 @@ def test_remote_provider_plan_redacts_ticket_and_source_context() -> None:
     assert "person@example.com" not in prompt
     assert "/tenant/acme/private.md" not in prompt
     assert "[CLIENT]" in prompt
+
+
+def test_remote_provider_caches_plan_and_surfaces_planner_failures() -> None:
+    requests: list[httpx.Request] = []
+
+    def success_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '{"tool_ids":["ticket-summary"]}'}},
+                ]
+            },
+        )
+
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(success_handler),
+    )
+    assert provider.select_tools("Investigate", _ticket(), [], [], max_tools=1) == [
+        "ticket-summary"
+    ]
+    assert provider.select_tools("Investigate", _ticket(), [], [], max_tools=1) == [
+        "ticket-summary"
+    ]
+    assert len(requests) == 1
+
+    for response in [
+        httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]}),
+        httpx.Response(503, json={"error": "unavailable"}),
+    ]:
+        failing = RemoteModelProvider(
+            _remote_profile(),
+            transport=httpx.MockTransport(lambda request, response=response: response),
+        )
+        with pytest.raises(ProviderUnavailableError, match="tool selection"):
+            failing.select_tools("Investigate", _ticket(), [], [], max_tools=1)
+
+
+def test_tool_selection_skips_blank_and_duplicate_ids() -> None:
+    provider = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"tool_ids":[" ","ticket-summary",'
+                                '"ticket-summary","knowledge-search"]}'
+                            }
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+
+    assert provider.select_tools("Investigate", _ticket(), [], [], max_tools=2) == [
+        "ticket-summary",
+        "knowledge-search",
+    ]
+
+
+def test_fallback_provider_select_tools_handles_missing_and_unavailable_primary() -> None:
+    remote = RemoteModelProvider(
+        _remote_profile(),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": '{"tool_ids":["ticket-summary"]}'}},
+                    ]
+                },
+            )
+        ),
+    )
+
+    class NoPlanningProvider:
+        def summarize_ticket(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "summary"
+
+        def draft_response(self, ticket: Ticket, sources: list[SourceReference]) -> str:
+            return "response"
+
+    class UnavailablePlanningProvider(NoPlanningProvider):
+        def select_tools(
+            self,
+            instruction: str,
+            ticket: Ticket,
+            sources: list[SourceReference],
+            tools: list[dict[str, str]],
+            *,
+            max_tools: int,
+        ) -> list[str]:
+            raise ProviderUnavailableError("primary planner unavailable")
+
+    for primary in [NoPlanningProvider(), UnavailablePlanningProvider()]:
+        assert FallbackModelProvider(primary, remote).select_tools(
+            "Investigate", _ticket(), [], [], max_tools=1
+        ) == ["ticket-summary"]
 
 
 def test_anthropic_provider_selects_tools_with_messages_contract() -> None:
@@ -1250,6 +1393,11 @@ def test_remote_openai_compatible_continuation_and_fallback(tmp_path: Path) -> N
 def test_remote_continuation_rejects_malformed_and_http_errors(tmp_path: Path) -> None:
     for response in [
         httpx.Response(200, json={"content": [{"type": "text", "text": "{}"}]}),
+        httpx.Response(
+            200,
+            json={"content": [{"type": "text", "text": "not json"}]},
+        ),
+        httpx.Response(200, json=[]),
         httpx.Response(503, json={"error": "unavailable"}),
     ]:
         provider = RemoteModelProvider(
