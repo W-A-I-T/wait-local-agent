@@ -172,6 +172,20 @@ describe("App", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
   });
 
+  it("does not present onboarding as demo-ready when dashboard access is denied", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Response(JSON.stringify({ detail: "invalid token" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
+
+    renderApp();
+
+    expect(await screen.findByRole("status")).toHaveTextContent("You do not have permission to do that.");
+    expect(screen.getByText("access unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("demo-ready")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Set up your MSP operations" })).not.toBeInTheDocument();
+  });
+
   it("hides write controls for viewer role", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, false, "viewer")));
 
