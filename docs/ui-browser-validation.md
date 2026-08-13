@@ -115,13 +115,15 @@ in issue [#257](https://github.com/W-A-I-T/wait-local-agent/issues/257).
 ## 2026-08-13 executable route/control matrix
 
 The repository now includes `scripts/validate_ui_browser.sh`, exposed as
-`npm run test:browser` from `ui/`. It runs against an already-running Vite and
-FastAPI stack and uses the Playwright CLI with a real browser; it does not start
-the appliance, enable provider writes, or fabricate provider results.
+`npm run test:browser` from `ui/`. Set `PWCLI` to the Playwright CLI wrapper
+provided by the local Playwright skill, then run it against an already-running
+Vite and FastAPI stack. It uses a real browser; it does not start the appliance,
+enable provider writes, or fabricate provider results.
 
 Run it against a local demo-safe stack with:
 
 ```bash
+PWCLI=/path/to/playwright_cli.sh \
 WAIT_BROWSER_UI_URL=http://127.0.0.1:5199 \
 WAIT_BROWSER_BROWSER=firefox \
 WAIT_BROWSER_REPORT=output/playwright/ui-browser-matrix.json \

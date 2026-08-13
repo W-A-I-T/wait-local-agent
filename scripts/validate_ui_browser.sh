@@ -16,15 +16,17 @@ RECORDS_DIR="$(mktemp -d "$ROOT_DIR/output/playwright/ui-browser-matrix.XXXXXX")
 RECORDS_PATH="$RECORDS_DIR/records.jsonl"
 touch "$RECORDS_PATH"
 
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-PWCLI="${PWCLI:-$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh}"
+PWCLI="${PWCLI:-${PLAYWRIGHT_CLI:-}}"
+if [[ -z "$PWCLI" ]]; then
+  PWCLI="$(command -v playwright_cli.sh || true)"
+fi
 
 if ! command -v npx >/dev/null 2>&1; then
   echo "npx is required to run the Playwright CLI." >&2
   exit 2
 fi
 if [[ ! -x "$PWCLI" ]]; then
-  echo "Playwright CLI wrapper not found: $PWCLI" >&2
+  echo "Set PWCLI or PLAYWRIGHT_CLI to the executable Playwright CLI wrapper." >&2
   exit 2
 fi
 
