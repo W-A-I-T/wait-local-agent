@@ -339,6 +339,25 @@ describe("Agents", () => {
     expect(String(request?.[1]?.body)).toContain("rodney@example.test");
   });
 
+  it("persists a bounded step failure policy", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByRole("checkbox", { name: "Ticket Triage" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Resilient triage" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Assess ticket SLA risk" }));
+    fireEvent.change(screen.getByLabelText("Ticket Triage failure policy"), { target: { value: "fallback" } });
+    fireEvent.change(screen.getByLabelText("Ticket Triage fallback tool"), { target: { value: "ticket-sla-assessment" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(screen.getByText("Agent created.")).toBeInTheDocument());
+    const request = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.find(
+      ([input, init]) => String(input) === "/agents" && init?.method === "POST"
+    );
+    expect(String(request?.[1]?.body)).toContain('"mode":"fallback"');
+    expect(String(request?.[1]?.body)).toContain('"fallback_tool_id":"ticket-sla-assessment"');
+  });
+
   it("exposes the bounded N-sight automated-task input", async () => {
     render(<MemoryRouter><Agents /></MemoryRouter>);
 

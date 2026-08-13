@@ -115,6 +115,11 @@ The consultant surfaces in this repository are deterministic and review-oriented
   and the React workflow dashboard.
   Agent run history also exposes the exact revision snapshot and supports
   approval-safe cancel and bounded retry controls under `/agent-runs`.
+- Each reviewed agent step may declare a deterministic failure policy: up to
+  three bounded retries, an explicitly configured enabled-tool fallback, human
+  input, technician escalation, or blocked-for-review. Invalid fallback targets
+  and cycles are rejected; the API, CLI, Agents UI, execution metadata, and
+  audit trail retain the same redacted policy and partial-history evidence.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.

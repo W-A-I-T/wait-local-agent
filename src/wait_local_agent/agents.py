@@ -35,6 +35,10 @@ from wait_local_agent.store import Store, _normalize_client_id
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
 MAX_AGENT_RETRIES = 3
+MAX_STEP_RETRIES = 3
+FAILURE_POLICY_MODES = frozenset(
+    {"stop", "retry", "fallback", "human_input", "technician_escalation", "blocked"}
+)
 SUPPORTED_AGENT_TRIGGERS = frozenset({"manual", "scheduled", "event"})
 SUPPORTED_ENTITY_TYPE = "ticket"
 SUPPORTED_EVENT_TYPES = frozenset(
@@ -775,7 +779,13 @@ class AgentService:
         started = time.monotonic()
         steps = _state_steps(state)
         input_payload = _state_object(state.get("input"))
-        for index in range(start_step, min(len(definition.steps), definition.max_steps)):
+        queued_steps = [
+            (index, definition.steps[index])
+            for index in range(start_step, min(len(definition.steps), definition.max_steps))
+        ]
+        attempted_tools: set[str] = set()
+        while queued_steps:
+            index, configured_step = queued_steps.pop(0)
             if time.monotonic() - started >= definition.execution_timeout_seconds:
                 return self._finish(
                     definition,
@@ -785,7 +795,6 @@ class AgentService:
                     {**state, "error_detail": "agent execution timed out"},
                     actor=actor,
                 )
-            configured_step = definition.steps[index]
             tool_id = configured_step.get("tool_id")
             configured_payload = configured_step.get("payload", {})
             if not isinstance(tool_id, str) or not isinstance(configured_payload, dict):
@@ -797,11 +806,6 @@ class AgentService:
                     {**state, "error_detail": "agent step is malformed"},
                     actor=actor,
                 )
-            payload = dict(input_payload)
-            payload.update(configured_payload)
-            payload.setdefault("ticket_id", run.entity_id)
-            if state.get("context"):
-                payload["_agent_context"] = state["context"]
             if tool_id not in definition.enabled_tools:
                 return self._finish(
                     definition,
@@ -811,37 +815,25 @@ class AgentService:
                     {**state, "error_detail": f"tool {tool_id} is not enabled for this agent"},
                     actor=actor,
                 )
-            approval_policy = _approval_policy_for_ticket(
+            if tool_id in attempted_tools:
+                continue
+            attempted_tools.add(tool_id)
+            step_records, action_result, directive = self._execute_step_attempts(
                 definition,
-                tool_id,
-                run.entity_id,
-                self.store,
+                run,
+                actor,
+                configured_step,
+                record_index=index,
+                input_payload=input_payload,
+                state=state,
                 actor_role=actor_role,
+                continuation=None,
             )
-            try:
-                action_result = self.smart_actions.invoke(
-                    tool_id,
-                    payload,
-                    actor,
-                    client_id=definition.client_id,
-                    approval_expiry_seconds=definition.approval_expiry_seconds,
-                    require_approval=approval_policy is not None,
-                )
-            except KeyError:
-                action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
-            step = {
-                "index": index,
-                "tool_id": tool_id,
-                "input": redact_value(payload),
-            }
-            if approval_policy is not None:
-                step["approval_policy"] = approval_policy
-            self._apply_result(step, action_result)
+            steps.extend(step_records)
             state["final_result"] = _final_result_from_action(tool_id, action_result)
-            steps.append(step)
             state["steps"] = steps
             if action_result.status == "pending_approval":
-                state["pending_approval_step"] = index
+                state["pending_approval_step"] = len(steps) - 1
                 return self._finish(
                     definition,
                     run,
@@ -851,6 +843,33 @@ class AgentService:
                     actor=actor,
                 )
             if action_result.status != "success":
+                if directive and directive.startswith("fallback:"):
+                    fallback_tool_id = directive.removeprefix("fallback:")
+                    fallback = next(
+                        (
+                            (fallback_index, candidate)
+                            for fallback_index, candidate in enumerate(definition.steps)
+                            if candidate.get("tool_id") == fallback_tool_id
+                        ),
+                        None,
+                    )
+                    if fallback is None or fallback_tool_id in attempted_tools:
+                        state["error_detail"] = (
+                            f"configured fallback {fallback_tool_id} was already attempted or unavailable"
+                        )
+                        state["failure_policy_terminal"] = "blocked"
+                        return self._finish(definition, run, "failed", index, state, actor=actor)
+                    queued_steps.insert(0, fallback)
+                    state["continuation"] = {
+                        "status": "fallback",
+                        "from_tool_id": tool_id,
+                        "to_tool_id": fallback_tool_id,
+                        "reason": "configured bounded fallback",
+                    }
+                    run = self.store.update_agent_run(run.id or 0, "queued", index, state)
+                    continue
+                if directive and directive.startswith("terminal:"):
+                    state["failure_policy_terminal"] = directive.removeprefix("terminal:")
                 return self._finish(definition, run, "failed", index, state, actor=actor)
             state["pending_approval_step"] = None
             run = self.store.update_agent_run(run.id or 0, "queued", index + 1, state)
@@ -876,6 +895,7 @@ class AgentService:
         started = time.monotonic()
         steps = _state_steps(state)
         input_payload = _state_object(state.get("input"))
+        fallback_step: dict[str, object] | None = None
         while len(steps) < definition.max_steps:
             ordinal = len(steps)
             if time.monotonic() - started >= definition.execution_timeout_seconds:
@@ -887,11 +907,18 @@ class AgentService:
                     {**state, "error_detail": "agent execution timed out"},
                     actor=actor,
                 )
-            configured_step, selection_mode = self._select_result_aware_step(
-                definition,
-                run.entity_id,
-                steps,
-            )
+            configured_step: dict[str, object] | None
+            selection_mode: str
+            if fallback_step is not None:
+                configured_step = fallback_step
+                selection_mode = "deterministic-fallback"
+                fallback_step = None
+            else:
+                configured_step, selection_mode = self._select_result_aware_step(
+                    definition,
+                    run.entity_id,
+                    steps,
+                )
             if configured_step is None:
                 state["continuation"] = {
                     "status": "complete",
@@ -910,11 +937,6 @@ class AgentService:
                     {**state, "error_detail": "agent step is malformed"},
                     actor=actor,
                 )
-            payload = dict(input_payload)
-            payload.update(configured_payload)
-            payload.setdefault("ticket_id", run.entity_id)
-            if state.get("context"):
-                payload["_agent_context"] = state["context"]
             if tool_id not in definition.enabled_tools:
                 return self._finish(
                     definition,
@@ -924,6 +946,113 @@ class AgentService:
                     {**state, "error_detail": f"tool {tool_id} is not enabled for this agent"},
                     actor=actor,
                 )
+            step_records, action_result, directive = self._execute_step_attempts(
+                definition,
+                run,
+                actor,
+                configured_step,
+                record_index=ordinal,
+                input_payload=input_payload,
+                state=state,
+                actor_role=actor_role,
+                continuation={
+                    "selection_mode": selection_mode,
+                    "reason": "selected from the remaining reviewed tool catalog",
+                    "lineage": _continuation_lineage(steps[-1] if steps else None),
+                },
+            )
+            steps.extend(step_records)
+            state["final_result"] = _final_result_from_action(tool_id, action_result)
+            state["steps"] = steps
+            if action_result.status == "pending_approval":
+                state["pending_approval_step"] = len(steps) - 1
+                return self._finish(
+                    definition,
+                    run,
+                    "pending_approval",
+                    ordinal,
+                    state,
+                    actor=actor,
+                )
+            if action_result.status != "success":
+                if directive and directive.startswith("fallback:"):
+                    fallback_tool_id = directive.removeprefix("fallback:")
+                    if len(steps) >= definition.max_steps:
+                        state["error_detail"] = (
+                            f"configured fallback {fallback_tool_id} exceeded the bounded step limit"
+                        )
+                        state["failure_policy_terminal"] = "blocked"
+                        return self._finish(definition, run, "failed", ordinal, state, actor=actor)
+                    fallback_step = next(
+                        (
+                            candidate
+                            for candidate in definition.steps
+                            if candidate.get("tool_id") == fallback_tool_id
+                        ),
+                        None,
+                    )
+                    if fallback_step is None or any(
+                        step.get("tool_id") == fallback_tool_id for step in steps
+                    ):
+                        state["error_detail"] = (
+                            f"configured fallback {fallback_tool_id} was already attempted or unavailable"
+                        )
+                        state["failure_policy_terminal"] = "blocked"
+                        return self._finish(definition, run, "failed", ordinal, state, actor=actor)
+                    state["continuation"] = {
+                        "status": "fallback",
+                        "from_tool_id": tool_id,
+                        "to_tool_id": fallback_tool_id,
+                        "reason": "configured bounded fallback",
+                    }
+                    run = self.store.update_agent_run(run.id or 0, "queued", len(steps), state)
+                    continue
+                if directive and directive.startswith("terminal:"):
+                    state["failure_policy_terminal"] = directive.removeprefix("terminal:")
+                return self._finish(definition, run, "failed", ordinal, state, actor=actor)
+            state["pending_approval_step"] = None
+            run = self.store.update_agent_run(run.id or 0, "queued", len(steps), state)
+        return self._finish(
+            definition,
+            run,
+            "completed",
+            len(steps),
+            state,
+            actor=actor,
+        )
+
+    def _execute_step_attempts(
+        self,
+        definition: AgentDefinition,
+        run: AgentRun,
+        actor: str,
+        configured_step: dict[str, object],
+        *,
+        record_index: int,
+        input_payload: dict[str, object],
+        state: dict[str, object],
+        actor_role: Role | None,
+        continuation: dict[str, object] | None,
+    ) -> tuple[list[dict[str, object]], ActionResult, str | None]:
+        """Execute one reviewed step with a deterministic, bounded failure policy."""
+
+        tool_id = configured_step.get("tool_id")
+        configured_payload = configured_step.get("payload", {})
+        if not isinstance(tool_id, str) or not isinstance(configured_payload, dict):
+            return (
+                [{"index": record_index, "tool_id": tool_id or "unknown", "status": "failed"}],
+                ActionResult(status="failed", error_detail="agent step is malformed"),
+                "terminal:blocked",
+            )
+        policy = _step_failure_policy(configured_step)
+        records: list[dict[str, object]] = []
+        attempt = 0
+        while True:
+            payload = dict(input_payload)
+            payload.update(configured_payload)
+            payload.setdefault("ticket_id", run.entity_id)
+            if state.get("context"):
+                payload["_agent_context"] = state["context"]
             approval_policy = _approval_policy_for_ticket(
                 definition,
                 tool_id,
@@ -942,44 +1071,32 @@ class AgentService:
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
-            step = {
-                "index": ordinal,
+            step: dict[str, object] = {
+                "index": record_index + attempt,
                 "tool_id": tool_id,
                 "input": redact_value(payload),
-                "continuation": {
-                    "selection_mode": selection_mode,
-                    "reason": "selected from the remaining reviewed tool catalog",
-                    "lineage": _continuation_lineage(steps[-1] if steps else None),
-                },
             }
+            if continuation is not None:
+                step["continuation"] = continuation
             if approval_policy is not None:
                 step["approval_policy"] = approval_policy
+            if policy["mode"] != "stop":
+                step["failure_policy"] = policy
+            if attempt:
+                step["attempt"] = attempt
             self._apply_result(step, action_result)
-            state["final_result"] = _final_result_from_action(tool_id, action_result)
-            steps.append(step)
-            state["steps"] = steps
-            if action_result.status == "pending_approval":
-                state["pending_approval_step"] = ordinal
-                return self._finish(
-                    definition,
-                    run,
-                    "pending_approval",
-                    ordinal,
-                    state,
-                    actor=actor,
-                )
-            if action_result.status != "success":
-                return self._finish(definition, run, "failed", ordinal, state, actor=actor)
-            state["pending_approval_step"] = None
-            run = self.store.update_agent_run(run.id or 0, "queued", ordinal + 1, state)
-        return self._finish(
-            definition,
-            run,
-            "completed",
-            len(steps),
-            state,
-            actor=actor,
-        )
+            records.append(step)
+            if action_result.status in {"success", "pending_approval"}:
+                return records, action_result, None
+            retry_limit = policy["max_retries"]
+            if policy["mode"] == "retry" and isinstance(retry_limit, int) and attempt < retry_limit:
+                attempt += 1
+                continue
+            if policy["mode"] == "fallback":
+                return records, action_result, f"fallback:{policy['fallback_tool_id']}"
+            if policy["mode"] != "stop":
+                return records, action_result, f"terminal:{policy['mode']}"
+            return records, action_result, None
 
     def _select_result_aware_step(
         self,
@@ -1125,6 +1242,14 @@ class AgentService:
         final_state["final_result"] = _normalized_final_result(final_state, status)
         final = self.store.update_agent_run(run.id or 0, status, current_step, final_state)
         steps = _state_steps(final_state)
+        policy_metadata = _failure_policy_metadata(final_state)
+        if policy_metadata:
+            self.store.add_audit_event(
+                "agent.failure_policy",
+                str(final.id),
+                json.dumps(policy_metadata, sort_keys=True, separators=(",", ":")),
+                client_id=definition.client_id,
+            )
         recorder_steps = tuple(
             StepRecord(
                 kind="agent.tool",
@@ -1143,6 +1268,7 @@ class AgentService:
             status=status,
             trigger_source=f"agent:{definition.trigger}",
             client_id=definition.client_id,
+            metadata=policy_metadata or None,
             steps=recorder_steps,
         )
         return self._result(final)
@@ -1266,13 +1392,14 @@ class AgentService:
                 f"{MAX_APPROVAL_EXPIRY_SECONDS} seconds"
             )
         for step in steps:
-            if set(step) - {"tool_id", "payload"}:
-                raise AgentDefinitionError("agent steps may only contain tool_id and payload")
+            if set(step) - {"tool_id", "payload", "failure_policy"}:
+                raise AgentDefinitionError("agent steps may only contain tool_id, payload, and failure_policy")
             tool_id = step.get("tool_id")
             if not isinstance(tool_id, str) or tool_id not in enabled_tools:
                 raise AgentDefinitionError("every step tool_id must be an enabled tool")
             if not isinstance(step.get("payload", {}), dict):
                 raise AgentDefinitionError("agent step payload must be an object")
+        _validate_failure_policies(steps, enabled_tools)
 
     def _validate_dependencies(
         self,
@@ -1619,6 +1746,122 @@ def _continuation_lineage(step: dict[str, object] | None) -> dict[str, object]:
     }
 
 
+def _step_failure_policy(step: dict[str, object]) -> dict[str, object]:
+    raw_policy = step.get("failure_policy")
+    if not isinstance(raw_policy, dict):
+        return {"mode": "stop", "max_retries": 0, "fallback_tool_id": None}
+    mode = raw_policy.get("mode", "stop")
+    max_retries = raw_policy.get("max_retries", 0)
+    fallback_tool_id = raw_policy.get("fallback_tool_id")
+    return {
+        "mode": mode if isinstance(mode, str) else "stop",
+        "max_retries": max_retries if isinstance(max_retries, int) and not isinstance(max_retries, bool) else 0,
+        "fallback_tool_id": fallback_tool_id if isinstance(fallback_tool_id, str) else None,
+    }
+
+
+def _failure_policy_metadata(state: dict[str, object]) -> dict[str, object]:
+    steps = _state_steps(state)
+    entries: list[dict[str, object]] = []
+    for step in steps:
+        policy = step.get("failure_policy")
+        if not isinstance(policy, dict):
+            continue
+        entry: dict[str, object] = {
+            "index": step.get("index"),
+            "tool_id": step.get("tool_id"),
+            "mode": policy.get("mode", "stop"),
+            "status": step.get("status", "failed"),
+        }
+        if isinstance(step.get("attempt"), int):
+            entry["attempt"] = step["attempt"]
+        if isinstance(policy.get("fallback_tool_id"), str):
+            entry["fallback_tool_id"] = policy["fallback_tool_id"]
+        entries.append(entry)
+    terminal = state.get("failure_policy_terminal")
+    if not entries and not isinstance(terminal, str):
+        return {}
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "failure_policy": {
+                    "terminal": terminal if isinstance(terminal, str) else None,
+                    "steps": entries[:MAX_AGENT_STEPS * (MAX_STEP_RETRIES + 1)],
+                }
+            }
+        ),
+    )
+
+
+def _validate_failure_policies(
+    steps: list[dict[str, object]],
+    enabled_tools: list[str],
+) -> None:
+    configured_tools = {
+        step.get("tool_id")
+        for step in steps
+        if isinstance(step.get("tool_id"), str)
+    }
+    fallback_graph: dict[str, str] = {}
+    for step in steps:
+        raw_policy = step.get("failure_policy")
+        if raw_policy is None:
+            continue
+        if not isinstance(raw_policy, dict):
+            raise AgentDefinitionError("failure_policy must be an object")
+        if set(raw_policy) - {"mode", "max_retries", "fallback_tool_id"}:
+            raise AgentDefinitionError(
+                "failure_policy may only contain mode, max_retries, and fallback_tool_id"
+            )
+        tool_id = step.get("tool_id")
+        mode = raw_policy.get("mode", "stop")
+        if not isinstance(tool_id, str) or not isinstance(mode, str) or mode not in FAILURE_POLICY_MODES:
+            raise AgentDefinitionError(
+                "failure_policy mode must be one of stop, retry, fallback, human_input, "
+                "technician_escalation, or blocked"
+            )
+        max_retries = raw_policy.get("max_retries", 0)
+        if (
+            not isinstance(max_retries, int)
+            or isinstance(max_retries, bool)
+            or max_retries < 0
+            or max_retries > MAX_STEP_RETRIES
+        ):
+            raise AgentDefinitionError(f"failure_policy max_retries must be between 0 and {MAX_STEP_RETRIES}")
+        fallback_tool_id = raw_policy.get("fallback_tool_id")
+        if fallback_tool_id is not None and (
+            not isinstance(fallback_tool_id, str) or not fallback_tool_id.strip()
+        ):
+            raise AgentDefinitionError("failure_policy fallback_tool_id must be a non-empty string")
+        if mode == "retry" and max_retries < 1:
+            raise AgentDefinitionError("retry failure_policy requires max_retries between 1 and 3")
+        if mode != "retry" and max_retries:
+            raise AgentDefinitionError("failure_policy max_retries is only valid for retry mode")
+        if mode == "fallback":
+            if not isinstance(fallback_tool_id, str):
+                raise AgentDefinitionError("fallback failure_policy requires fallback_tool_id")
+            if fallback_tool_id == tool_id:
+                raise AgentDefinitionError("failure_policy fallback_tool_id must differ from tool_id")
+            if fallback_tool_id not in enabled_tools or fallback_tool_id not in configured_tools:
+                raise AgentDefinitionError(
+                    "failure_policy fallback_tool_id must be another configured enabled tool"
+                )
+            fallback_graph[tool_id] = fallback_tool_id
+        elif fallback_tool_id is not None:
+            raise AgentDefinitionError("fallback_tool_id is only valid for fallback mode")
+
+    def visit(tool_id: str, visiting: set[str]) -> None:
+        if tool_id not in fallback_graph:
+            return
+        if tool_id in visiting:
+            raise AgentDefinitionError("failure_policy fallback cycle detected")
+        visit(fallback_graph[tool_id], {*visiting, tool_id})
+
+    for tool_id in fallback_graph:
+        visit(tool_id, set())
+
+
 def _normalized_final_result(state: dict[str, object], status: str) -> dict[str, object]:
     current = state.get("final_result")
     final_result = _final_result_from_step(current) if isinstance(current, dict) else {}
@@ -1630,10 +1873,12 @@ def _normalized_final_result(state: dict[str, object], status: str) -> dict[str,
         (step for step in reversed(steps) if step.get("status") not in {"success", "pending_approval"}),
         None,
     )
+    failed_steps = sum(1 for step in steps if step.get("status") not in {"success", "pending_approval"})
     final_result["history"] = {
         "attempted_steps": len(steps),
         "completed_steps": completed_steps,
-        "partial": bool(completed_steps and status in {"failed", "rejected", "cancelled"}),
+        "failed_steps": failed_steps,
+        "partial": bool(completed_steps and failed_steps),
     }
     retry_count = state.get("retry_count")
     if isinstance(retry_count, int) and retry_count > 0:
@@ -1641,6 +1886,9 @@ def _normalized_final_result(state: dict[str, object], status: str) -> dict[str,
     retry_of_run_id = state.get("retry_of_run_id")
     if isinstance(retry_of_run_id, int):
         final_result["retry_of_run_id"] = retry_of_run_id
+    terminal_policy = state.get("failure_policy_terminal")
+    if isinstance(terminal_policy, str) and terminal_policy in FAILURE_POLICY_MODES:
+        final_result["failure_policy"] = {"mode": terminal_policy}
     if status in {"failed", "rejected", "cancelled"}:
         final_result["status"] = status
         error_detail = state.get("error_detail", "")
@@ -1649,13 +1897,19 @@ def _normalized_final_result(state: dict[str, object], status: str) -> dict[str,
         final_result["exception"] = _exception_lineage(
             status,
             str(error_detail or (failed_step or {}).get("error_detail", "")),
+            policy_mode=terminal_policy if isinstance(terminal_policy, str) else None,
         )
     elif status == "pending_approval":
         final_result["exception"] = _exception_lineage("pending_approval", "")
     return cast(dict[str, object], redact_value(final_result))
 
 
-def _exception_lineage(status: str, error_detail: str) -> dict[str, object]:
+def _exception_lineage(
+    status: str,
+    error_detail: str,
+    *,
+    policy_mode: str | None = None,
+) -> dict[str, object]:
     """Return a small, deterministic recovery hint without exposing model reasoning."""
     normalized = error_detail.lower()
     if status == "pending_approval":
@@ -1676,6 +1930,15 @@ def _exception_lineage(status: str, error_detail: str) -> dict[str, object]:
             "recoverable": False,
             "next_action": "technician_review",
         }
+    policy_exceptions = {
+        "retry": ("retry_exhausted", True, "explicit_retry"),
+        "human_input": ("human_input_required", True, "human_input"),
+        "technician_escalation": ("technician_escalation", False, "technician_escalation"),
+        "blocked": ("blocked", False, "technician_review"),
+    }
+    if policy_mode in policy_exceptions:
+        kind, recoverable, next_action = policy_exceptions[policy_mode]
+        return {"kind": kind, "recoverable": recoverable, "next_action": next_action}
     if "timeout" in normalized:
         return {
             "kind": "timeout",

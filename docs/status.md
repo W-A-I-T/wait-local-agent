@@ -255,6 +255,13 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   and a redacted partial-history summary; the Agents screen uses the existing
   cancel/retry routes and shows the same step and recovery state. This is
   observability and controlled recovery, not unrestricted planner autonomy.
+  Each reviewed step may also declare one deterministic failure policy:
+  retry up to three times, use another explicitly configured enabled tool as a
+  fallback, request human input, escalate to a technician, or block for review.
+  Fallback cycles and unconfigured targets are rejected; attempts, policy, and
+  partial history remain redacted and auditable. The API run detail, CLI agent
+  listing, execution metadata, audit event, and Agents screen expose the same
+  bounded policy outcome.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, delivery history APIs, and an operator-triggered

@@ -1,13 +1,22 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { AgentApprovalRule, AgentDefinition, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
+import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
 const contextOptions = [
   ["ticket", "Ticket details"],
   ["client", "Client identity"],
   ["knowledge", "Local knowledge"]
 ] as const;
+
+const failurePolicyModes: Array<[AgentFailurePolicy["mode"], string]> = [
+  ["stop", "Stop and record failure"],
+  ["retry", "Retry this step"],
+  ["fallback", "Use configured fallback"],
+  ["human_input", "Request human input"],
+  ["technician_escalation", "Escalate to technician"],
+  ["blocked", "Block for review"]
+];
 
 export function Agents() {
   const { canWrite } = useDashboard();
@@ -18,6 +27,7 @@ export function Agents() {
   const [clientId, setClientId] = useState("");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [stepPayloads, setStepPayloads] = useState<Record<string, string>>({});
+  const [failurePolicyDrafts, setFailurePolicyDrafts] = useState<Record<string, AgentFailurePolicy>>({});
   const [contextSources, setContextSources] = useState<string[]>(["ticket"]);
   const [approvalExpiryHours, setApprovalExpiryHours] = useState("");
   const [approvalRequiredTools, setApprovalRequiredTools] = useState<string[]>([]);
@@ -61,6 +71,7 @@ export function Agents() {
     setClientId("");
     setSelectedTools([]);
     setStepPayloads({});
+    setFailurePolicyDrafts({});
     setContextSources(["ticket"]);
     setApprovalExpiryHours("");
     setApprovalRequiredTools([]);
@@ -75,6 +86,7 @@ export function Agents() {
     setClientId(agent.client_id ?? "");
     setSelectedTools(agent.enabled_tools.slice(0, 8));
     setStepPayloads(Object.fromEntries(agent.steps.map((step) => [step.tool_id, JSON.stringify(step.payload, null, 2)])));
+    setFailurePolicyDrafts(Object.fromEntries(agent.steps.map((step) => [step.tool_id, step.failure_policy ?? { mode: "stop" }] )));
     setContextSources(agent.context_sources.length ? agent.context_sources : ["ticket"]);
     setApprovalExpiryHours(agent.approval_expiry_seconds ? String(agent.approval_expiry_seconds / 3600) : "");
     setApprovalRequiredTools(agent.approval_required_tools ?? []);
@@ -120,7 +132,21 @@ export function Agents() {
       entity_type: agent?.entity_type ?? "ticket",
       filters: agent?.filters ?? {},
       enabled_tools: boundedTools,
-      steps: boundedTools.map((tool_id) => ({ tool_id, payload: parsedStepPayloads[tool_id] ?? agent?.steps.find((step) => step.tool_id === tool_id)?.payload ?? {} })),
+      steps: boundedTools.map((tool_id) => {
+        const policy = failurePolicyDrafts[tool_id] ?? { mode: "stop" as const };
+        const failure_policy = policy.mode === "stop"
+          ? undefined
+          : {
+              mode: policy.mode,
+              ...(policy.mode === "retry" ? { max_retries: Math.min(3, Math.max(1, policy.max_retries ?? 1)) } : {}),
+              ...(policy.mode === "fallback" ? { fallback_tool_id: policy.fallback_tool_id ?? "" } : {})
+            };
+        return {
+          tool_id,
+          payload: parsedStepPayloads[tool_id] ?? agent?.steps.find((step) => step.tool_id === tool_id)?.payload ?? {},
+          ...(failure_policy ? { failure_policy } : {})
+        };
+      }),
       max_steps: boundedTools.length,
       execution_timeout_seconds: agent?.execution_timeout_seconds ?? 30,
       context_sources: contextSources,
@@ -328,6 +354,10 @@ export function Agents() {
             }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
           })}</fieldset>
           <fieldset className="agent-option-group"><legend>Tool inputs (JSON objects)</legend><p className="screen-note">Provide the bounded inputs each selected tool needs. The ticket id is added automatically when a tool supports it; client-scoped tools can use the agent's client mapping.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`payload-${tool.id}`}>{tool.name}<textarea aria-label={`${tool.name} input JSON`} rows={4} value={stepPayloads[tool.id] ?? "{}"} onChange={(event) => setStepPayloads((current) => ({ ...current, [tool.id]: event.target.value }))} /></label>)}</fieldset>
+          <fieldset className="agent-option-group"><legend>Failure handling</legend><p className="screen-note">Failure policies are deterministic and bounded. Retries are limited to three attempts; fallbacks must be another selected tool. Human-input, technician-escalation, and blocked modes stop the run with an explicit recovery state.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
+            const draft = failurePolicyDrafts[tool.id] ?? { mode: "stop" as const };
+            return <div className="agent-rule-row" key={`failure-${tool.id}`}><strong>{tool.name}</strong><label>On failure<select aria-label={`${tool.name} failure policy`} value={draft.mode} onChange={(event) => setFailurePolicyDrafts((current) => ({ ...current, [tool.id]: { ...draft, mode: event.target.value as AgentFailurePolicy["mode"] } }))}>{failurePolicyModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{draft.mode === "retry" ? <label>Retries<input type="number" min="1" max="3" step="1" value={draft.max_retries ?? 1} onChange={(event) => setFailurePolicyDrafts((current) => ({ ...current, [tool.id]: { ...draft, max_retries: Number(event.target.value) } }))} /></label> : null}{draft.mode === "fallback" ? <label>Fallback tool<select aria-label={`${tool.name} fallback tool`} value={draft.fallback_tool_id ?? ""} onChange={(event) => setFailurePolicyDrafts((current) => ({ ...current, [tool.id]: { ...draft, fallback_tool_id: event.target.value } }))}><option value="">Choose selected tool</option>{selectedTools.filter((candidate) => candidate !== tool.id).map((candidate) => <option key={candidate} value={candidate}>{tools.find((item) => item.id === candidate)?.name ?? candidate}</option>)}</select></label> : null}</div>;
+          })}</fieldset>
           <fieldset className="agent-option-group"><legend>Additional approval rules</legend><p className="screen-note">Require approval for selected tools even when their catalog policy is read-only. Built-in approval requirements cannot be disabled.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`approval-${tool.id}`}><input type="checkbox" checked={approvalRequiredTools.includes(tool.id)} onChange={() => setApprovalRequiredTools((current) => toggleValue(current, tool.id))} />{tool.name}{tool.approval_required ? " · already required" : " · require approval"}</label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Conditional approval rules</legend><p className="screen-note">Require approval only when the ticket matches explicit priority, status, or requester-role values. Enter comma-separated values; matches are case-insensitive and all entered fields must match. Scheduled and event runs have no authenticated requester role, so a role condition does not match them.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
             const draft = approvalRuleDrafts[tool.id] ?? { priority: "", status: "", actor_role: "" };
@@ -365,7 +395,7 @@ export function Agents() {
               <span>History: {detail.lineage?.partial_history?.completed_steps ?? 0} of {detail.lineage?.partial_history?.attempted_steps ?? detail.state?.steps?.length ?? 0} step(s) completed{detail.lineage?.partial_history?.partial ? " before the failure" : ""}.</span>
               {detail.lineage?.retry_of_run_id ? <span>Retry of run {detail.lineage.retry_of_run_id} · attempt {detail.lineage.retry_count + 1}</span> : null}
               {detail.state?.final_result?.exception && typeof detail.state.final_result.exception === "object" ? <span>Recovery: {String((detail.state.final_result.exception as { kind?: unknown }).kind ?? "review required")} · {String((detail.state.final_result.exception as { next_action?: unknown }).next_action ?? "technician review")}</span> : null}
-              {detail.state?.steps?.map((step, index) => <small key={`${detail.id}-step-${index}`}>Step {index + 1}: {String(step.tool_id ?? "unknown")} · {String(step.status ?? "unknown")}{step.error_detail ? ` · ${String(step.error_detail)}` : ""}</small>)}
+              {detail.state?.steps?.map((step, index) => <small key={`${detail.id}-step-${index}`}>Step {index + 1}: {String(step.tool_id ?? "unknown")} · {String(step.status ?? "unknown")}{step.attempt !== undefined ? ` · attempt ${String(step.attempt)}` : ""}{step.failure_policy && typeof step.failure_policy === "object" ? ` · policy ${String((step.failure_policy as { mode?: unknown }).mode ?? "stop")}` : ""}{step.error_detail ? ` · ${String(step.error_detail)}` : ""}</small>)}
               <div className="row-actions">
                 {(detail.status === "queued" || detail.status === "pending_approval") ? <button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "cancel")}>Cancel run</button> : null}
                 {(detail.status === "failed" || detail.status === "cancelled") ? <button type="button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "retry")}>Retry run</button> : null}
