@@ -141,6 +141,7 @@ export function Knowledge() {
           />
           <input
             type="number"
+            aria-label="Search result limit"
             value={searchLimit}
             min={1}
             max={20}
