@@ -503,6 +503,7 @@ class Store:
                     status text not null default 'active',
                     answers_json text not null,
                     transcript_json text not null,
+                    blueprint_id text,
                     created_at text not null,
                     updated_at text not null
                 )
@@ -514,6 +515,7 @@ class Store:
                 on consultant_discovery_sessions (client_id, principal_id, updated_at)
                 """
             )
+            self._ensure_column(connection, "consultant_discovery_sessions", "blueprint_id", "text")
             self._ensure_column(
                 connection,
                 "agent_definitions",
@@ -2868,6 +2870,7 @@ class Store:
         principal_id: str,
         answers: dict[str, object],
         transcript: list[dict[str, object]],
+        blueprint_id: str | None = None,
     ) -> ConsultantDiscoverySession:
         normalized_client_id = _normalize_client_id(client_id)
         safe_principal_id = _redact_text(principal_id.strip())
@@ -2883,15 +2886,18 @@ class Store:
             connection.execute(
                 """
                 insert into consultant_discovery_sessions
-                  (id, client_id, principal_id, status, answers_json, transcript_json, created_at, updated_at)
-                values (?, ?, ?, 'active', ?, ?, ?, ?)
+                  (id, client_id, principal_id, status, answers_json, transcript_json,
+                   blueprint_id, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     normalized_client_id,
                     safe_principal_id,
+                    "completed" if blueprint_id else "active",
                     answers_json,
                     transcript_json,
+                    blueprint_id,
                     now,
                     now,
                 ),
@@ -2911,6 +2917,30 @@ class Store:
         if session is None:
             raise RuntimeError("consultant discovery session was not persisted")
         return session
+
+    def list_consultant_discovery_sessions(
+        self,
+        *,
+        client_id: str,
+        principal_id: str,
+        limit: int = 20,
+    ) -> list[ConsultantDiscoverySession]:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip())
+        if not normalized_client_id or not safe_principal_id:
+            return []
+        bounded_limit = max(1, min(limit, 50))
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from consultant_discovery_sessions
+                where client_id = ? and principal_id = ?
+                order by updated_at desc, created_at desc
+                limit ?
+                """,
+                (normalized_client_id, safe_principal_id, bounded_limit),
+            ).fetchall()
+        return [_consultant_discovery_session_from_row(row) for row in rows]
 
     def get_consultant_discovery_session(
         self,
@@ -2948,6 +2978,7 @@ class Store:
         status: str,
         answers: dict[str, object],
         transcript: list[dict[str, object]],
+        blueprint_id: str | None = None,
     ) -> ConsultantDiscoverySession | None:
         normalized_client_id = _normalize_client_id(client_id)
         if not normalized_client_id:
@@ -2966,13 +2997,15 @@ class Store:
             connection.execute(
                 """
                 update consultant_discovery_sessions
-                set status = ?, answers_json = ?, transcript_json = ?, updated_at = ?
+                set status = ?, answers_json = ?, transcript_json = ?,
+                    blueprint_id = coalesce(?, blueprint_id), updated_at = ?
                 where id = ? and client_id = ? and principal_id = ?
                 """,
                 (
                     status,
                     _json_dumps_value(answers),
                     _json_dumps_value(transcript),
+                    blueprint_id,
                     now,
                     session_id,
                     normalized_client_id,

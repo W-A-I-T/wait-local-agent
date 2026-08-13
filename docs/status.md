@@ -36,8 +36,11 @@ provider evidence as review gaps rather than inferred facts.
 Guided discovery now has persisted tenant/principal-scoped sessions with
 bounded one-question turns. It records explicit user answers and the next
 unresolved question, exposes the bounded transcript, and keeps missing
-evidence visible. This is a review/intake workflow; it does not infer
-requirements, execute connectors, or deploy a Microsoft solution.
+evidence visible. Tenant/principal-scoped session list and detail views make
+active sessions resumable after an operator refresh and preserve the resulting
+blueprint link when a session completes. This is a review/intake workflow; it
+does not infer requirements, execute connectors, or deploy a Microsoft
+solution.
 
 Evaluation cases can now request explicit, bounded evidence for RBAC,
 tool-injection, secret-leakage, unexpected-write, timeout, retry, cancellation,

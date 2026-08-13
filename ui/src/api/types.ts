@@ -390,6 +390,9 @@ export type ConsultantDiscoverySession = ConsultantDiscoveryResult & {
   turn_index: number;
   next_question: ConsultantDiscoveryQuestion | null;
   blueprint_id?: string | null;
+  session_status?: "active" | "completed";
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type TemplateGalleryEntry = {

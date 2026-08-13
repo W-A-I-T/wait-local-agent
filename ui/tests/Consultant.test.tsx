@@ -15,7 +15,7 @@ describe("Consultant", () => {
   beforeEach(() => {
     noBlueprints = false;
     dashboard.clientId = "acme";
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
         return Promise.resolve(new Response(JSON.stringify(noBlueprints ? [] : [{
@@ -189,6 +189,9 @@ describe("Consultant", () => {
         }), { status: 201 }));
       }
       if (path === "/consultant/discovery/sessions") {
+        if (String(init?.method ?? "GET") === "GET") {
+          return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+        }
         return Promise.resolve(new Response(JSON.stringify({
           session_id: "CDS-guided",
           principal_scope: "technician",
@@ -196,6 +199,28 @@ describe("Consultant", () => {
           turn_index: 0,
           next_question: { id: "users", prompt: "Who uses this?", kind: "list", required: true, answered: false },
           assistant_message: "Who uses this?",
+          missing_required: ["users"],
+          readiness: "needs_discovery",
+          risk_review: { level: "medium", factors: [], evidence_only: true },
+          roi_analysis: { status: "needs_estimates" },
+          status: "active",
+          inference_started: false,
+          execution_started: false,
+          deployment_started: false,
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/discovery/sessions/CDS-guided") {
+        return Promise.resolve(new Response(JSON.stringify({
+          session_id: "CDS-guided",
+          principal_scope: "technician",
+          transcript: [
+            { role: "user", field: "business_goal", content: "We want to automate employee onboarding" },
+            { role: "assistant", field: "users", content: "Who uses this?" },
+          ],
+          turn_index: 1,
+          next_question: { id: "users", prompt: "Who uses this?", kind: "list", required: true, answered: false },
+          assistant_message: "Who uses this?",
+          answered: { business_goal: "We want to automate employee onboarding" },
           missing_required: ["users"],
           readiness: "needs_discovery",
           risk_review: { level: "medium", factors: [], evidence_only: true },
@@ -261,10 +286,13 @@ describe("Consultant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start guided discovery" }));
 
     expect(await screen.findByText("Who uses this?")).toBeInTheDocument();
-    const guidedCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/sessions");
+    const guidedCall = vi.mocked(fetch).mock.calls.find(([input, init]) => String(input) === "/consultant/discovery/sessions" && init?.method === "POST");
     expect(guidedCall?.[1]).toMatchObject({
       body: expect.stringContaining('"client_id":"acme"'),
     });
+    expect(screen.getByText(/Saved sessions are visible only to this tenant/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /CDS-guided/ }));
+    expect(await screen.findByRole("list", { name: "Guided discovery transcript" })).toHaveTextContent("We want to automate employee onboarding");
   });
 
   it("uses the entered workspace when the local demo has no authenticated tenant scope", async () => {
