@@ -15,6 +15,7 @@ from wait_local_agent.msp_playbooks import (
     list_msp_playbooks,
     preview_msp_playbook,
     run_msp_playbook,
+    update_msp_playbook_subscription,
 )
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -479,6 +480,24 @@ def test_event_subscription_requires_matching_workflow_trigger_and_bounded_mappi
             client_id="acme",
             input_mapping={str(index): "priority" for index in range(17)},
         )
+    with pytest.raises(ValueError, match="keys and values must be strings"):
+        create_msp_playbook_subscription(
+            store,
+            "ticket-intake-review",
+            event_type="ticket.created",
+            client_id="acme",
+            input_mapping={1: "priority"},  # type: ignore[dict-item]
+        )
+    with pytest.raises(ValueError, match="duplicate targets"):
+        create_msp_playbook_subscription(
+            store,
+            "ticket-intake-review",
+            event_type="ticket.created",
+            client_id="acme",
+            input_mapping={"priority": "priority", " priority ": "priority"},
+        )
+    with pytest.raises(KeyError):
+        update_msp_playbook_subscription(store, "missing", client_id="acme", enabled=False)
 
 
 def test_api_exposes_playbook_catalog_preview_and_run(settings) -> None:
@@ -573,9 +592,27 @@ def test_api_exposes_tenant_scoped_playbook_subscriptions(settings) -> None:
     assert listed.status_code == 200
     assert listed.json() == [subscription]
 
+    fetched = client.get(f"/msp/playbook-subscriptions/{subscription['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json() == subscription
+
+    patched = client.patch(
+        f"/msp/playbook-subscriptions/{subscription['id']}",
+        json={"input_mapping": {"priority": "priority"}},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["input_mapping"] == {"priority": "priority"}
+
     disabled = client.post(f"/msp/playbook-subscriptions/{subscription['id']}/disable")
     assert disabled.status_code == 200
     assert disabled.json()["enabled"] is False
+
+    enabled = client.post(f"/msp/playbook-subscriptions/{subscription['id']}/enable")
+    assert enabled.status_code == 200
+    assert enabled.json()["enabled"] is True
+
+    assert client.get("/msp/playbook-subscriptions/missing").status_code == 404
+    assert client.post("/msp/playbook-subscriptions/missing/disable").status_code == 404
 
     invalid = client.post(
         "/msp/playbook-subscriptions",

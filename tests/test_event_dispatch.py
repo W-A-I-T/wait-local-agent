@@ -191,6 +191,37 @@ def test_event_dispatch_keeps_playbook_approval_pending_without_retrying_it(sett
     assert len(store.list_approval_requests(client_id="acme")) == 1
 
 
+def test_event_dispatch_records_redacted_playbook_failure(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    subscription = create_msp_playbook_subscription(
+        store,
+        "ticket-intake-review",
+        event_type="ticket.created",
+        client_id="acme",
+    )
+
+    def fail_playbook(*_args, **_kwargs):
+        raise RuntimeError("provider access_token=secret-value")
+
+    monkeypatch.setattr("wait_local_agent.event_dispatch.run_msp_playbook", fail_playbook)
+    result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={},
+        idempotency_key="playbook-failure-event",
+        client_id="acme",
+    )
+
+    assert result.delivery.status == "failed"
+    assert result.errors and "secret-value" not in result.errors[0]
+    attempts = json.loads(result.delivery.playbook_attempts_json)
+    assert attempts[subscription.id]["status"] == "failed"
+    assert attempts[subscription.id]["run_ids"] == []
+
+
 def test_event_dispatch_does_not_run_tenant_subscription_for_unscoped_ticket(settings) -> None:
     store = Store(settings.data_path)
     _seed(store, client_id=None)
