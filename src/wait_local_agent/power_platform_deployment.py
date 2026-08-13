@@ -8,6 +8,8 @@ returns redacted bounded output.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess  # nosec B404 - argv is fixed and shell execution is disabled below
 from collections.abc import Callable, Mapping, Sequence
@@ -22,7 +24,15 @@ from wait_local_agent.reports.renderers import redact_text
 MAX_DEPLOYMENT_TARGETS = 3
 MAX_STAGE_OUTPUT = 4_000
 MAX_COMMAND_TIMEOUT_SECONDS = 1_800.0
+MAX_ARTIFACT_BYTES = 500_000_000
 _TARGET_NAMES = ("dev", "test", "prod")
+_PROMOTION_SOURCE_STAGES: dict[str, str | None] = {
+    "build": None,
+    "dev": None,
+    "test": "dev",
+    "prod": "test",
+}
+_SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class PowerPlatformDeploymentError(ValueError):
@@ -61,6 +71,7 @@ def build_power_platform_deployment_plan(
             "commands": commands,
             "approval_required": True,
             "deployment_started": False,
+            "promotion_gate": {"required": False, "source_stage": None},
         }
     ]
     for target in targets:
@@ -79,7 +90,11 @@ def build_power_platform_deployment_plan(
                     cast(str, target["environment_url"]),
                 ]],
                 "approval_required": True,
-                "deployment_started": True,
+                "deployment_started": False,
+                "promotion_gate": {
+                    "required": name in {"test", "prod"},
+                    "source_stage": _PROMOTION_SOURCE_STAGES[name],
+                },
             }
         )
     return {
@@ -95,6 +110,24 @@ def build_power_platform_deployment_plan(
         "stages": stages,
         "credentials_included": False,
         "approval_required_for_every_stage": True,
+        "promotion_policy": {
+            stage: {
+                "required": source_stage is not None,
+                "source_stage": source_stage,
+                "evidence": (
+                    [
+                        "source_stage_success",
+                        "artifact_digest",
+                        "evaluation_pass",
+                        "governance_pass",
+                        "rollback_metadata",
+                    ]
+                    if source_stage is not None
+                    else []
+                ),
+            }
+            for stage, source_stage in _PROMOTION_SOURCE_STAGES.items()
+        },
         "execution_started": False,
         "deployment_started": False,
     }
@@ -115,10 +148,155 @@ def build_power_platform_deployment_plan_from_payload(
     targets = payload.get("deployment_targets")
     if not isinstance(targets, list) or any(not isinstance(item, Mapping) for item in targets):
         raise PowerPlatformDeploymentError("approval payload deployment_targets is invalid")
-    return build_power_platform_deployment_plan(
+    plan = build_power_platform_deployment_plan(
         **values,
         deployment_targets=cast(Sequence[Mapping[str, object]], targets),
     )
+    stage = payload.get("stage")
+    if isinstance(stage, str):
+        evidence = validate_promotion_evidence(stage, payload.get("promotion_evidence", {}))
+        if evidence:
+            plan["promotion_evidence"] = evidence
+    return plan
+
+
+def validate_promotion_evidence(stage_id: str, evidence: object) -> dict[str, object]:
+    """Validate evidence required before a solution can be promoted.
+
+    Build and DEV approvals establish the initial artifact and environment
+    boundary. TEST and PROD require explicit evidence from the immediately
+    preceding stage; a declaration without that evidence is not a promotion.
+    """
+
+    source_stage = _PROMOTION_SOURCE_STAGES.get(stage_id)
+    if stage_id not in _PROMOTION_SOURCE_STAGES:
+        raise PowerPlatformDeploymentError("stage must be build, dev, test, or prod")
+    if source_stage is None:
+        if evidence not in ({}, None):
+            raise PowerPlatformDeploymentError(f"{stage_id} does not accept promotion_evidence")
+        return {}
+    if not isinstance(evidence, Mapping):
+        raise PowerPlatformDeploymentError(f"{stage_id} requires promotion_evidence")
+    raw = dict(evidence)
+    if not raw:
+        raise PowerPlatformDeploymentError(f"{stage_id} requires promotion_evidence")
+    _reject_keys(
+        raw,
+        {
+            "source_stage",
+            "source_status",
+            "source_approval_request_id",
+            "artifact_digest",
+            "evaluation",
+            "governance",
+            "rollback",
+        },
+        "promotion_evidence",
+    )
+    if raw.get("source_stage") != source_stage:
+        raise PowerPlatformDeploymentError(f"promotion_evidence.source_stage must be {source_stage}")
+    if raw.get("source_status") != "succeeded":
+        raise PowerPlatformDeploymentError("promotion_evidence.source_status must be succeeded")
+    source_approval_request_id = raw.get("source_approval_request_id")
+    if (
+        isinstance(source_approval_request_id, bool)
+        or not isinstance(source_approval_request_id, int)
+        or source_approval_request_id <= 0
+    ):
+        raise PowerPlatformDeploymentError(
+            "promotion_evidence.source_approval_request_id must be a positive integer"
+        )
+    artifact_digest = _digest(raw.get("artifact_digest"), "promotion_evidence.artifact_digest")
+
+    evaluation = raw.get("evaluation")
+    if not isinstance(evaluation, Mapping) or evaluation.get("production_readiness") != "pass":
+        raise PowerPlatformDeploymentError("promotion_evidence.evaluation must have production_readiness=pass")
+    case_count = evaluation.get("case_count", 0)
+    if isinstance(case_count, bool) or not isinstance(case_count, int) or not 0 <= case_count <= 100_000:
+        raise PowerPlatformDeploymentError("promotion_evidence.evaluation.case_count must be a bounded integer")
+
+    governance = raw.get("governance")
+    if not isinstance(governance, Mapping) or governance.get("status") != "pass":
+        raise PowerPlatformDeploymentError("promotion_evidence.governance must have status=pass")
+
+    rollback = raw.get("rollback")
+    if not isinstance(rollback, Mapping) or rollback.get("available") is not True:
+        raise PowerPlatformDeploymentError("promotion_evidence.rollback.available must be true")
+    strategy = rollback.get("strategy")
+    if not isinstance(strategy, str) or not 1 <= len(strategy.strip()) <= 120:
+        raise PowerPlatformDeploymentError("promotion_evidence.rollback.strategy is required")
+    rollback_digest = _digest(rollback.get("artifact_digest"), "promotion_evidence.rollback.artifact_digest")
+    return {
+        "source_stage": source_stage,
+        "source_status": "succeeded",
+        "source_approval_request_id": source_approval_request_id,
+        "artifact_digest": artifact_digest,
+        "evaluation": {"production_readiness": "pass", "case_count": case_count},
+        "governance": {"status": "pass"},
+        "rollback": {
+            "available": True,
+            "strategy": strategy.strip(),
+            "artifact_digest": rollback_digest,
+        },
+    }
+
+
+def validate_promotion_source(
+    stage_id: str,
+    evidence: Mapping[str, object],
+    *,
+    source_approval: Mapping[str, object] | None,
+    current_payload: Mapping[str, object],
+) -> None:
+    """Require promotion evidence to reference a persisted successful stage.
+
+    The evidence shape is still explicit and reviewable, but a caller cannot
+    turn a declaration into promotion evidence without a same-tenant approval
+    whose stored payload and execution result prove the immediately preceding
+    stage succeeded for the same solution package.
+    """
+
+    source_stage = _PROMOTION_SOURCE_STAGES.get(stage_id)
+    if source_stage is None:
+        return
+    if source_approval is None:
+        raise PowerPlatformDeploymentError("promotion evidence source approval was not found")
+    source_id = evidence.get("source_approval_request_id")
+    if source_approval.get("id") != source_id:
+        raise PowerPlatformDeploymentError("promotion evidence source approval does not match")
+    if source_approval.get("client_id") != current_payload.get("client_id"):
+        raise PowerPlatformDeploymentError("promotion evidence source approval is outside the tenant scope")
+    if source_approval.get("action_type") != "power_platform.solution_stage":
+        raise PowerPlatformDeploymentError("promotion evidence source approval has the wrong action type")
+    if source_approval.get("status") != "approved":
+        raise PowerPlatformDeploymentError("promotion evidence source approval is not approved")
+    if source_approval.get("execution_status") != "succeeded":
+        raise PowerPlatformDeploymentError("promotion evidence source stage has not succeeded")
+    source_payload = source_approval.get("payload")
+    if not isinstance(source_payload, Mapping):
+        raise PowerPlatformDeploymentError("promotion evidence source approval payload is invalid")
+    if source_payload.get("stage") != source_stage:
+        raise PowerPlatformDeploymentError(f"promotion evidence source stage must be {source_stage}")
+    for field in ("solution_name", "publisher_name", "publisher_prefix", "deployment_targets"):
+        if source_payload.get(field) != current_payload.get(field):
+            raise PowerPlatformDeploymentError(f"promotion evidence source {field} does not match")
+    source_result = source_approval.get("execution_result")
+    if not isinstance(source_result, Mapping) or source_result.get("status") != "succeeded":
+        raise PowerPlatformDeploymentError("promotion evidence source execution result is not succeeded")
+    if source_result.get("artifact_digest") != evidence.get("artifact_digest"):
+        raise PowerPlatformDeploymentError("promotion evidence artifact digest does not match source execution")
+
+
+def _reject_keys(value: Mapping[str, object], allowed: set[str], field: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise PowerPlatformDeploymentError(f"{field} contains unsupported fields: {', '.join(unknown)}")
+
+
+def _digest(value: object, field: str) -> str:
+    if not isinstance(value, str) or not _SHA256_DIGEST.fullmatch(value.strip()):
+        raise PowerPlatformDeploymentError(f"{field} must be a sha256 digest")
+    return value.strip()
 
 
 def execute_power_platform_stage(
@@ -176,16 +354,21 @@ def execute_power_platform_stage(
         results.append(command_result)
         if completed.returncode != 0:
             return _failed(stage_id, "Power Platform command failed.", results)
-    return {
+    artifact_digest = _artifact_digest(plan, workspace, output_directory)
+    if artifact_digest is None:
+        return _failed(stage_id, "Power Platform stage did not produce a verifiable solution artifact.", results)
+    result = {
         "format": "wait-local-agent.power-platform.stage-result",
         "format_version": 1,
         "stage_id": stage_id,
         "status": "succeeded",
         "message": f"Power Platform stage {stage_id} completed.",
         "commands": results,
+        "artifact_digest": artifact_digest,
         "execution_started": True,
         "deployment_started": bool(stage.get("deployment_started")),
     }
+    return result
 
 
 def _targets(value: Sequence[Mapping[str, object]]) -> list[dict[str, str]]:
@@ -269,6 +452,28 @@ def _bounded_output(value: str | None) -> str:
     return redact_text((value or "")[:MAX_STAGE_OUTPUT])
 
 
+def _artifact_digest(plan: Mapping[str, object], workspace: Path, output_directory: Path) -> str | None:
+    solution = plan.get("solution")
+    if not isinstance(solution, Mapping):
+        return None
+    name = solution.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    artifact = (output_directory / f"{name}.zip").resolve()
+    if workspace == artifact or workspace not in artifact.parents or not artifact.is_file():
+        return None
+    try:
+        if artifact.stat().st_size > MAX_ARTIFACT_BYTES:
+            return None
+        digest = hashlib.sha256()
+        with artifact.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return f"sha256:{digest.hexdigest()}"
+
+
 def _blocked(stage_id: str, message: str) -> dict[str, object]:
     return {
         "format": "wait-local-agent.power-platform.stage-result",
@@ -300,4 +505,6 @@ __all__ = [
     "build_power_platform_deployment_plan",
     "build_power_platform_deployment_plan_from_payload",
     "execute_power_platform_stage",
+    "validate_promotion_evidence",
+    "validate_promotion_source",
 ]

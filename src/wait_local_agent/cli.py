@@ -89,9 +89,15 @@ from wait_local_agent.consultant import (
     parse_solution_blueprint,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
-from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
+from wait_local_agent.evaluation import (
+    AgentServiceEvaluationExecutor,
+    EvaluationValidationError,
+    evaluate_tool_contract,
+    execute_tool_contract,
+)
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
@@ -138,6 +144,8 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_promotion_evidence,
+    validate_promotion_source,
 )
 from wait_local_agent.providers import provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -204,12 +212,13 @@ blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
-microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
+microsoft_evaluation_app = typer.Typer(help="Bounded consultant evaluation commands.")
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
 microsoft_power_apps_app = typer.Typer(help="Bounded Power Apps and Dataverse plans and build artifacts.")
 microsoft_use_cases_app = typer.Typer(help="Read-only Microsoft consultant use cases.")
 microsoft_workflow_app = typer.Typer(help="Review-only Power Automate workflow plans.")
+microsoft_copilot_studio_app = typer.Typer(help="Review-only Copilot Studio handoff plans.")
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
 microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
 microsoft_delivery_app = typer.Typer(help="Review-only consultant delivery handoffs.")
@@ -243,6 +252,7 @@ microsoft_app.add_typer(microsoft_monitoring_app, name="monitoring")
 microsoft_app.add_typer(microsoft_power_apps_app, name="power-apps")
 microsoft_app.add_typer(microsoft_use_cases_app, name="use-cases")
 microsoft_app.add_typer(microsoft_workflow_app, name="workflow")
+microsoft_app.add_typer(microsoft_copilot_studio_app, name="copilot-studio")
 microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
 microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
 microsoft_app.add_typer(microsoft_delivery_app, name="delivery")
@@ -3083,6 +3093,7 @@ def request_microsoft_solution_deployment_approval(
     scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, cast(str, payload["client_id"]))
     if scoped_client_id is None:
         raise typer.BadParameter("authenticated principal has no tenant")
+    store = Store(settings.data_path)
     targets = payload["deployment_targets"]
     if not isinstance(targets, list) or any(not isinstance(item, dict) for item in targets):
         raise typer.BadParameter("deployment_targets must contain objects")
@@ -3096,21 +3107,36 @@ def request_microsoft_solution_deployment_approval(
         )
         if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
             raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
+        promotion_evidence = validate_promotion_evidence(stage, payload.get("promotion_evidence", {}))
+        approval_payload = {
+            "format": "wait-local-agent.power-platform.deployment-approval",
+            "format_version": 1,
+            "client_id": scoped_client_id,
+            "solution_name": payload["solution_name"],
+            "publisher_name": payload["publisher_name"],
+            "publisher_prefix": payload["publisher_prefix"],
+            "output_directory": payload["output_directory"],
+            "deployment_targets": plan["deployment_targets"],
+            "stage": stage,
+            "promotion_evidence": promotion_evidence,
+            "credentials_included": False,
+        }
+        if promotion_evidence:
+            source_id = cast(int, promotion_evidence["source_approval_request_id"])
+            source_approval = store.get_approval_request(source_id)
+            if source_approval is not None and _cli_blueprint_client_scope(
+                context.client_id, context.role, source_approval.client_id
+            ) != scoped_client_id:
+                source_approval = None
+            validate_promotion_source(
+                stage,
+                promotion_evidence,
+                source_approval=_power_platform_source_record(source_approval),
+                current_payload=approval_payload,
+            )
     except (PowerPlatformDeploymentError, KeyError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    approval_payload = {
-        "format": "wait-local-agent.power-platform.deployment-approval",
-        "format_version": 1,
-        "client_id": scoped_client_id,
-        "solution_name": payload["solution_name"],
-        "publisher_name": payload["publisher_name"],
-        "publisher_prefix": payload["publisher_prefix"],
-        "output_directory": payload["output_directory"],
-        "deployment_targets": plan["deployment_targets"],
-        "stage": stage,
-        "credentials_included": False,
-    }
-    approval = Store(settings.data_path).create_approval_request(
+    approval = store.create_approval_request(
         subject_id=f"{scoped_client_id}:{payload['solution_name']}:{stage}",
         action_type="power_platform.solution_stage",
         payload=approval_payload,
@@ -3143,6 +3169,22 @@ def execute_microsoft_solution_stage(
         stage_id = payload.get("stage")
         if not isinstance(stage_id, str):
             raise PowerPlatformDeploymentError("approval stage is invalid")
+        promotion_evidence = payload.get("promotion_evidence")
+        if isinstance(promotion_evidence, dict) and promotion_evidence:
+            source_id = promotion_evidence.get("source_approval_request_id")
+            if not isinstance(source_id, int) or isinstance(source_id, bool):
+                raise PowerPlatformDeploymentError("promotion evidence source approval id is invalid")
+            source_approval = store.get_approval_request(source_id)
+            if source_approval is not None and _cli_blueprint_client_scope(
+                context.client_id, context.role, source_approval.client_id
+            ) != scoped_client_id:
+                source_approval = None
+            validate_promotion_source(
+                stage_id,
+                promotion_evidence,
+                source_approval=_power_platform_source_record(source_approval),
+                current_payload=payload,
+            )
         result = execute_power_platform_stage(plan, stage_id, settings, approved=True)
         approval = store.record_approval_execution(
             request_id,
@@ -3157,14 +3199,67 @@ def execute_microsoft_solution_stage(
 
 
 @microsoft_evaluation_app.command("run")
-def run_microsoft_evaluation(source: Path) -> None:
+def run_microsoft_evaluation(
+    source: Path,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
     payload = _load_openapi_definition(source)
     test_set = payload.get("test_set")
-    observations = payload.get("observations")
-    if not isinstance(test_set, list) or not isinstance(observations, dict):
-        raise typer.BadParameter("source must contain test_set and observations")
+    execution = payload.get("execution")
+    if not isinstance(test_set, list):
+        raise typer.BadParameter("source must contain a test_set array")
     try:
-        result = evaluate_tool_contract(test_set, observations)
+        if execution is None:
+            observations = payload.get("observations")
+            if not isinstance(observations, dict):
+                raise typer.BadParameter("observation evaluation source must contain observations")
+            result = evaluate_tool_contract(test_set, observations)
+        else:
+            if not isinstance(execution, dict):
+                raise typer.BadParameter("execution must be an object")
+            settings = load_settings()
+            if not settings.demo_mode or settings.allow_write_actions:
+                raise typer.BadParameter(
+                    "controlled evaluation execution requires local demo mode with writes disabled"
+                )
+            context = _cli_access(settings, token, Role.TECHNICIAN)
+            agent_id = execution.get("agent_id")
+            entity_id = execution.get("entity_id")
+            requested_client_id = execution.get("client_id")
+            input_payload = execution.get("input", {})
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (agent_id, entity_id, requested_client_id)
+            ):
+                raise typer.BadParameter("execution must contain agent_id, entity_id, and client_id text")
+            normalized_agent_id = cast(str, agent_id).strip()
+            normalized_entity_id = cast(str, entity_id).strip()
+            normalized_requested_client_id = cast(str, requested_client_id).strip()
+            if not isinstance(input_payload, dict):
+                raise typer.BadParameter("execution.input must be an object")
+            scoped_client_id = _cli_blueprint_client_scope(
+                context.client_id,
+                context.role,
+                normalized_requested_client_id,
+            )
+            if scoped_client_id is None:
+                raise typer.BadParameter("authenticated principal has no tenant")
+            store = Store(settings.data_path)
+            smart_actions = SmartActionService(store, settings)
+            agent_service = AgentService(store, settings, smart_actions)
+            definition = agent_service.get(normalized_agent_id, scoped_client_id)
+            if definition is None or definition.client_id != scoped_client_id:
+                raise typer.BadParameter("evaluation agent was not found in tenant scope")
+            executor = AgentServiceEvaluationExecutor(
+                agent_service,
+                definition,
+                entity_id=normalized_entity_id,
+                actor=context.approver_id or "evaluation",
+                actor_role=context.role,
+                input_payload=cast(dict[str, object], input_payload),
+                client_id=scoped_client_id,
+            )
+            result = execute_tool_contract(test_set, executor)
     except EvaluationValidationError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
@@ -3319,6 +3414,43 @@ def plan_microsoft_workflow(source: Path) -> None:
         )
     except PowerAutomatePlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_copilot_studio_app.command("plan")
+def plan_microsoft_copilot_studio(source: Path) -> None:
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "copilot_name", "business_goal", "topics", "knowledge_sources", "actions")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain Copilot Studio plan fields")
+    client_id = payload["client_id"]
+    copilot_name = payload["copilot_name"]
+    business_goal = payload["business_goal"]
+    topics = payload["topics"]
+    knowledge_sources = payload["knowledge_sources"]
+    actions = payload["actions"]
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(copilot_name, str)
+        or not isinstance(business_goal, str)
+        or not isinstance(topics, list)
+        or any(not isinstance(item, dict) for item in topics)
+        or not isinstance(knowledge_sources, list)
+        or not isinstance(actions, list)
+        or any(not isinstance(item, dict) for item in actions)
+    ):
+        raise typer.BadParameter("Copilot Studio plan fields have invalid types")
+    try:
+        result = build_copilot_studio_plan(
+            client_id=client_id,
+            copilot_name=copilot_name,
+            business_goal=business_goal,
+            topics=topics,
+            knowledge_sources=knowledge_sources,
+            actions=actions,
+        )
+    except CopilotStudioPlanError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
@@ -4785,6 +4917,26 @@ def _cli_report_client_scope(context, requested_client_id: str | None) -> str | 
     if not context.client_id:
         raise typer.BadParameter("authenticated principal has no tenant")
     return context.client_id
+
+
+def _power_platform_source_record(approval) -> dict[str, object] | None:
+    if approval is None or approval.id is None:
+        return None
+    try:
+        payload = json.loads(approval.payload_json)
+        execution_result = json.loads(approval.execution_result_json)
+    except json.JSONDecodeError:
+        payload = {}
+        execution_result = {}
+    return {
+        "id": approval.id,
+        "client_id": approval.client_id,
+        "action_type": approval.action_type,
+        "status": approval.status,
+        "execution_status": approval.execution_status,
+        "payload": payload if isinstance(payload, dict) else {},
+        "execution_result": execution_result if isinstance(execution_result, dict) else {},
+    }
 
 
 def _load_json_config(path: Path | None) -> dict[str, object]:

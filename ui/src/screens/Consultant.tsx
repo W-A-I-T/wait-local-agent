@@ -7,6 +7,7 @@ import type {
   ConsultantArchitecture,
   ConsultantArchitectureComponent,
   ConsultantBlueprint,
+  ConsultantBlueprintPromotionResult,
   ConsultantDiscoveryResult,
   ConsultantDiscoverySession,
   ConsultantMonitoring,
@@ -35,7 +36,7 @@ const DEFAULT_POWER_APPS_ACTIONS = JSON.stringify([
 ], null, 2);
 
 export function Consultant() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clientId: scopedClientId } = useDashboard();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
@@ -51,6 +52,9 @@ export function Consultant() {
   const [powerAppsActions, setPowerAppsActions] = useState(DEFAULT_POWER_APPS_ACTIONS);
   const [flowLoading, setFlowLoading] = useState(false);
   const [discoveryGoal, setDiscoveryGoal] = useState("");
+  const [discoveryClientId, setDiscoveryClientId] = useState("");
+  const [discoverySolutionName, setDiscoverySolutionName] = useState("");
+  const [discoveryRisk, setDiscoveryRisk] = useState<"low" | "medium" | "high">("medium");
   const [discoveryUsers, setDiscoveryUsers] = useState("");
   const [discoverySystems, setDiscoverySystems] = useState("");
   const [discoveryKnowledge, setDiscoveryKnowledge] = useState("");
@@ -65,6 +69,7 @@ export function Consultant() {
   const [guidedAnswer, setGuidedAnswer] = useState("");
   const [guidedBooleanAnswer, setGuidedBooleanAnswer] = useState(false);
   const [guidedLoading, setGuidedLoading] = useState(false);
+  const [promotionLoading, setPromotionLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -130,7 +135,7 @@ export function Consultant() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_id: selected.client_id,
-          workflow_id: workflow.id,
+          workflow_id: powerAutomateIdentifier(workflow.id),
           workflow_name: workflow.name ?? workflow.id,
           trigger: draft.trigger || "Manual review request",
           steps: draft.steps.map((name, index) => ({
@@ -155,9 +160,9 @@ export function Consultant() {
 
   async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    const clientId = currentClientId();
     if (!clientId || !discoveryGoal.trim()) {
-      setMessage("Choose a blueprint tenant and provide a business goal before assessing discovery.");
+      setMessage("A tenant scope and business goal are required before assessing discovery.");
       return;
     }
     setDiscoveryLoading(true);
@@ -169,6 +174,7 @@ export function Consultant() {
         body: JSON.stringify({
           client_id: clientId,
           answers: {
+            solution_name: discoverySolutionName.trim() || undefined,
             business_goal: discoveryGoal,
             users: splitList(discoveryUsers),
             systems: splitList(discoverySystems),
@@ -191,9 +197,9 @@ export function Consultant() {
   }
 
   async function startGuidedDiscovery() {
-    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    const clientId = currentClientId();
     if (!clientId || !discoveryGoal.trim()) {
-      setMessage("Choose a blueprint tenant and provide a business goal before starting guided discovery.");
+      setMessage("A tenant scope and business goal are required before starting guided discovery.");
       return;
     }
     setGuidedLoading(true);
@@ -202,12 +208,20 @@ export function Consultant() {
       const result = await apiFetch<ConsultantDiscoverySession>("/consultant/discovery/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId, opening_message: discoveryGoal.trim() }),
+        body: JSON.stringify({
+          client_id: clientId,
+          opening_message: discoveryGoal.trim(),
+          answers: { solution_name: discoverySolutionName.trim() || undefined },
+        }),
       });
       setDiscoverySession(result);
       setDiscoveryResult(result);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
+      if (result.blueprint_id) {
+        setMessage(`Discovery completed and blueprint ${result.blueprint_id} was saved for review.`);
+        await refresh();
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to start guided discovery.");
     } finally {
@@ -218,7 +232,7 @@ export function Consultant() {
   async function answerGuidedDiscovery() {
     const question = discoverySession?.next_question;
     if (!question) return;
-    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    const clientId = currentClientId();
     if (!clientId) return;
     const answer = question.kind === "boolean"
       ? guidedBooleanAnswer
@@ -235,13 +249,17 @@ export function Consultant() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field: question.id, answer }),
+          body: JSON.stringify({ client_id: clientId, field: question.id, answer }),
         },
       );
       setDiscoverySession(result);
       setDiscoveryResult(result);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
+      if (result.blueprint_id) {
+        setMessage(`Discovery completed and blueprint ${result.blueprint_id} was saved for review.`);
+        await refresh();
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to record the discovery answer.");
     } finally {
@@ -249,9 +267,50 @@ export function Consultant() {
     }
   }
 
+  async function promoteDiscovery() {
+    const clientId = selected?.client_id ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
+      setMessage("Complete the required discovery evidence before saving a solution blueprint.");
+      return;
+    }
+    if (!discoverySolutionName.trim()) {
+      setMessage("Provide a solution name before saving a solution blueprint.");
+      return;
+    }
+    if (!discoveryResult.answered) {
+      setMessage("Discovery answers are unavailable; reassess the intake before saving the blueprint.");
+      return;
+    }
+    setPromotionLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantBlueprintPromotionResult>("/consultant/discovery/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          solution_name: discoverySolutionName.trim(),
+          risk: discoveryRisk,
+          answers: discoveryResult.answered,
+        }),
+      });
+      setBlueprints((current) => [
+        result.blueprint,
+        ...current.filter((blueprint) => blueprint.id !== result.blueprint.id),
+      ]);
+      setSelectedId(result.blueprint.id);
+      setArchitecture(null);
+      setMessage("Solution blueprint saved for architecture review.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save the solution blueprint.");
+    } finally {
+      setPromotionLoading(false);
+    }
+  }
+
   async function buildPowerAppsArtifact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? blueprints[0]?.client_id;
+    const clientId = currentClientId();
     if (!clientId || !powerAppsName.trim()) {
       setMessage("Choose a blueprint tenant and provide an app name before building the artifact.");
       return;
@@ -283,6 +342,10 @@ export function Consultant() {
 
   const selected = blueprints.find((blueprint) => blueprint.id === selectedId);
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
+
+  function currentClientId() {
+    return selected?.client_id?.trim() || scopedClientId.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+  }
 
   return (
     <div className="screen-stack">
@@ -325,6 +388,30 @@ export function Consultant() {
         </div>
         <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
           <div className="grid">
+            <label>
+              Customer workspace ID
+              <input
+                value={discoveryClientId || selected?.client_id || blueprints[0]?.client_id || ""}
+                onChange={(event) => setDiscoveryClientId(event.target.value)}
+                placeholder="acme"
+              />
+            </label>
+            <label>
+              Solution name
+              <input
+                value={discoverySolutionName}
+                onChange={(event) => setDiscoverySolutionName(event.target.value)}
+                placeholder="Employee onboarding"
+              />
+            </label>
+            <label>
+              Risk review
+              <select value={discoveryRisk} onChange={(event) => setDiscoveryRisk(event.target.value as "low" | "medium" | "high")}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
             <label>
               Business goal
               <textarea rows={2} value={discoveryGoal} onChange={(event) => setDiscoveryGoal(event.target.value)} placeholder="Reduce manual onboarding work" />
@@ -372,6 +459,14 @@ export function Consultant() {
             <strong>{discoveryResult.readiness === "ready_for_architecture" ? "Ready for architecture review." : "More discovery is required."}</strong>{" "}
             {discoveryResult.missing_required.length ? `Missing: ${discoveryResult.missing_required.join(", ")}. ` : "All required answers are present. "}
             Risk review: {discoveryResult.risk_review.level}. ROI estimate: {discoveryResult.roi_analysis.status}.
+            {discoveryResult.readiness === "ready_for_architecture" ? (
+              <div>
+                <button type="button" onClick={() => void promoteDiscovery()} disabled={!canWrite || promotionLoading || !discoverySolutionName.trim()}>
+                  {promotionLoading ? "Saving blueprint…" : "Save solution blueprint"}
+                </button>
+                <p className="screen-note">The selected risk is recorded explicitly; no agent, connector, or provider deployment starts.</p>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div className="notice">
@@ -560,6 +655,10 @@ export function Consultant() {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function powerAutomateIdentifier(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 function parseJsonArray(value: string, label: string): Record<string, unknown>[] {

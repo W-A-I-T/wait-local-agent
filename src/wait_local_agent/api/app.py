@@ -92,8 +92,10 @@ from wait_local_agent.consultant import (
     architect_solution_blueprint,
     blueprint_view,
     parse_solution_blueprint,
+    promote_discovery_candidate,
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
+from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import (
     DiscoveryValidationError,
@@ -181,6 +183,8 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_promotion_evidence,
+    validate_promotion_source,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import (
@@ -507,9 +511,29 @@ class PowerAutomatePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CopilotStudioPlanRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    copilot_name: str = Field(min_length=1, max_length=240)
+    business_goal: str = Field(min_length=1, max_length=500)
+    topics: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    knowledge_sources: list[object] = Field(default_factory=list, max_length=32)
+    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoveryBlueprintPromotionRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=240)
+    risk: Literal["low", "medium", "high"]
+    answers: dict[str, object] = Field(default_factory=dict, max_length=28)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -521,6 +545,7 @@ class DiscoverySessionStartRequest(BaseModel):
 
 
 class DiscoveryTurnRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
     field: str = Field(min_length=1, max_length=64)
     answer: object
     model_config = ConfigDict(extra="forbid")
@@ -568,6 +593,7 @@ class PowerPlatformDeploymentRequest(BaseModel):
     output_directory: str = Field(min_length=1, max_length=240)
     deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
     stage: Literal["build", "dev", "test", "prod"] = "build"
+    promotion_evidence: dict[str, object] = Field(default_factory=dict)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -922,6 +948,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def auth_role(context: ViewerAccess) -> dict[str, object]:
         return {
             "role": context.role.label(),
+            "client_id": context.client_id,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
         }
@@ -4454,6 +4481,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return build_solution_discovery(client_id=client_id, answers=answers, environment=environment)
 
+    def _promote_completed_discovery(
+        result: dict[str, object],
+        *,
+        client_id: str,
+        created_by: str,
+    ) -> dict[str, object]:
+        """Persist complete guided evidence as a review-only blueprint."""
+
+        if result.get("status") != "complete":
+            return result
+        candidate = result.get("blueprint_candidate")
+        answered = result.get("answered")
+        if not isinstance(candidate, dict) or not isinstance(answered, dict):
+            raise DiscoveryValidationError("completed discovery is missing blueprint evidence")
+        solution = candidate.get("solution")
+        solution_name = solution.get("name") if isinstance(solution, dict) else None
+        if not isinstance(solution_name, str) or not solution_name.strip():
+            solution_name = "Guided discovery solution"
+        risk_review = result.get("risk_review")
+        risk = risk_review.get("level") if isinstance(risk_review, dict) else None
+        if risk not in {"low", "medium", "high"}:
+            risk = "high" if answered.get("data_leaves_tenant") is True else "medium"
+        try:
+            blueprint = promote_discovery_candidate(
+                candidate,
+                client_id=client_id,
+                solution_name=solution_name.strip(),
+                risk=cast(str, risk),
+                created_by=created_by,
+            )
+            persisted = store.create_solution_blueprint(blueprint)
+        except BlueprintValidationError as exc:
+            raise DiscoveryValidationError(f"completed discovery cannot become a blueprint: {exc}") from exc
+        result["blueprint_id"] = persisted.id
+        result["blueprint"] = blueprint_view(persisted)
+        return result
+
     @app.post("/consultant/discovery")
     def consultant_discovery(
         payload: DiscoveryRequest,
@@ -4465,6 +4529,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return _consultant_discovery_result(scoped_client_id, payload.answers)
         except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/discovery/promote", status_code=201)
+    def consultant_discovery_promote(
+        payload: DiscoveryBlueprintPromotionRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            discovery = _consultant_discovery_result(scoped_client_id, payload.answers)
+            missing = cast(list[object], discovery["missing_required"])
+            if missing:
+                fields = ", ".join(str(item) for item in missing)
+                raise DiscoveryValidationError(f"discovery is missing required answers: {fields}")
+            candidate = discovery.get("blueprint_candidate")
+            if not isinstance(candidate, dict):
+                raise DiscoveryValidationError("discovery blueprint candidate is invalid")
+            blueprint = promote_discovery_candidate(
+                candidate,
+                client_id=scoped_client_id,
+                solution_name=payload.solution_name,
+                risk=payload.risk,
+                created_by=context.approver_id or "api",
+            )
+            persisted = store.create_solution_blueprint(blueprint)
+            return {
+                "blueprint": blueprint_view(persisted),
+                "discovery": discovery,
+                "execution_started": False,
+                "deployment_started": False,
+            }
+        except (BlueprintValidationError, DiscoveryValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/consultant/discovery/sessions")
@@ -4485,7 +4583,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 if "business_goal" not in answers:
                     answers["business_goal"] = opening_message
-            result = _consultant_discovery_result(scoped_client_id, answers)
+            result = _promote_completed_discovery(
+                _consultant_discovery_result(scoped_client_id, answers),
+                client_id=scoped_client_id,
+                created_by=context.approver_id or "api",
+            )
         except DiscoveryValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         principal_id = context.approver_id or "api"
@@ -4528,7 +4630,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoveryTurnRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, None)
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"
@@ -4550,7 +4652,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise DiscoveryValidationError("discovery session state is invalid")
             answers = dict(cast(dict[str, object], answers_value))
             answers[payload.field] = payload.answer
-            result = _consultant_discovery_result(scoped_client_id, answers)
+            result = _promote_completed_discovery(
+                _consultant_discovery_result(scoped_client_id, answers),
+                client_id=scoped_client_id,
+                created_by=principal_id,
+            )
         except (DiscoveryValidationError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         answered = cast(dict[str, object], result["answered"])
@@ -4693,20 +4799,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 output_directory=payload.output_directory,
                 deployment_targets=payload.deployment_targets,
             )
+            promotion_evidence = validate_promotion_evidence(payload.stage, payload.promotion_evidence)
+            approval_payload = {
+                "format": "wait-local-agent.power-platform.deployment-approval",
+                "format_version": 1,
+                "client_id": scoped_client_id,
+                "solution_name": payload.solution_name,
+                "publisher_name": payload.publisher_name,
+                "publisher_prefix": payload.publisher_prefix,
+                "output_directory": payload.output_directory,
+                "deployment_targets": plan["deployment_targets"],
+                "stage": payload.stage,
+                "promotion_evidence": promotion_evidence,
+                "credentials_included": False,
+            }
+            if promotion_evidence:
+                source_id = cast(int, promotion_evidence["source_approval_request_id"])
+                source_approval = store.get_approval_request(source_id)
+                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                    source_approval = None
+                validate_promotion_source(
+                    payload.stage,
+                    promotion_evidence,
+                    source_approval=_power_platform_source_record(source_approval),
+                    current_payload=approval_payload,
+                )
         except PowerPlatformDeploymentError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        approval_payload = {
-            "format": "wait-local-agent.power-platform.deployment-approval",
-            "format_version": 1,
-            "client_id": scoped_client_id,
-            "solution_name": payload.solution_name,
-            "publisher_name": payload.publisher_name,
-            "publisher_prefix": payload.publisher_prefix,
-            "output_directory": payload.output_directory,
-            "deployment_targets": plan["deployment_targets"],
-            "stage": payload.stage,
-            "credentials_included": False,
-        }
         approval = store.create_approval_request(
             subject_id=f"{scoped_client_id}:{payload.solution_name}:{payload.stage}",
             action_type="power_platform.solution_stage",
@@ -4737,6 +4856,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             stage_id = payload.get("stage")
             if not isinstance(stage_id, str):
                 raise PowerPlatformDeploymentError("deployment approval stage is invalid")
+            promotion_evidence = payload.get("promotion_evidence")
+            if isinstance(promotion_evidence, dict) and promotion_evidence:
+                source_id = promotion_evidence.get("source_approval_request_id")
+                if not isinstance(source_id, int) or isinstance(source_id, bool):
+                    raise PowerPlatformDeploymentError("promotion evidence source approval id is invalid")
+                source_approval = store.get_approval_request(source_id)
+                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                    source_approval = None
+                validate_promotion_source(
+                    stage_id,
+                    promotion_evidence,
+                    source_approval=_power_platform_source_record(source_approval),
+                    current_payload=payload,
+                )
             result = execute_power_platform_stage(
                 plan,
                 stage_id,
@@ -4784,6 +4917,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 steps=payload.steps,
             )
         except PowerAutomatePlanError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/copilot-studio/plan")
+    def consultant_copilot_studio_plan(
+        payload: CopilotStudioPlanRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_copilot_studio_plan(
+                client_id=scoped_client_id,
+                copilot_name=payload.copilot_name,
+                business_goal=payload.business_goal,
+                topics=payload.topics,
+                knowledge_sources=payload.knowledge_sources,
+                actions=payload.actions,
+            )
+        except CopilotStudioPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/monitoring/agents")
@@ -6507,6 +6660,20 @@ def _safe_json_object(payload_json: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _power_platform_source_record(approval) -> dict[str, object] | None:
+    if approval is None or approval.id is None:
+        return None
+    return {
+        "id": approval.id,
+        "client_id": approval.client_id,
+        "action_type": approval.action_type,
+        "status": approval.status,
+        "execution_status": approval.execution_status,
+        "payload": _safe_json_object(approval.payload_json),
+        "execution_result": _safe_json_object(approval.execution_result_json),
+    }
 
 
 def _safe_json_list(payload_json: str) -> list[dict[str, object]]:

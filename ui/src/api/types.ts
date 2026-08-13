@@ -321,6 +321,13 @@ export type ConsultantDiscoveryResult = {
   deployment_started: boolean;
 };
 
+export type ConsultantBlueprintPromotionResult = {
+  blueprint: ConsultantBlueprint;
+  discovery: ConsultantDiscoveryResult;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
 export type ConsultantDiscoveryQuestion = {
   id: string;
   prompt: string;
@@ -335,6 +342,7 @@ export type ConsultantDiscoverySession = ConsultantDiscoveryResult & {
   transcript: Array<{ role: "user" | "assistant"; field?: string; content: unknown }>;
   turn_index: number;
   next_question: ConsultantDiscoveryQuestion | null;
+  blueprint_id?: string | null;
 };
 
 export type TemplateGalleryEntry = {
@@ -958,6 +966,7 @@ export type HaloTicketsResponse = {
 
 export type AuthRoleResponse = {
   role: "admin" | "technician" | "viewer";
+  client_id?: string | null;
   api_auth_required: boolean;
   demo_mode: boolean;
 };

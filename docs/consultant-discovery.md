@@ -4,6 +4,7 @@ WAIT provides a deterministic discovery intake at:
 
 ```text
 POST /consultant/discovery
+POST /consultant/discovery/promote
 ```
 
 The CLI equivalent is:
@@ -70,3 +71,19 @@ saved from `monthly_runs * minutes_saved_per_run / 60` and optionally applies a
 user-supplied hourly value. Risk review reports explicit state-change,
 cross-tenant, approval, and failure-path factors. Both outputs are evidence
 only and do not execute an agent, call a provider, or create a blueprint record.
+
+`POST /consultant/discovery/promote` is the explicit review boundary between
+completed discovery and a persisted solution blueprint. It requires the
+tenant-scoped `client_id`, a human-supplied `solution_name`, an explicit
+`risk` (`low`, `medium`, or `high`), and the completed discovery `answers`.
+The server recomputes discovery and refuses promotion while required answers
+are missing. Approval labels from discovery are normalized into bounded
+blueprint identifiers (for example, `Assign license` becomes
+`assign_license`), while the original labels remain in the stored discovery
+evidence. Promotion records the blueprint and audit event only; it does not
+start agent execution, connector calls, provider operations, or deployment.
+
+When a guided session reaches its final required answer, its response also
+includes the promoted `blueprint_id` and blueprint. The stateless bulk
+promotion route remains available for explicit operator-controlled promotion
+and enforces the same completion and tenant checks.

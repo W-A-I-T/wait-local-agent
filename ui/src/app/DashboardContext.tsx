@@ -35,6 +35,7 @@ const defaultWriteHealth: HaloReadResult = {
 type DashboardContextValue = {
   actionTypes: string[];
   apiToken: string;
+  clientId: string;
   role: AuthRoleResponse["role"];
   connectors: ConnectorStatus[];
   haloConnector?: ConnectorStatus;
@@ -75,6 +76,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [clientId, setClientId] = useState("");
   const [roleResolved, setRoleResolved] = useState(false);
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
@@ -129,6 +131,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return;
       }
       setRole(auth.role);
+      setClientId(auth.client_id ?? "");
       setRoleResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
@@ -275,6 +278,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return {
       actionTypes,
       apiToken,
+      clientId,
       role,
       connectors,
       haloConnector,
@@ -316,6 +320,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, [
     apiToken,
+    clientId,
     approvalRequests,
     busyId,
     clearApiToken,

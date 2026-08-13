@@ -95,6 +95,7 @@ def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp
         ["microsoft", "power-apps", "build", "examples/consultant/power-apps-build.json"],
         ["microsoft", "use-cases", "list"],
         ["microsoft", "workflow", "plan", "examples/consultant/flow-plan.json"],
+        ["microsoft", "copilot-studio", "plan", "examples/consultant/copilot-studio-plan.json"],
         ["microsoft", "discovery", "assess", "examples/consultant/discovery.json"],
         ["microsoft", "delivery", "plan", "examples/consultant/delivery.json"],
     ]
@@ -102,6 +103,124 @@ def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp
     for command in commands:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, f"{command}: {result.output}"
+
+
+def test_microsoft_evaluation_cli_runs_existing_agent_in_controlled_mode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    agent = service.create(
+        name="CLI evaluation fixture",
+        description="A bounded local evaluation fixture.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    source = tmp_path / "controlled-evaluation.json"
+    source.write_text(
+        json.dumps(
+            {
+                "test_set": [
+                    {
+                        "id": "triage",
+                        "expected_tool_ids": ["ticket-triage"],
+                        "forbidden_tool_ids": [],
+                        "expected_approval_tool_ids": [],
+                    }
+                ],
+                "execution": {
+                    "agent_id": agent.id,
+                    "entity_id": "TCK-1001",
+                    "client_id": "acme",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["microsoft", "evaluation", "run", str(source)])
+
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.output)
+    assert output["execution_mode"] == "controlled"
+    assert output["production_readiness"] == "pass"
+    assert output["cases"][0]["execution"]["execution_status"] == "completed"
+
+    malformed_cases = [
+        ({"test_set": [{"id": "triage"}], "execution": []}, "execution must be an object"),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {"agent_id": 1, "entity_id": "TCK-1001", "client_id": "acme"},
+            },
+            "execution must contain",
+        ),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {
+                    "agent_id": agent.id,
+                    "entity_id": "TCK-1001",
+                    "client_id": "acme",
+                    "input": [],
+                },
+            },
+            "execution.input must be an object",
+        ),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {"agent_id": "missing", "entity_id": "TCK-1001", "client_id": "acme"},
+            },
+            "agent was not found",
+        ),
+        (
+            {
+                "test_set": [],
+                "execution": {
+                    "agent_id": agent.id,
+                    "entity_id": "TCK-1001",
+                    "client_id": "acme",
+                },
+            },
+            "test_set must contain",
+        ),
+    ]
+    for malformed, message in malformed_cases:
+        source.write_text(json.dumps(malformed), encoding="utf-8")
+        invalid = CliRunner().invoke(app, ["microsoft", "evaluation", "run", str(source)])
+        assert invalid.exit_code != 0
+        assert message in invalid.output
+
+
+def test_microsoft_evaluation_cli_blocks_controlled_mode_when_writes_are_enabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "true")
+    source = tmp_path / "controlled-evaluation.json"
+    source.write_text(
+        json.dumps(
+            {
+                "test_set": [],
+                "execution": {"agent_id": "fixture", "entity_id": "TCK-1", "client_id": "acme"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["microsoft", "evaluation", "run", str(source)])
+
+    assert result.exit_code != 0
+    assert "writes disabled" in result.output
 
 
 def test_microsoft_solution_deployment_cli_stays_approval_gated(monkeypatch, tmp_path) -> None:

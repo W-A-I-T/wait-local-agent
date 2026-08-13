@@ -13,6 +13,37 @@ followed by optional `dev`, `test`, and `prod` import stages. Targets must be
 ordered in promotion order and contain HTTPS environment URLs without
 credentials or query data.
 
+Planning is metadata-only: every planned stage reports
+`deployment_started: false`. A `test` approval requires normalized evidence
+that the immediately preceding `dev` stage succeeded, including a SHA-256
+artifact digest, a passing evaluation, passing governance, and rollback
+metadata. A `prod` approval applies the same gate to the preceding `test`
+stage. Missing or non-passing evidence is rejected before an approval request
+is created.
+
+The promotion evidence shape is intentionally bounded:
+
+```json
+{
+  "source_stage": "dev",
+  "source_status": "succeeded",
+  "source_approval_request_id": 123,
+  "artifact_digest": "sha256:<64 lowercase hex characters>",
+  "evaluation": {"production_readiness": "pass", "case_count": 1},
+  "governance": {"status": "pass"},
+  "rollback": {
+    "available": true,
+    "strategy": "reimport_previous_package",
+    "artifact_digest": "sha256:<64 lowercase hex characters>"
+  }
+}
+```
+
+For TEST and PROD, `source_approval_request_id` must identify an approved,
+same-tenant approval for the immediately preceding stage. Its persisted
+execution result must be successful and contain the same artifact digest; a
+caller cannot promote by submitting a self-declared success record.
+
 The CLI exposes the same boundary:
 
 ```bash

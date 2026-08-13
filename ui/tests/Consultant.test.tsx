@@ -3,16 +3,22 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
+const dashboard = vi.hoisted(() => ({ clientId: "acme" }));
+
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId })
 }));
 
 describe("Consultant", () => {
+  let noBlueprints = false;
+
   beforeEach(() => {
+    noBlueprints = false;
+    dashboard.clientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
-        return Promise.resolve(new Response(JSON.stringify([{
+        return Promise.resolve(new Response(JSON.stringify(noBlueprints ? [] : [{
           id: "bp-acme",
           client_id: "acme",
           created_by: "architect",
@@ -112,10 +118,58 @@ describe("Consultant", () => {
           readiness: "ready_for_architecture",
           risk_review: { level: "medium", factors: [], evidence_only: true },
           roi_analysis: { status: "needs_estimates" },
-          blueprint_candidate: {},
+          answered: {
+            solution_name: "Employee onboarding",
+            business_goal: "Reduce onboarding effort",
+            users: ["HR"],
+            systems: ["Microsoft Entra"],
+            knowledge: ["Employee handbook"],
+            changes: ["Create user"],
+            approvals: ["Create user"],
+            failure_handling: "Pause for review",
+            data_location: ["Tenant SharePoint"],
+            data_leaves_tenant: false,
+          },
+          blueprint_candidate: { approvals: { "Create user": "human_review_required" } },
           inference_started: false,
           execution_started: false,
           deployment_started: false
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/discovery/promote") {
+        return Promise.resolve(new Response(JSON.stringify({
+          blueprint: {
+            id: "bp-saved",
+            client_id: "acme",
+            created_by: "architect",
+            created_at: "2026-08-12T00:00:00Z",
+            updated_at: "2026-08-12T00:00:00Z",
+            solution: { name: "Employee onboarding review" },
+            risk: "medium",
+            agents: [],
+            workflows: [],
+          },
+          discovery: { missing_required: [], readiness: "ready_for_architecture" },
+          execution_started: false,
+          deployment_started: false,
+        }), { status: 201 }));
+      }
+      if (path === "/consultant/discovery/sessions") {
+        return Promise.resolve(new Response(JSON.stringify({
+          session_id: "CDS-guided",
+          principal_scope: "technician",
+          transcript: [],
+          turn_index: 0,
+          next_question: { id: "users", prompt: "Who uses this?", kind: "list", required: true, answered: false },
+          assistant_message: "Who uses this?",
+          missing_required: ["users"],
+          readiness: "needs_discovery",
+          risk_review: { level: "medium", factors: [], evidence_only: true },
+          roi_analysis: { status: "needs_estimates" },
+          status: "active",
+          inference_started: false,
+          execution_started: false,
+          deployment_started: false,
         }), { status: 200 }));
       }
       throw new Error(`Unexpected request: ${path}`);
@@ -139,10 +193,53 @@ describe("Consultant", () => {
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
     expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    const planCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/workflows/power-automate/plan");
+    expect(planCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"workflow_id":"onboarding_flow"'),
+    });
     fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
+    fireEvent.change(screen.getByLabelText("Solution name"), { target: { value: "Employee onboarding review" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
     expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save solution blueprint" }));
+    expect(await screen.findByText(/saved for architecture review/i)).toBeInTheDocument();
+    const promotionCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/promote");
+    expect(promotionCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"solution_name":"Employee onboarding review"'),
+    });
+  });
+
+  it("starts guided discovery from the authenticated tenant when no blueprint exists", async () => {
+    noBlueprints = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start guided discovery" }));
+
+    expect(await screen.findByText("Who uses this?")).toBeInTheDocument();
+    const guidedCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/sessions");
+    expect(guidedCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"client_id":"acme"'),
+    });
+  });
+
+  it("uses the entered workspace when the local demo has no authenticated tenant scope", async () => {
+    noBlueprints = true;
+    dashboard.clientId = "";
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Customer workspace ID"), { target: { value: "acme-browser" } });
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
+
+    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
+    const discoveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery");
+    expect(discoveryCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"client_id":"acme-browser"'),
+    });
   });
 });

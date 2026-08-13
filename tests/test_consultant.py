@@ -9,11 +9,14 @@ import pytest
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     _decision_for_component,
+    _matching_environment,
     architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
+    promote_discovery_candidate,
 )
+from wait_local_agent.discovery import build_solution_discovery
 from wait_local_agent.store import Store
 from wait_local_agent.workflows import list_workflow_templates
 
@@ -98,6 +101,150 @@ def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets()
         parse_solution_blueprint(
             {**_payload(), "discovery": {"business_goal": "token=secret"}},
             client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_blueprint_normalizes_optional_or_duplicate_environment_evidence() -> None:
+    candidate = {
+        **_payload(),
+        "approvals": {"Assign license": "IT"},
+        "environment": [
+            {"id": "m365", "name": "Microsoft 365", "status": "configured", "kind": "m365"},
+            {"id": "m365", "name": "Microsoft 365", "status": "detected", "kind": "graph"},
+            {"id": "m365", "name": "Microsoft 365", "status": "detected", "kind": "graph"},
+        ],
+    }
+    blueprint = promote_discovery_candidate(
+        candidate,
+        client_id="acme",
+        solution_name="Onboarding",
+        risk="medium",
+        created_by="architect",
+    )
+
+    assert [item["id"] for item in blueprint.environment] == ["m365", "microsoft-365", "microsoft-365-2"]
+
+
+def test_blueprint_handles_optional_or_nonmatching_environment_values() -> None:
+    assert _matching_environment("m365", [{"name": None, "connector_id": "m365"}]) == {
+        "name": None,
+        "connector_id": "m365",
+    }
+    with pytest.raises(BlueprintValidationError, match="environment must be an array"):
+        promote_discovery_candidate(
+            {**_payload(), "approvals": {"Assign license": "IT"}, "environment": None},
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+    with pytest.raises(BlueprintValidationError, match=r"environment\[0\] must be an object"):
+        promote_discovery_candidate(
+            {**_payload(), "approvals": {"Assign license": "IT"}, "environment": [None]},
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+
+
+def test_blueprint_accepts_null_orchestration() -> None:
+    blueprint = parse_solution_blueprint(
+        {**_payload(), "orchestration": None},
+        client_id="acme",
+        created_by="architect",
+    )
+    assert blueprint.orchestration == ""
+
+
+@pytest.mark.parametrize(
+    ("discovery", "message"),
+    [
+        ([], "discovery must be an object"),
+        ({"owners": ["token=secret"]}, "discovery evidence cannot contain secret material"),
+        ({"data_leaves_tenant": "unknown"}, "discovery.data_leaves_tenant must be boolean"),
+    ],
+)
+def test_blueprint_rejects_malformed_discovery_evidence(discovery: object, message: str) -> None:
+    with pytest.raises(BlueprintValidationError, match=message):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": discovery},
+            client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_discovery_candidate_promotion_normalizes_labels_and_preserves_evidence() -> None:
+    answers = {
+        "solution_name": "Employee onboarding",
+        "business_goal": "Reduce manual onboarding work",
+        "users": ["HR", "IT"],
+        "knowledge": ["SharePoint HR policies"],
+        "systems": ["Microsoft Entra", "Teams"],
+        "reads": ["Employee record", "HR policy"],
+        "changes": ["Create user", "Assign license"],
+        "approvals": ["Assign license"],
+        "failure_handling": "Pause and create an approval review",
+        "licenses": ["Microsoft 365 E3"],
+        "data_location": ["Tenant SharePoint"],
+        "data_leaves_tenant": False,
+    }
+    candidate = build_solution_discovery(client_id="acme", answers=answers)["blueprint_candidate"]
+
+    blueprint = promote_discovery_candidate(
+        candidate,
+        client_id="acme",
+        solution_name="Employee onboarding review",
+        risk="high",
+        created_by="architect",
+    )
+
+    assert blueprint.solution_name == "Employee onboarding review"
+    assert blueprint.risk == "high"
+    assert blueprint.approvals == {"assign_license": "human_review_required"}
+    assert blueprint.discovery["approvals"] == ["Assign license"]
+
+
+@pytest.mark.parametrize(
+    ("raw_action", "message"),
+    [
+        ("api_key", "secret material"),
+        ("!!!", "usable identifier"),
+        ("Assign\u0000license", "unsupported control characters"),
+    ],
+)
+def test_discovery_candidate_promotion_rejects_unsafe_approval_labels(raw_action: str, message: str) -> None:
+    candidate = {**_payload(), "approvals": {raw_action: "HR"}}
+    with pytest.raises(BlueprintValidationError, match=message):
+        promote_discovery_candidate(
+            candidate,
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+
+
+@pytest.mark.parametrize(
+    ("approvals", "message"),
+    [
+        ([], "must be an object"),
+        ({1: "HR"}, "approval action must be text"),
+        ({"Assign license": "HR", "assign_license": "IT"}, "identifiers collide"),
+    ],
+)
+def test_discovery_candidate_promotion_rejects_invalid_approval_objects(
+    approvals: object,
+    message: str,
+) -> None:
+    candidate = {**_payload(), "approvals": approvals}
+    with pytest.raises(BlueprintValidationError, match=message):
+        promote_discovery_candidate(
+            candidate,
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
             created_by="architect",
         )
 

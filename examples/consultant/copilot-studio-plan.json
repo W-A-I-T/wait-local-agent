@@ -1,0 +1,17 @@
+{
+  "client_id": "demo",
+  "copilot_name": "Employee onboarding copilot",
+  "business_goal": "Guide HR through an auditable onboarding request.",
+  "topics": [
+    {
+      "id": "onboarding_request",
+      "name": "Onboarding request",
+      "trigger_phrases": ["start onboarding", "new employee"]
+    }
+  ],
+  "knowledge_sources": ["employee-handbook", "onboarding-runbook"],
+  "actions": [
+    {"id": "lookup_employee", "connector_id": "m365", "method": "GET"},
+    {"id": "prepare_identity", "connector_id": "m365", "method": "POST", "approval_required": true}
+  ]
+}

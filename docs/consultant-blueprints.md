@@ -79,9 +79,10 @@ those agents. The separate `/consultant/supervisor/run` operation can execute
 explicitly selected persisted child definitions through the existing approval
 and audit runtime.
 
-Power Platform connector, Power Apps, and Power Automate plans are available as
-separate review-only artifacts. MCP server/client and Work IQ integration are
-also available behind explicit configuration. None of those plans or adapters
-implicitly call Microsoft services, acquire credentials, or deploy a solution;
-live Copilot Studio channel integration and production deployment remain
-explicitly separate operations.
+Power Platform connector, Power Apps, Power Automate, and Copilot Studio
+handoff plans are available as separate review-only artifacts. The Copilot
+Studio plan records bounded topics, trigger phrases, knowledge references, and
+connector actions, but it does not provision a Copilot, acquire credentials,
+publish a channel, or call Microsoft services. MCP server/client and Work IQ
+integration are also available behind explicit configuration. Production
+deployment remains a separate approval-gated operation.

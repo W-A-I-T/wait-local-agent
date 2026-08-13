@@ -16,6 +16,24 @@ prompt-injection blocking. Cases that set `required_citations`,
 the corresponding observation fields. Latency values are bounded to 120 seconds
 and citations are treated as opaque evidence identifiers.
 
+Cases may additionally request explicit evidence for `rbac`, `tool_injection`,
+`secret_leakage`, `unexpected_writes`, `timeout`, `retries`, `cancellation`,
+`provider_failure`, `malformed_provider_output`, `duplicate_prevention`,
+`partial_failure`, and `rollback` through
+`required_security_dimensions`. Missing evidence is recorded as failed for that
+dimension; it is never treated as a pass. These fields define the evaluation
+contract and evidence boundary. They do not claim that a local fixture has
+performed live-provider, rollback, or production-deployment verification.
+
+For example:
+
+```json
+{
+  "id": "onboarding-safety",
+  "required_security_dimensions": ["rbac", "unexpected_writes", "rollback"]
+}
+```
+
 Observation mode is useful for importing evidence from an already captured
 fixture:
 
@@ -57,6 +75,26 @@ observation mode:
 ```bash
 wait-local-agent microsoft evaluation run evaluation.json
 ```
+
+The same command accepts the controlled execution shape used by the API. It
+reuses a tenant-scoped persisted agent and the existing AgentService, and
+requires local demo mode with writes disabled:
+
+```text
+{
+  "test_set": [...],
+  "execution": {
+    "agent_id": "onboarding-fixture",
+    "entity_id": "TCK-001",
+    "client_id": "demo-client",
+    "input": {}
+  }
+}
+```
+
+Use `--token` (or `WAIT_CLI_TOKEN`) when the local CLI is configured with an
+authenticated role. Controlled execution remains isolated from production and
+does not enable writes or bypass approval.
 
 A result is `pass` only when every bounded dimension reaches 100%; otherwise it
 is `needs_review`. Observation mode always reports `execution_started: false`.

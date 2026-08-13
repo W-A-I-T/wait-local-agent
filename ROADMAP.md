@@ -80,9 +80,9 @@ credential or undocumented vendor API remains an explicit boundary.
   targets, alternatives, dependencies, permissions, licenses, read/write and
   approval boundaries, risk, data movement, complexity, reversibility, tests,
   deployment requirements, and evidence gaps.
-- Reviewable Power Apps, Power Automate, connector, deployment, and delivery
-  artifacts that preserve the distinction between plan, generate, validate,
-  package, and deploy.
+- Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
+  deployment, and delivery artifacts that preserve the distinction between
+  plan, generate, validate, package, and deploy.
 
 ### Next increments
 
@@ -98,7 +98,11 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Bounded Microsoft Graph and Teams reads/actions, Work IQ read boundaries,
   Power Platform connector artifacts, Power Apps metadata/build artifacts,
-  Power Automate planning, and deployment-stage records.
+  Power Automate planning, Copilot Studio handoff planning, and
+  deployment-stage records. Planned stages remain
+  non-mutating; TEST and PROD approval requests require preceding-stage
+  success, passing evaluation/governance, artifact digest, and rollback
+  evidence.
 - PAC execution is allowlisted, fixed-argument, approval-gated, bounded,
   digest-bound, shell-disabled, and reports unavailable credentials or tools
   explicitly.
@@ -108,9 +112,10 @@ credential or undocumented vendor API remains an explicit boundary.
 - Complete blueprint-to-artifact validation and packaging across supported
   Copilot Studio, Power Automate, Power Apps/Dataverse, connector, and PAC
   paths.
-- Promotion gates for DEV → TEST → PROD with explicit human approval,
-  evaluation evidence, rollback metadata, and no inference of live success from
-  local artifacts.
+- Complete DEV → TEST → PROD validation with live-provider result verification
+  and rollback execution evidence. Promotion evidence is now bound to a
+  same-tenant persisted preceding-stage approval and matching artifact digest;
+  local artifacts still never imply provider success.
 - Expand Work IQ only for documented operations whose path, function,
   arguments, tenant, identity, and local policy produce a deterministic
   READ/WRITE/ACTION/HIGH-RISK/BLOCKED/UNKNOWN decision. Unknown fails closed.
@@ -153,7 +158,9 @@ comparison** and evidence index. It is not the master product roadmap.
 
 - Review-oriented evaluation contracts plus controlled local-fixture execution
   through the existing AgentService, deterministic governance and DLP mapping,
-  provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries.
+  provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries;
+  bounded explicit evidence dimensions for injection, secret leakage,
+  unexpected writes, provider failure, rollback, and related failure modes.
 
 ### Next increments
 

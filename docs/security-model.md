@@ -378,8 +378,8 @@ Document ingestion is restricted by `WAIT_ALLOWED_DOC_ROOT`. The ingestion servi
 | Credential leakage in approval views | Expanded recursive redaction | Implemented |
 | Accidental HTTP calls | HTTP probing disabled by default | Implemented |
 | Accidental model calls | Inference and cloud fallback disabled by default | Implemented |
-| Cross-client data leakage | Tenant/client query enforcement | Future RBAC phase |
-| Rate limiting | Route-level rate limits | Future hardening phase |
+| Cross-client data leakage | Tenant/client query enforcement and scoped provider results | Implemented; covered by tenant/RBAC tests |
+| Rate limiting | Route-level rate limits when enabled | Implemented; operators must enable and configure it for production-like installs |
 
 ## Pre-promotion checklist
 
