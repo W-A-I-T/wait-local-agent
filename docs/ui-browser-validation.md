@@ -133,13 +133,14 @@ bash scripts/validate_ui_browser.sh
 The current replay passed all 21 operator/direct-link destinations and checked
 route headings, visible control names, desktop overflow, Consultant responsive
 layout at `390 × 844`, first-tab keyboard focus, a controlled provider `503`
-failure, and an unavailable-appliance transport state. A separate token-
-enforced replay passed the permission state with the visible permission message
-and `access unavailable` status. The generated report is ignored because it is
-environment-specific evidence.
+failure and recovery, and an unavailable-appliance transport state followed by
+recovery. A separate token-enforced replay passed the permission state with the
+visible permission message and `access unavailable` status. The generated
+report is ignored because it is environment-specific evidence.
 
 The provider-error and offline checks are controlled browser fixtures. The
 offline fixture combines browser offline mode with an unavailable auth route;
 it is not evidence that a particular customer network or external provider is
-reachable. Full per-control successful provider execution, cancellation,
-recovery, and live-provider behavior remain open under issue #257.
+reachable. Recovery proves only that the dashboard clears its local error state
+after a successful refresh; it does not prove provider execution,
+cancellation, or live-provider behavior, which remain open under issue #257.
