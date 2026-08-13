@@ -29,6 +29,8 @@ MAX_COMMAND_TIMEOUT_SECONDS = 1_800.0
 MAX_ARTIFACT_BYTES = 500_000_000
 MAX_ARTIFACT_ENTRIES = 4_096
 _TARGET_NAMES = ("dev", "test", "prod")
+_ROLLBACK_STAGES = frozenset({"dev", "test", "prod"})
+_ROLLBACK_STRATEGY = "reimport_previous_package"
 _PROMOTION_SOURCE_STAGES: dict[str, str | None] = {
     "build": None,
     "dev": None,
@@ -244,6 +246,24 @@ def validate_promotion_evidence(stage_id: str, evidence: object) -> dict[str, ob
     }
 
 
+def validate_rollback_evidence(evidence: object) -> dict[str, object]:
+    """Validate the bounded evidence needed to re-import a prior package."""
+
+    if not isinstance(evidence, Mapping):
+        raise PowerPlatformDeploymentError("rollback_evidence must be an object")
+    raw = dict(evidence)
+    _reject_keys(raw, {"available", "strategy", "artifact_digest"}, "rollback_evidence")
+    if raw.get("available") is not True:
+        raise PowerPlatformDeploymentError("rollback_evidence is not available")
+    if raw.get("strategy") != _ROLLBACK_STRATEGY:
+        raise PowerPlatformDeploymentError("rollback_evidence.strategy is unsupported")
+    return {
+        "available": True,
+        "strategy": _ROLLBACK_STRATEGY,
+        "artifact_digest": _digest(raw.get("artifact_digest"), "rollback_evidence.artifact_digest"),
+    }
+
+
 def validate_promotion_source(
     stage_id: str,
     evidence: Mapping[str, object],
@@ -372,6 +392,108 @@ def execute_power_platform_stage(
         "deployment_started": bool(stage.get("deployment_started")),
     }
     return result
+
+
+def execute_power_platform_rollback(
+    plan: Mapping[str, object],
+    stage_id: str,
+    settings: Settings,
+    *,
+    rollback_artifact_path: str | Path,
+    rollback_evidence: Mapping[str, object],
+    approved: bool,
+    runner: CommandRunner | None = None,
+) -> dict[str, object]:
+    """Re-import one verified prior package into an approved target stage.
+
+    Rollback is intentionally narrower than normal stage execution: it accepts
+    only the fixed ``reimport_previous_package`` strategy, validates the
+    previous ZIP and its digest inside the configured workspace, and invokes
+    only the canonical PAC solution-import command. Provider completion is
+    reported solely from PAC's return code; it is not inferred from artifact
+    validation.
+    """
+
+    if not approved:
+        return _rollback_blocked(stage_id, "Power Platform rollback requires a completed approval.")
+    if not settings.allow_write_actions:
+        return _rollback_blocked(
+            stage_id,
+            "Power Platform rollback is blocked until WAIT_ALLOW_WRITE_ACTIONS=true.",
+        )
+    if not settings.allow_power_platform_deployment:
+        return _rollback_blocked(
+            stage_id,
+            "Power Platform rollback is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.",
+        )
+    if plan.get("credentials_included") is True:
+        return _rollback_blocked(stage_id, "Power Platform deployment plans must not contain credentials.")
+    if stage_id not in _ROLLBACK_STAGES:
+        return _rollback_blocked(stage_id, "Power Platform rollback target must be dev, test, or prod.")
+    try:
+        normalized_evidence = validate_rollback_evidence(rollback_evidence)
+        expected_digest = cast(str, normalized_evidence["artifact_digest"])
+        _stage(plan, stage_id)
+        targets = _targets(cast(Sequence[Mapping[str, object]], plan.get("deployment_targets", [])))
+        environment_url = next(target["environment_url"] for target in targets if target["name"] == stage_id)
+        workspace, _ = _execution_paths(plan, settings)
+        artifact = Path(rollback_artifact_path).expanduser().resolve()
+        actual_digest = validate_power_platform_solution_package(artifact, workspace)
+        if actual_digest != expected_digest:
+            return _rollback_failed(stage_id, "Power Platform rollback artifact digest does not match evidence.", [])
+        pac = shutil.which("pac")
+        if not pac:
+            return _rollback_blocked(stage_id, "The pac executable is not available on the local PATH.")
+    except (PowerPlatformDeploymentError, StopIteration) as exc:
+        return _rollback_blocked(stage_id, str(exc))
+
+    command = [
+        pac,
+        "solution",
+        "import",
+        "--path",
+        str(artifact),
+        "--environment",
+        environment_url,
+    ]
+    run = runner or _run_command
+    timeout = min(max(float(settings.power_platform_command_timeout_seconds), 1.0), MAX_COMMAND_TIMEOUT_SECONDS)
+    try:
+        completed = run(command, workspace, timeout)
+    except subprocess.TimeoutExpired:
+        return _rollback_failed(stage_id, "Power Platform rollback command timed out.", [])
+    except OSError:
+        return _rollback_failed(stage_id, "Power Platform rollback command could not be started.", [])
+    command_result = {
+        "command": [
+            "pac",
+            "solution",
+            "import",
+            "--path",
+            artifact.name,
+            "--environment",
+            environment_url,
+        ],
+        "return_code": completed.returncode,
+        "stdout": _bounded_output(completed.stdout),
+        "stderr": _bounded_output(completed.stderr),
+    }
+    commands = [command_result]
+    if completed.returncode != 0:
+        return _rollback_failed(stage_id, "Power Platform rollback command failed.", commands, actual_digest)
+    return {
+        "format": "wait-local-agent.power-platform.rollback-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "succeeded",
+        "message": f"Power Platform rollback for {stage_id} completed.",
+        "strategy": _ROLLBACK_STRATEGY,
+        "artifact_digest": actual_digest,
+        "commands": commands,
+        "execution_started": True,
+        "rollback_started": True,
+        "deployment_started": True,
+    }
 
 
 def _targets(value: Sequence[Mapping[str, object]]) -> list[dict[str, str]]:
@@ -550,6 +672,44 @@ def _blocked(stage_id: str, message: str) -> dict[str, object]:
     }
 
 
+def _rollback_blocked(stage_id: str, message: str) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.power-platform.rollback-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "blocked",
+        "message": message,
+        "strategy": _ROLLBACK_STRATEGY,
+        "commands": [],
+        "execution_started": False,
+        "rollback_started": False,
+        "deployment_started": False,
+    }
+
+
+def _rollback_failed(
+    stage_id: str,
+    message: str,
+    commands: list[dict[str, object]],
+    artifact_digest: str | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "format": "wait-local-agent.power-platform.rollback-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "failed",
+        "message": message,
+        "strategy": _ROLLBACK_STRATEGY,
+        "commands": commands,
+        "execution_started": bool(commands),
+        "rollback_started": bool(commands),
+        "deployment_started": bool(commands),
+    }
+    if artifact_digest is not None:
+        result["artifact_digest"] = artifact_digest
+    return result
+
+
 def _failed(stage_id: str, message: str, commands: list[dict[str, object]]) -> dict[str, object]:
     return {
         "format": "wait-local-agent.power-platform.stage-result",
@@ -567,8 +727,10 @@ __all__ = [
     "PowerPlatformDeploymentError",
     "build_power_platform_deployment_plan",
     "build_power_platform_deployment_plan_from_payload",
+    "execute_power_platform_rollback",
     "execute_power_platform_stage",
     "validate_power_platform_solution_package",
     "validate_promotion_evidence",
     "validate_promotion_source",
+    "validate_rollback_evidence",
 ]

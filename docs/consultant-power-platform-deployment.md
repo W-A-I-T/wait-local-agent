@@ -70,3 +70,36 @@ import success or production deployment.
 Execution is intentionally one stage at a time so DEV, TEST, and PROD each
 retain a separate approval and audit record. A failed stage stops the pipeline;
 later stages are not started automatically.
+
+## Rollback execution boundary
+
+The deployment runtime includes a separate `execute_power_platform_rollback`
+primitive for an explicitly approved target stage. It accepts only the
+`reimport_previous_package` strategy, requires a prior ZIP whose bounded
+contents and SHA-256 digest match the rollback evidence, and invokes the same
+fixed `pac solution import` command with `shell=False`. Output is redacted and
+reports PAC success or failure; validating the ZIP alone never reports a
+provider rollback as successful.
+
+Rollback requests are now exposed through the same approval and audit boundary:
+
+```text
+POST /consultant/solutions/rollback-approvals
+POST /consultant/solutions/rollback-approvals/{request_id}/execute
+```
+
+The CLI exposes the equivalent commands:
+
+```bash
+wait-local-agent microsoft solution request-rollback-approval rollback.json --stage dev
+wait-local-agent microsoft solution execute-rollback <approval-id>
+```
+
+The request path validates the artifact and digest before creating a pending
+approval. The execute path requires an approved request and admin authority,
+re-validates the stored evidence and artifact, records the bounded result in
+the approval and audit records, and never chooses an artifact automatically.
+It does not automatically roll back a failed stage or bypass the existing
+write/deployment flags. A successful local `pac` return code is still only
+provider-command evidence; live tenant rollback verification remains an
+external boundary.

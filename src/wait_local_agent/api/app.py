@@ -187,9 +187,12 @@ from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_rollback,
     execute_power_platform_stage,
+    validate_power_platform_solution_package,
     validate_promotion_evidence,
     validate_promotion_source,
+    validate_rollback_evidence,
 )
 from wait_local_agent.providers import (
     PROVIDER_CONFIGURATION_SCOPE,
@@ -617,6 +620,19 @@ class PowerPlatformDeploymentRequest(BaseModel):
     deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
     stage: Literal["build", "dev", "test", "prod"] = "build"
     promotion_evidence: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformRollbackRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=64)
+    publisher_name: str = Field(min_length=1, max_length=100)
+    publisher_prefix: str = Field(min_length=2, max_length=8)
+    output_directory: str = Field(min_length=1, max_length=240)
+    deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
+    stage: Literal["dev", "test", "prod"]
+    rollback_artifact_path: str = Field(min_length=1, max_length=240)
+    rollback_evidence: dict[str, object]
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4948,6 +4964,107 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message=cast(str, result["message"]),
                 result=result,
                 audit_event_type="power_platform.solution_stage",
+            )
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (KeyError, PermissionError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _approval_view(updated)
+
+    @app.post("/consultant/solutions/rollback-approvals", status_code=201)
+    @limiter.limit(active_settings.rate_limit_connector)
+    def request_power_platform_rollback_approval(
+        payload: PowerPlatformRollbackRequest,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        del request
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            plan = build_power_platform_deployment_plan(
+                solution_name=payload.solution_name,
+                publisher_name=payload.publisher_name,
+                publisher_prefix=payload.publisher_prefix,
+                output_directory=payload.output_directory,
+                deployment_targets=payload.deployment_targets,
+            )
+            rollback_evidence = validate_rollback_evidence(payload.rollback_evidence)
+            artifact_digest = validate_power_platform_solution_package(
+                Path(payload.rollback_artifact_path),
+                active_settings.power_platform_workspace,
+            )
+            if artifact_digest != rollback_evidence["artifact_digest"]:
+                raise PowerPlatformDeploymentError(
+                    "rollback artifact digest does not match rollback evidence"
+                )
+            approval_payload = {
+                "format": "wait-local-agent.power-platform.rollback-approval",
+                "format_version": 1,
+                "client_id": scoped_client_id,
+                "solution_name": payload.solution_name,
+                "publisher_name": payload.publisher_name,
+                "publisher_prefix": payload.publisher_prefix,
+                "output_directory": payload.output_directory,
+                "deployment_targets": plan["deployment_targets"],
+                "stage": payload.stage,
+                "rollback_artifact_path": str(Path(payload.rollback_artifact_path).expanduser().resolve()),
+                "rollback_evidence": rollback_evidence,
+                "credentials_included": False,
+            }
+        except PowerPlatformDeploymentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        approval = store.create_approval_request(
+            subject_id=f"{scoped_client_id}:{payload.solution_name}:rollback:{payload.stage}",
+            action_type="power_platform.solution_rollback",
+            payload=approval_payload,
+            client_id=scoped_client_id,
+        )
+        return {"approval": _approval_view(approval), "plan": plan}
+
+    @app.post("/consultant/solutions/rollback-approvals/{request_id}/execute")
+    @limiter.limit(active_settings.rate_limit_connector)
+    def execute_power_platform_rollback_approval(
+        request_id: int,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        del request
+        approval = store.get_approval_request(request_id)
+        if (
+            approval is None
+            or approval.action_type != "power_platform.solution_rollback"
+            or not _approval_in_scope(context, approval)
+        ):
+            raise HTTPException(status_code=404, detail="Power Platform rollback approval request not found")
+        if approval.status != "approved":
+            raise HTTPException(status_code=409, detail="rollback approval must be approved before execution")
+        try:
+            payload = _safe_json_object(approval.payload_json)
+            plan = build_power_platform_deployment_plan_from_payload(payload)
+            stage_id = payload.get("stage")
+            artifact_path = payload.get("rollback_artifact_path")
+            rollback_evidence = payload.get("rollback_evidence")
+            if not isinstance(stage_id, str):
+                raise PowerPlatformDeploymentError("rollback approval stage is invalid")
+            if not isinstance(artifact_path, str):
+                raise PowerPlatformDeploymentError("rollback approval artifact path is invalid")
+            normalized_evidence = validate_rollback_evidence(rollback_evidence)
+            result = execute_power_platform_rollback(
+                plan,
+                stage_id,
+                active_settings,
+                rollback_artifact_path=artifact_path,
+                rollback_evidence=normalized_evidence,
+                approved=True,
+            )
+            updated = store.record_approval_execution(
+                request_id,
+                status=cast(str, result["status"]),
+                message=cast(str, result["message"]),
+                result=result,
+                audit_event_type="power_platform.solution_rollback",
             )
         except PowerPlatformDeploymentError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

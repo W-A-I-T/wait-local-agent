@@ -143,9 +143,12 @@ from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_rollback,
     execute_power_platform_stage,
+    validate_power_platform_solution_package,
     validate_promotion_evidence,
     validate_promotion_source,
+    validate_rollback_evidence,
 )
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
@@ -3216,6 +3219,127 @@ def execute_microsoft_solution_stage(
             message=cast(str, result["message"]),
             result=result,
             audit_event_type="power_platform.solution_stage",
+        )
+    except (PowerPlatformDeploymentError, json.JSONDecodeError, KeyError, PermissionError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("request-rollback-approval")
+def request_microsoft_solution_rollback_approval(
+    source: Path,
+    stage: str = typer.Option("dev", help="Target stage to roll back: dev, test, or prod."),
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    payload = _load_openapi_definition(source)
+    required = (
+        "client_id",
+        "solution_name",
+        "publisher_name",
+        "publisher_prefix",
+        "output_directory",
+        "deployment_targets",
+        "rollback_artifact_path",
+        "rollback_evidence",
+    )
+    if any(key not in payload for key in required):
+        raise typer.BadParameter("source must contain rollback approval fields")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, cast(str, payload["client_id"]))
+    if scoped_client_id is None:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    targets = payload["deployment_targets"]
+    artifact_path = payload["rollback_artifact_path"]
+    evidence = payload["rollback_evidence"]
+    if not isinstance(targets, list) or any(not isinstance(item, dict) for item in targets):
+        raise typer.BadParameter("deployment_targets must contain objects")
+    if not isinstance(artifact_path, str) or not isinstance(evidence, dict):
+        raise typer.BadParameter("rollback artifact and evidence have invalid types")
+    try:
+        plan = build_power_platform_deployment_plan(
+            solution_name=cast(str, payload["solution_name"]),
+            publisher_name=cast(str, payload["publisher_name"]),
+            publisher_prefix=cast(str, payload["publisher_prefix"]),
+            output_directory=cast(str, payload["output_directory"]),
+            deployment_targets=cast(list[dict[str, object]], targets),
+        )
+        if stage not in {"dev", "test", "prod"}:
+            raise PowerPlatformDeploymentError("rollback stage must be dev, test, or prod")
+        if stage not in {str(item["id"]) for item in cast(list[dict[str, object]], plan["stages"])}:
+            raise PowerPlatformDeploymentError("stage is not present in the deployment plan")
+        normalized_evidence = validate_rollback_evidence(evidence)
+        artifact_digest = validate_power_platform_solution_package(
+            Path(artifact_path), settings.power_platform_workspace
+        )
+        if artifact_digest != normalized_evidence["artifact_digest"]:
+            raise PowerPlatformDeploymentError("rollback artifact digest does not match rollback evidence")
+        approval_payload = {
+            "format": "wait-local-agent.power-platform.rollback-approval",
+            "format_version": 1,
+            "client_id": scoped_client_id,
+            "solution_name": payload["solution_name"],
+            "publisher_name": payload["publisher_name"],
+            "publisher_prefix": payload["publisher_prefix"],
+            "output_directory": payload["output_directory"],
+            "deployment_targets": plan["deployment_targets"],
+            "stage": stage,
+            "rollback_artifact_path": str(Path(artifact_path).expanduser().resolve()),
+            "rollback_evidence": normalized_evidence,
+            "credentials_included": False,
+        }
+    except (PowerPlatformDeploymentError, KeyError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    store = Store(settings.data_path)
+    approval = store.create_approval_request(
+        subject_id=f"{scoped_client_id}:{payload['solution_name']}:rollback:{stage}",
+        action_type="power_platform.solution_rollback",
+        payload=approval_payload,
+        client_id=scoped_client_id,
+    )
+    typer.echo(json.dumps(_approval_cli_view(approval), sort_keys=True, indent=2))
+
+
+@microsoft_solution_app.command("execute-rollback")
+def execute_microsoft_solution_rollback(
+    request_id: int,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    store = Store(settings.data_path)
+    approval = store.get_approval_request(request_id)
+    if approval is None or approval.action_type != "power_platform.solution_rollback":
+        raise typer.BadParameter("Power Platform rollback approval request not found")
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, approval.client_id)
+    if scoped_client_id is None:
+        raise typer.BadParameter("approval request is outside the authenticated tenant scope")
+    if approval.status != "approved":
+        raise typer.BadParameter("rollback approval must be approved before execution")
+    try:
+        payload = json.loads(approval.payload_json)
+        if not isinstance(payload, dict):
+            raise PowerPlatformDeploymentError("rollback approval payload is malformed")
+        plan = build_power_platform_deployment_plan_from_payload(payload)
+        stage_id = payload.get("stage")
+        artifact_path = payload.get("rollback_artifact_path")
+        if not isinstance(stage_id, str) or not isinstance(artifact_path, str):
+            raise PowerPlatformDeploymentError("rollback approval payload is incomplete")
+        normalized_evidence = validate_rollback_evidence(payload.get("rollback_evidence"))
+        result = execute_power_platform_rollback(
+            plan,
+            stage_id,
+            settings,
+            rollback_artifact_path=artifact_path,
+            rollback_evidence=normalized_evidence,
+            approved=True,
+        )
+        approval = store.record_approval_execution(
+            request_id,
+            status=cast(str, result["status"]),
+            message=cast(str, result["message"]),
+            result=result,
+            audit_event_type="power_platform.solution_rollback",
         )
     except (PowerPlatformDeploymentError, json.JSONDecodeError, KeyError, PermissionError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc

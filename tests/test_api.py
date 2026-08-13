@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -5888,6 +5889,229 @@ def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -
     assert requested.json()["plan"]["approval_required_for_every_stage"] is True
     assert pending.status_code == 409
     assert missing.status_code == 404
+
+
+def test_consultant_api_rollbacks_are_approval_backed_and_audited(settings, tmp_path, monkeypatch) -> None:
+    workspace = tmp_path / "power-platform"
+    workspace.mkdir()
+    artifact = workspace / "previous.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = f"sha256:{hashlib.sha256(artifact.read_bytes()).hexdigest()}"
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "viewer_token": "viewer-token",
+            "allow_write_actions": True,
+            "allow_power_platform_deployment": True,
+            "power_platform_workspace": workspace,
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "client_id": "acme",
+        "solution_name": "onboarding",
+        "publisher_name": "WAIT",
+        "publisher_prefix": "wlp",
+        "output_directory": str(workspace / "solution"),
+        "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+        "stage": "dev",
+        "rollback_artifact_path": str(artifact),
+        "rollback_evidence": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": digest,
+        },
+    }
+    requested = client.post(
+        "/consultant/solutions/rollback-approvals",
+        headers=_auth("tech-token"),
+        json=payload,
+    )
+    request_id = requested.json()["approval"]["id"]
+    pending = client.post(
+        f"/consultant/solutions/rollback-approvals/{request_id}/execute",
+        headers=_auth("admin-token"),
+    )
+    approved = client.post(
+        f"/approval-requests/{request_id}",
+        headers=_auth("tech-token"),
+        json={"status": "approved", "comment": "rollback reviewed"},
+    )
+    monkeypatch.setattr(
+        app_module,
+        "execute_power_platform_rollback",
+        lambda *args, **kwargs: {
+            "format": "wait-local-agent.power-platform.rollback-result",
+            "format_version": 1,
+            "stage_id": "dev",
+            "status": "succeeded",
+            "message": "Power Platform rollback for dev completed.",
+            "strategy": "reimport_previous_package",
+            "artifact_digest": digest,
+            "commands": [],
+            "execution_started": True,
+            "rollback_started": True,
+            "deployment_started": True,
+        },
+    )
+    executed = client.post(
+        f"/consultant/solutions/rollback-approvals/{request_id}/execute",
+        headers=_auth("admin-token"),
+    )
+    audit = client.get("/audit", headers=_auth("admin-token"))
+
+    assert requested.status_code == 201
+    assert requested.json()["approval"]["action_type"] == "power_platform.solution_rollback"
+    assert pending.status_code == 409
+    assert approved.status_code == 200
+    assert executed.status_code == 200
+    assert executed.json()["execution_status"] == "succeeded"
+    assert any(event["event_type"] == "power_platform.solution_rollback" for event in audit.json())
+
+
+def test_consultant_api_rollbacks_fail_closed_on_scope_digest_and_execution_errors(
+    settings, tmp_path, monkeypatch
+) -> None:
+    workspace = tmp_path / "power-platform"
+    workspace.mkdir()
+    artifact = workspace / "previous.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = f"sha256:{hashlib.sha256(artifact.read_bytes()).hexdigest()}"
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "admin_token": "admin-token",
+            "tech_token": "tech-token",
+            "allow_write_actions": True,
+            "allow_power_platform_deployment": True,
+            "power_platform_workspace": workspace,
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    payload = {
+        "client_id": "acme",
+        "solution_name": "onboarding",
+        "publisher_name": "WAIT",
+        "publisher_prefix": "wlp",
+        "output_directory": str(workspace / "solution"),
+        "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+        "stage": "dev",
+        "rollback_artifact_path": str(artifact),
+        "rollback_evidence": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": digest,
+        },
+    }
+    rollback_evidence = cast(dict[str, object], payload["rollback_evidence"])
+    mismatch: dict[str, object] = dict(payload)
+    mismatch["rollback_evidence"] = {
+        **rollback_evidence,
+        "artifact_digest": "sha256:" + "0" * 64,
+    }
+    assert (
+        client.post(
+            "/consultant/solutions/rollback-approvals",
+            headers=_auth("tech-token"),
+            json=mismatch,
+        ).status_code
+        == 422
+    )
+
+    unscoped_settings = secure_settings.__class__(**{**secure_settings.__dict__, "client_id": ""})
+    unscoped = TestClient(create_app(unscoped_settings))
+    assert (
+        unscoped.post(
+            "/consultant/solutions/rollback-approvals",
+            headers=_auth("tech-token"),
+            json=payload,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/consultant/solutions/rollback-approvals/99999/execute",
+            headers=_auth("admin-token"),
+        ).status_code
+        == 404
+    )
+
+    requested = client.post("/consultant/solutions/rollback-approvals", headers=_auth("tech-token"), json=payload)
+    request_id = requested.json()["approval"]["id"]
+    Store(secure_settings.data_path).update_approval_request(request_id, "approved")
+    monkeypatch.setattr(
+        app_module,
+        "execute_power_platform_rollback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(app_module.PowerPlatformDeploymentError("provider boundary")),
+    )
+    assert (
+        client.post(
+            f"/consultant/solutions/rollback-approvals/{request_id}/execute",
+            headers=_auth("admin-token"),
+        ).status_code
+        == 422
+    )
+    store = Store(secure_settings.data_path)
+    stored_payload = requested.json()["approval"]["payload"]
+    malformed_stage = dict(stored_payload)
+    malformed_stage["stage"] = 1
+    stage_request = store.create_approval_request(
+        "acme:onboarding:rollback:invalid-stage",
+        "power_platform.solution_rollback",
+        malformed_stage,
+        client_id="acme",
+    )
+    store.update_approval_request(stage_request.id or 0, "approved")
+    assert (
+        client.post(
+            f"/consultant/solutions/rollback-approvals/{stage_request.id}/execute",
+            headers=_auth("admin-token"),
+        ).status_code
+        == 422
+    )
+    malformed_artifact = dict(stored_payload)
+    malformed_artifact["rollback_artifact_path"] = 1
+    artifact_request = store.create_approval_request(
+        "acme:onboarding:rollback:invalid-artifact",
+        "power_platform.solution_rollback",
+        malformed_artifact,
+        client_id="acme",
+    )
+    store.update_approval_request(artifact_request.id or 0, "approved")
+    assert (
+        client.post(
+            f"/consultant/solutions/rollback-approvals/{artifact_request.id}/execute",
+            headers=_auth("admin-token"),
+        ).status_code
+        == 422
+    )
+    runtime_request = store.create_approval_request(
+        "acme:onboarding:rollback:runtime-error",
+        "power_platform.solution_rollback",
+        stored_payload,
+        client_id="acme",
+    )
+    store.update_approval_request(runtime_request.id or 0, "approved")
+    monkeypatch.setattr(
+        app_module,
+        "execute_power_platform_rollback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("provider runtime unavailable")),
+    )
+    assert (
+        client.post(
+            f"/consultant/solutions/rollback-approvals/{runtime_request.id}/execute",
+            headers=_auth("admin-token"),
+        ).status_code
+        == 409
+    )
 
 
 def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None:
