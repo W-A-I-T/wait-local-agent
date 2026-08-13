@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from wait_local_agent.api.app import create_app
 from wait_local_agent.models import WorkflowTemplate
 from wait_local_agent.msp_playbooks import (
+    create_msp_playbook_subscription,
     get_msp_playbook,
     list_msp_playbooks,
     preview_msp_playbook,
@@ -441,6 +442,45 @@ def test_failed_playbook_result_is_bounded_and_redacted(settings) -> None:
     assert "[redacted]" in json.dumps(result)
 
 
+def test_event_subscription_requires_matching_workflow_trigger_and_bounded_mapping(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+
+    subscription = create_msp_playbook_subscription(
+        store,
+        "ticket-intake-review",
+        event_type="ticket.created",
+        client_id="acme",
+        input_mapping={"priority": "priority"},
+    )
+
+    assert subscription.client_id == "acme"
+    assert subscription.enabled is True
+    assert json.loads(subscription.input_mapping_json) == {"priority": "priority"}
+    with pytest.raises(ValueError, match="match the playbook trigger"):
+        create_msp_playbook_subscription(
+            store,
+            "ticket-intake-review",
+            event_type="ticket.updated",
+            client_id="acme",
+        )
+    with pytest.raises(ValueError, match="event_type is not supported"):
+        create_msp_playbook_subscription(
+            store,
+            "qbr-review",
+            event_type="schedule.monthly",
+            client_id="acme",
+        )
+    with pytest.raises(ValueError, match="at most"):
+        create_msp_playbook_subscription(
+            store,
+            "ticket-intake-review",
+            event_type="ticket.created",
+            client_id="acme",
+            input_mapping={str(index): "priority" for index in range(17)},
+        )
+
+
 def test_api_exposes_playbook_catalog_preview_and_run(settings) -> None:
     store = Store(settings.data_path)
     _seed_client_ticket(store)
@@ -508,3 +548,41 @@ def test_api_exposes_playbook_catalog_preview_and_run(settings) -> None:
     headers = {"Authorization": "Bearer tech-token"}
     assert secure_client.post("/msp/playbooks/qbr-review/preview", headers=headers, json={}).status_code == 403
     assert secure_client.post("/msp/playbooks/qbr-review/runs", headers=headers, json={}).status_code == 403
+
+
+def test_api_exposes_tenant_scoped_playbook_subscriptions(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/msp/playbook-subscriptions",
+        json={
+            "playbook_id": "ticket-intake-review",
+            "event_type": "ticket.created",
+            "client_id": "acme",
+            "input_mapping": {"priority": "priority"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    subscription = created.json()
+    assert subscription["client_id"] == "acme"
+    assert subscription["input_mapping"] == {"priority": "priority"}
+
+    listed = client.get("/msp/playbook-subscriptions")
+    assert listed.status_code == 200
+    assert listed.json() == [subscription]
+
+    disabled = client.post(f"/msp/playbook-subscriptions/{subscription['id']}/disable")
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+
+    invalid = client.post(
+        "/msp/playbook-subscriptions",
+        json={
+            "playbook_id": "ticket-intake-review",
+            "event_type": "ticket.updated",
+            "client_id": "acme",
+        },
+    )
+    assert invalid.status_code == 422

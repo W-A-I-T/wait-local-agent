@@ -17,6 +17,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRY_DELAY_SECONDS,
     EventDelivery,
 )
+from wait_local_agent.msp_playbooks import msp_playbook_subscription_input, run_msp_playbook
 from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.store import Store, _normalize_client_id
 
@@ -27,6 +28,8 @@ class EventDispatchResult:
     duplicate: bool
     matched_agent_ids: list[str]
     run_ids: list[int]
+    matched_playbook_ids: list[str]
+    playbook_run_ids: list[str]
     errors: list[str]
 
 
@@ -157,8 +160,11 @@ class EventDispatcher:
             event_context["client_id"] = client_id
         matched_agent_ids = _string_list(delivery.agent_ids_json) if retry_only else []
         run_ids = _int_list(delivery.run_ids_json) if retry_only else []
+        matched_playbook_ids = _string_list(delivery.playbook_ids_json) if retry_only else []
+        playbook_run_ids = _string_list(delivery.playbook_run_ids_json) if retry_only else []
         errors: list[str] = []
         attempts = _attempts_from_json(delivery.agent_attempts_json)
+        playbook_attempts = _attempts_from_json(delivery.playbook_attempts_json)
         if retry_only and not attempts:
             attempts = {
                 agent_id: {"status": "failed", "error": "", "run_ids": []}
@@ -272,6 +278,46 @@ class EventDispatcher:
                 break
             pending = [definition for definition, _unmet in next_pending]
 
+        subscriptions = (
+            self.store.list_msp_playbook_subscriptions(client_id, event_type=event_type)
+            if client_id is not None
+            else []
+        )
+        for subscription in subscriptions:
+            if not subscription.enabled:
+                continue
+            previous = playbook_attempts.get(subscription.id, {})
+            if retry_only and previous.get("status") not in {"failed", "blocked"}:
+                continue
+            if subscription.id not in matched_playbook_ids:
+                matched_playbook_ids.append(subscription.id)
+            try:
+                playbook_attempts[subscription.id] = {"status": "running", "error": "", "run_ids": []}
+                playbook_result = run_msp_playbook(
+                    self.store,
+                    subscription.playbook_id,
+                    ticket_id=entity_id,
+                    client_id=client_id,
+                    actor=actor,
+                    trigger_source=f"event:{event_type}",
+                    input_payload=msp_playbook_subscription_input(subscription, event_context),
+                    tool_executor=self.agent_service.smart_actions,
+                    smart_action_service=self.agent_service.smart_actions,
+                )
+                playbook_run_id = str(playbook_result["run_id"])
+                playbook_run_ids.append(playbook_run_id)
+                result_status = str(playbook_result.get("status", "failed"))
+                attempt_status = "completed" if result_status == "completed" else "pending"
+                playbook_attempts[subscription.id] = {
+                    "status": attempt_status,
+                    "error": "" if attempt_status == "completed" else "playbook requires review",
+                    "run_ids": [playbook_run_id],
+                }
+            except Exception as exc:  # noqa: BLE001 - preserve one subscription failure explicitly.
+                error = redact_text(f"{subscription.id}: {exc}")
+                playbook_attempts[subscription.id] = {"status": "failed", "error": error, "run_ids": []}
+                errors.append(error)
+
         status = "failed" if errors else "completed"
         next_retry_at = (
             _next_retry_at(delivery.retry_count, delivery.retry_delay_seconds)
@@ -284,6 +330,10 @@ class EventDispatcher:
             matched_agent_count=len(matched_agent_ids),
             agent_ids=matched_agent_ids,
             run_ids=run_ids,
+            matched_playbook_count=len(matched_playbook_ids),
+            playbook_ids=matched_playbook_ids,
+            playbook_run_ids=playbook_run_ids,
+            playbook_attempts=playbook_attempts,
             error_detail="; ".join(errors),
             agent_attempts=attempts,
             next_retry_at=next_retry_at,
@@ -299,6 +349,8 @@ class EventDispatcher:
             duplicate=False,
             matched_agent_ids=matched_agent_ids,
             run_ids=run_ids,
+            matched_playbook_ids=matched_playbook_ids,
+            playbook_run_ids=playbook_run_ids,
             errors=errors,
         )
 
@@ -329,6 +381,8 @@ class EventDispatcher:
             duplicate=duplicate,
             matched_agent_ids=_string_list(delivery.agent_ids_json),
             run_ids=_int_list(delivery.run_ids_json),
+            matched_playbook_ids=_string_list(delivery.playbook_ids_json),
+            playbook_run_ids=_string_list(delivery.playbook_run_ids_json),
             errors=[delivery.error_detail] if delivery.error_detail else [],
         )
 
