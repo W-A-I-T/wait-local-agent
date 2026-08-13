@@ -61,7 +61,12 @@ describe("wla-wp17 Launch Passport UI", () => {
   it("checks model provider health only when the admin asks", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      if (path === "/settings/providers") return jsonResponse({ local_model_provider: "local", vector_backend: "local" });
+      if (path === "/settings/providers") return jsonResponse({
+        local_model_provider: "local",
+        provider_scope: "appliance-wide",
+        context_scope: "tenant-scoped",
+        vector_backend: "local"
+      });
       if (path === "/settings/security") return jsonResponse({ api_token_configured: false, demo_mode: true });
       if (path === "/packs" || path === "/secrets") return jsonResponse([]);
       if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
@@ -77,6 +82,8 @@ describe("wla-wp17 Launch Passport UI", () => {
     render(<MemoryRouter><Settings /></MemoryRouter>);
 
     expect(await screen.findByRole("button", { name: "Check model health" })).toBeInTheDocument();
+    expect(screen.getByText("Provider scope").parentElement).toHaveTextContent("appliance-wide");
+    expect(screen.getByText("Request context").parentElement).toHaveTextContent("tenant-scoped");
     expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain("/settings/providers/health");
     fireEvent.click(screen.getByRole("button", { name: "Check model health" }));
     expect(await screen.findByText(/Local: ready/)).toBeInTheDocument();
