@@ -97,7 +97,10 @@ credential or undocumented vendor API remains an explicit boundary.
 - Deterministic architecture decisions for blueprint components, with explicit
   targets, alternatives, dependencies, permissions, licenses, read/write and
   approval boundaries, risk, data movement, complexity, reversibility, tests,
-  deployment requirements, and evidence gaps.
+  deployment requirements, and evidence gaps. Decisions now consume explicit
+  discovery declarations for read/write scope, approvals, licenses, residency,
+  data movement, and rollback expectations as evidence-only inputs; provider
+  permission and authorization verification remains separate.
 - Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
   deployment, and delivery artifacts that preserve the distinction between
   plan, generate, validate, package, and deploy. The canonical onboarding

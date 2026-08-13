@@ -54,10 +54,13 @@ targets remain explicit review items unless they are a supported local surface
 It also returns deterministic `decisions` for every architecture component.
 Each decision records the selected implementation target, alternatives,
 dependencies, systems, required permissions and licenses (including explicit
-`unknown` evidence when the local catalog cannot verify them), read/write
-behavior, approvals, risk, data movement, execution boundary, complexity,
-reversibility, testing, deployment requirements, and evidence. A decision is
-not treated as ready merely because a target name is available: unresolved
+`unknown` evidence when the local catalog cannot verify them), and consumes
+explicit discovery declarations for reads, changes, approvals, licenses, data
+residency, data movement, and rollback expectations. Those declarations are
+marked as customer evidence and are never upgraded to provider verification.
+Each decision also reports read/write behavior, approvals, risk, data
+movement, execution boundary, complexity, reversibility, testing, deployment
+requirements, and evidence. A decision is not treated as ready merely because a target name is available: unresolved
 connector bindings, provider authorization, missing templates, and unsupported
 deployment surfaces remain `needs_review` or `unsupported`.
 Blueprints may also carry an optional `environment` array from

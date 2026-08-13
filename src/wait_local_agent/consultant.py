@@ -63,6 +63,22 @@ _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
 _ORCHESTRATION_MODES = {"single_agent", "supervisor", "event_driven", "hybrid"}
 _VERIFIED_ENVIRONMENT_STATUSES = {"reachable", "authenticated", "authorized"}
 _LOCAL_DEPLOYMENT_TARGETS = {"local", "api", "cli", "agents", "mcp"}
+_DECISION_EVIDENCE_FIELDS = (
+    "business_goal",
+    "reads",
+    "changes",
+    "approvals",
+    "licenses",
+    "data_location",
+    "data_residency",
+    "data_leaves_tenant",
+    "failure_handling",
+    "compliance",
+    "existing_apis",
+    "channels",
+    "success_metrics",
+    "rollback_expectations",
+)
 
 
 class BlueprintValidationError(ValueError):
@@ -245,6 +261,7 @@ def architect_solution_blueprint(
 
     decisions = _architecture_decisions(blueprint, components, templates)
     unresolved_decisions = [item for item in decisions if item["status"] != "ready"]
+    discovery_evidence = _decision_discovery_evidence(blueprint)
     return {
         "blueprint_id": blueprint.id,
         "client_id": blueprint.client_id,
@@ -262,6 +279,7 @@ def architect_solution_blueprint(
             "deployment_started": False,
             "decision_count": len(decisions),
             "unresolved_decision_count": len(unresolved_decisions),
+            "evidence_summary": discovery_evidence,
         },
         "supervisor": _supervisor_plan(blueprint),
         "open_items": open_items,
@@ -301,19 +319,15 @@ def _decision_for_component(
         "alternatives_considered": ["human_process"],
         "systems_involved": list(blueprint.systems),
         "dependencies": [],
-        "required_permissions": _unknown_requirement("provider permissions are not declared by the local catalog"),
-        "licenses": _unknown_requirement("licensing evidence is not present in the blueprint"),
-        "read_write_behavior": {
-            "read": "not_declared",
-            "write": "not_declared",
-            "evidence": "the blueprint does not declare action-level read/write behavior",
-        },
+        "required_permissions": _permission_requirements(blueprint, component),
+        "licenses": _license_requirements(blueprint),
+        "read_write_behavior": _read_write_requirements(blueprint),
         "approval_requirements": _approval_requirements(blueprint),
         "risk": blueprint.risk,
-        "data_movement": "unknown",
+        "data_movement": _data_movement(blueprint),
         "execution_boundary": "unknown",
         "estimated_complexity": "unknown",
-        "reversibility": "unknown",
+        "reversibility": _reversibility(blueprint),
         "testing_requirements": [
             "functional behavior",
             "tenant isolation",
@@ -324,6 +338,7 @@ def _decision_for_component(
             "obtain explicit human approval before deployment",
         ],
         "evidence": [],
+        "evidence_quality": "explicit_blueprint_and_local_catalog_evidence",
         "open_questions": [],
         "status": "needs_review",
     }
@@ -343,7 +358,11 @@ def _decision_for_component(
                 + list(cast(list[str], component.get("knowledge_references", []))),
                 "execution_boundary": "local",
                 "estimated_complexity": "medium" if component.get("requested_tool_ids") else "low",
-                "reversibility": "reversible_design_only",
+                "reversibility": (
+                    _reversibility(blueprint)
+                    if _reversibility(blueprint) != "unknown"
+                    else "reversible_design_only"
+                ),
                 "evidence": ["existing_agent_runtime", "blueprint_agent_declaration"],
                 "status": "needs_review" if unresolved else "ready",
             }
@@ -499,6 +518,131 @@ def _decision_for_component(
 
 def _unknown_requirement(evidence: str) -> list[dict[str, object]]:
     return [{"name": "provider_requirement", "status": "unknown", "evidence": [evidence]}]
+
+
+def _decision_discovery_evidence(blueprint: SolutionBlueprint) -> dict[str, object]:
+    """Summarize only explicit discovery facts used by architecture decisions.
+
+    Discovery answers are customer evidence, not provider verification. Keeping
+    the source and missing fields in the architecture response prevents a
+    decision from looking more certain merely because a blueprint exists.
+    """
+
+    explicit_fields = [field for field in _DECISION_EVIDENCE_FIELDS if field in blueprint.discovery]
+    missing_fields = [field for field in _DECISION_EVIDENCE_FIELDS if field not in blueprint.discovery]
+    return {
+        "source": "blueprint.discovery",
+        "explicit_fields": explicit_fields,
+        "missing_fields": missing_fields,
+        "evidence_only": True,
+        "provider_verification_source": "environment evidence is evaluated separately",
+    }
+
+
+def _discovery_list(blueprint: SolutionBlueprint, field: str) -> list[str]:
+    value = blueprint.discovery.get(field)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _permission_requirements(
+    blueprint: SolutionBlueprint,
+    component: Mapping[str, object],
+) -> list[dict[str, object]]:
+    requirements: list[dict[str, object]] = [
+        {
+            "name": "tenant_scope",
+            "status": "verified",
+            "evidence": ["blueprint_client_scope"],
+        }
+    ]
+    approvals = _discovery_list(blueprint, "approvals")
+    if approvals:
+        requirements.append(
+            {
+                "name": "human_approval",
+                "status": "declared",
+                "evidence": ["discovery.approvals"],
+                "actions": approvals,
+            }
+        )
+    if component.get("kind") in {"system_connector", "environment"}:
+        status = str(component.get("observed_status", ""))
+        if status == "authorized":
+            requirements.append(
+                {
+                    "name": "provider_authorization",
+                    "status": "verified",
+                    "evidence": list(cast(list[str], component.get("evidence", []))),
+                }
+            )
+        else:
+            requirements.append(
+                {
+                    "name": "provider_authorization",
+                    "status": "unknown",
+                    "evidence": ["provider authorization is not verified for this component"],
+                }
+            )
+    else:
+        requirements.append(
+            {
+                "name": "provider_permissions",
+                "status": "unknown",
+                "evidence": ["provider permissions are not declared by the local catalog"],
+            }
+        )
+    return requirements
+
+
+def _license_requirements(blueprint: SolutionBlueprint) -> list[dict[str, object]]:
+    licenses = _discovery_list(blueprint, "licenses")
+    if not licenses:
+        return _unknown_requirement("licensing evidence is not present in the blueprint")
+    return [
+        {
+            "name": license_name,
+            "status": "declared",
+            "evidence": ["discovery.licenses"],
+            "verification": "not_verified",
+        }
+        for license_name in licenses
+    ]
+
+
+def _read_write_requirements(blueprint: SolutionBlueprint) -> dict[str, object]:
+    reads = _discovery_list(blueprint, "reads")
+    writes = _discovery_list(blueprint, "changes")
+    return {
+        "read": {
+            "status": "declared" if reads else "unknown",
+            "items": reads,
+            "source": "discovery.reads" if reads else "missing discovery.reads",
+        },
+        "write": {
+            "status": "declared" if writes else "unknown",
+            "items": writes,
+            "source": "discovery.changes" if writes else "missing discovery.changes",
+        },
+        "evidence": "customer discovery declaration; action-level provider behavior remains unverified",
+    }
+
+
+def _data_movement(blueprint: SolutionBlueprint) -> str:
+    value = blueprint.discovery.get("data_leaves_tenant")
+    if value is True:
+        return "cross_boundary_declared"
+    if value is False:
+        return "within_declared_tenant_and_local_boundary"
+    return "unknown"
+
+
+def _reversibility(blueprint: SolutionBlueprint) -> str:
+    expectation = blueprint.discovery.get("rollback_expectations")
+    if isinstance(expectation, str) and expectation.strip():
+        return "operator_declared"
+    return "unknown"
 
 
 def _approval_requirements(blueprint: SolutionBlueprint, template_approval: bool = False) -> list[str]:
