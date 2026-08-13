@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import stat
 import subprocess
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -13,6 +15,7 @@ from wait_local_agent.power_platform_deployment import (
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
     execute_power_platform_stage,
+    validate_power_platform_solution_package,
     validate_promotion_evidence,
     validate_promotion_source,
 )
@@ -481,7 +484,8 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
     def success_runner(command, cwd, timeout):
         artifact = cwd / "solution" / "onboarding_review.zip"
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_bytes(b"verified solution artifact")
+        with zipfile.ZipFile(artifact, "w") as archive:
+            archive.writestr("solution.xml", "<ImportExportXml />")
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     succeeded = execute_power_platform_stage(plan, "build", configured, approved=True, runner=success_runner)
@@ -534,7 +538,8 @@ def test_artifact_digest_is_bounded_and_confined(tmp_path: Path, monkeypatch) ->
     ) is None
     assert deployment._artifact_digest(plan, workspace, workspace) is None
     artifact = output / "onboarding_review.zip"
-    artifact.write_bytes(b"artifact")
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
     digest = deployment._artifact_digest(plan, workspace, output)
     assert isinstance(digest, str) and digest.startswith("sha256:")
     monkeypatch.setattr(deployment, "MAX_ARTIFACT_BYTES", 1)
@@ -550,6 +555,42 @@ def test_artifact_digest_is_bounded_and_confined(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setattr(Path, "open", failing_open)
     assert deployment._artifact_digest(plan, workspace, output) is None
+
+
+def test_solution_package_validation_rejects_invalid_archive_members(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "solution"
+    output.mkdir(parents=True)
+    artifact = output / "onboarding_review.zip"
+
+    artifact.write_bytes(b"not a zip")
+    with pytest.raises(PowerPlatformDeploymentError, match="valid ZIP"):
+        validate_power_platform_solution_package(artifact, workspace)
+
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("../outside.txt", "unsafe")
+    with pytest.raises(PowerPlatformDeploymentError, match="traversal"):
+        validate_power_platform_solution_package(artifact, workspace)
+
+    symlink = zipfile.ZipInfo("linked.txt")
+    symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(symlink, "outside")
+    with pytest.raises(PowerPlatformDeploymentError, match="symlink"):
+        validate_power_platform_solution_package(artifact, workspace)
+
+
+def test_solution_package_validation_returns_digest_for_safe_archive(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "solution"
+    output.mkdir(parents=True)
+    artifact = output / "onboarding_review.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+        archive.writestr("customizations.xml", "<ImportExportXml />")
+
+    digest = validate_power_platform_solution_package(artifact, workspace)
+    assert digest.startswith("sha256:")
 
 
 def test_deployment_shape_guards_cover_target_and_execution_path_edges(settings, tmp_path: Path) -> None:
