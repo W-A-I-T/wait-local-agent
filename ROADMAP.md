@@ -50,9 +50,11 @@ open-core increment. Current facts are also tracked in
 - Bounded MSP playbook composition now includes tenant-scoped published
   aggregate definitions with validated edit, enable/disable, revision compare,
   restore-as-new-version, preview, approval-aware execution, and audit evidence;
-  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). Richer mappings,
-  historical/provider ingestion, and scheduled/event-triggered operations remain
-  open.
+  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). The aggregate catalog
+  now also covers inactive-ticket follow-up and bounded M365 password, explicit
+  authentication-method, and license reviews. Richer mappings,
+  historical/provider ingestion, compliance/software review, and
+  scheduled/event-triggered operations remain open.
 - General conditional approval policy composition without weakening built-in
   tool requirements or tenant boundaries.
 - Connector-aware backfill plans and richer provider-backed lifecycle/QBR

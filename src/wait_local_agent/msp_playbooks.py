@@ -234,6 +234,97 @@ MSP_PLAYBOOKS: tuple[MspPlaybookDefinition, ...] = (
         output_evidence=("workflow_run_ids", "approval_request_id", "partial_failure_state"),
     ),
     MspPlaybookDefinition(
+        id="inactive-ticket-follow-up-review",
+        name="Inactive Ticket Follow-up Review",
+        version=1,
+        trigger="schedule.daily",
+        description=(
+            "Identify a stale local ticket using an explicit age threshold, then prepare an "
+            "approval-gated follow-up without sending it automatically."
+        ),
+        risk_level="medium",
+        steps=(
+            _workflow_step(
+                "stale",
+                "Stale ticket check",
+                "stale-ticket-sweep-review",
+                "Check the ticket against the operator-supplied stale threshold.",
+                ("stale_after_minutes",),
+            ),
+            _workflow_step(
+                "follow-up",
+                "Inactive ticket follow-up",
+                "inactive-ticket-follow-up",
+                "Prepare a local note or explicitly selected communication for approval.",
+                ("channel",),
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "stale_threshold", "approval_request_id"),
+    ),
+    MspPlaybookDefinition(
+        id="m365-password-reset-review",
+        name="Microsoft 365 Password Reset Review",
+        version=1,
+        trigger="ticket.updated",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 password reset using a local vault "
+            "reference; execution remains approval-gated."
+        ),
+        risk_level="high",
+        steps=(
+            _workflow_step(
+                "password-reset",
+                "Password reset",
+                "m365-password-reset-review",
+                "Prepare the bounded password reset request without exposing the temporary credential.",
+                ("user_identity", "temporary_vault_name"),
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "approval_request_id", "tenant_scope"),
+    ),
+    MspPlaybookDefinition(
+        id="m365-authentication-method-review",
+        name="Microsoft 365 Authentication Method Review",
+        version=1,
+        trigger="ticket.updated",
+        description=(
+            "Prepare removal of one explicitly identified Microsoft 365 authentication "
+            "method; broad MFA reset is not inferred."
+        ),
+        risk_level="high",
+        steps=(
+            _workflow_step(
+                "method-removal",
+                "Authentication method removal",
+                "m365-authentication-method-removal-review",
+                "Prepare an immutable-method-ID removal request for approval.",
+                ("user_identity", "method_type", "method_id"),
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "approval_request_id", "explicit_method_id"),
+    ),
+    MspPlaybookDefinition(
+        id="m365-license-review",
+        name="Microsoft 365 License Review",
+        version=1,
+        trigger="ticket.created",
+        description=(
+            "Prepare a tenant-scoped Microsoft 365 license add or removal request from "
+            "immutable user and SKU identifiers."
+        ),
+        risk_level="high",
+        steps=(
+            _workflow_step(
+                "license-request",
+                "License request",
+                "m365-license-request-review",
+                "Prepare the explicit license operation for approval.",
+                ("user_id", "sku_ids", "operation"),
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "approval_request_id", "immutable_sku_ids"),
+    ),
+    MspPlaybookDefinition(
         id="qbr-review",
         name="Quarterly Business Review",
         version=1,

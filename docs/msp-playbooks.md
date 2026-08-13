@@ -8,7 +8,9 @@ second agent or provider execution engine.
 The current built-in catalog includes:
 
 - ticket intake, resolution, dispatch, stale/SLA, and security-response reviews;
-- Microsoft 365 onboarding and offboarding reviews; and
+- inactive-ticket follow-up review;
+- Microsoft 365 onboarding, offboarding, password-reset, explicit
+  authentication-method removal, and license reviews; and
 - QBR, automation-opportunity, and recurring-service-review reports.
 
 Preview is side-effect free. It validates the complete ordered definition,
@@ -77,6 +79,9 @@ provider contract and stored evidence establish them.
 The broader MSP issue remains open. Built-in versioned definitions and the
 preview/controlled-run contract plus the first tenant-edited aggregate
 publish/disable/restore/compare lifecycle slice are now present. Richer step
-input mappings, provider-backed historical ingestion, and several scheduled or
-event-triggered operations remain follow-up work. The existing workflow gallery
-continues to provide lifecycle operations for individual templates.
+input mappings, historical/provider ingestion, M365 compliance checks,
+software-inventory review, and several scheduled or event-triggered operations
+remain follow-up work. These new M365 playbooks prepare and gate requests; they
+do not claim a live directory mutation without configured provider evidence. The
+existing workflow gallery continues to provide lifecycle operations for
+individual templates.

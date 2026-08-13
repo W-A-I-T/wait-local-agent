@@ -33,9 +33,15 @@ def _steps(result: dict[str, object]) -> list[dict[str, object]]:
 def test_msp_playbook_catalog_is_versioned_and_structured() -> None:
     playbooks = list_msp_playbooks()
 
-    assert len(playbooks) >= 10
+    assert len(playbooks) >= 14
     assert all(playbook.version == 1 for playbook in playbooks)
     assert all(playbook.steps for playbook in playbooks)
+    assert {
+        "inactive-ticket-follow-up-review",
+        "m365-password-reset-review",
+        "m365-authentication-method-review",
+        "m365-license-review",
+    }.issubset({playbook.id for playbook in playbooks})
     assert get_msp_playbook("ticket-intake-review") is not None
     assert get_msp_playbook("missing") is None
 
@@ -139,6 +145,30 @@ def test_playbook_run_composes_local_reviews(settings) -> None:
             "TCK-1001",
         ),
         (
+            "inactive-ticket-follow-up-review",
+            {"stale_after_minutes": 60, "channel": "ticket_note"},
+            "TCK-1001",
+        ),
+        (
+            "m365-password-reset-review",
+            {"user_identity": "new.user@example.com", "temporary_vault_name": "m365-temp-new-user"},
+            "TCK-1001",
+        ),
+        (
+            "m365-authentication-method-review",
+            {
+                "user_identity": "new.user@example.com",
+                "method_type": "microsoft_authenticator",
+                "method_id": "method-1",
+            },
+            "TCK-1001",
+        ),
+        (
+            "m365-license-review",
+            {"user_id": "user-1", "sku_ids": ["sku-1"], "operation": "add"},
+            "TCK-1001",
+        ),
+        (
             "automation-opportunity-review",
             {"period_start": "2026-01-01", "period_end": "2026-03-31"},
             None,
@@ -180,6 +210,7 @@ def test_report_and_payload_validation_boundaries(settings) -> None:
             client_id="acme",
             input_payload={"period_start": "not-a-date", "period_end": "2026-03-31"},
         )
+
     with pytest.raises(ValueError, match="not be after"):
         preview_msp_playbook(
             store,
@@ -225,6 +256,63 @@ def test_report_and_payload_validation_boundaries(settings) -> None:
                 "follow_up_after_days": 0,
             },
         )
+
+
+@pytest.mark.parametrize(
+    ("playbook_id", "payload", "expected_status"),
+    [
+        (
+            "inactive-ticket-follow-up-review",
+            {"stale_after_minutes": 60, "channel": "ticket_note"},
+            "pending_approval",
+        ),
+        (
+            "m365-password-reset-review",
+            {"user_identity": "new.user@example.com", "temporary_vault_name": "m365-temp-new-user"},
+            "failed",
+        ),
+        (
+            "m365-authentication-method-review",
+            {
+                "user_identity": "new.user@example.com",
+                "method_type": "microsoft_authenticator",
+                "method_id": "method-1",
+            },
+            "failed",
+        ),
+        (
+            "m365-license-review",
+            {"user_id": "user-1", "sku_ids": ["sku-1"], "operation": "add"},
+            "failed",
+        ),
+    ],
+)
+def test_new_msp_playbooks_stop_at_existing_approval_boundary(
+    settings, playbook_id: str, payload: dict[str, object], expected_status: str
+) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    smart_actions = SmartActionService(store, settings)
+
+    result = run_msp_playbook(
+        store,
+        playbook_id,
+        ticket_id="TCK-1001",
+        client_id="acme",
+        actor="technician",
+        input_payload=payload,
+        tool_executor=smart_actions,
+        smart_action_service=smart_actions,
+    )
+
+    assert result["status"] == expected_status
+    assert result["stopped_after_step"] == _steps(result)[-1]["id"]
+    if expected_status == "pending_approval":
+        assert _steps(result)[-1]["approval_request_id"] is not None
+    else:
+        assert _steps(result)[-1]["status"] == "failed"
+        assert _steps(result)[-1]["message"]
+    assert all(step["status"] in {"completed", "pending_approval", "failed"} for step in _steps(result))
 
 
 def test_workflow_message_has_bounded_fallback_for_custom_read_only_template(settings) -> None:
