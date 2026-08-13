@@ -173,6 +173,70 @@ def test_controlled_evaluation_executes_each_case_and_captures_runtime_evidence(
     assert result["cases"][0]["execution"]["run_id"] == 7
 
 
+def test_action_outcomes_fail_closed_for_failed_functional_and_approval_actions() -> None:
+    case = {
+        **_case(),
+        "expected_successful_tool_ids": ["m365-user-create"],
+    }
+
+    class Runner:
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            return {
+                **_observation(),
+                "action_outcomes": [
+                    {"tool_id": "m365-user-create", "status": "failed", "approval_id": 42},
+                ],
+            }
+
+    result = execute_tool_contract([case], Runner())
+
+    checks = result["cases"][0]["checks"]
+    assert checks["functional"] is False
+    assert checks["approval_safety"] is False
+    assert result["cases"][0]["execution"]["action_outcomes"] == [
+        {"tool_id": "m365-user-create", "status": "failed", "approval_id": 42}
+    ]
+
+
+def test_action_outcomes_derive_success_and_approval_evidence() -> None:
+    case = {**_case(), "expected_successful_tool_ids": ["m365-user-create"]}
+
+    class Runner:
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            return {
+                **_observation(),
+                "action_outcomes": [
+                    {"tool_id": "m365-user-create", "status": "success", "approval_id": 42},
+                ],
+            }
+
+    result = execute_tool_contract([case], Runner())
+
+    assert result["production_readiness"] == "pass"
+    assert result["cases"][0]["checks"]["functional"] is True
+    assert result["cases"][0]["checks"]["approval_safety"] is True
+
+
+@pytest.mark.parametrize(
+    ("action_outcomes", "message"),
+    [
+        (["not-an-object"], "must contain objects"),
+        ([{"tool_id": "tool", "status": "success", "unexpected": True}], "unsupported action outcome fields"),
+        ([{"tool_id": 42, "status": "success"}], "tool_id must be text"),
+        ([{"tool_id": "tool", "status": ""}], "status must be bounded"),
+        ([{"tool_id": "tool"}], "status must be bounded"),
+        ([{"tool_id": "tool", "status": "success", "approval_id": "bad"}], "approval_id must be"),
+        ([{"tool_id": "tool", "status": "success"}] * 65, "must contain 0-64"),
+    ],
+)
+def test_action_outcomes_are_bounded_and_typed(action_outcomes: object, message: str) -> None:
+    with pytest.raises(EvaluationValidationError, match=message):
+        evaluate_tool_contract(
+            [_case()],
+            {"onboarding": {**_observation(), "action_outcomes": action_outcomes}},
+        )
+
+
 def test_controlled_evaluation_preserves_bounded_case_inputs_for_executor() -> None:
     class Runner:
         def __init__(self) -> None:
@@ -320,6 +384,18 @@ def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -
             [_case("duplicate"), _case("duplicate")],
             {"duplicate": _observation()},
         )
+    with pytest.raises(EvaluationValidationError, match="action outcome approval_id"):
+        evaluate_tool_contract(
+            [{**_case(), "expected_successful_tool_ids": ["m365-user-create"]}],
+            {
+                "onboarding": {
+                    **_observation(),
+                    "action_outcomes": [
+                        {"tool_id": "m365-user-create", "status": "success", "approval_id": 0}
+                    ],
+                }
+            },
+        )
 
 
 def test_evaluation_reports_security_evidence_provenance_without_overriding_scores() -> None:
@@ -447,12 +523,44 @@ def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_e
     assert result["security_evidence"] == {"rbac": False, "unexpected_writes": False}
 
 
+def test_runtime_evaluation_marks_successful_write_as_unexpected() -> None:
+    class Result:
+        run_id = 14
+        status = "completed"
+        error_detail = ""
+        final_result: dict[str, object] = {}
+        steps = [{"tool_id": "fixture-write", "status": "success"}]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return [
+                type("Tool", (), {"id": "fixture-write", "required_role": "technician", "access_mode": "write"})()
+            ]
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme", "enabled_tools": ["fixture-write"]})()
+    observed = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    ).execute({"required_security_dimensions": ["unexpected_writes"]})
+
+    assert observed["security_evidence"] == {"rbac": True, "unexpected_writes": False}
+
+
 def test_runtime_evaluation_proves_tool_allowlist_and_secret_absence() -> None:
     class Result:
         run_id = 11
         status = "completed"
         error_detail = ""
-        final_result = {"status": "completed", "output": {"message": "[redacted]"}}
+        final_result: object = []
         steps = [{"tool_id": "ticket-triage", "status": "success", "output": {"message": "[redacted]"}}]
 
     class Service:
