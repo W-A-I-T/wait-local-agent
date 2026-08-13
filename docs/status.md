@@ -84,6 +84,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   documented model-list contract, report missing models and malformed or
   unavailable responses explicitly, and never probe remote providers while
   offline or when remote fallback is disabled.
+- The local CLI exposes the same readiness boundary through
+  `wait-local-agent microsoft provider health`, labeling local/remote scope,
+  provider, model, probe mode, status, and offline state while auditing only
+  status labels.
 - Model completion, planning, and continuation requests retry only transient
   rate-limit, timeout, server, or transport failures within a fixed two-retry
   budget; non-retryable failures stop immediately, and redacted provider

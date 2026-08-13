@@ -85,5 +85,17 @@ observation mode:
 wait-local-agent microsoft evaluation run evaluation.json
 ```
 
+Operators can inspect configured model-provider readiness without exposing
+credentials or response bodies:
+
+```bash
+wait-local-agent microsoft provider health
+```
+
+The output labels local and remote scope, provider, model, status, probe mode,
+and offline state. A remote probe is only attempted when the existing explicit
+cloud opt-ins allow it; offline mode reports `blocked_offline` without making a
+network request.
+
 A result is `pass` only when every bounded dimension reaches 100%; otherwise it
 is `needs_review`. Observation mode always reports `execution_started: false`.
