@@ -64,3 +64,26 @@ Observed results:
 This replay expands the evidence for issue #257 but does not complete the
 full control-success, permission-denied, offline, provider-error, keyboard,
 and responsive matrix for every interactive surface.
+
+## 2026-08-13 current-main route/control inventory
+
+Environment:
+
+- Current merged main at `30de3ee`.
+- Vite dashboard on `127.0.0.1:5196` with a local deterministic API on
+  `127.0.0.1:8796`, connector probing and writes disabled.
+- Firefox through the Playwright CLI skill at the desktop viewport.
+
+Observed results:
+
+- All 20 operator destinations and the direct-link `/end-user` destination
+  rendered route-specific headings.
+- The DOM inventory found no empty or unnamed buttons and no unnamed links.
+  Disabled controls were exposed as disabled rather than presented as
+  successful actions.
+- The captured browser console logs contained no application errors or
+  warnings during the route inventory.
+
+This is route/control inventory evidence only. It does not prove each control's
+success, denied, offline, provider-error, cancellation, or recovery path, so
+issue #257 remains open.

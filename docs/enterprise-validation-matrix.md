@@ -17,7 +17,7 @@ a fixture is not a substitute for that gate.
 | Offline/local-first behavior | Settings offline mode, deterministic provider fallback, connector guards, provider health CLI/API/UI | [`docs/provider-conformance-matrix.md`](provider-conformance-matrix.md), `tests/test_providers.py`, `tests/test_cloud_adapters.py`, `tests/test_mcp_client.py`, `tests/test_cli.py`, and `tests/conftest.py` default settings | Optional remote providers and external connectors remain unavailable without explicit configuration and credentials; health probes report scope and state without exposing secrets. |
 | Failure, timeout, retry, cancellation, partial execution, and rollback | AgentService, supervisor, event delivery, MSP playbook subscriptions, connector adapters, and the bounded Power Platform rollback primitive | `tests/test_agents.py`, `tests/test_cli.py`, `tests/test_supervisor.py`, `tests/test_event_dispatch.py`, provider failure tests, evaluation security-dimension tests, and `tests/test_power_platform_deployment.py` | Event-triggered playbooks are tenant-scoped, idempotent, bounded to existing event types, and preserve approval pauses. Evaluation evidence is runtime/fixture evidence. The Power Platform rollback path verifies a prior artifact, requires approval, records audit evidence, and reports PAC return status; live-provider rollback evidence remains open. Step retries and fallbacks remain bounded by the reviewed definition and never select an unconfigured tool. |
 | Blueprint-to-delivery safety | Discovery, environment, architecture, governance, delivery, Power Platform stages | `tests/test_discovery.py`, `tests/test_environment.py`, `tests/test_consultant.py`, `tests/test_delivery_plan.py`, `tests/test_power_platform_deployment.py`, and `tests/test_employee_onboarding_demo.py` | The canonical onboarding walkthrough is `local_fixture`; it now generates and validates bounded review-only Power Apps, Power Automate, and Copilot Studio manifests and a redacted digest-bound review package. Live provider execution, deployable packaging, and deployment remain explicit boundaries. |
-| UI route/control/state quality | React dashboard and API proxy | `ui/tests/`, `ui/package.json`, `docs/ui-feature-evidence.md`, `docs/ui-browser-validation.md`, and the workflow UI test/build steps | Real-browser evidence now covers all route headings, a mobile responsive replay, offline/denied states, viewer write-control gating, and review-only artifact generation; the full every-control, keyboard, provider-error, and responsive matrix remains open under issue #257. |
+| UI route/control/state quality | React dashboard and API proxy | `ui/tests/`, `ui/package.json`, `docs/ui-feature-evidence.md`, `docs/ui-browser-validation.md`, and the workflow UI test/build steps | Current-main browser inventory covers all operator/direct-link destinations, route-specific headings, unnamed-control detection, mobile responsive replay, offline/denied states, viewer write-control gating, and review-only artifact generation; the full every-control success/failure, keyboard, provider-error, and responsive matrix remains open under issue #257. |
 | Release and operational readiness | Desktop workflow, updater, backup/restore, release validation | `.github/workflows/release-desktop.yml`, `docs/desktop-install.md`, `src/wait_local_agent/backup.py`, `tests/test_backup.py`, `docs/launch-checklist.md`, and `scripts/validate_release.sh` | External macOS/Windows signing certificates and production credentials are not present in the repository; issue #38 remains the signing blocker. |
 
 ## Evidence interpretation
@@ -34,6 +34,19 @@ a fixture is not a substitute for that gate.
 - A requirement is not release-ready until the linked behavior-focused tests,
   repository checks, and—where required—real-browser or live-provider evidence
   all exist. Missing evidence remains a risk rather than an inferred pass.
+
+## Latest local release gate
+
+On merged main commit `30de3ee`, `bash scripts/validate_release.sh` passed:
+
+- 2,311 backend tests passed at 95.01% coverage (95% required).
+- Ruff, mypy, Bandit, pip-audit, and the public-surface audit passed.
+- 24 UI test files and 109 UI tests passed.
+- The production UI build passed.
+
+The run emitted only the repository's existing Starlette deprecation warnings.
+This validates the local/repository gate; it does not provide external
+provider credentials, production deployment evidence, or desktop signing.
 
 ## Known open gates
 
