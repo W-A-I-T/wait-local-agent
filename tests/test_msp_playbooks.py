@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -49,6 +50,7 @@ def test_msp_playbook_catalog_is_versioned_and_structured() -> None:
         "m365-authentication-method-review",
         "m365-license-review",
         "m365-compliance-review",
+        "software-inventory-review",
     }.issubset({playbook.id for playbook in playbooks})
     assert get_msp_playbook("ticket-intake-review") is not None
     assert get_msp_playbook("missing") is None
@@ -124,6 +126,36 @@ def test_playbook_run_composes_local_reviews(settings) -> None:
     assert all(step["workflow_run_id"] is not None for step in steps)
 
 
+def test_software_inventory_playbook_reuses_scoped_n_sight_action(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    smart_actions = SmartActionService(
+        store,
+        settings,
+        rmm_provider=SimpleNamespace(
+            adapter_id="n-sight",
+            list_software=lambda device_id, client_id: [
+                {"software_id": "sw-1", "name": "Example Agent", "version": "1.0"}
+            ],
+        ),
+    )
+
+    result = run_msp_playbook(
+        store,
+        "software-inventory-review",
+        ticket_id="TCK-1001",
+        client_id="acme",
+        actor="technician",
+        input_payload={"device_id": "server:1"},
+        tool_executor=smart_actions,
+        smart_action_service=smart_actions,
+    )
+
+    assert result["status"] == "completed"
+    assert _steps(result)[0]["status"] == "completed"
+    assert store.list_smart_action_runs()[0].status == "success"
+
+
 @pytest.mark.parametrize(
     ("playbook_id", "payload", "ticket_id"),
     [
@@ -177,6 +209,7 @@ def test_playbook_run_composes_local_reviews(settings) -> None:
             "TCK-1001",
         ),
         ("m365-compliance-review", {"limit": 10}, "TCK-1001"),
+        ("software-inventory-review", {"device_id": "server:1"}, "TCK-1001"),
         (
             "automation-opportunity-review",
             {"period_start": "2026-01-01", "period_end": "2026-03-31"},

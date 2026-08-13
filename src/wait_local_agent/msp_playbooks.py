@@ -347,6 +347,27 @@ MSP_PLAYBOOKS: tuple[MspPlaybookDefinition, ...] = (
         output_evidence=("workflow_run_ids", "connector_read_evidence", "observed_findings"),
     ),
     MspPlaybookDefinition(
+        id="software-inventory-review",
+        name="Software Inventory Review",
+        version=1,
+        trigger="schedule.daily",
+        description=(
+            "Read an explicitly mapped N-sight software inventory through the existing "
+            "tenant-scoped RMM adapter; no remediation or vulnerability claim is inferred."
+        ),
+        risk_level="low",
+        steps=(
+            _workflow_step(
+                "inventory",
+                "Software inventory",
+                "software-inventory-review",
+                "Read the bounded software inventory for one mapped device.",
+                ("device_id",),
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "rmm_software_inventory", "mapped_device_scope"),
+    ),
+    MspPlaybookDefinition(
         id="qbr-review",
         name="Quarterly Business Review",
         version=1,
