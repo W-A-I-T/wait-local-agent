@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.delivery_plan import (
+    DeliveryPlanError,
+    build_consultant_artifact_review_package,
+    build_consultant_delivery_plan,
+)
 
 
 def _architecture() -> dict[str, object]:
@@ -81,6 +85,19 @@ def test_delivery_plan_rejects_non_json_review_artifacts() -> None:
             governance={"client_id": "acme", "status": "pass"},
             deployment_targets=["Teams"],
             connector_artifacts=[{"connector_id": "m365", "value": object()}],
+        )
+
+
+def test_review_package_rejects_foreign_or_started_artifacts() -> None:
+    with pytest.raises(DeliveryPlanError, match="outside the requested tenant"):
+        build_consultant_artifact_review_package(
+            client_id="acme",
+            artifacts=[{"client_id": "beta", "format": "review"}],
+        )
+    with pytest.raises(DeliveryPlanError, match="execution or deployment"):
+        build_consultant_artifact_review_package(
+            client_id="acme",
+            artifacts=[{"client_id": "acme", "deployment_started": True}],
         )
 
 

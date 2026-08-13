@@ -604,6 +604,7 @@ class DeliveryPlanRequest(BaseModel):
     governance: dict[str, object]
     deployment_targets: list[str] = Field(min_length=1, max_length=8)
     connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    review_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4840,6 +4841,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 governance=payload.governance,
                 deployment_targets=payload.deployment_targets,
                 connector_artifacts=payload.connector_artifacts,
+                review_artifacts=payload.review_artifacts,
             )
         except DeliveryPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

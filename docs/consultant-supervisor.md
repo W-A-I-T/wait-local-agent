@@ -43,4 +43,4 @@ The canonical employee-onboarding child map is
 tools describe the intended Microsoft/MSP handoffs, while its local fixture
 tool is deliberately `ticket-triage`. This distinction is part of the demo
 contract: the fixture proves bounded orchestration and audit lineage without
-claiming live provider execution, artifact generation, or deployment.
+claiming live provider execution, deployable packaging, or deployment.

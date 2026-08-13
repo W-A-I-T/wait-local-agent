@@ -82,7 +82,9 @@ credential or undocumented vendor API remains an explicit boundary.
   deployment requirements, and evidence gaps.
 - Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
   deployment, and delivery artifacts that preserve the distinction between
-  plan, generate, validate, package, and deploy.
+  plan, generate, validate, package, and deploy. The canonical onboarding
+  fixture now validates and digest-binds a local review package; it is not a
+  deployable Power Platform package.
 
 ### Next increments
 
@@ -110,9 +112,9 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Next increments
 
-- Complete blueprint-to-artifact validation and packaging across supported
-  Copilot Studio, Power Automate, Power Apps/Dataverse, connector, and PAC
-  paths.
+- Complete deployable blueprint-to-artifact packaging and validation across
+  supported Copilot Studio, Power Automate, Power Apps/Dataverse, connector,
+  and PAC paths; the local review-package slice is not that deployment package.
 - Complete DEV → TEST → PROD validation with live-provider result verification
   and rollback execution evidence. Promotion evidence is now bound to a
   same-tenant persisted preceding-stage approval and matching artifact digest;

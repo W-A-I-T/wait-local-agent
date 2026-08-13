@@ -83,11 +83,20 @@ describe("Consultant", () => {
             supervisor: { status: "completed", children: [] },
             evaluation: { production_readiness: "pass", execution_started: true },
             governance: { status: "needs_review" },
+            artifacts: {
+              status: "review_only",
+              items: [{ format: "wait-local-agent.power-apps-artifact" }],
+              package_digest: "sha256:fixture",
+              deployment_package_generated: false,
+            },
             delivery: { production_readiness: "needs_review", deployment_started: false },
           },
           boundaries: {
             live_provider_execution: false,
-            artifact_generation: false,
+            artifact_generation: true,
+            artifact_generation_status: "review_only",
+            review_package_generated: true,
+            deployable_package_generated: false,
             deployment_started: false,
             production_deployment_requires_approval: true,
             external_systems_require_environment_verification: true,
@@ -226,6 +235,7 @@ describe("Consultant", () => {
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Run local onboarding walkthrough" }));
     expect(await screen.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/Artifacts: 1 review-only/)).toBeInTheDocument();
     const onboardingCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/demos/employee-onboarding");
     expect(onboardingCall?.[1]).toMatchObject({
       body: expect.stringContaining('"blueprint_id":"bp-acme"'),

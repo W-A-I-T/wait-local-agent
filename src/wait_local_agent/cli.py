@@ -3600,6 +3600,7 @@ def plan_microsoft_delivery(source: Path) -> None:
     governance = payload["governance"]
     deployment_targets = payload["deployment_targets"]
     connector_artifacts = payload.get("connector_artifacts", [])
+    review_artifacts = payload.get("review_artifacts", [])
     if (
         not isinstance(client_id, str)
         or not isinstance(architecture, dict)
@@ -3609,6 +3610,8 @@ def plan_microsoft_delivery(source: Path) -> None:
         or any(not isinstance(item, str) for item in deployment_targets)
         or not isinstance(connector_artifacts, list)
         or any(not isinstance(item, dict) for item in connector_artifacts)
+        or not isinstance(review_artifacts, list)
+        or any(not isinstance(item, dict) for item in review_artifacts)
     ):
         raise typer.BadParameter("source contains invalid delivery-plan fields")
     try:
@@ -3619,6 +3622,7 @@ def plan_microsoft_delivery(source: Path) -> None:
             governance=governance,
             deployment_targets=deployment_targets,
             connector_artifacts=connector_artifacts,
+            review_artifacts=review_artifacts,
         )
     except DeliveryPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc

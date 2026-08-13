@@ -1,8 +1,8 @@
 # Consultant delivery plan
 
 The delivery-plan surface composes explicit architecture, evaluation,
-governance, connector, and deployment-target artifacts into one reviewable
-handoff:
+governance, connector, generated review-artifact, and deployment-target
+artifacts into one reviewable handoff:
 
 ```text
 POST /consultant/delivery-plan
@@ -16,8 +16,9 @@ wait-local-agent microsoft delivery plan delivery.json
 
 It reports requirements analyzed, agents/workflows/knowledge sources,
 approval boundaries, test scenario count, security evaluation, readiness, and
-deployment targets. When connector artifacts are supplied, it also returns a
-bounded, redacted, deterministic review-package manifest and SHA-256 digest.
+deployment targets. Connector artifacts and `review_artifacts` are bounded,
+redacted, and included in a deterministic review-package manifest with a
+SHA-256 digest.
 Production deployment always remains approval-required.
 
 This is an evidence composer, not an executor. The review package is not a

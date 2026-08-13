@@ -50,13 +50,17 @@ discovery, environment, blueprint, architecture, supervisor, controlled
 evaluation, governance, delivery, and audit primitives in an isolated local
 fixture. It executes only the bounded local `ticket-triage` stand-in; target
 Microsoft/PSA/RMM/documentation/Teams actions, live provider execution,
-artifact generation, and deployment remain explicit review or approval gates.
+and deployment remain explicit review or approval gates. It now generates and
+validates bounded review-only Power Apps/Dataverse, Power Automate, and Copilot
+Studio manifests and packages their redacted metadata with a deterministic
+digest; this is not a deployable Power Platform package.
 
 The same walkthrough is reachable through a tenant-scoped technician API
 endpoint and the Consultant screen in local demo mode. It resolves a selected
 persisted blueprint without duplicating it, requires an existing scoped fixture
-ticket, and keeps live provider execution, artifact generation, and deployment
-disabled.
+ticket, and keeps live provider execution, deployable packaging, and deployment
+disabled. Review-only artifact generation is reported separately from live
+execution and deployment.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 

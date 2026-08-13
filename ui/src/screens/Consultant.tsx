@@ -418,7 +418,7 @@ export function Consultant() {
         </div>
         <div className="notice">
           <strong>Local fixture only.</strong>{" "}
-          No Microsoft, PSA, RMM, documentation, Teams, artifact-generation, or deployment call is started. The walkthrough requires an existing tenant-scoped ticket and never seeds one.
+          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one.
         </div>
         <div className="grid">
           <label>
@@ -438,8 +438,8 @@ export function Consultant() {
         {employeeOnboardingDemo ? (
           <div className="notice">
             <strong>{employeeOnboardingDemo.stages.blueprint.solution_name} completed in {employeeOnboardingDemo.mode} mode.</strong>{" "}
-            Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}.
-            <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"}.
+            Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}. Artifacts: {employeeOnboardingDemo.stages.artifacts.items.length} review-only.
+            <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · deployable package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
           </div>
         ) : null}
       </section>
