@@ -56,6 +56,41 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "write_actions_enabled=False" in result.output
 
 
+def test_microsoft_provider_health_reports_scopes_without_secrets(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(
+        cli_module,
+        "probe_model_providers",
+        lambda settings: {
+            "local": {
+                "provider": "ollama",
+                "model": "llama3.1",
+                "status": "ready",
+                "probe": "models",
+            },
+            "remote": {
+                "provider": "deepseek",
+                "model": "documented-model",
+                "status": "blocked_offline",
+                "probe": "not_run",
+            },
+        },
+    )
+
+    result = CliRunner().invoke(app, ["microsoft", "provider", "health"])
+
+    assert result.exit_code == 0, result.output
+    assert "offline_mode=False" in result.output
+    assert "scope=local provider=ollama model=llama3.1 status=ready probe=models" in result.output
+    assert "scope=remote provider=deepseek model=documented-model status=blocked_offline probe=not_run" in result.output
+    assert "secret" not in result.output.casefold()
+    events = cli_module._store().list_audit_events()  # noqa: SLF001
+    assert [event.event_type for event in events[-2:]] == [
+        "model_provider.health",
+        "model_provider.health",
+    ]
+
+
 def test_microsoft_power_apps_build_cli_emits_local_artifact(monkeypatch, tmp_path) -> None:
     source = Path("examples/consultant/power-apps-build.json")
     output = tmp_path / "power-apps-artifact.json"

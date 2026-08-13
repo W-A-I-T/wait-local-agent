@@ -132,7 +132,7 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_evidence,
     validate_promotion_source,
 )
-from wait_local_agent.providers import provider_from_settings
+from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
@@ -195,6 +195,7 @@ workflows_app = typer.Typer(help="Workflow template and run commands.")
 consultant_app = typer.Typer(help="Local-first solution consultant commands.")
 blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
+microsoft_provider_app = typer.Typer(help="Bounded model provider health commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
 microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
@@ -230,6 +231,7 @@ app.add_typer(workflows_app, name="workflows")
 consultant_app.add_typer(blueprints_app, name="blueprints")
 app.add_typer(consultant_app, name="consultant")
 microsoft_app.add_typer(microsoft_connector_app, name="connector")
+microsoft_app.add_typer(microsoft_provider_app, name="provider")
 microsoft_app.add_typer(microsoft_solution_app, name="solution")
 microsoft_app.add_typer(microsoft_evaluation_app, name="evaluation")
 microsoft_app.add_typer(microsoft_governance_app, name="governance")
@@ -403,6 +405,28 @@ def doctor() -> None:
     typer.echo(f"m365_configured={m365_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
+
+
+@microsoft_provider_app.command("health")
+def microsoft_provider_health() -> None:
+    """Probe configured model providers and print safe readiness evidence."""
+    settings = load_settings()
+    result = probe_model_providers(settings)
+    typer.echo(f"offline_mode={settings.offline_mode}")
+    for scope in ("local", "remote"):
+        status = result.get(scope)
+        if not isinstance(status, dict):
+            continue
+        typer.echo(
+            f"scope={scope} provider={status.get('provider') or '(none)'} "
+            f"model={status.get('model') or '(none)'} status={status.get('status', 'unknown')} "
+            f"probe={status.get('probe', 'not_run')}"
+        )
+        _store().add_audit_event(
+            "model_provider.health",
+            scope,
+            str(status.get("status", "unknown")),
+        )
 
 
 @packs_app.command("list")
