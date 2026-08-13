@@ -70,6 +70,7 @@ export function Consultant() {
   const [discoveryResult, setDiscoveryResult] = useState<ConsultantDiscoveryResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [discoverySession, setDiscoverySession] = useState<ConsultantDiscoverySession | null>(null);
+  const [discoverySessions, setDiscoverySessions] = useState<ConsultantDiscoverySession[]>([]);
   const [guidedAnswer, setGuidedAnswer] = useState("");
   const [guidedBooleanAnswer, setGuidedBooleanAnswer] = useState(false);
   const [guidedLoading, setGuidedLoading] = useState(false);
@@ -80,14 +81,16 @@ export function Consultant() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows, catalog, health] = await Promise.all([
+      const [rows, catalog, health, sessions] = await Promise.all([
         apiFetch<ConsultantBlueprint[]>("/consultant/blueprints"),
         apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases"),
         apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents"),
+        apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions"),
       ]);
       setBlueprints(rows);
       setUseCases(catalog.use_cases);
       setMonitoring(health);
+      setDiscoverySessions(sessions);
       if (selectedId && rows.some((row) => row.id === selectedId)) return;
       setSelectedId(rows[0]?.id ?? null);
       setArchitecture(null);
@@ -220,6 +223,7 @@ export function Consultant() {
       });
       setDiscoverySession(result);
       setDiscoveryResult(result);
+      setDiscoverySessions((current) => [result, ...current.filter((item) => item.session_id !== result.session_id)]);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
       if (result.blueprint_id) {
@@ -258,6 +262,7 @@ export function Consultant() {
       );
       setDiscoverySession(result);
       setDiscoveryResult(result);
+      setDiscoverySessions((current) => [result, ...current.filter((item) => item.session_id !== result.session_id)]);
       setGuidedAnswer("");
       setGuidedBooleanAnswer(false);
       if (result.blueprint_id) {
@@ -269,6 +274,37 @@ export function Consultant() {
     } finally {
       setGuidedLoading(false);
     }
+  }
+
+  async function resumeGuidedDiscovery(sessionId: string) {
+    const clientId = currentClientId();
+    if (!clientId) return;
+    setGuidedLoading(true);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantDiscoverySession>(
+        `/consultant/discovery/sessions/${encodeURIComponent(sessionId)}`,
+      );
+      setDiscoverySession(result);
+      setDiscoveryResult(result);
+      const answers = result.answered ?? {};
+      if (typeof answers.solution_name === "string") setDiscoverySolutionName(answers.solution_name);
+      if (typeof answers.business_goal === "string") setDiscoveryGoal(answers.business_goal);
+      setGuidedAnswer("");
+      setGuidedBooleanAnswer(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to resume guided discovery.");
+    } finally {
+      setGuidedLoading(false);
+    }
+  }
+
+  function startNewGuidedDiscovery() {
+    setDiscoverySession(null);
+    setDiscoveryResult(null);
+    setGuidedAnswer("");
+    setGuidedBooleanAnswer(false);
+    setMessage("");
   }
 
   async function promoteDiscovery() {
@@ -538,6 +574,24 @@ export function Consultant() {
         <div className="notice">
           <strong>Guided discovery</strong>{" "}
           <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
+          {discoverySessions.length ? (
+            <div className="discovery-session-list" aria-label="Saved guided discovery sessions">
+              <p className="screen-note">Saved sessions are visible only to this tenant and operator.</p>
+              {discoverySessions.map((session) => (
+                <button
+                  key={session.session_id}
+                  type="button"
+                  className={discoverySession?.session_id === session.session_id ? "selected" : ""}
+                  onClick={() => void resumeGuidedDiscovery(session.session_id)}
+                  disabled={guidedLoading}
+                >
+                  {String(session.answered?.solution_name || session.answered?.business_goal || session.session_id)}
+                  {" · "}{session.session_status === "completed" ? "completed" : "active"}
+                  {session.updated_at ? ` · ${new Date(session.updated_at).toLocaleString()}` : ""}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {!discoverySession ? (
             <div>
               <button type="button" onClick={() => void startGuidedDiscovery()} disabled={!canWrite || guidedLoading || !discoveryGoal.trim()}>
@@ -546,6 +600,16 @@ export function Consultant() {
             </div>
           ) : discoverySession.next_question ? (
             <div className="draft-form">
+              <button type="button" onClick={startNewGuidedDiscovery} disabled={guidedLoading}>Start new session</button>
+              {discoverySession.transcript.length ? (
+                <ol aria-label="Guided discovery transcript">
+                  {discoverySession.transcript.map((entry, index) => (
+                    <li key={`${entry.field ?? entry.role}-${index}`}>
+                      <strong>{entry.role === "user" ? "You" : "WAIT"}:</strong> {String(entry.content)}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
               <p><strong>{discoverySession.assistant_message}</strong></p>
               {discoverySession.next_question.kind === "boolean" ? (
                 <label className="checkbox-label">
@@ -564,7 +628,19 @@ export function Consultant() {
               <p className="screen-note">{discoverySession.unanswered?.length ?? 0} evidence questions remain unanswered.</p>
             </div>
           ) : (
-            <p>Guided discovery is complete. Review the evidence and readiness result above.</p>
+            <div>
+              <button type="button" onClick={startNewGuidedDiscovery} disabled={guidedLoading}>Start new session</button>
+              {discoverySession.transcript.length ? (
+                <ol aria-label="Guided discovery transcript">
+                  {discoverySession.transcript.map((entry, index) => (
+                    <li key={`${entry.field ?? entry.role}-${index}`}>
+                      <strong>{entry.role === "user" ? "You" : "WAIT"}:</strong> {String(entry.content)}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              <p>Guided discovery is complete. Review the evidence and readiness result above.</p>
+            </div>
           )}
         </div>
       </section>

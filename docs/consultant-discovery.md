@@ -17,6 +17,8 @@ For progressive intake, use the persisted guided session routes:
 
 ```text
 POST /consultant/discovery/sessions
+GET  /consultant/discovery/sessions
+GET  /consultant/discovery/sessions/{session_id}
 POST /consultant/discovery/sessions/{session_id}/turn
 ```
 
@@ -28,6 +30,13 @@ principal, persist locally in SQLite, and emit audit events. The transcript is
 bounded evidence of user answers and prompts; it does not contain hidden model
 reasoning. A completed question sequence still does not imply that required
 evidence is sufficient for architecture.
+
+The list and detail routes return only sessions matching both the authenticated
+tenant and principal. They make an active session resumable after an operator
+refresh and expose the bounded transcript for review. A completed session keeps
+its resulting blueprint ID when one was created. Reading or resuming a session
+does not execute tools, call providers, infer missing answers, or deploy a
+solution.
 
 The intake asks for explicit evidence about the business goal, users,
 knowledge, systems, reads, changes, approvals, failure handling, licenses,

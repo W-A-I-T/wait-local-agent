@@ -71,7 +71,9 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Guided discovery, including tenant/principal-scoped persisted sessions with
   bounded one-question turns, explicit transcript evidence, and no-inference
-  next-question state; tenant-scoped provider-neutral `SolutionBlueprint` data,
+  next-question state, resumable tenant/principal-scoped session list/detail
+  views, and bounded transcript review; tenant-scoped provider-neutral
+  `SolutionBlueprint` data,
   architecture projections, workflow design, use-case catalog, delivery
   handoff, governance review, evaluation contracts, monitoring, and bounded
   supervisor/child-agent plans.

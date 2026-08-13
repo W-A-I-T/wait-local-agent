@@ -488,6 +488,76 @@ def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None
     assert foreign.value.status_code == 404
 
 
+def test_guided_discovery_sessions_can_be_listed_and_resumed_with_scope(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            opening_message="Review onboarding",
+        ),
+        _technician(),
+    )
+
+    listed = _get_endpoint(settings, "/consultant/discovery/sessions")(_technician())
+    assert [item["session_id"] for item in listed] == [start["session_id"]]
+    assert listed[0]["transcript"][-1]["role"] == "assistant"
+    assert listed[0]["blueprint_id"] is None
+    assert isinstance(listed[0]["updated_at"], str)
+
+    resumed = _get_endpoint(settings, "/consultant/discovery/sessions/{session_id}")(start["session_id"], _technician())
+    assert resumed["session_id"] == start["session_id"]
+    assert resumed["answered"]["business_goal"] == "Review onboarding"
+    assert resumed["transcript"] == listed[0]["transcript"]
+
+    with pytest.raises(HTTPException) as foreign:
+        _get_endpoint(settings, "/consultant/discovery/sessions/{session_id}")(start["session_id"], _technician("beta"))
+    assert foreign.value.status_code == 404
+
+
+def test_guided_discovery_store_rejects_unscoped_and_invalid_updates(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="client scope"):
+        store.create_consultant_discovery_session(
+            client_id="",
+            principal_id="technician",
+            answers={},
+            transcript=[],
+        )
+    with pytest.raises(ValueError, match="principal identity"):
+        store.create_consultant_discovery_session(
+            client_id="acme",
+            principal_id="",
+            answers={},
+            transcript=[],
+        )
+    assert store.list_consultant_discovery_sessions(client_id="", principal_id="technician") == []
+    assert (
+        store.update_consultant_discovery_session(
+            "missing",
+            client_id="",
+            principal_id="technician",
+            status="active",
+            answers={},
+            transcript=[],
+        )
+        is None
+    )
+    session = store.create_consultant_discovery_session(
+        client_id="acme",
+        principal_id="technician",
+        answers={"business_goal": "Review onboarding"},
+        transcript=[],
+    )
+    with pytest.raises(ValueError, match="status is invalid"):
+        store.update_consultant_discovery_session(
+            session.id,
+            client_id="acme",
+            principal_id="technician",
+            status="invalid",
+            answers={},
+            transcript=[],
+        )
+
+
 def test_completed_guided_discovery_promotes_a_tenant_scoped_blueprint(settings) -> None:
     result = _endpoint(settings, "/consultant/discovery/sessions")(
         DiscoverySessionStartRequest(

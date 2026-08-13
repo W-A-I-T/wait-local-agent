@@ -507,6 +507,7 @@ class ConsultantDiscoverySession:
     status: str
     answers_json: str
     transcript_json: str
+    blueprint_id: str | None
     created_at: str
     updated_at: str
 

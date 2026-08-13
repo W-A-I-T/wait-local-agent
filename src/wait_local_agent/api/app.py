@@ -153,6 +153,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
+    ConsultantDiscoverySession,
     WorkflowRun,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
@@ -4596,6 +4597,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result["blueprint"] = blueprint_view(persisted)
         return result
 
+    def _consultant_discovery_session_view(
+        session: ConsultantDiscoverySession,
+        *,
+        client_id: str,
+    ) -> dict[str, object]:
+        """Rehydrate one persisted session without adding inference or execution."""
+
+        try:
+            answers_value = json.loads(session.answers_json)
+            transcript_value = json.loads(session.transcript_json)
+        except json.JSONDecodeError as exc:
+            raise DiscoveryValidationError("discovery session state is invalid") from exc
+        if not isinstance(answers_value, dict) or not isinstance(transcript_value, list):
+            raise DiscoveryValidationError("discovery session state is invalid")
+        transcript = [item for item in transcript_value if isinstance(item, dict)]
+        result = _consultant_discovery_result(client_id, cast(dict[str, object], answers_value))
+        result["session_status"] = session.status
+        result["session_id"] = session.id
+        result["principal_scope"] = session.principal_id
+        result["transcript"] = transcript
+        result["turn_index"] = max(0, (len(transcript) - 1) // 2)
+        result["blueprint_id"] = session.blueprint_id
+        result["created_at"] = session.created_at
+        result["updated_at"] = session.updated_at
+        return result
+
     @app.post("/consultant/discovery")
     def consultant_discovery(
         payload: DiscoveryRequest,
@@ -4693,14 +4720,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             principal_id=principal_id,
             answers=answered,
             transcript=transcript,
+            blueprint_id=cast(str | None, result.get("blueprint_id")),
         )
-        return {
-            **result,
-            "session_id": session.id,
-            "principal_scope": session.principal_id,
-            "transcript": transcript,
-            "turn_index": 0,
-        }
+        return _consultant_discovery_session_view(session, client_id=scoped_client_id)
+
+    @app.get("/consultant/discovery/sessions")
+    def consultant_discovery_session_list(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = context.approver_id or "api"
+        try:
+            sessions = store.list_consultant_discovery_sessions(
+                client_id=scoped_client_id,
+                principal_id=principal_id,
+            )
+            return [
+                _consultant_discovery_session_view(session, client_id=scoped_client_id)
+                for session in sessions
+            ]
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/consultant/discovery/sessions/{session_id}")
+    def consultant_discovery_session_get(
+        session_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = context.approver_id or "api"
+        session = store.get_consultant_discovery_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="discovery session not found")
+        try:
+            return _consultant_discovery_session_view(session, client_id=scoped_client_id)
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/consultant/discovery/sessions/{session_id}/turn")
     def consultant_discovery_session_turn(
@@ -4765,16 +4830,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status=status,
             answers=answered,
             transcript=transcript,
+            blueprint_id=cast(str | None, result.get("blueprint_id")),
         )
         if updated is None:
             raise HTTPException(status_code=409, detail="discovery session could not be updated")
-        return {
-            **result,
-            "session_id": updated.id,
-            "principal_scope": updated.principal_id,
-            "transcript": transcript,
-            "turn_index": (len(transcript) - 1) // 2,
-        }
+        return _consultant_discovery_session_view(updated, client_id=scoped_client_id)
 
     @app.post("/consultant/environment-discovery")
     def consultant_environment_discovery(
