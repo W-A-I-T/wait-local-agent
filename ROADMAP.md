@@ -47,7 +47,9 @@ credential or undocumented vendor API remains an explicit boundary.
   license evidence and reports observed attention states without claiming
   regulatory compliance or live-provider success. A read-only software-inventory
   review now composes the existing mapped N-sight inventory action; vulnerability
-  classification and remediation remain unsupported.
+  classification and remediation remain unsupported. A bounded inactive-license
+  review now reads disabled-user license assignments through the same Graph
+  boundary; reclamation remains unsupported.
   scheduled/event-triggered operations remain open.
 - Validated static and tenant-published playbooks can now be registered with the
   existing scheduler and execute through the same controlled coordinator.

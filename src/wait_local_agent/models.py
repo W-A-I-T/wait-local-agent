@@ -39,6 +39,7 @@ ActionKind = Literal[
     "m365.authentication_method_removal",
     "m365.license_request",
     "m365.compliance_review",
+    "m365.inactive_license_review",
     "rmm.software_inventory_review",
     "client.recurring_service_review",
 ]

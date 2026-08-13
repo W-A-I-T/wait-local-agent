@@ -50,6 +50,7 @@ def test_msp_playbook_catalog_is_versioned_and_structured() -> None:
         "m365-authentication-method-review",
         "m365-license-review",
         "m365-compliance-review",
+        "m365-inactive-license-review",
         "software-inventory-review",
     }.issubset({playbook.id for playbook in playbooks})
     assert get_msp_playbook("ticket-intake-review") is not None
@@ -209,6 +210,7 @@ def test_software_inventory_playbook_reuses_scoped_n_sight_action(settings) -> N
             "TCK-1001",
         ),
         ("m365-compliance-review", {"limit": 10}, "TCK-1001"),
+        ("m365-inactive-license-review", {"limit": 10}, "TCK-1001"),
         ("software-inventory-review", {"device_id": "server:1"}, "TCK-1001"),
         (
             "automation-opportunity-review",
