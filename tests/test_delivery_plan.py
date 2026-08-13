@@ -7,6 +7,7 @@ import pytest
 from wait_local_agent.delivery_plan import (
     DeliveryPlanError,
     build_consultant_artifact_review_package,
+    build_consultant_delivery_bundle,
     build_consultant_delivery_plan,
 )
 
@@ -44,6 +45,10 @@ def test_delivery_plan_composes_evidence_and_requires_production_approval() -> N
     assert result["review_package"]["credentials_included"] is False
     assert result["review_package"]["artifacts"][0]["credentials_included"] is False
     assert result["review_package_digest"].startswith("sha256:")
+    assert result["delivery_bundle_generated"] is True
+    assert result["delivery_bundle_status"] == "review_only"
+    assert result["delivery_bundle"]["manifest"]["deployable"] is False
+    assert result["delivery_bundle_digest"].startswith("sha256:")
     assert result["deployment_package_generated"] is False
     assert result["deployment_package_status"] == "not_generated"
     assert result["execution_started"] is False
@@ -74,6 +79,136 @@ def test_delivery_plan_review_package_is_deterministic_and_redacted() -> None:
     artifact = first["review_package"]["artifacts"][0]
     assert artifact["client_secret"] == "[redacted]"
     assert artifact["notes"] == "token=[redacted]"
+
+
+def test_delivery_bundle_is_deterministic_redacted_and_explicitly_non_deployable() -> None:
+    review_package, _ = build_consultant_artifact_review_package(
+        client_id="acme",
+        artifacts=[
+            {
+                "format": "wait-local-agent.power-automate-flow-plan",
+                "client_id": "acme",
+                "credentials_included": False,
+                "secret_value": "do-not-export",
+                "execution_started": False,
+                "deployment_started": False,
+            }
+        ],
+    )
+    kwargs: dict[str, Any] = {
+        "client_id": "acme",
+        "architecture": _architecture(),
+        "evaluation": {"production_readiness": "pass", "case_count": 4},
+        "governance": {"client_id": "acme", "status": "pass"},
+        "deployment_targets": ["Power Automate"],
+        "review_package": review_package,
+    }
+
+    first, first_digest = build_consultant_delivery_bundle(**kwargs)
+    second, second_digest = build_consultant_delivery_bundle(**kwargs)
+
+    assert first is not None
+    assert second is not None
+    assert first_digest == second_digest
+    assert first == second
+    assert first["manifest"]["bundle_status"] == "review_only"
+    assert first["manifest"]["deployable"] is False
+    assert first["manifest"]["deployment_started"] is False
+    assert first["files"][0]["path"] == "architecture.json"
+    artifact_file = first["files"][-1]
+    assert artifact_file["content"]["secret_value"] == "[redacted]"
+
+
+def test_delivery_bundle_requires_a_review_only_tenant_scoped_package() -> None:
+    with pytest.raises(DeliveryPlanError, match="outside the requested tenant"):
+        build_consultant_delivery_bundle(
+            client_id="acme",
+            architecture=_architecture(),
+            evaluation={"production_readiness": "pass"},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Power Apps"],
+            review_package={"client_id": "beta", "package_status": "review_only", "artifacts": []},
+        )
+    with pytest.raises(DeliveryPlanError, match="review_only"):
+        build_consultant_delivery_bundle(
+            client_id="acme",
+            architecture=_architecture(),
+            evaluation={"production_readiness": "pass"},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Power Apps"],
+            review_package={"client_id": "acme", "package_status": "deployable", "artifacts": []},
+        )
+
+
+def test_delivery_bundle_rejects_foreign_evidence_and_unsafe_package_state() -> None:
+    base: dict[str, Any] = {
+        "client_id": "acme",
+        "architecture": _architecture(),
+        "evaluation": {"production_readiness": "pass"},
+        "governance": {"client_id": "acme", "status": "pass"},
+        "deployment_targets": ["Power Apps"],
+        "review_package": {"client_id": "acme", "package_status": "review_only", "artifacts": []},
+    }
+    for field, message in (
+        ("architecture", "architecture is outside"),
+        ("evaluation", "evaluation is outside"),
+        ("governance", "governance is outside"),
+    ):
+        invalid = dict(base)
+        invalid[field] = {"client_id": "beta"}
+        with pytest.raises(DeliveryPlanError, match=message):
+            build_consultant_delivery_bundle(**invalid)
+
+    for package, message in (
+        (
+            {"client_id": "acme", "package_status": "review_only", "credentials_included": True, "artifacts": []},
+            "credentials",
+        ),
+        (
+            {"client_id": "acme", "package_status": "review_only", "deployment_started": True, "artifacts": []},
+            "deployment started",
+        ),
+        ({"client_id": "acme", "package_status": "review_only", "artifacts": {}}, "artifacts must be an array"),
+        ({"client_id": "acme", "package_status": "review_only", "artifacts": [object()]}, "JSON-compatible"),
+    ):
+        with pytest.raises(DeliveryPlanError, match=message):
+            build_consultant_delivery_bundle(**{**base, "review_package": package})
+
+
+def test_delivery_bundle_enforces_bounded_source_and_digest_sizes() -> None:
+    base: dict[str, Any] = {
+        "client_id": "acme",
+        "architecture": _architecture(),
+        "evaluation": {"production_readiness": "pass"},
+        "governance": {"client_id": "acme", "status": "pass"},
+        "deployment_targets": ["Power Apps"],
+    }
+    with pytest.raises(DeliveryPlanError, match="at most 32 files"):
+        build_consultant_delivery_bundle(
+            **base,
+            review_package={
+                "client_id": "acme",
+                "package_status": "review_only",
+                "artifacts": [{}] * 30,
+            },
+        )
+    with pytest.raises(DeliveryPlanError, match="delivery bundle may be at most"):
+        oversized_source = dict(base)
+        oversized_source["architecture"] = {**_architecture(), "large": "x" * 260_000}
+        build_consultant_delivery_bundle(
+            **oversized_source,
+            review_package={"client_id": "acme", "package_status": "review_only", "artifacts": []},
+        )
+    with pytest.raises(DeliveryPlanError, match="review package exceeds"):
+        build_consultant_delivery_bundle(
+            **base,
+            review_package={
+                "client_id": "acme",
+                "package_status": "review_only",
+                "artifacts": [],
+                "large": "x" * 260_000,
+            },
+        )
 
 
 def test_delivery_plan_rejects_non_json_review_artifacts() -> None:

@@ -13,6 +13,7 @@ MAX_DELIVERY_TARGETS = 8
 MAX_DELIVERY_CONNECTORS = 16
 MAX_DELIVERY_REVIEW_ARTIFACTS = 16
 MAX_DELIVERY_REVIEW_PACKAGE_BYTES = 256_000
+MAX_DELIVERY_BUNDLE_FILES = 32
 
 
 class DeliveryPlanError(ValueError):
@@ -66,6 +67,14 @@ def build_consultant_delivery_plan(
         client_id=tenant,
         artifacts=[*connectors, *review_items],
     )
+    delivery_bundle, delivery_bundle_digest = build_consultant_delivery_bundle(
+        client_id=tenant,
+        architecture=architecture,
+        evaluation=evaluation,
+        governance=governance,
+        deployment_targets=targets,
+        review_package=review_package,
+    )
     return {
         "format": "wait-local-agent.consultant-delivery-plan",
         "format_version": 1,
@@ -91,6 +100,10 @@ def build_consultant_delivery_plan(
         "review_package": review_package,
         "review_package_generated": review_package is not None,
         "review_package_digest": review_package_digest,
+        "delivery_bundle": delivery_bundle,
+        "delivery_bundle_generated": delivery_bundle is not None,
+        "delivery_bundle_digest": delivery_bundle_digest,
+        "delivery_bundle_status": "review_only" if delivery_bundle is not None else "not_generated",
         "deployment_package_generated": False,
         "deployment_package_status": "not_generated",
         "production_deployment_requires_approval": True,
@@ -176,3 +189,128 @@ def build_consultant_artifact_review_package(
             f"review_artifacts review package may be at most {MAX_DELIVERY_REVIEW_PACKAGE_BYTES} bytes"
         )
     return package, f"sha256:{hashlib.sha256(serialized).hexdigest()}"
+
+
+def build_consultant_delivery_bundle(
+    *,
+    client_id: str,
+    architecture: Mapping[str, object],
+    evaluation: Mapping[str, object],
+    governance: Mapping[str, object],
+    deployment_targets: Sequence[str],
+    review_package: Mapping[str, object] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Assemble a bounded handoff bundle without claiming deployability.
+
+    This is the deterministic handoff between consultant planning and a
+    provider-specific packager. It contains redacted JSON files and their
+    digests for operator review. It is not a Power Platform solution ZIP, does
+    not invoke PAC, and cannot prove provider deployment.
+    """
+
+    tenant = _text(client_id, "client_id", 128)
+    targets = _text_list(deployment_targets, "deployment_targets", MAX_DELIVERY_TARGETS)
+    if architecture.get("client_id") != tenant:
+        raise DeliveryPlanError("architecture is outside the requested tenant")
+    if evaluation.get("client_id") not in {None, tenant}:
+        raise DeliveryPlanError("evaluation is outside the requested tenant")
+    if governance.get("client_id") not in {None, tenant}:
+        raise DeliveryPlanError("governance is outside the requested tenant")
+    if review_package is None:
+        return None, None
+    if review_package.get("client_id") != tenant:
+        raise DeliveryPlanError("review package is outside the requested tenant")
+    if review_package.get("package_status") != "review_only":
+        raise DeliveryPlanError("review package must remain review_only")
+    if review_package.get("credentials_included") is True:
+        raise DeliveryPlanError("review package must not contain credentials")
+    if review_package.get("deployment_started") is True:
+        raise DeliveryPlanError("review package must not report deployment started")
+    raw_artifacts = review_package.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        raise DeliveryPlanError("review package artifacts must be an array")
+    if len(raw_artifacts) + 3 > MAX_DELIVERY_BUNDLE_FILES:
+        raise DeliveryPlanError(f"delivery bundle may contain at most {MAX_DELIVERY_BUNDLE_FILES} files")
+
+    source_files: list[tuple[str, object]] = [
+        ("architecture.json", architecture),
+        ("evaluation.json", evaluation),
+        ("governance.json", governance),
+    ]
+    source_files.extend(
+        (f"artifacts/artifact-{index + 1:02d}.json", artifact)
+        for index, artifact in enumerate(raw_artifacts)
+    )
+    files: list[dict[str, object]] = []
+    for path, value in source_files:
+        redacted = redact_value(value)
+        try:
+            serialized = json.dumps(
+                redacted,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise DeliveryPlanError("delivery bundle sources must contain JSON-compatible values") from exc
+        files.append(
+            {
+                "path": path,
+                "media_type": "application/json",
+                "digest": f"sha256:{hashlib.sha256(serialized).hexdigest()}",
+                "content": redacted,
+            }
+        )
+
+    manifest: dict[str, object] = {
+        "format": "wait-local-agent.consultant-delivery-bundle",
+        "format_version": 1,
+        "client_id": tenant,
+        "bundle_status": "review_only",
+        "deployable": False,
+        "credentials_included": False,
+        "execution_started": False,
+        "deployment_started": False,
+        "deployment_targets": targets,
+        "source_review_package_digest": _review_package_digest(review_package),
+        "files": [
+            {key: value for key, value in file.items() if key != "content"}
+            for file in files
+        ],
+        "open_items": [
+            "A provider-specific packager must produce and validate the official Power Platform solution format.",
+            "Environment, credentials, licensing, permissions, and tenant authorization require operator evidence.",
+            "PAC execution and deployment remain separate approval-gated operations.",
+        ],
+    }
+    bundle: dict[str, Any] = {"manifest": manifest, "files": files}
+    try:
+        serialized_bundle = json.dumps(
+            bundle,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise DeliveryPlanError("delivery bundle must contain JSON-compatible values") from exc
+    if len(serialized_bundle) > MAX_DELIVERY_REVIEW_PACKAGE_BYTES:
+        raise DeliveryPlanError(f"delivery bundle may be at most {MAX_DELIVERY_REVIEW_PACKAGE_BYTES} bytes")
+    return bundle, f"sha256:{hashlib.sha256(serialized_bundle).hexdigest()}"
+
+
+def _review_package_digest(review_package: Mapping[str, object]) -> str:
+    try:
+        serialized = json.dumps(
+            review_package,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise DeliveryPlanError("review package must contain JSON-compatible values") from exc
+    if len(serialized) > MAX_DELIVERY_REVIEW_PACKAGE_BYTES:
+        raise DeliveryPlanError("review package exceeds the bounded size limit")
+    return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
