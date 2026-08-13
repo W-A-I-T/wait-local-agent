@@ -38,6 +38,7 @@ ActionKind = Literal[
     "m365.password_reset",
     "m365.authentication_method_removal",
     "m365.license_request",
+    "m365.compliance_review",
     "client.recurring_service_review",
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]

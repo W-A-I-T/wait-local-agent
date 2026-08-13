@@ -327,6 +327,26 @@ MSP_PLAYBOOKS: tuple[MspPlaybookDefinition, ...] = (
         output_evidence=("workflow_run_ids", "approval_request_id", "immutable_sku_ids"),
     ),
     MspPlaybookDefinition(
+        id="m365-compliance-review",
+        name="Microsoft 365 Compliance Review",
+        version=1,
+        trigger="schedule.daily",
+        description=(
+            "Review bounded tenant-scoped Microsoft Graph device and license evidence; "
+            "observed attention items are reported without claiming regulatory compliance."
+        ),
+        risk_level="low",
+        steps=(
+            _workflow_step(
+                "compliance",
+                "M365 compliance evidence",
+                "m365-compliance-review",
+                "Read managed-device and tenant-license evidence through the existing Graph boundary.",
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "connector_read_evidence", "observed_findings"),
+    ),
+    MspPlaybookDefinition(
         id="qbr-review",
         name="Quarterly Business Review",
         version=1,

@@ -63,6 +63,7 @@ from wait_local_agent.smart_actions import (
     ItGlueDocumentationSearchAction,
     KnowledgeSearchAction,
     M365AuthenticationMethodDeleteAction,
+    M365ComplianceReviewAction,
     M365GroupMembershipAction,
     M365IdentityLookupAction,
     M365LicenseChangeAction,
@@ -236,6 +237,70 @@ def _action_context(
         provider_available=available,
         collector_service=collector_service,
     )
+
+
+def test_m365_compliance_review_reports_observed_findings_and_requires_scope(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
+            ConnectorReadResult("ready", "ok", 2),
+            [
+                M365GraphManagedDevice(
+                    "device-1", "user-1", "Laptop", "company", "", "", "Windows",
+                    "noncompliant", "mdm", "11", True, "registered", True,
+                    "alice@example.test", "Alice", "Model", "Maker",
+                ),
+                M365GraphManagedDevice(
+                    "device-2", "user-2", "Desktop", "company", "", "", "Windows",
+                    "compliant", "mdm", "11", True, "registered", True,
+                    "bob@example.test", "Bob", "Model", "Maker",
+                ),
+            ],
+        ),
+        list_subscribed_skus=lambda: M365GraphLicenseReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphSubscribedSku("license-1", "sku-1", "BUSINESS", "Suspended", "User", 4, 2, 0, 0, 0)],
+        ),
+    )
+    context = replace(_action_context(store, settings), client_id="acme", m365_client=provider)
+
+    result = M365ComplianceReviewAction().run(context, {"ticket_id": "TCK-1001", "limit": 2})
+
+    assert result.status == "success"
+    assert result.output["connector_status"] == "ready"
+    findings = cast(list[dict[str, object]], result.output["findings"])
+    assert {finding["type"] for finding in findings} == {
+        "managed_device_compliance",
+        "tenant_license_status",
+        "tenant_license_capacity",
+    }
+    assert result.evidence[0]["client_id"] == "acme"
+    assert M365ComplianceReviewAction().run(context, {}).status == "failed"
+
+
+def test_m365_compliance_review_fails_closed_on_partial_graph_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
+            ConnectorReadResult("ready", "ok", 0), []
+        ),
+        list_subscribed_skus=lambda: M365GraphLicenseReadResponse(
+            ConnectorReadResult("not_configured", "Graph unavailable", 0), []
+        ),
+    )
+    context = replace(_action_context(store, settings), client_id="acme", m365_client=provider)
+
+    result = M365ComplianceReviewAction().run(context, {"ticket_id": "TCK-1001"})
+
+    assert result.status == "failed"
+    assert result.output["connector_status"] == "partial"
+    assert result.output["findings"] == []
 
 
 def test_teams_context_action_is_bounded_and_read_only(settings) -> None:
@@ -1133,9 +1198,10 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "halopsa-ticket-update-fields",
         "hudu-documentation-search",
         "itglue-documentation-search",
-        "knowledge-search",
-        "m365-authentication-method-remove",
-        "m365-group-membership",
+            "knowledge-search",
+            "m365-authentication-method-remove",
+            "m365-compliance-review",
+            "m365-group-membership",
         "m365-identity-lookup",
         "m365-license-change",
         "m365-live-context",

@@ -10,7 +10,7 @@ The current built-in catalog includes:
 - ticket intake, resolution, dispatch, stale/SLA, and security-response reviews;
 - inactive-ticket follow-up review;
 - Microsoft 365 onboarding, offboarding, password-reset, explicit
-  authentication-method removal, and license reviews; and
+  authentication-method removal, license, and read-only compliance reviews; and
 - QBR, automation-opportunity, and recurring-service-review reports.
 
 Preview is side-effect free. It validates the complete ordered definition,
@@ -130,9 +130,11 @@ The broader MSP issue remains open. Built-in versioned definitions and the
 preview/controlled-run contract plus the first tenant-edited aggregate
 publish/disable/restore/compare lifecycle slice plus scheduled playbook
 registration and execution through the existing scheduler are now present.
-Richer provider-backed step mappings, historical/provider ingestion, M365
-compliance checks, and software-inventory review remain follow-up work. These
-new M365 playbooks prepare and gate requests; they
+Richer provider-backed step mappings, historical/provider ingestion, and
+software-inventory review remain follow-up work. The M365 compliance review
+reads bounded managed-device and tenant-license Graph evidence and classifies
+only observed device/license attention states; it does not assert regulatory
+compliance or provider success. The other new M365 playbooks prepare and gate requests; they
 do not claim a live directory mutation without configured provider evidence. The
 existing workflow gallery continues to provide lifecycle operations for
 individual templates.
