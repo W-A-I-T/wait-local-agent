@@ -66,6 +66,7 @@ from wait_local_agent.smart_actions import (
     M365ComplianceReviewAction,
     M365GroupMembershipAction,
     M365IdentityLookupAction,
+    M365InactiveLicenseReviewAction,
     M365LicenseChangeAction,
     M365LiveContextAction,
     M365MailboxSettingsAction,
@@ -302,6 +303,116 @@ def test_m365_compliance_review_fails_closed_on_partial_graph_evidence(settings)
     assert result.status == "failed"
     assert result.output["connector_status"] == "partial"
     assert result.output["findings"] == []
+
+
+def test_m365_inactive_license_review_reports_disabled_user_assignments(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 2),
+            [
+                M365GraphUser("user-1", "Alice", "alice@example.test", "", False, "", ""),
+                M365GraphUser("user-2", "Bob", "bob@example.test", "", True, "", ""),
+            ],
+        ),
+        list_license_details=lambda identity, page_size: M365GraphLicenseDetailReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphLicenseDetail("detail-1", "sku-1", "BUSINESS", ())],
+        ),
+    )
+    context = replace(_action_context(store, settings), client_id="acme", m365_client=provider)
+
+    result = M365InactiveLicenseReviewAction().run(context, {"ticket_id": "TCK-1001", "limit": 2})
+
+    assert result.status == "success"
+    assert result.output["user_count"] == 2
+    assert result.output["inactive_user_count"] == 1
+    findings = cast(list[dict[str, object]], result.output["findings"])
+    assert findings[0]["type"] == "inactive_user_license_assignment"
+    assert findings[0]["user_id"] == "user-1"
+    assert result.evidence[1]["operation"] == "user_license_details.list"
+
+
+def test_m365_inactive_license_review_fails_closed_on_detail_failure(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphUser("user-1", "Alice", "alice@example.test", "", False, "", "")],
+        ),
+        list_license_details=lambda identity, page_size: M365GraphLicenseDetailReadResponse(
+            ConnectorReadResult("failed", "Graph denied", 0), []
+        ),
+    )
+    context = replace(_action_context(store, settings), client_id="acme", m365_client=provider)
+
+    result = M365InactiveLicenseReviewAction().run(context, {"ticket_id": "TCK-1001"})
+
+    assert result.status == "failed"
+    assert result.output["connector_status"] == "partial"
+    assert result.output["inactive_assignments"] == []
+
+
+def test_m365_inactive_license_review_rejects_invalid_and_malformed_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    context = replace(_action_context(store, settings), client_id="acme")
+    action = M365InactiveLicenseReviewAction()
+
+    assert action.run(context, {"ticket_id": "TCK-1001", "unexpected": True}).status == "failed"
+    assert action.run(context, {"ticket_id": "TCK-1001", "limit": 0}).status == "failed"
+
+    unavailable = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("failed", "Graph unavailable", 0), []
+        )
+    )
+    assert action.run(replace(context, m365_client=unavailable), {"ticket_id": "TCK-1001"}).output[
+        "connector_status"
+    ] == "failed"
+
+    malformed_users = SimpleNamespace(
+        list_users=lambda identity, page_size: SimpleNamespace(
+            result=ConnectorReadResult("ready", "ok", 1), items=["not-a-user"]
+        )
+    )
+    assert action.run(replace(context, m365_client=malformed_users), {"ticket_id": "TCK-1001"}).status == "failed"
+
+    missing_id = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphUser("", "Alice", "alice@example.test", "", False, "", "")],
+        )
+    )
+    assert action.run(replace(context, m365_client=missing_id), {"ticket_id": "TCK-1001"}).status == "failed"
+
+    detail_exception = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphUser("user-1", "Alice", "alice@example.test", "", False, "", "")],
+        ),
+        list_license_details=lambda identity, page_size: (_ for _ in ()).throw(RuntimeError("provider error")),
+    )
+    assert action.run(replace(context, m365_client=detail_exception), {"ticket_id": "TCK-1001"}).status == "failed"
+
+    malformed_details = SimpleNamespace(
+        list_users=lambda identity, page_size: M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphUser("user-1", "Alice", "alice@example.test", "", False, "", "")],
+        ),
+        list_license_details=lambda identity, page_size: SimpleNamespace(
+            result=ConnectorReadResult("ready", "ok", 1), items=["not-a-license"]
+        ),
+    )
+    assert action.run(replace(context, m365_client=malformed_details), {"ticket_id": "TCK-1001"}).status == "failed"
 
 
 def test_nsight_software_inventory_accepts_only_a_tenant_scoped_workflow_anchor(settings) -> None:
@@ -1224,10 +1335,11 @@ def test_registry_lists_all_seed_actions(settings) -> None:
         "hudu-documentation-search",
         "itglue-documentation-search",
             "knowledge-search",
-            "m365-authentication-method-remove",
-            "m365-compliance-review",
-            "m365-group-membership",
-        "m365-identity-lookup",
+                "m365-authentication-method-remove",
+                "m365-compliance-review",
+                    "m365-group-membership",
+            "m365-identity-lookup",
+                        "m365-inactive-license-review",
         "m365-license-change",
         "m365-live-context",
         "m365-mail-message-delete",

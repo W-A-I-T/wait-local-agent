@@ -10,7 +10,8 @@ The current built-in catalog includes:
 - ticket intake, resolution, dispatch, stale/SLA, and security-response reviews;
 - inactive-ticket follow-up review;
 - Microsoft 365 onboarding, offboarding, password-reset, explicit
-  authentication-method removal, license, and read-only compliance reviews; and
+  authentication-method removal, license, read-only compliance, and
+  inactive-license reviews; and
 - read-only software-inventory review for one explicitly mapped N-sight device; and
 - QBR, automation-opportunity, and recurring-service-review reports.
 
@@ -137,6 +138,9 @@ reads bounded managed-device and tenant-license Graph evidence and classifies
 only observed device/license attention states; it does not assert regulatory
 compliance or provider success. The other new M365 playbooks prepare and gate requests; they
 do not claim a live directory mutation without configured provider evidence. The
+inactive-license review reads the first bounded page of users, then explicitly
+looks up license details only for disabled users; partial user/detail evidence
+fails closed and the output is a review candidate, never an automatic reclaim.
 software-inventory review reuses the existing N-sight mapped-device inventory
 read and does not claim vulnerability status, installation/removal, or
 remediation. The

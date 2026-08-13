@@ -844,7 +844,7 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
     assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
     assert templates.status_code == 200
-    assert len(templates.json()) == 23
+    assert len(templates.json()) == 24
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
     assert any(item["tool_id"] == "dispatch-suggestion" for item in templates.json())
     assert {
@@ -856,16 +856,23 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
             "m365-authentication-method-removal-review",
         "m365-license-request-review",
         "m365-compliance-review",
+        "m365-inactive-license-review",
     }
     assert all(
         item["approval_required"]
         for item in templates.json()
-        if item["id"].startswith("m365-") and item["id"] != "m365-compliance-review"
+        if item["id"].startswith("m365-")
+        and item["id"] not in {"m365-compliance-review", "m365-inactive-license-review"}
     )
     assert next(
         item["approval_required"]
         for item in templates.json()
         if item["id"] == "m365-compliance-review"
+    ) is False
+    assert next(
+        item["approval_required"]
+        for item in templates.json()
+        if item["id"] == "m365-inactive-license-review"
     ) is False
     sla_template = next(item for item in templates.json() if item["id"] == "ticket-sla-risk-review")
     assert sla_template["payload_schema"]["required"] == ["thresholds_minutes"]

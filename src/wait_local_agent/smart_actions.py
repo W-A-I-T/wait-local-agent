@@ -1987,6 +1987,174 @@ class M365ComplianceReviewAction:
         )
 
 
+class M365InactiveLicenseReviewAction:
+    manifest = SmartActionManifest(
+        action_id="m365-inactive-license-review",
+        title="Microsoft 365 inactive-license review",
+        description=(
+            "Read bounded Microsoft Graph user and license-detail evidence and identify "
+            "licenses still assigned to disabled users without proposing reclamation."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id"],
+            "properties": {
+                "ticket_id": {"type": "string", "minLength": 1, "maxLength": 200},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={
+            "inactive_assignments": "array",
+            "findings": "array",
+            "user_count": "integer",
+            "inactive_user_count": "integer",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=8,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "limit"}:
+            return _failed("M365 inactive-license review payload contains unsupported fields")
+        if _ticket_from_payload(context.store, payload, context.client_id) is None:
+            return _failed("ticket_id must identify an existing tenant-scoped ticket")
+        limit = payload.get("limit", 50)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            return _failed("limit must be an integer between 1 and 50")
+
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(M365GraphReadProvider, context.m365_client or M365GraphClient(context.settings))
+        try:
+            user_response = provider.list_users(identity=None, page_size=limit)
+        except Exception:
+            return _failed("Microsoft Graph inactive-license review failed")
+
+        user_result = getattr(user_response, "result", None)
+        user_status = str(getattr(user_result, "status", "failed"))
+        if user_status != "ready":
+            return ActionResult(
+                status="failed",
+                output={
+                    "inactive_assignments": [],
+                    "findings": [],
+                    "user_count": 0,
+                    "inactive_user_count": 0,
+                    "connector_status": "failed",
+                },
+                error_detail=redact_text(
+                    str(getattr(user_result, "message", "Microsoft Graph user evidence is unavailable"))
+                )[:240],
+            )
+
+        users = getattr(user_response, "items", None)
+        if (
+            not isinstance(users, list)
+            or len(users) > limit
+            or any(not hasattr(item, "__dataclass_fields__") for item in users)
+        ):
+            return _failed("Microsoft Graph returned malformed user evidence")
+
+        inactive_assignments: list[dict[str, object]] = []
+        for user in users:
+            if getattr(user, "account_enabled", None) is not False:
+                continue
+            identity = str(getattr(user, "id", "")).strip()
+            if not identity:
+                return _failed("Microsoft Graph returned a disabled user without an immutable ID")
+            try:
+                license_response = provider.list_license_details(identity=identity, page_size=limit)
+            except Exception:
+                return _failed("Microsoft Graph inactive-license detail lookup failed")
+            license_result = getattr(license_response, "result", None)
+            license_status = str(getattr(license_result, "status", "failed"))
+            if license_status != "ready":
+                return ActionResult(
+                    status="failed",
+                    output={
+                        "inactive_assignments": [],
+                        "findings": [],
+                        "user_count": len(users),
+                        "inactive_user_count": 0,
+                        "connector_status": "partial",
+                    },
+                    error_detail=redact_text(
+                        str(getattr(license_result, "message", "Microsoft Graph license evidence is unavailable"))
+                    )[:240],
+                )
+            license_items = getattr(license_response, "items", None)
+            if (
+                not isinstance(license_items, list)
+                or len(license_items) > limit
+                or any(not hasattr(item, "__dataclass_fields__") for item in license_items)
+            ):
+                return _failed("Microsoft Graph returned malformed license evidence")
+            if not license_items:
+                continue
+            inactive_assignments.append(
+                {
+                    "user": {
+                        "id": identity,
+                        "display_name": str(getattr(user, "display_name", "")),
+                        "user_principal_name": str(getattr(user, "user_principal_name", "")),
+                        "account_enabled": False,
+                    },
+                    "licenses": [
+                        cast(dict[str, object], redact_value(asdict(item))) for item in license_items[:limit]
+                    ],
+                }
+            )
+
+        findings: list[dict[str, object]] = []
+        for assignment in inactive_assignments:
+            user = cast(dict[str, object], assignment["user"])
+            licenses = cast(list[object], assignment["licenses"])
+            findings.append(
+                {
+                    "type": "inactive_user_license_assignment",
+                    "severity": "review",
+                    "user_id": user["id"],
+                    "license_count": len(licenses),
+                    "message": (
+                        "Disabled user still has one or more observed license assignments; "
+                        "review before reclaiming."
+                    ),
+                }
+            )
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_read",
+                "connector": "m365",
+                "operation": "users.list",
+                "client_id": context.client_id,
+                "count": len(users),
+            },
+            {
+                "type": "connector_read",
+                "connector": "m365",
+                "operation": "user_license_details.list",
+                "client_id": context.client_id,
+                "count": len(inactive_assignments),
+            },
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "inactive_assignments": inactive_assignments,
+                "findings": findings,
+                "user_count": len(users),
+                "inactive_user_count": len(inactive_assignments),
+                "connector_status": "ready",
+            },
+            evidence=evidence,
+        )
+
+
 class TeamsGraphContextAction:
     manifest = SmartActionManifest(
         action_id="m365-teams-context",
@@ -8839,6 +9007,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ScalePadAssessmentLookupAction(),
         M365LiveContextAction(),
         M365ComplianceReviewAction(),
+        M365InactiveLicenseReviewAction(),
         TeamsGraphContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),

@@ -76,7 +76,10 @@ provider success remain separate boundaries. Tenant-scoped event subscriptions
 now reuse the existing EventDispatcher and playbook coordinator for supported
 event types, persist bounded playbook lineage and attempt state, and preserve
 approval pauses. They do not imply live provider success or replace the
-existing event-agent runtime.
+existing event-agent runtime. The M365 compliance review and inactive-license
+review remain read-only Graph evidence slices: the latter checks disabled users
+against bounded per-user license details and fails closed on partial evidence;
+neither proposes or performs license reclamation.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 

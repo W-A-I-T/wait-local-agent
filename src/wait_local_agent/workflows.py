@@ -416,6 +416,24 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
         },
     ),
     WorkflowTemplate(
+        id="m365-inactive-license-review",
+        name="Microsoft 365 Inactive-License Review",
+        trigger="schedule.daily",
+        description=(
+            "Read disabled-user license assignments through Microsoft Graph and report "
+            "review candidates without proposing license reclamation."
+        ),
+        action_type="m365.inactive_license_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("user_count", "inactive_user_count", "findings", "connector_status"),
+        tool_id="m365-inactive-license-review",
+        payload_schema={
+            "type": "object",
+            "properties": {"limit": "integer from 1 to 50 (default: 50)"},
+        },
+    ),
+    WorkflowTemplate(
         id="software-inventory-review",
         name="Software Inventory Review",
         trigger="schedule.daily",
@@ -672,6 +690,10 @@ def _bounded_workflow_payload(
         ):
             raise ValueError("follow_up_after_days must be an integer between 1 and 90")
     elif template.id == "m365-compliance-review":
+        limit = safe_payload.get("limit", 50)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise ValueError("limit must be an integer between 1 and 50")
+    elif template.id == "m365-inactive-license-review":
         limit = safe_payload.get("limit", 50)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
             raise ValueError("limit must be an integer between 1 and 50")

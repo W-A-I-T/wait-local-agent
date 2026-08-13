@@ -368,6 +368,26 @@ MSP_PLAYBOOKS: tuple[MspPlaybookDefinition, ...] = (
         output_evidence=("workflow_run_ids", "rmm_software_inventory", "mapped_device_scope"),
     ),
     MspPlaybookDefinition(
+        id="m365-inactive-license-review",
+        name="Microsoft 365 Inactive-License Review",
+        version=1,
+        trigger="schedule.daily",
+        description=(
+            "Review observed license assignments for disabled Microsoft 365 users; "
+            "reclamation is never inferred or executed."
+        ),
+        risk_level="low",
+        steps=(
+            _workflow_step(
+                "inactive-licenses",
+                "Inactive license assignments",
+                "m365-inactive-license-review",
+                "Read disabled-user license assignments through the existing Graph boundary.",
+            ),
+        ),
+        output_evidence=("workflow_run_ids", "connector_read_evidence", "observed_findings"),
+    ),
+    MspPlaybookDefinition(
         id="qbr-review",
         name="Quarterly Business Review",
         version=1,

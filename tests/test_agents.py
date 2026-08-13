@@ -77,6 +77,7 @@ def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
         "knowledge-search",
             "m365-identity-lookup",
             "m365-compliance-review",
+            "m365-inactive-license-review",
             "m365-live-context",
         "m365-teams-context",
         "m365-authentication-method-remove",
