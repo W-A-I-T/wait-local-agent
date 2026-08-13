@@ -7,6 +7,11 @@ artifacts only:
 scripts/demo_consultant_mode.sh
 ```
 
+The launcher uses an installed `wait-local-agent` command when available and
+otherwise falls back to `uv run wait-local-agent`, so the walkthrough works
+from a repository checkout after the project dependencies are installed. CI
+runs the same script against a temporary SQLite database.
+
 It lists the Teams use case, assesses explicit discovery evidence, builds a
 reviewable Power Apps/Dataverse artifact manifest and Power Automate plan, prepares a
 review-only OpenAPI custom-connector package and Copilot Studio handoff, prints a staged `pac solution`
