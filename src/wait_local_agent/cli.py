@@ -3573,6 +3573,181 @@ def list_agents() -> None:
         )
 
 
+@agents_app.command("run")
+def run_agent(
+    agent_id: str,
+    entity_id: str,
+    input_payload: Annotated[str | None, typer.Option("--input", help="JSON object or JSON file.")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Run one reviewed agent definition and print its bounded result."""
+
+    settings = load_settings()
+    store = Store(settings.data_path)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    if not scoped_client_id and context.role < Role.ADMIN:
+        raise typer.BadParameter("authenticated principal has no tenant")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    definition = service.get(agent_id, scoped_client_id)
+    if definition is None:
+        raise typer.BadParameter("agent not found")
+    try:
+        result = service.run(
+            definition,
+            entity_id=entity_id,
+            actor=context.approver_id or "cli",
+            input_payload=_load_smart_action_payload(input_payload),
+            actor_role=context.role,
+        )
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+
+
+@agents_app.command("show-run")
+def show_agent_run(
+    run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Show persisted agent state, lineage, and redacted final evidence."""
+
+    settings = load_settings()
+    store = Store(settings.data_path)
+    scoped_client_id = _cli_execution_scope(settings, token, client_id)
+    run = store.get_agent_run(run_id, client_id=scoped_client_id)
+    if run is None:
+        raise typer.BadParameter("agent run not found")
+    typer.echo(json.dumps(_agent_run_cli_view(run), sort_keys=True, indent=2))
+
+
+@agents_app.command("cancel")
+def cancel_agent_run(
+    run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Cancel a queued or approval-paused agent run."""
+
+    settings = load_settings()
+    store = Store(settings.data_path)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    run, definition = _agent_cli_run_context(store, settings, run_id, scoped_client_id)
+    try:
+        result = AgentService(store, settings, SmartActionService(store, settings)).cancel(
+            definition,
+            run,
+            actor=context.approver_id or "cli",
+            approver_role=context.role,
+        )
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+
+
+@agents_app.command("retry")
+def retry_agent_run(
+    run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Retry a failed or cancelled agent run within its persisted retry cap."""
+
+    settings = load_settings()
+    store = Store(settings.data_path)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    run, definition = _agent_cli_run_context(store, settings, run_id, scoped_client_id)
+    try:
+        result = AgentService(store, settings, SmartActionService(store, settings)).retry(
+            definition,
+            run,
+            actor=context.approver_id or "cli",
+            actor_role=context.role,
+        )
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps({"retry_of_run_id": run.id, **asdict(result)}, sort_keys=True, indent=2))
+
+
+@agents_app.command("resume")
+def resume_agent_run(
+    run_id: int,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Resume an approval-paused agent run using the authenticated approver."""
+
+    settings = load_settings()
+    store = Store(settings.data_path)
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = client_id if context.role >= Role.ADMIN else context.client_id
+    run, definition = _agent_cli_run_context(store, settings, run_id, scoped_client_id)
+    try:
+        result = AgentService(store, settings, SmartActionService(store, settings)).resume(
+            definition,
+            run,
+            approver=context.approver_id or "cli",
+            approver_role=context.role,
+        )
+    except (PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(asdict(result), sort_keys=True, indent=2))
+
+
+def _agent_cli_run_context(
+    store: Store,
+    settings,
+    run_id: int,
+    client_id: str | None,
+):
+    run = store.get_agent_run(run_id, client_id=client_id)
+    if run is None:
+        raise typer.BadParameter("agent run not found")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    definition = service.get(run.agent_id, run.client_id)
+    if definition is None:
+        raise typer.BadParameter("agent definition not found")
+    return run, definition
+
+
+def _agent_run_cli_view(run) -> dict[str, object]:
+    try:
+        state = json.loads(run.state_json)
+    except json.JSONDecodeError:
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    final_result = state.get("final_result") if isinstance(state.get("final_result"), dict) else {}
+    retry_count = state.get("retry_count") if isinstance(state.get("retry_count"), int) else 0
+    retry_of_run_id = state.get("retry_of_run_id") if isinstance(state.get("retry_of_run_id"), int) else None
+    history = final_result.get("history") if isinstance(final_result, dict) else {}
+    return cast(
+        dict[str, object],
+        redact_value(
+            {
+                "id": run.id,
+                "agent_id": run.agent_id,
+                "entity_id": run.entity_id,
+                "actor": run.actor,
+                "status": run.status,
+                "current_step": run.current_step,
+                "state": state,
+                "revision_version": run.revision_version,
+                "client_id": run.client_id,
+                "lineage": {
+                    "retry_count": retry_count,
+                    "retry_of_run_id": retry_of_run_id,
+                    "partial_history": history if isinstance(history, dict) else {},
+                },
+            }
+        ),
+    )
+
+
 @knowledge_app.command("ingest")
 def ingest_knowledge(
     path: Path,

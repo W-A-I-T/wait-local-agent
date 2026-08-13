@@ -459,6 +459,39 @@ def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     assert "failure_policies=ticket-triage:retry:retries=1" in result.output
 
 
+def test_agents_run_and_show_run_share_persisted_failure_evidence(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    settings = load_settings()
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    definition = service.create(
+        name="CLI triage",
+        description="CLI bounded run",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id=None,
+    )
+
+    result = CliRunner().invoke(app, ["agents", "run", definition.id, "TCK-1001"])
+
+    assert result.exit_code == 0, result.output
+    run_payload = json.loads(result.output)
+    assert run_payload["status"] == "completed"
+    assert run_payload["final_result"]["status"] == "success"
+    detail = CliRunner().invoke(app, ["agents", "show-run", str(run_payload["run_id"])])
+    assert detail.exit_code == 0, detail.output
+    detail_payload = json.loads(detail.output)
+    assert detail_payload["status"] == "completed"
+    assert detail_payload["state"]["final_result"]["history"]["completed_steps"] == 1
+
+
 def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()

@@ -265,7 +265,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   Fallback cycles and unconfigured targets are rejected; attempts, policy, and
   partial history remain redacted and auditable. The API run detail, CLI agent
   listing, execution metadata, audit event, and Agents screen expose the same
-  bounded policy outcome.
+  bounded policy outcome. The CLI also exposes `agents run`, `agents show-run`,
+  `agents cancel`, `agents retry`, and `agents resume` through the same
+  tenant-scoped AgentService lifecycle.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, delivery history APIs, and an operator-triggered

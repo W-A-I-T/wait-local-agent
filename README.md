@@ -120,6 +120,10 @@ The consultant surfaces in this repository are deterministic and review-oriented
   input, technician escalation, or blocked-for-review. Invalid fallback targets
   and cycles are rejected; the API, CLI, Agents UI, execution metadata, and
   audit trail retain the same redacted policy and partial-history evidence.
+- The CLI exposes the same reviewed agent lifecycle through `agents run`,
+  `agents show-run`, `agents cancel`, `agents retry`, and `agents resume`; these
+  commands use the authenticated tenant/role scope and print the persisted
+  bounded result rather than a separate execution path.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.
