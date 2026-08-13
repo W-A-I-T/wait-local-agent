@@ -76,5 +76,25 @@ observation mode:
 wait-local-agent microsoft evaluation run evaluation.json
 ```
 
+The same command accepts the controlled execution shape used by the API. It
+reuses a tenant-scoped persisted agent and the existing AgentService, and
+requires local demo mode with writes disabled:
+
+```text
+{
+  "test_set": [...],
+  "execution": {
+    "agent_id": "onboarding-fixture",
+    "entity_id": "TCK-001",
+    "client_id": "demo-client",
+    "input": {}
+  }
+}
+```
+
+Use `--token` (or `WAIT_CLI_TOKEN`) when the local CLI is configured with an
+authenticated role. Controlled execution remains isolated from production and
+does not enable writes or bypass approval.
+
 A result is `pass` only when every bounded dimension reaches 100%; otherwise it
 is `needs_review`. Observation mode always reports `execution_started: false`.

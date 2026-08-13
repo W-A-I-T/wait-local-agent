@@ -57,7 +57,7 @@ unverifiable product claim.
 
 ## Validation record
 
-- UI tests: 24 files, 104 tests passed.
+- UI tests: 24 files, 106 tests passed.
 - UI production build: passed.
 - Real-browser smoke on `main` after IT Glue content-search merge: `/agents`
   loaded with `/agents` and `/tools` returning `200`; the IT Glue documentation
@@ -114,6 +114,18 @@ unverifiable product claim.
   deployment remain false. This is not evidence that the broader route,
   responsive, accessibility, denied, offline, or provider-error matrix is
   complete.
+- Current browser-validation slice on 2026-08-12: Firefox
+  exercised all 20 operator routes against a local demo-safe API with the
+  request limiter disabled for deterministic navigation; every route exposed
+  its expected primary heading, the browser reported 98 console messages with
+  zero errors and zero warnings, and the consultant route rendered at both
+  1280x900 and 390x844. The consultant form regression was exercised with no
+  existing blueprint and an entered workspace ID: the API received that
+  explicit tenant value, returned the missing-evidence state, and guided
+  discovery advanced only after an explicit answer. The local demo reported
+  no token, deterministic provider mode, disabled remote fallback, and no
+  pending approvals; this does not prove external provider access, production
+  deployment, accessibility conformance, or live write execution.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.

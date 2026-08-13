@@ -160,7 +160,7 @@ export function Consultant() {
 
   async function assessDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = currentClientId();
     if (!clientId || !discoveryGoal.trim()) {
       setMessage("A tenant scope and business goal are required before assessing discovery.");
       return;
@@ -197,7 +197,7 @@ export function Consultant() {
   }
 
   async function startGuidedDiscovery() {
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = currentClientId();
     if (!clientId || !discoveryGoal.trim()) {
       setMessage("A tenant scope and business goal are required before starting guided discovery.");
       return;
@@ -232,7 +232,7 @@ export function Consultant() {
   async function answerGuidedDiscovery() {
     const question = discoverySession?.next_question;
     if (!question) return;
-    const clientId = selected?.client_id ?? scopedClientId ?? (discoveryClientId.trim() || blueprints[0]?.client_id);
+    const clientId = currentClientId();
     if (!clientId) return;
     const answer = question.kind === "boolean"
       ? guidedBooleanAnswer
@@ -310,7 +310,7 @@ export function Consultant() {
 
   async function buildPowerAppsArtifact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const clientId = selected?.client_id ?? scopedClientId ?? blueprints[0]?.client_id;
+    const clientId = currentClientId();
     if (!clientId || !powerAppsName.trim()) {
       setMessage("Choose a blueprint tenant and provide an app name before building the artifact.");
       return;
@@ -342,6 +342,10 @@ export function Consultant() {
 
   const selected = blueprints.find((blueprint) => blueprint.id === selectedId);
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
+
+  function currentClientId() {
+    return selected?.client_id?.trim() || scopedClientId.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+  }
 
   return (
     <div className="screen-stack">
