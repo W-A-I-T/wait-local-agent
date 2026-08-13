@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import wait_local_agent.consultant_use_cases as consultant_use_cases_module
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 
 
@@ -31,3 +32,10 @@ def test_use_case_catalog_filters_without_exposing_mutable_source() -> None:
 def test_use_case_catalog_rejects_unknown_category() -> None:
     with pytest.raises(UseCaseCatalogError, match="category must be one of"):
         list_consultant_use_cases("unknown")
+
+
+def test_use_case_catalog_enforces_output_bound(monkeypatch) -> None:
+    monkeypatch.setattr(consultant_use_cases_module, "MAX_USE_CASES", 4)
+
+    with pytest.raises(UseCaseCatalogError, match="exceeds the configured bound"):
+        list_consultant_use_cases()
