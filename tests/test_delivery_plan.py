@@ -35,8 +35,53 @@ def test_delivery_plan_composes_evidence_and_requires_production_approval() -> N
     assert result["summary"]["agents_designed"] == 1
     assert result["summary"]["test_scenarios"] == 48
     assert result["production_deployment_requires_approval"] is True
+    assert result["review_package_generated"] is True
+    assert result["review_package"]["package_status"] == "review_only"
+    assert result["review_package"]["credentials_included"] is False
+    assert result["review_package"]["artifacts"][0]["credentials_included"] is False
+    assert result["review_package_digest"].startswith("sha256:")
+    assert result["deployment_package_generated"] is False
+    assert result["deployment_package_status"] == "not_generated"
     assert result["execution_started"] is False
     assert result["deployment_started"] is False
+
+
+def test_delivery_plan_review_package_is_deterministic_and_redacted() -> None:
+    kwargs: dict[str, Any] = {
+        "client_id": "acme",
+        "architecture": _architecture(),
+        "evaluation": {"production_readiness": "pass", "case_count": 1},
+        "governance": {"client_id": "acme", "status": "pass"},
+        "deployment_targets": ["Teams"],
+        "connector_artifacts": [
+            {
+                "connector_id": "m365",
+                "credentials_included": False,
+                "client_secret": "do-not-export",
+                "notes": "token=do-not-export",
+            }
+        ],
+    }
+
+    first = build_consultant_delivery_plan(**kwargs)
+    second = build_consultant_delivery_plan(**kwargs)
+
+    assert first["review_package_digest"] == second["review_package_digest"]
+    artifact = first["review_package"]["artifacts"][0]
+    assert artifact["client_secret"] == "[redacted]"
+    assert artifact["notes"] == "token=[redacted]"
+
+
+def test_delivery_plan_rejects_non_json_review_artifacts() -> None:
+    with pytest.raises(DeliveryPlanError, match="JSON-compatible"):
+        build_consultant_delivery_plan(
+            client_id="acme",
+            architecture=_architecture(),
+            evaluation={"production_readiness": "pass", "case_count": 1},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Teams"],
+            connector_artifacts=[{"connector_id": "m365", "value": object()}],
+        )
 
 
 def test_delivery_plan_reports_unready_evidence_and_rejects_foreign_architecture() -> None:

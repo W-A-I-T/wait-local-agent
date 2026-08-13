@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from wait_local_agent.reports.renderers import redact_value
+
 MAX_DELIVERY_TARGETS = 8
 MAX_DELIVERY_CONNECTORS = 16
+MAX_DELIVERY_REVIEW_PACKAGE_BYTES = 256_000
 
 
 class DeliveryPlanError(ValueError):
@@ -48,6 +53,7 @@ def build_consultant_delivery_plan(
     case_count = evaluation.get("case_count", 0)
     if isinstance(case_count, bool) or not isinstance(case_count, int) or case_count < 0:
         raise DeliveryPlanError("evaluation.case_count must be a non-negative integer")
+    review_package, review_package_digest = _build_review_package(tenant, connectors)
     return {
         "format": "wait-local-agent.consultant-delivery-plan",
         "format_version": 1,
@@ -69,7 +75,11 @@ def build_consultant_delivery_plan(
         "checks": checks,
         "production_readiness": "pass" if all(checks.values()) else "needs_review",
         "deployment_targets": targets,
-        "deployment_package_generated": bool(connectors),
+        "review_package": review_package,
+        "review_package_generated": review_package is not None,
+        "review_package_digest": review_package_digest,
+        "deployment_package_generated": False,
+        "deployment_package_status": "not_generated",
         "production_deployment_requires_approval": True,
         "execution_started": False,
         "deployment_started": False,
@@ -93,3 +103,50 @@ def _text(value: object, field: str, maximum: int) -> str:
     if any(ord(character) < 32 for character in normalized):
         raise DeliveryPlanError(f"{field} contains unsupported control characters")
     return normalized
+
+
+def _build_review_package(
+    tenant: str,
+    connectors: Sequence[Mapping[str, object]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build a bounded deterministic review manifest, never a deployable package."""
+
+    if not connectors:
+        return None, None
+
+    artifacts: list[dict[str, Any]] = []
+    for connector in connectors:
+        redacted = redact_value(dict(connector))
+        if not isinstance(redacted, dict):
+            raise DeliveryPlanError("connector_artifacts must contain JSON objects")
+        # ``redact_value`` treats credential-related keys as sensitive. Preserve
+        # this required safety assertion when it is explicitly supplied as false.
+        if connector.get("credentials_included") is False:
+            redacted["credentials_included"] = False
+        artifacts.append(redacted)
+
+    package: dict[str, Any] = {
+        "format": "wait-local-agent.consultant-review-package",
+        "format_version": 1,
+        "client_id": tenant,
+        "artifact_count": len(artifacts),
+        "artifacts": artifacts,
+        "package_status": "review_only",
+        "credentials_included": False,
+        "deployment_started": False,
+    }
+    try:
+        serialized = json.dumps(
+            package,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise DeliveryPlanError("connector_artifacts must contain JSON-compatible values") from exc
+    if len(serialized) > MAX_DELIVERY_REVIEW_PACKAGE_BYTES:
+        raise DeliveryPlanError(
+            f"connector_artifacts review package may be at most {MAX_DELIVERY_REVIEW_PACKAGE_BYTES} bytes"
+        )
+    return package, f"sha256:{hashlib.sha256(serialized).hexdigest()}"
