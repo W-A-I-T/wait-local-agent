@@ -28,6 +28,7 @@ def main() -> None:
             allow_http_probing=False,
             allow_cloud_fallback=False,
             allow_llm_inference=False,
+            offline_mode=True,
             local_model_provider="deterministic",
             local_model_base_url="",
             local_model_name="",

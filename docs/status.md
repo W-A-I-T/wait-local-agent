@@ -26,6 +26,12 @@ for the execution boundary.
 The repository-wide requirement-to-evidence and release-risk index is
 [`docs/enterprise-validation-matrix.md`](enterprise-validation-matrix.md).
 
+The CI workflow also runs `scripts/validate_local_first.sh`. That gate executes
+the canonical onboarding fixture and consultant preparation workflow with
+offline mode, model inference, HTTP probing, cloud fallback, writes, and Power
+Platform deployment explicitly disabled. A successful run proves local fixture
+behavior only; it does not claim provider reachability or deployment.
+
 Tenant-scoped environment discovery matches explicit system declarations to
 local connector configuration by default without probing providers; configured,
 not-configured, detected, permission-limited, and unknown states remain
