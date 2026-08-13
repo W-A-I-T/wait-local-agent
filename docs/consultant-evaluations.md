@@ -1,8 +1,9 @@
 # Consultant evaluation contracts
 
 WAIT exposes a bounded evaluation contract for consultant-mode agents. A JSON
-test set declares expected and forbidden tool IDs, required approval tool IDs,
-and safety/evidence expectations. The same deterministic evaluator can score
+test set declares expected and forbidden tool IDs, optionally required
+successful tool IDs, required approval tool IDs, and safety/evidence
+expectations. The same deterministic evaluator can score
 either supplied observations or a controlled local execution through the
 existing `AgentService`.
 
@@ -53,8 +54,13 @@ POST /consultant/evaluations
 
 Controlled execution is available only in local demo mode with writes disabled.
 It runs the tenant-scoped, enabled agent definition through the existing
-runtime, captures actual tool actions, approvals, status, run ID, and evidence,
-and reports provider failures as failed evidence. It emits bounded security
+runtime, captures actual tool actions, per-action status, approvals, status, run
+ID, and evidence, and reports provider failures as failed evidence. In
+controlled results, `functional` requires expected tools to have successful
+action outcomes (unless the case explicitly expects a failure), and
+`approval_safety` requires a positive approval ID on a pending or successful
+outcome. A failed action or approval-shaped field cannot pass by presence alone.
+It emits bounded security
 evidence that the local runtime can prove deterministically: matching tenant
 scope and tool required-role checks (`rbac`), the absence of successful write
 actions while writes are disabled (`unexpected_writes`), execution only within
