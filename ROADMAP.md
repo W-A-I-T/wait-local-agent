@@ -165,14 +165,17 @@ comparison** and evidence index. It is not the master product roadmap.
 - Review-oriented evaluation contracts plus controlled local-fixture execution
   through the existing AgentService, deterministic governance and DLP mapping,
   provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries;
-  bounded explicit evidence dimensions for injection, secret leakage,
-  unexpected writes, provider failure, rollback, and related failure modes.
+  bounded explicit evidence dimensions for tool allowlists, configured secret
+  absence, injection, unexpected writes, provider failure, rollback, and
+  related failure modes.
 
 ### Next increments
 
 - Expand controlled evaluation from the current local AgentService fixture path
   to the full required security, provider-failure, rollback, and regression
-  matrix without enabling production execution.
+  matrix without enabling production execution; tool-allowlist and configured
+  secret-absence evidence are now runtime-derived, while prompt injection,
+  provider-side leakage, and rollback remain explicit gaps.
 - Cover functional behavior, tool selection, forbidden tools, approvals,
   grounding, tenant isolation, RBAC, prompt/tool injection, secret leakage,
   unexpected writes, timeouts, retries, cancellation, provider failure,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Mapping
@@ -20,6 +21,7 @@ MAX_EVALUATION_CASES = 32
 MAX_EXPECTED_TOOLS = 8
 MAX_LATENCY_MS = 120_000
 MAX_SECURITY_DIMENSIONS = 16
+MAX_SECRET_INPUT_KEYS = 8
 SECURITY_DIMENSIONS = (
     "rbac",
     "tool_injection",
@@ -268,6 +270,9 @@ class AgentServiceEvaluationExecutor:
             definition_client_id=self.definition.client_id,
             result_aware=bool(getattr(self.definition, "result_aware", False)),
             required_dimensions=cast(list[str], case.get("required_security_dimensions", [])),
+            input_payload=self.input_payload,
+            secret_input_keys=cast(list[str], case.get("secret_input_keys", [])),
+            definition_enabled_tools=cast(list[str], getattr(self.definition, "enabled_tools", [])),
         )
         # Deterministic local execution does not pass untrusted ticket text to
         # a model. If model inference is enabled, the runtime must supply an
@@ -319,6 +324,7 @@ def _case(value: object) -> dict[str, object]:
         "failure_expected",
         "regression_expected",
         "required_security_dimensions",
+        "secret_input_keys",
     }
     unknown = sorted(set(case) - allowed)
     if unknown:
@@ -340,6 +346,9 @@ def _case(value: object) -> dict[str, object]:
         "failure_expected": _required_bool(case.get("failure_expected", False), "failure_expected"),
         "regression_expected": _required_bool(case.get("regression_expected", False), "regression_expected"),
         "required_security_dimensions": _security_dimensions(case.get("required_security_dimensions", [])),
+        "secret_input_keys": _string_list(
+            case.get("secret_input_keys", []), "secret_input_keys", MAX_SECRET_INPUT_KEYS
+        ),
     }
 
 
@@ -439,14 +448,17 @@ def _controlled_security_evidence(
     definition_client_id: str | None,
     result_aware: bool,
     required_dimensions: list[str],
+    input_payload: Mapping[str, object],
+    secret_input_keys: list[str],
+    definition_enabled_tools: list[str],
 ) -> tuple[dict[str, bool], dict[str, str]]:
     """Return only security facts the local runtime can prove deterministically.
 
     Lifecycle evidence is derived only from the bounded result status and the
-    persisted final-result lineage. This intentionally does not infer injection,
-    secret safety, or rollback from a successful fixture run; those dimensions
-    remain explicit evidence requirements and therefore fail closed unless a
-    caller supplies dedicated evidence.
+    persisted final-result lineage. Tool allowlist and configured secret-input
+    checks are deterministic runtime evidence. Prompt injection, provider-side
+    leakage, and rollback remain explicit evidence requirements and fail closed
+    unless a caller supplies dedicated evidence.
     """
 
     raw_tools: list[Any] = getattr(agent_service, "list_tools", lambda: [])()
@@ -519,6 +531,17 @@ def _controlled_security_evidence(
         "provider_failure": exception.get("kind") == "provider_failure",
         "malformed_provider_output": exception.get("kind") == "malformed_output",
     }
+    if "tool_injection" in required_dimensions:
+        evidence["tool_injection"] = bool(definition_enabled_tools) and all(
+            tool_id in definition_enabled_tools for tool_id in tool_ids
+        )
+    if "secret_leakage" in required_dimensions:
+        evidence["secret_leakage"] = _secret_values_absent(
+            input_payload,
+            secret_input_keys,
+            result,
+            steps,
+        )
     evidence.update(
         {
             dimension: lifecycle_evidence[dimension]
@@ -533,6 +556,38 @@ def _controlled_security_evidence(
 def _role_allows(required_role: object, actor_role: Role) -> bool:
     levels = {"end_user": 0, "viewer": 1, "technician": 2, "admin": 3}
     return isinstance(required_role, str) and levels.get(required_role.casefold(), -1) <= int(actor_role)
+
+
+def _secret_values_absent(
+    input_payload: Mapping[str, object],
+    secret_input_keys: list[str],
+    result: object,
+    steps: list[dict[str, object]],
+) -> bool:
+    """Check configured secret inputs without returning or persisting values."""
+
+    if not secret_input_keys:
+        return False
+    secret_values: list[str] = []
+    for key in secret_input_keys:
+        value = input_payload.get(key)
+        if not isinstance(value, str) or not value:
+            return False
+        secret_values.append(value)
+    try:
+        evidence_text = json.dumps(
+            {
+                "result": getattr(result, "final_result", {}),
+                "error": getattr(result, "error_detail", ""),
+                "steps": steps,
+            },
+            sort_keys=True,
+            default=str,
+            ensure_ascii=False,
+        )
+    except (TypeError, ValueError):
+        return False
+    return not any(secret in evidence_text for secret in secret_values)
 
 
 def _bounded_error(error: Exception) -> str:
