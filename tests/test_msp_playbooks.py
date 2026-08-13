@@ -8,12 +8,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.models import WorkflowTemplate
+from wait_local_agent.models import WorkflowRun, WorkflowTemplate
 from wait_local_agent.msp_playbooks import (
+    _json_object,
+    compare_tenant_playbook_revisions,
+    create_tenant_msp_playbook,
     get_msp_playbook,
     list_msp_playbooks,
+    playbook_definition_payload,
     preview_msp_playbook,
     run_msp_playbook,
+    tenant_playbook_revision_view,
+    update_tenant_msp_playbook,
 )
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -38,6 +44,219 @@ def test_msp_playbook_catalog_is_versioned_and_structured() -> None:
     assert all(playbook.steps for playbook in playbooks)
     assert get_msp_playbook("ticket-intake-review") is not None
     assert get_msp_playbook("missing") is None
+
+
+def test_tenant_playbook_lifecycle_is_scoped_versioned_and_disabled_by_default(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    source = get_msp_playbook("ticket-intake-review")
+    assert source is not None
+
+    created = create_tenant_msp_playbook(
+        store,
+        client_id="acme",
+        source_playbook_id=source.id,
+        name="Acme intake policy",
+        trigger=source.trigger,
+        description="Tenant-owned intake composition.",
+        risk_level=source.risk_level,
+        definition=playbook_definition_payload(source),
+    )
+    entry_id = str(created["id"])
+    assert created["enabled"] is False
+    assert created["version"] == 1
+    assert store.get_msp_playbook_entry(entry_id, "other") is None
+
+    with pytest.raises(KeyError):
+        preview_msp_playbook(store, entry_id, ticket_id="TCK-1001", client_id="acme")
+    with pytest.raises(KeyError):
+        preview_msp_playbook(store, entry_id, ticket_id="TCK-1001")
+
+    updated = update_tenant_msp_playbook(
+        store,
+        entry_id,
+        client_id="acme",
+        name="Acme intake policy v2",
+        enabled=True,
+    )
+    assert updated["enabled"] is True
+    assert updated["version"] == 2
+    preview = preview_msp_playbook(store, entry_id, ticket_id="TCK-1001", client_id="acme")
+    preview_playbook = cast(dict[str, object], preview["playbook"])
+    assert preview_playbook["id"] == entry_id
+    assert preview_playbook["version"] == 2
+
+    revisions = store.list_msp_playbook_revisions(entry_id, "acme")
+    assert [revision.version for revision in revisions] == [2, 1]
+    assert tenant_playbook_revision_view(revisions[0])["version"] == 2
+    diff = compare_tenant_playbook_revisions(revisions[1], revisions[0])
+    assert diff["left_version"] == 1
+    assert any(change["field"] == "name" for change in cast(list[dict[str, object]], diff["changes"]))
+
+    restored = store.restore_msp_playbook_revision(entry_id, 1, "acme")
+    assert restored.version == 3
+    assert restored.enabled is False
+    assert restored.name == "Acme intake policy"
+    assert len(store.list_msp_playbook_revisions(entry_id, "acme")) == 3
+
+
+def test_enabled_tenant_playbook_runs_through_existing_executor(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    source = get_msp_playbook("ticket-intake-review")
+    assert source is not None
+    created = create_tenant_msp_playbook(
+        store,
+        client_id="acme",
+        source_playbook_id=source.id,
+        name="Acme executable intake",
+        trigger=source.trigger,
+        description="Tenant-owned executable intake.",
+        risk_level=source.risk_level,
+        definition=playbook_definition_payload(source),
+        enabled=True,
+    )
+    runs: list[WorkflowRun] = []
+    result = run_msp_playbook(
+        store,
+        str(created["id"]),
+        ticket_id="TCK-1001",
+        client_id="acme",
+        tool_executor=SmartActionService(store, settings),
+        on_workflow_run=runs.append,
+    )
+    assert result["status"] == "completed"
+    assert len(runs) == 6
+
+
+def test_tenant_playbook_definition_validation_is_fail_closed(settings) -> None:
+    store = Store(settings.data_path)
+    source = get_msp_playbook("ticket-intake-review")
+    assert source is not None
+    valid = playbook_definition_payload(source)
+    valid_steps = cast(list[dict[str, object]], valid["steps"])
+    first_step = dict(valid_steps[0])
+
+    invalid_definitions = [
+        ({**valid, "format": "wrong"}, "format must be"),
+        ({**valid, "format_version": 2}, "format_version"),
+        ({**valid, "steps": []}, "at least one step"),
+        ({**valid, "steps": valid_steps * 5}, "at most 24 steps"),
+        ({**valid, "steps": ["not-an-object"]}, "steps must be objects"),
+        (
+            {
+                **valid,
+                "steps": [
+                    dict(first_step),
+                    dict(first_step),
+                ],
+            },
+            "duplicated",
+        ),
+    ]
+    invalid_definitions.extend(
+        [
+            ({**valid, "steps": [{**first_step, "kind": "shell"}]}, "kind is unsupported"),
+            ({**valid, "steps": [{**first_step, "required_inputs": [""]}]}, "required_inputs"),
+            ({**valid, "steps": [{**first_step, "required_inputs": ["x"] * 17}]}, "too many required"),
+            (
+                {
+                    **valid,
+                    "steps": [{**first_step, "kind": "report", "report_type": "missing"}],
+                },
+                "unsupported report type",
+            ),
+            ({**valid, "output_evidence": "not-a-list"}, "output_evidence is invalid"),
+            ({**valid, "output_evidence": ["x"] * 25}, "at most 24 labels"),
+            ({**valid, "local_fixture": "yes"}, "local_fixture must be boolean"),
+            (
+                {
+                    **valid,
+                    "steps": [{**first_step, "kind": "report", "report_type": "qbr"}],
+                },
+                "__valid_report__",
+            ),
+            ({**valid, "steps": [{**first_step, "id": ""}]}, "step id is required"),
+            ({**valid, "steps": [{**first_step, "id": "x" * 81}]}, "step id is too long"),
+        ]
+    )
+    for definition, message in invalid_definitions:
+        if message == "__valid_report__":
+            create_tenant_msp_playbook(
+                store,
+                client_id="acme",
+                name="Valid report",
+                trigger="manual",
+                description="Accepted report definition.",
+                risk_level="low",
+                definition=cast(dict[str, object], definition),
+            )
+            continue
+        with pytest.raises(ValueError, match=message):
+            create_tenant_msp_playbook(
+                store,
+                client_id="acme",
+                name="Invalid",
+                trigger="manual",
+                description="Rejected definition.",
+                risk_level="low",
+                definition=cast(dict[str, object], definition),
+            )
+
+    with pytest.raises(ValueError, match="source_playbook_id"):
+        create_tenant_msp_playbook(
+            store,
+            client_id="acme",
+            source_playbook_id="unknown",
+            name="Invalid source",
+            trigger="manual",
+            description="Rejected source.",
+            risk_level="low",
+            definition=valid,
+        )
+    with pytest.raises(ValueError, match="risk_level"):
+        create_tenant_msp_playbook(
+            store,
+            client_id="acme",
+            name="Invalid risk",
+            trigger="manual",
+            description="Rejected risk.",
+            risk_level="critical",
+            definition=valid,
+        )
+    with pytest.raises(ValueError, match="stored MSP playbook definition is invalid"):
+        _json_object("not-json")
+    with pytest.raises(ValueError, match="must be an object"):
+        _json_object("[]")
+
+
+def test_tenant_playbook_definition_rejects_unknown_execution_targets(settings) -> None:
+    store = Store(settings.data_path)
+    with pytest.raises(ValueError, match="unknown workflow template"):
+        create_tenant_msp_playbook(
+            store,
+            client_id="acme",
+            name="Unsafe",
+            trigger="manual",
+            description="Should not persist.",
+            risk_level="high",
+            definition={
+                "format": "wait-local-agent.msp-playbook-definition",
+                "format_version": 1,
+                "steps": [
+                    {
+                        "id": "shell",
+                        "name": "Shell",
+                        "kind": "workflow",
+                        "description": "Not an allowed target.",
+                        "workflow_template_id": "arbitrary-shell",
+                    }
+                ],
+                "output_evidence": [],
+                "local_fixture": True,
+            },
+        )
+    assert store.list_msp_playbook_entries("acme") == []
 
 
 def test_preview_is_dry_run_and_exposes_ordered_approval_boundaries(settings) -> None:
@@ -420,3 +639,69 @@ def test_api_exposes_playbook_catalog_preview_and_run(settings) -> None:
     headers = {"Authorization": "Bearer tech-token"}
     assert secure_client.post("/msp/playbooks/qbr-review/preview", headers=headers, json={}).status_code == 403
     assert secure_client.post("/msp/playbooks/qbr-review/runs", headers=headers, json={}).status_code == 403
+
+
+def test_api_exposes_tenant_playbook_lifecycle_and_scope(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_client_ticket(store)
+    client = TestClient(create_app(settings))
+    source = get_msp_playbook("ticket-intake-review")
+    assert source is not None
+    definition = playbook_definition_payload(source)
+
+    created = client.post(
+        "/msp/playbooks/custom",
+        json={
+            "source_playbook_id": source.id,
+            "name": "Acme custom intake",
+            "trigger": source.trigger,
+            "description": "A tenant-owned intake policy.",
+            "risk_level": source.risk_level,
+            "definition": definition,
+            "client_id": "acme",
+        },
+    )
+    assert created.status_code == 201, created.text
+    entry_id = created.json()["id"]
+    assert created.json()["enabled"] is False
+
+    catalog = client.get("/msp/playbooks", params={"client_id": "acme"})
+    assert any(item["id"] == entry_id for item in catalog.json())
+    assert client.get(f"/msp/playbooks/custom/{entry_id}").status_code == 200
+    assert (
+        client.post(
+            f"/msp/playbooks/{entry_id}/preview",
+            json={"ticket_id": "TCK-1001", "client_id": "acme"},
+        ).status_code
+        == 404
+    )
+
+    enabled = client.patch(
+        f"/msp/playbooks/custom/{entry_id}",
+        json={"enabled": True, "client_id": "acme"},
+    )
+    assert enabled.status_code == 200, enabled.text
+    preview = client.post(
+        f"/msp/playbooks/{entry_id}/preview",
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
+    )
+    assert preview.status_code == 200, preview.text
+
+    revisions = client.get(f"/msp/playbooks/custom/{entry_id}/revisions", params={"client_id": "acme"})
+    assert revisions.status_code == 200
+    assert [revision["version"] for revision in revisions.json()] == [2, 1]
+    diff = client.get(
+        f"/msp/playbooks/custom/{entry_id}/revisions/1/diff/2",
+        params={"client_id": "acme"},
+    )
+    assert diff.status_code == 200
+    assert diff.json()["left_version"] == 1
+    restored = client.post(
+        f"/msp/playbooks/custom/{entry_id}/revisions/1/restore",
+        json={"client_id": "acme"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["version"] == 3
+
+    other = client.get(f"/msp/playbooks/custom/{entry_id}", params={"client_id": "other"})
+    assert other.status_code == 404

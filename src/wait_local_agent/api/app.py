@@ -157,10 +157,17 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
+    compare_tenant_playbook_revisions,
+    create_tenant_msp_playbook,
+    get_msp_playbook,
     list_msp_playbooks,
+    playbook_definition_payload,
     playbook_view,
     preview_msp_playbook,
     run_msp_playbook,
+    tenant_playbook_entry_view,
+    tenant_playbook_revision_view,
+    update_tenant_msp_playbook,
 )
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
@@ -394,6 +401,31 @@ class MspPlaybookRunRequest(BaseModel):
     ticket_id: str | None = None
     client_id: str | None = None
     payload: dict[str, object] = Field(default_factory=dict)
+
+
+class MspPlaybookCreateRequest(BaseModel):
+    source_playbook_id: str | None = Field(default=None, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    trigger: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+    risk_level: Literal["low", "medium", "high"]
+    definition: dict[str, object] | None = None
+    enabled: bool = False
+    client_id: str | None = None
+
+
+class MspPlaybookUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    trigger: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=2000)
+    risk_level: Literal["low", "medium", "high"] | None = None
+    definition: dict[str, object] | None = None
+    enabled: bool | None = None
+    client_id: str | None = None
+
+
+class MspPlaybookRestoreRequest(BaseModel):
+    client_id: str | None = None
 
 
 class TemplateGalleryCreateRequest(BaseModel):
@@ -4119,8 +4151,147 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [asdict(template) for template in list_workflow_templates()]
 
     @app.get("/msp/playbooks")
-    def msp_playbooks(_: ViewerAccess) -> list[dict[str, object]]:
-        return [playbook_view(playbook) for playbook in list_msp_playbooks()]
+    def msp_playbooks(
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        catalog = [playbook_view(playbook) for playbook in list_msp_playbooks()]
+        if scoped_client_id is not None:
+            catalog.extend(
+                tenant_playbook_entry_view(entry)
+                for entry in store.list_msp_playbook_entries(scoped_client_id)
+            )
+        return catalog
+
+    @app.post("/msp/playbooks/custom", status_code=201)
+    def create_custom_msp_playbook(
+        payload: MspPlaybookCreateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="MSP playbook entries require a tenant")
+        definition = payload.definition
+        if definition is None:
+            if payload.source_playbook_id is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="definition or source_playbook_id is required",
+                )
+            source = get_msp_playbook(payload.source_playbook_id)
+            if source is None:
+                raise HTTPException(status_code=422, detail="source_playbook_id is unknown")
+            definition = playbook_definition_payload(source)
+        try:
+            return create_tenant_msp_playbook(
+                store,
+                client_id=scoped_client_id,
+                source_playbook_id=payload.source_playbook_id,
+                name=payload.name,
+                trigger=payload.trigger,
+                description=payload.description,
+                risk_level=payload.risk_level,
+                definition=definition,
+                enabled=payload.enabled,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/msp/playbooks/custom/{entry_id}/revisions")
+    def custom_msp_playbook_revisions(
+        entry_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            return []
+        entry = store.get_msp_playbook_entry(entry_id, scoped_client_id)
+        if entry is None:
+            return []
+        return [
+            tenant_playbook_revision_view(revision)
+            for revision in store.list_msp_playbook_revisions(entry_id, entry.client_id)
+        ]
+
+    @app.get("/msp/playbooks/custom/{entry_id}/revisions/{version}/diff/{other_version}")
+    def custom_msp_playbook_revision_diff(
+        entry_id: str,
+        version: int,
+        other_version: int,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="MSP playbook revision not found")
+        entry = store.get_msp_playbook_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="MSP playbook revision not found")
+        left = store.get_msp_playbook_revision(entry_id, version, entry.client_id)
+        right = store.get_msp_playbook_revision(entry_id, other_version, entry.client_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="MSP playbook revision not found")
+        return compare_tenant_playbook_revisions(left, right)
+
+    @app.post("/msp/playbooks/custom/{entry_id}/revisions/{version}/restore")
+    def restore_custom_msp_playbook_revision(
+        entry_id: str,
+        version: int,
+        payload: MspPlaybookRestoreRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="MSP playbook entries require a tenant")
+        try:
+            restored = store.restore_msp_playbook_revision(entry_id, version, scoped_client_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook revision not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return tenant_playbook_entry_view(restored)
+
+    @app.get("/msp/playbooks/custom/{entry_id}")
+    def custom_msp_playbook_detail(
+        entry_id: str,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="MSP playbook not found")
+        entry = store.get_msp_playbook_entry(entry_id, scoped_client_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="MSP playbook not found")
+        return tenant_playbook_entry_view(entry)
+
+    @app.patch("/msp/playbooks/custom/{entry_id}")
+    def update_custom_msp_playbook(
+        entry_id: str,
+        payload: MspPlaybookUpdateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="MSP playbook entries require a tenant")
+        try:
+            return update_tenant_msp_playbook(
+                store,
+                entry_id,
+                client_id=scoped_client_id,
+                name=payload.name,
+                trigger=payload.trigger,
+                description=payload.description,
+                risk_level=payload.risk_level,
+                definition=payload.definition,
+                enabled=payload.enabled,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/msp/playbooks/{playbook_id}/preview")
     def preview_msp_playbook_route(

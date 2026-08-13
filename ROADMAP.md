@@ -116,10 +116,11 @@ preserved and extended through the shared runtime.
 - Governed HaloPSA, ConnectWise, Syncro, ServiceNow, Autotask, RMM,
   documentation, Microsoft 365, Teams, and communication surfaces where the
   provider contract, scope, approval, audit, and tests exist.
-- A bounded MSP playbook composition layer now exposes versioned local review
-  and report definitions with dry-run previews, explicit required inputs,
-  sequential stop-at-approval/failure execution, child result IDs, and
-  playbook audit events; see `docs/msp-playbooks.md`.
+- A bounded MSP playbook composition layer now exposes built-in and tenant-owned
+  versioned local review/report definitions with dry-run previews,
+  disabled-by-default publishing, explicit required inputs, sequential
+  stop-at-approval/failure execution, revision restore/diff, child result IDs,
+  and playbook audit events; see `docs/msp-playbooks.md`.
 
 ### Next increments
 

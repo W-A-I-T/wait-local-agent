@@ -31,6 +31,16 @@ Use:
 POST /msp/playbooks/{playbook_id}/runs
 ```
 
+Tenant-owned aggregate definitions use the same execution boundary and are
+persisted separately from the built-in catalog. Create a definition with
+`POST /msp/playbooks/custom`, edit or disable it with
+`PATCH /msp/playbooks/custom/{entry_id}`, and inspect its immutable revisions
+with `GET /msp/playbooks/custom/{entry_id}/revisions`. A restore creates a new
+version rather than rewriting history; the revision diff endpoint compares two
+stored envelopes. Definitions may reference only existing WAIT workflow
+templates or supported local report types, and new entries are disabled until
+explicitly enabled.
+
 The same surface is available from the local CLI:
 
 ```text
@@ -44,9 +54,9 @@ success, vendor SLA compliance, measured time savings, or automatic ticket
 merge/close. Those values remain explicitly unsupported unless a future
 provider contract and stored evidence establish them.
 
-The broader MSP issue remains open. Built-in versioned definitions and the
-preview/controlled-run contract are now present, while tenant-edited aggregate
-playbook publish/disable/restore/compare history, richer step input mappings,
+The broader MSP issue remains open. Built-in and tenant-owned versioned
+definitions, disabled-by-default publishing, revision restore/diff, and the
+preview/controlled-run contract are now present. Richer step input mappings,
 provider-backed historical ingestion, and several scheduled or event-triggered
 operations remain follow-up work. The existing workflow gallery continues to
 provide lifecycle operations for individual templates.
