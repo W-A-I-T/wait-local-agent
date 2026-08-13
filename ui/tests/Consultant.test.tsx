@@ -257,20 +257,20 @@ describe("Consultant", () => {
     });
   });
 
-  it("uses an explicitly entered tenant when the authenticated scope is empty", async () => {
+  it("uses the entered workspace when the local demo has no authenticated tenant scope", async () => {
     noBlueprints = true;
     dashboard.clientId = "";
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Customer workspace ID"), { target: { value: "acme" } });
-    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Automate employee onboarding" } });
+    fireEvent.change(screen.getByLabelText("Customer workspace ID"), { target: { value: "acme-browser" } });
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
 
     expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
     const discoveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery");
     expect(discoveryCall?.[1]).toMatchObject({
-      body: expect.stringContaining('"client_id":"acme"'),
+      body: expect.stringContaining('"client_id":"acme-browser"'),
     });
   });
 });

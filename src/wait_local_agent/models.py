@@ -434,6 +434,29 @@ class TemplateGalleryRevision:
 
 
 @dataclass(frozen=True)
+class MspPlaybookEntry:
+    id: str
+    source_playbook_id: str
+    definition_json: str
+    provenance: str
+    enabled: bool
+    version: int
+    created_at: str
+    updated_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MspPlaybookRevision:
+    id: int
+    playbook_id: str
+    version: int
+    snapshot_json: str
+    created_at: str
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
 class BlueprintAgent:
     id: str
     name: str

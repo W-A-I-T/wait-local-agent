@@ -25,6 +25,8 @@ jobs:
       - run: bandit -r src
       - run: pip-audit --skip-editable
       - run: python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
+      - run: bash -n scripts/demo_consultant_mode.sh
+      - run: WAIT_DEMO_MODE=true WAIT_DATA_PATH="${RUNNER_TEMP}/wait-consultant-demo.db" bash scripts/demo_consultant_mode.sh
       - run: python scripts/public_surface_audit.py
 
   ui:
