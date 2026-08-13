@@ -169,7 +169,9 @@ comparison** and evidence index. It is not the master product roadmap.
   provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries;
   bounded explicit evidence dimensions for tool allowlists, configured secret
   absence, injection, unexpected writes, provider failure, rollback, and
-  related failure modes.
+  related failure modes. Controlled cases can now provide bounded per-case
+  input overrides to exercise distinct local failure and security fixtures;
+  inputs remain in-memory execution data and never become result evidence.
 
 ### Next increments
 

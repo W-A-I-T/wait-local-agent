@@ -173,6 +173,28 @@ def test_controlled_evaluation_executes_each_case_and_captures_runtime_evidence(
     assert result["cases"][0]["execution"]["run_id"] == 7
 
 
+def test_controlled_evaluation_preserves_bounded_case_inputs_for_executor() -> None:
+    class Runner:
+        def __init__(self) -> None:
+            self.inputs: list[object] = []
+
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            self.inputs.append(case["input"])
+            return _observation()
+
+    runner = Runner()
+    result = execute_tool_contract(
+        [
+            _case("base"),
+            {**_case("override"), "input": {"scenario": "provider-failure", "attempt": 2}},
+        ],
+        runner,
+    )
+
+    assert result["execution_errors"] == []
+    assert runner.inputs == [{}, {"scenario": "provider-failure", "attempt": 2}]
+
+
 def test_controlled_evaluation_turns_provider_failure_into_failed_evidence() -> None:
     class FailingRunner:
         def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
@@ -255,6 +277,44 @@ def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -
             [{**_case(), "secret_input_keys": ["secret"] * 9}],
             {"onboarding": _observation()},
         )
+    with pytest.raises(EvaluationValidationError, match="evaluation case input must contain at most 16 fields"):
+        evaluate_tool_contract(
+            [{**_case(), "input": {str(index): index for index in range(17)}}],
+            {"onboarding": _observation()},
+        )
+    with pytest.raises(EvaluationValidationError, match="evaluation case input must contain JSON-compatible values"):
+        evaluate_tool_contract(
+            [{**_case(), "input": {"unsupported": object()}}],
+            {"onboarding": _observation()},
+        )
+    with pytest.raises(EvaluationValidationError, match="evaluation case input must be at most 16384 bytes"):
+        evaluate_tool_contract(
+            [{**_case(), "input": {"payload": "x" * 16_385}}],
+            {"onboarding": _observation()},
+        )
+    with pytest.raises(EvaluationValidationError, match="evaluation case input must be an object"):
+        evaluate_tool_contract(
+            [{**_case(), "input": "not-an-object"}],
+            {"onboarding": _observation()},
+        )
+    with pytest.raises(EvaluationValidationError, match="field names must be non-empty"):
+        evaluate_tool_contract(
+            [{**_case(), "input": {"": "invalid"}}],
+            {"onboarding": _observation()},
+        )
+    deeply_nested: object = "leaf"
+    for _ in range(9):
+        deeply_nested = {"nested": deeply_nested}
+    with pytest.raises(EvaluationValidationError, match="nesting exceeds 8 levels"):
+        evaluate_tool_contract(
+            [{**_case(), "input": {"payload": deeply_nested}}],
+            {"onboarding": _observation()},
+        )
+    nested_list = evaluate_tool_contract(
+        [{**_case(), "input": {"values": [{"fixture": True}]}}],
+        {"onboarding": _observation()},
+    )
+    assert nested_list["production_readiness"] == "pass"
     with pytest.raises(EvaluationValidationError, match="case ids must not contain duplicates"):
         evaluate_tool_contract(
             [_case("duplicate"), _case("duplicate")],
@@ -432,6 +492,45 @@ def test_runtime_evaluation_proves_tool_allowlist_and_secret_absence() -> None:
     assert provenance["tool_injection"] == "runtime"
     assert provenance["secret_leakage"] == "runtime"
     assert "fixture-secret" not in str(observed)
+
+
+def test_runtime_evaluation_merges_case_input_over_bounded_base_input() -> None:
+    class Result:
+        run_id = 13
+        status = "completed"
+        error_detail = ""
+        final_result = {"status": "completed", "output": {"message": "[redacted]"}}
+        steps: list[dict[str, object]] = []
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def __init__(self) -> None:
+            self.inputs: list[dict[str, object]] = []
+
+        def list_tools(self):
+            return []
+
+        def run(self, *args, **kwargs):
+            self.inputs.append(cast(dict[str, object], kwargs["input_payload"]))
+            return Result()
+
+    service = Service()
+    definition = type("Definition", (), {"client_id": "acme", "enabled_tools": []})()
+    executor = AgentServiceEvaluationExecutor(
+        cast(AgentService, service),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        input_payload={"scenario": "baseline", "shared": "base"},
+        client_id="acme",
+    )
+
+    observed = executor.execute({"input": {"scenario": "case", "case_only": True}})
+
+    assert service.inputs == [{"scenario": "case", "shared": "base", "case_only": True}]
+    assert "case_only" not in str(observed["error_detail"])
 
     Result.steps = [{"tool_id": "ticket-triage", "status": "success", "output": {"echo": "fixture-secret"}}]
     leaked = executor.execute(

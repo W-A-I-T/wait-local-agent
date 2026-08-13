@@ -5766,6 +5766,25 @@ def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -
     invalid_calls = [
         ("/consultant/connectors/openapi/generate", {"connector_id": "bad", "definition": {}}),
         ("/consultant/evaluations", {"test_set": [], "observations": {}}),
+        (
+            "/consultant/evaluations",
+            {
+                "test_set": [
+                    {
+                        "id": "bounded-input",
+                        "input": {str(index): index for index in range(17)},
+                    }
+                ],
+                "observations": {
+                    "bounded-input": {
+                        "tool_ids": [],
+                        "approval_tool_ids": [],
+                        "tenant_isolated": True,
+                        "prompt_injection_blocked": True,
+                    }
+                },
+            },
+        ),
         ("/consultant/governance/evaluate", {"architecture": {"client_id": "acme", "components": "bad"}}),
         (
             "/consultant/power-apps/plan",
