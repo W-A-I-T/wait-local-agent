@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 
+import wait_local_agent.power_apps as power_apps_module
 from wait_local_agent.power_apps import PowerAppsPlanError, build_power_apps_artifact, build_power_apps_plan
 
 
@@ -81,6 +82,20 @@ def test_power_apps_artifact_builds_bounded_reviewable_files_without_deployment(
     assert result["credentials_included"] is False
     assert result["build_started"] is True
     assert result["deployment_started"] is False
+
+
+def test_power_apps_artifact_enforces_output_size_bound(monkeypatch) -> None:
+    payload = _plan()
+    monkeypatch.setattr(power_apps_module, "MAX_ARTIFACT_BYTES", 1)
+
+    with pytest.raises(PowerAppsPlanError, match="exceeds the bounded output size"):
+        build_power_apps_artifact(
+            client_id=cast(str, payload["client_id"]),
+            app_name=cast(str, payload["app_name"]),
+            entities=cast(list[dict[str, object]], payload["entities"]),
+            screens=cast(list[dict[str, object]], payload["screens"]),
+            actions=cast(list[dict[str, object]], payload["actions"]),
+        )
 
 
 @pytest.mark.parametrize(

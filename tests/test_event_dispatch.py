@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from wait_local_agent.agents import AgentService
+import wait_local_agent.event_dispatch as event_dispatch_module
+from wait_local_agent.agents import AgentExecutionResult, AgentService
 from wait_local_agent.event_dispatch import (
     EventDispatcher,
     EventDispatchError,
@@ -191,7 +192,7 @@ def test_event_dispatch_keeps_playbook_approval_pending_without_retrying_it(sett
     assert len(store.list_approval_requests(client_id="acme")) == 1
 
 
-def test_event_dispatch_records_redacted_playbook_failure(settings, monkeypatch) -> None:
+def test_event_dispatch_records_subscription_failure_as_bounded_retry_evidence(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     _seed(store)
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -202,10 +203,10 @@ def test_event_dispatch_records_redacted_playbook_failure(settings, monkeypatch)
         client_id="acme",
     )
 
-    def fail_playbook(*_args, **_kwargs):
+    def fail_playbook(*args, **kwargs):
         raise RuntimeError("provider access_token=secret-value")
 
-    monkeypatch.setattr("wait_local_agent.event_dispatch.run_msp_playbook", fail_playbook)
+    monkeypatch.setattr(event_dispatch_module, "run_msp_playbook", fail_playbook)
     result = EventDispatcher(store, service).dispatch(
         event_type="ticket.created",
         entity_type="ticket",
@@ -213,13 +214,82 @@ def test_event_dispatch_records_redacted_playbook_failure(settings, monkeypatch)
         payload={},
         idempotency_key="playbook-failure-event",
         client_id="acme",
+        max_retries=1,
     )
 
     assert result.delivery.status == "failed"
-    assert result.errors and "secret-value" not in result.errors[0]
+    assert result.delivery.next_retry_at
+    assert subscription.id in result.matched_playbook_ids
+    assert "secret-value" not in result.errors[0]
     attempts = json.loads(result.delivery.playbook_attempts_json)
     assert attempts[subscription.id]["status"] == "failed"
-    assert attempts[subscription.id]["run_ids"] == []
+
+
+def test_event_dispatch_retry_skips_playbook_that_is_already_pending(settings, monkeypatch) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    failed = create_msp_playbook_subscription(
+        store,
+        "ticket-intake-review",
+        event_type="ticket.created",
+        client_id="acme",
+    )
+    pending = create_msp_playbook_subscription(
+        store,
+        "security-response-review",
+        event_type="ticket.created",
+        client_id="acme",
+    )
+    original = event_dispatch_module.run_msp_playbook
+
+    def fail_one(store_arg, playbook_id, *args, **kwargs):
+        if playbook_id == failed.playbook_id:
+            raise RuntimeError("temporary provider failure")
+        return original(store_arg, playbook_id, *args, **kwargs)
+
+    monkeypatch.setattr(event_dispatch_module, "run_msp_playbook", fail_one)
+    dispatcher = EventDispatcher(store, service)
+    first = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={},
+        idempotency_key="playbook-retry-event",
+        client_id="acme",
+        max_retries=1,
+    )
+    retried = dispatcher.retry(first.delivery.id or 0, client_id="acme")
+
+    assert retried.delivery.status == "failed"
+    attempts = json.loads(retried.delivery.playbook_attempts_json)
+    assert attempts[pending.id]["status"] == "pending"
+    assert attempts[failed.id]["status"] == "failed"
+
+
+def test_event_dispatch_preserves_noncompleted_agent_status(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service, definition = _event_agent(settings, store)
+    service.run = lambda *args, **kwargs: AgentExecutionResult(
+        run_id=77,
+        agent_id=definition.id,
+        status="pending",
+        current_step=0,
+        steps=[],
+    )
+
+    result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="pending-agent-event",
+        client_id="acme",
+    )
+
+    assert result.delivery.status == "completed"
+    assert result.run_ids == [77]
 
 
 def test_event_dispatch_does_not_run_tenant_subscription_for_unscoped_ticket(settings) -> None:
