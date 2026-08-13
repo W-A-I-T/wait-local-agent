@@ -76,7 +76,7 @@ export function AppShell() {
           </div>
         </header>
 
-        {statusMessage ? <div className="notice">{statusMessage}</div> : null}
+        {statusMessage ? <div className="notice" role="status" aria-live="polite">{statusMessage}</div> : null}
         {refreshErrors.length > 0 ? (
           <div className="notice danger" role="alert">
             <AlertTriangle size={17} aria-hidden="true" />

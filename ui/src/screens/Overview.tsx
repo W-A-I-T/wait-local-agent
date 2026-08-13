@@ -17,12 +17,13 @@ export function Overview() {
     retryEventDelivery,
     canWrite,
     isConfigured,
-    configurationLoading
+    configurationLoading,
+    roleResolved
   } = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
   const [showOnboarding, setShowOnboarding] = useState(false);
 
-  const shouldShowOnboarding = !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
+  const shouldShowOnboarding = roleResolved && !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
 
   useEffect(() => {
     if (!shouldShowOnboarding) {
@@ -54,7 +55,15 @@ export function Overview() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Operations Overview</h2>
-          <span>{configurationLoading ? "checking configuration" : isConfigured ? "configured" : "demo-ready"}</span>
+          <span>
+            {configurationLoading
+              ? "checking configuration"
+              : !roleResolved
+                ? "access unavailable"
+                : isConfigured
+                  ? "configured"
+                  : "demo-ready"}
+          </span>
         </div>
         <div className="overview-cards">
           <Link className="overview-card" to="/connectors">
