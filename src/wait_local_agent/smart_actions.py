@@ -3888,6 +3888,12 @@ class NSightPatchLookupAction:
             "required": ["device_id"],
             "properties": {
                 "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "ticket_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "workflow tenant-scope anchor",
+                },
             },
         },
         output_schema={"patches": "array", "count": "integer", "source": "string"},
@@ -4221,6 +4227,12 @@ class NSightSoftwareInventoryAction:
             "required": ["device_id"],
             "properties": {
                 "device_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "ticket_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "workflow tenant-scope anchor",
+                },
             },
         },
         output_schema={"software": "array", "count": "integer", "source": "string"},
@@ -4232,8 +4244,10 @@ class NSightSoftwareInventoryAction:
     )
 
     def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
-        if set(payload) != {"device_id"}:
+        if set(payload) - {"device_id", "ticket_id"}:
             return _failed("N-sight software inventory payload contains unsupported fields")
+        if "ticket_id" in payload and _ticket_from_payload(context.store, payload, context.client_id) is None:
+            return _failed("ticket_id must identify an existing tenant-scoped ticket")
         device_id = payload.get("device_id")
         if not isinstance(device_id, str) or not device_id.strip() or len(device_id.strip()) > 80:
             return _failed("device_id must be a non-empty string of at most 80 characters")

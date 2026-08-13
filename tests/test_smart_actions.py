@@ -78,6 +78,7 @@ from wait_local_agent.smart_actions import (
     M365UserOffboardingAction,
     M365UserOnboardingAction,
     NotionPageCommentAction,
+    NSightSoftwareInventoryAction,
     RecurringServiceReviewAction,
     RmmDeviceLookupAction,
     SecurityAlertAssessmentAction,
@@ -301,6 +302,30 @@ def test_m365_compliance_review_fails_closed_on_partial_graph_evidence(settings)
     assert result.status == "failed"
     assert result.output["connector_status"] == "partial"
     assert result.output["findings"] == []
+
+
+def test_nsight_software_inventory_accepts_only_a_tenant_scoped_workflow_anchor(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    provider = SimpleNamespace(
+        adapter_id="n-sight",
+        list_software=lambda device_id, client_id: [
+            {"software_id": "sw-1", "name": "Example Agent", "version": "1.0"}
+        ],
+    )
+    context = replace(_action_context(store, settings), client_id="acme", rmm_provider=provider)
+
+    result = NSightSoftwareInventoryAction().run(
+        context, {"device_id": "server:1", "ticket_id": "TCK-1001"}
+    )
+
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert NSightSoftwareInventoryAction().run(
+        context, {"device_id": "server:1", "ticket_id": "missing"}
+    ).status == "failed"
 
 
 def test_teams_context_action_is_bounded_and_read_only(settings) -> None:

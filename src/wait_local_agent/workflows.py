@@ -415,6 +415,25 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
             "properties": {"limit": "integer from 1 to 50 (default: 50)"},
         },
     ),
+    WorkflowTemplate(
+        id="software-inventory-review",
+        name="Software Inventory Review",
+        trigger="schedule.daily",
+        description=(
+            "Read one explicitly mapped N-sight software inventory through the existing "
+            "RMM boundary; no software is installed, removed, or classified as vulnerable."
+        ),
+        action_type="rmm.software_inventory_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("device_id", "software", "count", "source"),
+        tool_id="nsight-software-inventory",
+        payload_schema={
+            "type": "object",
+            "required": ["device_id"],
+            "properties": {"device_id": "mapped N-sight device identifier"},
+        },
+    ),
 )
 
 
