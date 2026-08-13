@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -490,6 +491,79 @@ def test_agents_run_and_show_run_share_persisted_failure_evidence(monkeypatch, t
     detail_payload = json.loads(detail.output)
     assert detail_payload["status"] == "completed"
     assert detail_payload["state"]["final_result"]["history"]["completed_steps"] == 1
+
+
+def test_agents_cancel_retry_and_resume_use_persisted_scope(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    settings = replace(
+        load_settings(),
+        client_id="acme",
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+    )
+    store = Store(settings.data_path)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets (id, client, subject, body, priority, status, client_id)
+            values (
+                'TCK-CLI-LIFECYCLE', 'Acme Dental', 'Dispatch review',
+                'Need a reviewed dispatch proposal.', 'medium', 'open', 'acme'
+            )
+            """
+        )
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    definition = service.create(
+        name="CLI approval lifecycle",
+        description="Exercise cancel, retry, and resume from the CLI.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["dispatch-suggestion"],
+        steps=[{"tool_id": "dispatch-suggestion", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        approval_required_tools=["dispatch-suggestion"],
+    )
+    runner = CliRunner()
+
+    pending = runner.invoke(
+        app,
+        ["agents", "run", definition.id, "TCK-CLI-LIFECYCLE", "--token", "tech-token"],
+    )
+    assert pending.exit_code == 0, pending.output
+    pending_payload = json.loads(pending.output)
+    assert pending_payload["status"] == "pending_approval"
+
+    cancelled = runner.invoke(
+        app,
+        ["agents", "cancel", str(pending_payload["run_id"]), "--token", "tech-token"],
+    )
+    assert cancelled.exit_code == 0, cancelled.output
+    assert json.loads(cancelled.output)["status"] == "cancelled"
+
+    retried = runner.invoke(
+        app,
+        ["agents", "retry", str(pending_payload["run_id"]), "--token", "tech-token"],
+    )
+    assert retried.exit_code == 0, retried.output
+    retried_payload = json.loads(retried.output)
+    assert retried_payload["retry_of_run_id"] == pending_payload["run_id"]
+    assert retried_payload["status"] == "pending_approval"
+
+    resumed = runner.invoke(
+        app,
+        ["agents", "resume", str(retried_payload["run_id"]), "--token", "admin-token"],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    assert json.loads(resumed.output)["status"] == "completed"
 
 
 def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:
