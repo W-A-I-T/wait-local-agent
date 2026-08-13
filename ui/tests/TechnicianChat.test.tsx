@@ -27,6 +27,21 @@ describe("TechnicianChat", () => {
       if (path === "/technician/chat/sessions" && !init?.method) {
         return Promise.resolve(json([session]));
       }
+      if (path === "/smart-actions/runs" && !init?.method) {
+        return Promise.resolve(json([{
+          id: 8,
+          action_id: "communication-send",
+          actor: "tech-1",
+          status: "failed",
+          approval_id: null,
+          output: { channel: "teams" },
+          evidence: [],
+          error_detail: "communication delivery is not configured",
+          created_at: "2026-08-09T00:00:00Z",
+          updated_at: "2026-08-09T00:00:00Z",
+          client_id: "acme"
+        }]));
+      }
       if (path === "/technician/chat/sessions/TCS-1" && !init?.method) {
         return Promise.resolve(json({ ...session, messages: [{ id: 1, role: "assistant", message: "Ready.", status: "help", action_id: null, ticket_id: "TCK-1001", created_at: "2026-08-09T00:00:00Z" }] }));
       }
@@ -50,6 +65,7 @@ describe("TechnicianChat", () => {
     render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Technician Chat" })).toBeInTheDocument();
+    expect(await screen.findByText("communication delivery is not configured")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /TCS-1/ })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Client id (optional for a scoped technician token)"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "New chat session" }));
@@ -87,6 +103,17 @@ describe("TechnicianChat", () => {
         body: expect.stringContaining('"channel":"teams"')
       })
     ));
+  });
+
+  it("refreshes tenant-scoped notification activity after preparing an approval", async () => {
+    render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Technician Chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh activity" }));
+
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === "/smart-actions/runs")).toBe(true));
+    expect(screen.getByText("teams")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
   });
 
   it("does not expose chat controls to a viewer", async () => {

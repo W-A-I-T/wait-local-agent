@@ -351,7 +351,8 @@ class Store:
                     approval_id integer,
                     created_at text not null,
                     updated_at text not null,
-                    client_id text
+                    client_id text,
+                    error_detail text not null default ''
                 )
                 """
             )
@@ -682,6 +683,7 @@ class Store:
             )
             self._ensure_column(connection, "knowledge_documents", "client_id", "text")
             self._ensure_column(connection, "smart_action_runs", "client_id", "text")
+            self._ensure_column(connection, "smart_action_runs", "error_detail", "text not null default ''")
             self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
             self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
             self._ensure_column(connection, "template_gallery_entries", "definition_json", "text not null default '{}'")
@@ -3997,6 +3999,7 @@ class Store:
         *,
         approval_id: int | None = None,
         client_id: str | None = None,
+        error_detail: str = "",
     ) -> SmartActionRun:
         now = utc_now()
         with self._connect() as connection:
@@ -4004,8 +4007,8 @@ class Store:
                 """
                 insert into smart_action_runs
                   (action_id, actor, status, payload_digest, output_json,
-                   evidence_json, approval_id, created_at, updated_at, client_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   evidence_json, approval_id, created_at, updated_at, client_id, error_detail)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     action_id,
@@ -4018,6 +4021,7 @@ class Store:
                     now,
                     now,
                     _normalize_client_id(client_id),
+                    _redact_text(error_detail),
                 ),
             )
             if cursor.lastrowid is None:
@@ -4151,6 +4155,7 @@ class Store:
         *,
         approval_id: int | None = None,
         approver_id: str | None = None,
+        error_detail: str = "",
         _smart_action_capability: object | None = None,
     ) -> SmartActionRun:
         with self._connect() as connection:
@@ -4184,13 +4189,14 @@ class Store:
             cursor = connection.execute(
                 """
                 update smart_action_runs
-                set status = ?, output_json = ?, evidence_json = ?, updated_at = ?
+                set status = ?, output_json = ?, evidence_json = ?, error_detail = ?, updated_at = ?
                 where id = ?
                 """,
                 (
                     status,
                     _json_dumps(output),
                     _json_dumps_value(evidence),
+                    _redact_text(error_detail),
                     utc_now(),
                     run_id,
                 ),

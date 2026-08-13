@@ -162,6 +162,20 @@ export type EventDelivery = {
   client_id?: string | null;
 };
 
+export type SmartActionRun = {
+  id: number;
+  action_id: string;
+  actor: string;
+  status: string;
+  approval_id?: number | null;
+  output?: Record<string, unknown>;
+  evidence?: Array<Record<string, unknown>>;
+  error_detail?: string;
+  created_at: string;
+  updated_at: string;
+  client_id?: string | null;
+};
+
 export type WorkflowTemplate = {
   id: string;
   name: string;

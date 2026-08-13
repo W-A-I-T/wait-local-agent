@@ -561,6 +561,7 @@ class SmartActionRun:
     created_at: str
     updated_at: str
     client_id: str | None = None
+    error_detail: str = ""
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { CheckCircle2, MessageSquare, Plus, Send, XCircle } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
-import type { TechnicianChatResponse, TechnicianChatSession } from "../api/types";
+import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
   const { canWrite } = useDashboard();
@@ -19,9 +19,29 @@ export function TechnicianChat() {
   const [notificationSubject, setNotificationSubject] = useState("");
   const [notificationBody, setNotificationBody] = useState("");
   const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationRuns, setNotificationRuns] = useState<SmartActionRun[]>([]);
+  const [notificationLoading, setNotificationLoading] = useState(true);
+  const [notificationError, setNotificationError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [busy, setBusy] = useState<"create" | "send" | "close" | null>(null);
+
+  const refreshNotificationRuns = useCallback(async () => {
+    if (!canWrite) {
+      setNotificationLoading(false);
+      return;
+    }
+    setNotificationLoading(true);
+    setNotificationError("");
+    try {
+      const runs = await apiFetch<SmartActionRun[]>("/smart-actions/runs");
+      setNotificationRuns(runs.filter((run) => run.action_id === "communication-send").slice(0, 12));
+    } catch (requestError) {
+      setNotificationError(requestError instanceof Error ? requestError.message : "Unable to load notification activity.");
+    } finally {
+      setNotificationLoading(false);
+    }
+  }, [canWrite]);
 
   const refreshSessions = useCallback(async () => {
     if (!canWrite) {
@@ -48,6 +68,10 @@ export function TechnicianChat() {
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions]);
+
+  useEffect(() => {
+    void refreshNotificationRuns();
+  }, [refreshNotificationRuns]);
 
   async function openSession(sessionId: string) {
     setLoadingSession(sessionId);
@@ -157,6 +181,7 @@ export function TechnicianChat() {
         ? `${notificationChannel} notification approval ${result.approval_id} created. Review it before delivery.`
         : `${notificationChannel} notification request completed with status ${result.status}.`);
       setNotificationBody("");
+      await refreshNotificationRuns();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to prepare the technician notification.");
     } finally {
@@ -192,6 +217,27 @@ export function TechnicianChat() {
           <label>Notification message<textarea required maxLength={10000} rows={3} value={notificationBody} onChange={(event) => setNotificationBody(event.target.value)} placeholder="A bounded update for the configured technician channel" /></label>
           <button type="submit" disabled={notificationBusy || !notificationRecipient.trim() || !notificationBody.trim()}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
         </form>
+        <section className="notification-activity" aria-labelledby="notification-activity-heading">
+          <div className="panel-heading">
+            <div><h3 id="notification-activity-heading">Notification activity</h3><p className="screen-note">Tenant-scoped request status, approval linkage, and redacted delivery evidence.</p></div>
+            <button className="secondary-button" type="button" onClick={() => void refreshNotificationRuns()} disabled={notificationLoading}>{notificationLoading ? "Loading…" : "Refresh activity"}</button>
+          </div>
+          {notificationError ? <div className="notice danger" role="alert">{notificationError}</div> : null}
+          {notificationRuns.length === 0 && !notificationLoading ? <p>No notification requests yet.</p> : null}
+          {notificationRuns.length > 0 ? <ul className="notification-activity-list">
+            {notificationRuns.map((run) => {
+              const channel = typeof run.output?.channel === "string" ? run.output.channel : "notification";
+              const providerStatus = typeof run.output?.provider_status === "string" ? run.output.provider_status : "";
+              const receiptId = typeof run.output?.receipt_id === "string" ? run.output.receipt_id : "";
+              const detail = run.error_detail || providerStatus || (run.approval_id ? `approval ${run.approval_id} pending` : "No delivery detail recorded.");
+              return <li key={run.id}>
+                <div><strong>{channel}</strong><span>{run.status}</span></div>
+                <small>{detail}</small>
+                {receiptId ? <small>Receipt recorded: {receiptId}</small> : null}
+              </li>;
+            })}
+          </ul> : null}
+        </section>
       </section>
 
       <div className="technician-chat-layout">
