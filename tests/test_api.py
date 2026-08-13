@@ -2899,6 +2899,21 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     assert hidden.status_code == 200
 
 
+def test_smart_action_run_exposes_redacted_failure_detail(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    failed = client.post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"ticket_id": "missing"}, "client_id": "acme"},
+    )
+    listed = client.get("/smart-actions/runs", params={"client_id": "acme"})
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    run = next(item for item in listed.json() if item["id"] == failed.json()["run_id"])
+    assert run["error_detail"] == "ticket_id must identify an existing ticket"
+
+
 def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     secure_settings = replace(
         settings,

@@ -226,8 +226,9 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   only when both write and outbound-call flags are enabled. Successful sends
   return and persist an opaque local receipt ID, UTC acceptance time, and
   bounded adapter status; webhook status codes are retained without provider
-  response bodies. Receipts are available through smart-action run API/CLI
-  views; there is no dedicated communication-history screen.
+  response bodies. Technician Chat exposes tenant-scoped notification activity
+  with approval linkage, opaque receipts, provider status, and redacted failure
+  detail; smart-action run API/CLI views remain available as well.
 - Approval request payload preview before connector execution, with approve, reject, draft revision, approver identity capture, and a bounded 24-hour expiry that terminates linked pending work and blocks late execution.
 - Agent definitions can shorten approval deadlines with a bounded policy and can
   require additional approval for selected enabled tools. They can also add a

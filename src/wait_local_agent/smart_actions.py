@@ -8894,6 +8894,7 @@ class SmartActionService:
                 result.output,
                 result.evidence,
                 client_id=effective_client_id,
+                error_detail=result.error_detail,
             )
             if run.id is None:
                 raise RuntimeError("smart action run was not persisted")
@@ -9100,6 +9101,7 @@ class SmartActionService:
             result.evidence,
             approval_id=approval_id,
             approver_id=approver,
+            error_detail=result.error_detail,
             _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
         )
         self.store.add_audit_event(
@@ -9225,6 +9227,7 @@ class SmartActionService:
             safe_result.output,
             safe_result.evidence,
             client_id=client_id,
+            error_detail=safe_result.error_detail,
         )
         if run.id is None:
             raise RuntimeError("smart action run was not persisted")

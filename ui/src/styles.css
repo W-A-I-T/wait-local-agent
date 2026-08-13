@@ -230,6 +230,40 @@ a {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.notification-activity {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e4ebe8;
+  padding-top: 16px;
+}
+
+.notification-activity-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notification-activity-list li {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.notification-activity-list li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.notification-activity-list span,
+.notification-activity-list small {
+  color: #60706a;
+}
+
 .technician-composer textarea {
   border: 1px solid #dce5e1;
   border-radius: 8px;

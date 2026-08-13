@@ -5986,6 +5986,7 @@ def _smart_action_run_view(run) -> dict[str, object]:
         "created_at": run.created_at,
         "updated_at": run.updated_at,
         "client_id": run.client_id,
+        "error_detail": redact_text(run.error_detail),
     }
 
 
