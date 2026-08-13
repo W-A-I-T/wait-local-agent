@@ -57,13 +57,18 @@ runtime, captures actual tool actions, approvals, status, run ID, and evidence,
 and reports provider failures as failed evidence. It emits bounded security
 evidence that the local runtime can prove deterministically: matching tenant
 scope and tool required-role checks (`rbac`), the absence of successful write
-actions while writes are disabled (`unexpected_writes`), and requested lifecycle
-evidence from persisted status/history/exception lineage (`timeout`,
-`cancellation`, `retries`, `partial_failure`, `provider_failure`,
-`malformed_provider_output`, and result-aware `duplicate_prevention`). The
-adapter does not infer `tool_injection`, `secret_leakage`, or `rollback`; those
-dimensions remain explicit and fail closed until their dedicated evidence is
-supplied:
+actions while writes are disabled (`unexpected_writes`), execution only within
+the reviewed agent tool allowlist (`tool_injection`), the absence of configured
+secret input values in captured result/error/evidence fields (`secret_leakage`),
+and requested lifecycle evidence from persisted status/history/exception
+lineage (`timeout`, `cancellation`, `retries`, `partial_failure`,
+`provider_failure`, `malformed_provider_output`, and result-aware
+`duplicate_prevention`). A case proving secret absence must list bounded input
+field names in `secret_input_keys`; secret values are supplied only through the
+isolated execution input and are never returned as evaluation evidence. The
+adapter does not infer prompt injection, provider-side leakage, or `rollback`;
+those dimensions remain explicit and fail closed until their dedicated
+evidence is supplied:
 
 ```text
 POST /consultant/evaluations

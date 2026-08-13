@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+from wait_local_agent import evaluation as evaluation_module
 from wait_local_agent.agents import AgentService
 from wait_local_agent.evaluation import (
     AgentServiceEvaluationExecutor,
@@ -249,6 +250,11 @@ def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -
             [{**_case(), "required_security_dimensions": ["rbac"] * 17}],
             {"onboarding": _observation()},
         )
+    with pytest.raises(EvaluationValidationError, match="secret_input_keys must contain 0-8"):
+        evaluate_tool_contract(
+            [{**_case(), "secret_input_keys": ["secret"] * 9}],
+            {"onboarding": _observation()},
+        )
     with pytest.raises(EvaluationValidationError, match="case ids must not contain duplicates"):
         evaluate_tool_contract(
             [_case("duplicate"), _case("duplicate")],
@@ -379,6 +385,118 @@ def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_e
         client_id="acme",
     ).execute({"failure_expected": False})
     assert result["security_evidence"] == {"rbac": False, "unexpected_writes": False}
+
+
+def test_runtime_evaluation_proves_tool_allowlist_and_secret_absence() -> None:
+    class Result:
+        run_id = 11
+        status = "completed"
+        error_detail = ""
+        final_result = {"status": "completed", "output": {"message": "[redacted]"}}
+        steps = [{"tool_id": "ticket-triage", "status": "success", "output": {"message": "[redacted]"}}]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return [
+                type("Tool", (), {"id": "ticket-triage", "required_role": "technician", "access_mode": "read"})()
+            ]
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme", "enabled_tools": ["ticket-triage"]})()
+    executor = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        input_payload={"temporary_password": "fixture-secret"},
+        client_id="acme",
+    )
+    observed = executor.execute(
+        {
+            "required_security_dimensions": ["tool_injection", "secret_leakage"],
+            "secret_input_keys": ["temporary_password"],
+        }
+    )
+    assert observed["security_evidence"] == {
+        "rbac": True,
+        "unexpected_writes": True,
+        "tool_injection": True,
+        "secret_leakage": True,
+    }
+    provenance = cast(dict[str, str], observed["security_evidence_provenance"])
+    assert provenance["tool_injection"] == "runtime"
+    assert provenance["secret_leakage"] == "runtime"
+    assert "fixture-secret" not in str(observed)
+
+    Result.steps = [{"tool_id": "ticket-triage", "status": "success", "output": {"echo": "fixture-secret"}}]
+    leaked = executor.execute(
+        {
+            "required_security_dimensions": ["secret_leakage"],
+            "secret_input_keys": ["temporary_password"],
+        }
+    )
+    leaked_evidence = cast(dict[str, bool], leaked["security_evidence"])
+    assert leaked_evidence["secret_leakage"] is False
+
+    Result.steps = [{"tool_id": "unreviewed-tool", "status": "failed", "output": {}}]
+    injected = executor.execute({"required_security_dimensions": ["tool_injection"]})
+    injected_evidence = cast(dict[str, bool], injected["security_evidence"])
+    assert injected_evidence["tool_injection"] is False
+
+
+def test_runtime_evaluation_fails_closed_for_invalid_secret_inputs_and_capture_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        run_id = 12
+        status = "completed"
+        error_detail = ""
+        final_result: dict[str, object] = {}
+        steps: list[dict[str, object]] = []
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return []
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme", "enabled_tools": ["ticket-triage"]})()
+    executor = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        input_payload={"temporary_password": "fixture-secret"},
+        client_id="acme",
+    )
+
+    no_key = executor.execute({"required_security_dimensions": ["secret_leakage"]})
+    assert cast(dict[str, bool], no_key["security_evidence"])["secret_leakage"] is False
+    missing_key = executor.execute(
+        {"required_security_dimensions": ["secret_leakage"], "secret_input_keys": ["missing"]}
+    )
+    assert cast(dict[str, bool], missing_key["security_evidence"])["secret_leakage"] is False
+
+    def fail_serialization(*args: object, **kwargs: object) -> str:
+        raise ValueError("fixture serialization failure")
+
+    monkeypatch.setattr(evaluation_module.json, "dumps", fail_serialization)
+    capture_error = executor.execute(
+        {
+            "required_security_dimensions": ["secret_leakage"],
+            "secret_input_keys": ["temporary_password"],
+        }
+    )
+    assert cast(dict[str, bool], capture_error["security_evidence"])["secret_leakage"] is False
 
 
 @pytest.mark.parametrize(
