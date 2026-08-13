@@ -92,7 +92,12 @@ from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_cons
 from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
-from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
+from wait_local_agent.evaluation import (
+    AgentServiceEvaluationExecutor,
+    EvaluationValidationError,
+    evaluate_tool_contract,
+    execute_tool_contract,
+)
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
@@ -197,7 +202,7 @@ blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
 microsoft_connector_app = typer.Typer(help="Metadata-only Power Platform connector commands.")
 microsoft_solution_app = typer.Typer(help="Reviewable Power Platform solution command plans.")
-microsoft_evaluation_app = typer.Typer(help="Observation-based consultant evaluation commands.")
+microsoft_evaluation_app = typer.Typer(help="Bounded consultant evaluation commands.")
 microsoft_governance_app = typer.Typer(help="Review-only consultant governance commands.")
 microsoft_monitoring_app = typer.Typer(help="Tenant-scoped consultant health summaries.")
 microsoft_power_apps_app = typer.Typer(help="Bounded Power Apps and Dataverse plans and build artifacts.")
@@ -3016,14 +3021,67 @@ def execute_microsoft_solution_stage(
 
 
 @microsoft_evaluation_app.command("run")
-def run_microsoft_evaluation(source: Path) -> None:
+def run_microsoft_evaluation(
+    source: Path,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
     payload = _load_openapi_definition(source)
     test_set = payload.get("test_set")
-    observations = payload.get("observations")
-    if not isinstance(test_set, list) or not isinstance(observations, dict):
-        raise typer.BadParameter("source must contain test_set and observations")
+    execution = payload.get("execution")
+    if not isinstance(test_set, list):
+        raise typer.BadParameter("source must contain a test_set array")
     try:
-        result = evaluate_tool_contract(test_set, observations)
+        if execution is None:
+            observations = payload.get("observations")
+            if not isinstance(observations, dict):
+                raise typer.BadParameter("observation evaluation source must contain observations")
+            result = evaluate_tool_contract(test_set, observations)
+        else:
+            if not isinstance(execution, dict):
+                raise typer.BadParameter("execution must be an object")
+            settings = load_settings()
+            if not settings.demo_mode or settings.allow_write_actions:
+                raise typer.BadParameter(
+                    "controlled evaluation execution requires local demo mode with writes disabled"
+                )
+            context = _cli_access(settings, token, Role.TECHNICIAN)
+            agent_id = execution.get("agent_id")
+            entity_id = execution.get("entity_id")
+            requested_client_id = execution.get("client_id")
+            input_payload = execution.get("input", {})
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (agent_id, entity_id, requested_client_id)
+            ):
+                raise typer.BadParameter("execution must contain agent_id, entity_id, and client_id text")
+            normalized_agent_id = cast(str, agent_id).strip()
+            normalized_entity_id = cast(str, entity_id).strip()
+            normalized_requested_client_id = cast(str, requested_client_id).strip()
+            if not isinstance(input_payload, dict):
+                raise typer.BadParameter("execution.input must be an object")
+            scoped_client_id = _cli_blueprint_client_scope(
+                context.client_id,
+                context.role,
+                normalized_requested_client_id,
+            )
+            if scoped_client_id is None:
+                raise typer.BadParameter("authenticated principal has no tenant")
+            store = Store(settings.data_path)
+            smart_actions = SmartActionService(store, settings)
+            agent_service = AgentService(store, settings, smart_actions)
+            definition = agent_service.get(normalized_agent_id, scoped_client_id)
+            if definition is None or definition.client_id != scoped_client_id:
+                raise typer.BadParameter("evaluation agent was not found in tenant scope")
+            executor = AgentServiceEvaluationExecutor(
+                agent_service,
+                definition,
+                entity_id=normalized_entity_id,
+                actor=context.approver_id or "evaluation",
+                actor_role=context.role,
+                input_payload=cast(dict[str, object], input_payload),
+                client_id=scoped_client_id,
+            )
+            result = execute_tool_contract(test_set, executor)
     except EvaluationValidationError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
