@@ -3456,11 +3456,19 @@ def list_agents() -> None:
             if definition.execution_window_start and definition.execution_window_end
             else " window=always"
         )
+        failure_policy_values: list[str] = []
+        for step in definition.steps:
+            policy = step.get("failure_policy")
+            if isinstance(policy, dict):
+                mode = policy.get("mode", "stop")
+                failure_policy_values.append(f"{step.get('tool_id', 'unknown')}:{mode}")
+        failure_policies = ",".join(failure_policy_values) or "-"
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
             f"enabled={definition.enabled} version={definition.version}{window} "
             f"context={','.join(definition.context_sources) or '-'} "
-            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'}"
+            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'} "
+            f"failure_policies={failure_policies}"
         )
 
 

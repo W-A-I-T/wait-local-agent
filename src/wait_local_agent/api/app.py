@@ -643,6 +643,7 @@ class ClientReportRequest(BaseModel):
 class AgentStepRequest(BaseModel):
     tool_id: str
     payload: dict[str, object] = Field(default_factory=dict)
+    failure_policy: dict[str, object] | None = None
 
 
 class AgentApprovalRuleRequest(BaseModel):

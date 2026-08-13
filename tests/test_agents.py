@@ -490,8 +490,215 @@ def test_result_aware_agent_preserves_approval_pause_and_failure(settings) -> No
     assert failed.final_result["history"] == {
         "attempted_steps": 1,
         "completed_steps": 0,
+        "failed_steps": 1,
         "partial": False,
     }
+
+
+class _PolicyActions:
+    def __init__(self, results: list[ActionResult], catalog: SmartActionService) -> None:
+        self.results = list(results)
+        self.catalog = catalog
+        self.calls: list[str] = []
+        self.provider_configured = False
+
+    def list(self):
+        return self.catalog.list()
+
+    def invoke(self, tool_id: str, payload: dict[str, object], actor: str, **kwargs: object) -> ActionResult:
+        self.calls.append(tool_id)
+        return self.results.pop(0) if self.results else ActionResult(status="success", output={})
+
+
+def test_agent_step_failure_policy_retries_and_records_partial_history(settings) -> None:
+    service = _service(settings)
+    actions = _PolicyActions(
+        [
+            ActionResult(status="failed", error_detail="provider temporarily unavailable"),
+            ActionResult(status="success", output={"resolved": True}),
+        ],
+        service.smart_actions,
+    )
+    policy_service = AgentService(service.store, settings, cast(SmartActionService, actions))
+    definition = policy_service.create(
+        name="Retrying triage",
+        description="Retry one transient failure within the step budget.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[
+            {
+                "tool_id": "ticket-triage",
+                "payload": {},
+                "failure_policy": {"mode": "retry", "max_retries": 1},
+            }
+        ],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    result = policy_service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "completed"
+    assert actions.calls == ["ticket-triage", "ticket-triage"]
+    assert [step["status"] for step in result.steps] == ["failed", "success"]
+    assert result.steps[1]["attempt"] == 1
+    assert result.final_result["history"] == {
+        "attempted_steps": 2,
+        "completed_steps": 1,
+        "failed_steps": 1,
+        "partial": True,
+    }
+    audit = service.store.list_audit_events(client_id="acme")
+    assert any(event.event_type == "agent.failure_policy" for event in audit)
+    executions = service.store.list_execution_runs(client_id="acme", run_kind="agent")
+    assert json.loads(executions[0].metadata_json)["failure_policy"]["steps"][0]["mode"] == "retry"
+
+
+def test_agent_step_failure_policy_uses_only_configured_fallback(settings) -> None:
+    service = _service(settings)
+    actions = _PolicyActions(
+        [
+            ActionResult(status="failed", error_detail="primary provider failed"),
+            ActionResult(status="success", output={"fallback": True}),
+        ],
+        service.smart_actions,
+    )
+    policy_service = AgentService(service.store, settings, cast(SmartActionService, actions))
+    definition = policy_service.create(
+        name="Fallback triage",
+        description="Use a selected local fallback after a provider failure.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["suggest-resolution", "ticket-triage"],
+        steps=[
+            {
+                "tool_id": "suggest-resolution",
+                "payload": {},
+                "failure_policy": {"mode": "fallback", "fallback_tool_id": "ticket-triage"},
+            },
+            {"tool_id": "ticket-triage", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    result = policy_service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "completed"
+    assert actions.calls == ["suggest-resolution", "ticket-triage"]
+    assert [step["tool_id"] for step in result.steps] == ["suggest-resolution", "ticket-triage"]
+    history = cast(dict[str, object], result.final_result["history"])
+    assert history["partial"] is True
+
+
+def test_result_aware_failure_policy_uses_configured_fallback(settings) -> None:
+    service = _service(settings)
+    actions = _PolicyActions(
+        [
+            ActionResult(status="failed", error_detail="provider failure"),
+            ActionResult(status="success", output={"fallback": True}),
+        ],
+        service.smart_actions,
+    )
+    policy_service = AgentService(service.store, settings, cast(SmartActionService, actions))
+    definition = policy_service.create(
+        name="Result-aware fallback",
+        description="Keep fallback selection deterministic after a failed result.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["suggest-resolution", "ticket-triage"],
+        steps=[
+            {
+                "tool_id": "suggest-resolution",
+                "payload": {},
+                "failure_policy": {"mode": "fallback", "fallback_tool_id": "ticket-triage"},
+            },
+            {"tool_id": "ticket-triage", "payload": {}},
+        ],
+        max_steps=2,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        result_aware=True,
+    )
+
+    result = policy_service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "completed"
+    assert actions.calls == ["suggest-resolution", "ticket-triage"]
+    assert [step["tool_id"] for step in result.steps] == ["suggest-resolution", "ticket-triage"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "kind", "next_action"),
+    [
+        ("human_input", "human_input_required", "human_input"),
+        ("technician_escalation", "technician_escalation", "technician_escalation"),
+        ("blocked", "blocked", "technician_review"),
+    ],
+)
+def test_agent_step_failure_policy_exposes_explicit_terminal_recovery(
+    settings, mode: str, kind: str, next_action: str
+) -> None:
+    service = _service(settings)
+    actions = _PolicyActions([ActionResult(status="failed", error_detail="provider failed")], service.smart_actions)
+    policy_service = AgentService(service.store, settings, cast(SmartActionService, actions))
+    definition = policy_service.create(
+        name=f"{mode} triage",
+        description="Expose a deterministic recovery state.",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[
+            {"tool_id": "ticket-triage", "payload": {}, "failure_policy": {"mode": mode}}
+        ],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    result = policy_service.run(definition, entity_id="TCK-1001", actor="requester", input_payload={})
+
+    assert result.status == "failed"
+    assert result.final_result["exception"] == {
+        "kind": kind,
+        "recoverable": mode == "human_input",
+        "next_action": next_action,
+    }
+
+
+def test_agent_step_failure_policy_rejects_unconfigured_fallback(settings) -> None:
+    service = _service(settings)
+    with pytest.raises(AgentDefinitionError, match="another configured enabled tool"):
+        service.create(
+            name="Unsafe fallback",
+            description="Fallback must be explicitly selected.",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=["ticket-triage"],
+            steps=[
+                {
+                    "tool_id": "ticket-triage",
+                    "payload": {},
+                    "failure_policy": {"mode": "fallback", "fallback_tool_id": "not-enabled"},
+                }
+            ],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+        )
 
 
 def test_continuation_lineage_is_bounded_and_redacted() -> None:
@@ -1466,6 +1673,7 @@ def test_agent_api_retry_is_tenant_scoped_and_rejects_completed_runs(settings) -
         "partial_history": {
             "attempted_steps": 1,
             "completed_steps": 0,
+            "failed_steps": 1,
             "partial": False,
         },
     }
@@ -2310,6 +2518,7 @@ def test_agent_api_exposes_catalog_tenant_scope_and_run_trace(settings) -> None:
     assert detail.json()["lineage"]["partial_history"] == {
         "attempted_steps": 1,
         "completed_steps": 1,
+        "failed_steps": 0,
         "partial": False,
     }
     assert set(detail.json()["state"]["context"]) == {"ticket", "client"}

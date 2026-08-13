@@ -469,6 +469,12 @@ export type AgentTool = {
   approval_expiry_seconds?: number;
 };
 
+export type AgentFailurePolicy = {
+  mode: "stop" | "retry" | "fallback" | "human_input" | "technician_escalation" | "blocked";
+  max_retries?: number;
+  fallback_tool_id?: string | null;
+};
+
 export type AgentRunDetail = {
   id: number;
   agent_id: string;
@@ -486,6 +492,7 @@ export type AgentRunDetail = {
     partial_history?: {
       attempted_steps?: number;
       completed_steps?: number;
+      failed_steps?: number;
       partial?: boolean;
     };
   };
@@ -855,7 +862,7 @@ export type AgentDefinition = {
   entity_type: string;
   filters: Record<string, unknown>;
   enabled_tools: string[];
-  steps: Array<{ tool_id: string; payload: Record<string, unknown> }>;
+  steps: Array<{ tool_id: string; payload: Record<string, unknown>; failure_policy?: AgentFailurePolicy }>;
   max_steps: number;
   execution_timeout_seconds: number;
   client_id: string | null;
