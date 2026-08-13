@@ -264,11 +264,20 @@ export type ConsultantEmployeeOnboardingDemo = {
     supervisor: { status: string; children?: Array<{ status?: string }> };
     evaluation: { production_readiness: string; execution_started: boolean };
     governance: { status: string };
+    artifacts: {
+      status: string;
+      items: Array<Record<string, unknown>>;
+      package_digest: string;
+      deployment_package_generated: boolean;
+    };
     delivery: { production_readiness: string; deployment_started: boolean };
   };
   boundaries: {
     live_provider_execution: boolean;
     artifact_generation: boolean;
+    artifact_generation_status: string;
+    review_package_generated: boolean;
+    deployable_package_generated: boolean;
     deployment_started: boolean;
     production_deployment_requires_approval: boolean;
     external_systems_require_environment_verification: boolean;

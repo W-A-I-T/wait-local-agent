@@ -42,9 +42,19 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
     assert stages["evaluation"]["production_readiness"] == "pass"
     assert stages["governance"]["status"] == "needs_review"
     assert stages["delivery"]["production_readiness"] == "needs_review"
+    assert stages["artifacts"]["status"] == "review_only"
+    assert len(stages["artifacts"]["items"]) == 3
+    assert stages["artifacts"]["package"]["package_status"] == "review_only"
+    assert stages["artifacts"]["package_digest"].startswith("sha256:")
+    assert stages["artifacts"]["deployment_package_generated"] is False
+    assert stages["delivery"]["review_package_generated"] is True
+    assert stages["delivery"]["deployment_package_generated"] is False
     assert result["boundaries"] == {
         "live_provider_execution": False,
-        "artifact_generation": False,
+        "artifact_generation": True,
+        "artifact_generation_status": "review_only",
+        "review_package_generated": True,
+        "deployable_package_generated": False,
         "deployment_started": False,
         "production_deployment_requires_approval": True,
         "external_systems_require_environment_verification": True,

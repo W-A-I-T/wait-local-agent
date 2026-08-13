@@ -16,12 +16,18 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
 from wait_local_agent.connectors import list_connector_statuses
 from wait_local_agent.consultant import architect_solution_blueprint, parse_solution_blueprint
-from wait_local_agent.delivery_plan import build_consultant_delivery_plan
+from wait_local_agent.copilot_studio import build_copilot_studio_plan
+from wait_local_agent.delivery_plan import (
+    build_consultant_artifact_review_package,
+    build_consultant_delivery_plan,
+)
 from wait_local_agent.discovery import build_solution_discovery
 from wait_local_agent.environment import discover_environment
 from wait_local_agent.evaluation import AgentServiceEvaluationExecutor, execute_tool_contract
 from wait_local_agent.governance import evaluate_solution_governance
 from wait_local_agent.models import AgentDefinition, SolutionBlueprint
+from wait_local_agent.power_apps import build_power_apps_artifact
+from wait_local_agent.power_automate import build_power_automate_flow_plan
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -146,12 +152,18 @@ def run_employee_onboarding_demo(
         ),
     )
     governance = evaluate_solution_governance(architecture, [])
+    review_artifacts = _build_review_artifacts(client_id)
+    review_package, review_package_digest = build_consultant_artifact_review_package(
+        client_id=client_id,
+        artifacts=review_artifacts,
+    )
     delivery = build_consultant_delivery_plan(
         client_id=client_id,
         architecture=architecture,
         evaluation=evaluation,
         governance=governance,
         deployment_targets=["Teams", "Power Automate", "Power Apps", "Dataverse"],
+        review_artifacts=review_artifacts,
     )
 
     return {
@@ -174,6 +186,14 @@ def run_employee_onboarding_demo(
             "supervisor": supervisor,
             "evaluation": evaluation,
             "governance": governance,
+            "artifacts": {
+                "status": "review_only",
+                "items": review_artifacts,
+                "package": review_package,
+                "package_digest": review_package_digest,
+                "deployment_package_generated": False,
+                "deployment_started": False,
+            },
             "delivery": delivery,
         },
         "fixture_child_agents": [
@@ -188,7 +208,10 @@ def run_employee_onboarding_demo(
         ],
         "boundaries": {
             "live_provider_execution": False,
-            "artifact_generation": False,
+            "artifact_generation": True,
+            "artifact_generation_status": "review_only",
+            "review_package_generated": True,
+            "deployable_package_generated": False,
             "deployment_started": False,
             "production_deployment_requires_approval": True,
             "external_systems_require_environment_verification": True,
@@ -235,6 +258,92 @@ def _target_tools(blueprint: SolutionBlueprint, role: str) -> list[str]:
         for agent in blueprint.agents
         if role in agent.id or role in agent.name.casefold()
         for tool in agent.tools
+    ]
+
+
+def _build_review_artifacts(client_id: str) -> list[dict[str, Any]]:
+    """Generate validated local manifests for the canonical Microsoft handoff."""
+
+    return [
+        build_power_apps_artifact(
+            client_id=client_id,
+            app_name="Employee onboarding workspace",
+            entities=[
+                {
+                    "logical_name": "employee",
+                    "display_name": "Employee",
+                    "fields": [
+                        {"name": "display_name", "type": "string", "required": True},
+                        {"name": "start_date", "type": "date", "required": True},
+                    ],
+                }
+            ],
+            screens=[
+                {"id": "employee_browse", "title": "Employees", "entity": "employee", "mode": "browse"},
+                {"id": "employee_edit", "title": "Edit employee", "entity": "employee", "mode": "edit"},
+            ],
+            actions=[
+                {"id": "employee_lookup", "connector_id": "m365", "method": "GET"},
+                {
+                    "id": "employee_create",
+                    "connector_id": "m365",
+                    "method": "POST",
+                    "approval_required": True,
+                },
+            ],
+        ),
+        build_power_automate_flow_plan(
+            client_id=client_id,
+            workflow_id="employee_onboarding",
+            workflow_name="Employee onboarding",
+            trigger="HR onboarding request",
+            steps=[
+                {"id": "validate_manager", "name": "Validate manager", "kind": "condition"},
+                {
+                    "id": "prepare_identity",
+                    "name": "Prepare Entra identity",
+                    "tool_id": "m365_user_create",
+                    "method": "POST",
+                    "approval_required": True,
+                },
+                {
+                    "id": "assign_license",
+                    "name": "Assign Microsoft 365 license",
+                    "tool_id": "m365_license_assign",
+                    "method": "POST",
+                    "approval_required": True,
+                },
+                {
+                    "id": "notify_manager",
+                    "name": "Notify manager in Teams",
+                    "tool_id": "m365_teams_message",
+                    "method": "POST",
+                    "approval_required": True,
+                },
+            ],
+        ),
+        build_copilot_studio_plan(
+            client_id=client_id,
+            copilot_name="Employee onboarding copilot",
+            business_goal="Guide HR through an auditable onboarding request.",
+            topics=[
+                {
+                    "id": "onboarding_request",
+                    "name": "Onboarding request",
+                    "trigger_phrases": ["start onboarding", "new employee"],
+                }
+            ],
+            knowledge_sources=["employee-handbook", "it-onboarding-runbook"],
+            actions=[
+                {"id": "lookup_employee", "connector_id": "m365", "method": "GET"},
+                {
+                    "id": "prepare_identity",
+                    "connector_id": "m365",
+                    "method": "POST",
+                    "approval_required": True,
+                },
+            ],
+        ),
     ]
 
 

@@ -134,6 +134,15 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
             evaluation={"production_readiness": "pass", "case_count": 1},
             governance={"client_id": "acme", "status": "pass"},
             deployment_targets=["Teams"],
+            review_artifacts=[
+                {
+                    "format": "wait-local-agent.power-automate-flow-plan",
+                    "client_id": "acme",
+                    "credentials_included": False,
+                    "execution_started": False,
+                    "deployment_started": False,
+                }
+            ],
         ),
         _technician(),
     )
@@ -144,6 +153,9 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert power_apps_artifact["deployment_started"] is False
     assert flow["export_status"] == "review_only"
     assert delivery["production_deployment_requires_approval"] is True
+    assert delivery["summary"]["review_artifacts_prepared"] == 1
+    assert delivery["review_package_generated"] is True
+    assert delivery["deployment_package_generated"] is False
 
     copilot = _endpoint(settings, "/consultant/copilot-studio/plan")(
         CopilotStudioPlanRequest(
@@ -881,7 +893,11 @@ def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(setti
     assert result["mode"] == "local_fixture"
     assert result["stages"]["supervisor"]["status"] == "completed"
     assert result["stages"]["evaluation"]["production_readiness"] == "pass"
+    assert result["stages"]["artifacts"]["status"] == "review_only"
+    assert result["stages"]["artifacts"]["deployment_package_generated"] is False
     assert result["boundaries"]["live_provider_execution"] is False
+    assert result["boundaries"]["artifact_generation_status"] == "review_only"
+    assert result["boundaries"]["deployable_package_generated"] is False
     assert result["boundaries"]["deployment_started"] is False
 
 

@@ -11,6 +11,7 @@ from wait_local_agent.reports.renderers import redact_value
 
 MAX_DELIVERY_TARGETS = 8
 MAX_DELIVERY_CONNECTORS = 16
+MAX_DELIVERY_REVIEW_ARTIFACTS = 16
 MAX_DELIVERY_REVIEW_PACKAGE_BYTES = 256_000
 
 
@@ -26,6 +27,7 @@ def build_consultant_delivery_plan(
     governance: Mapping[str, object],
     deployment_targets: Sequence[str],
     connector_artifacts: Sequence[Mapping[str, object]] = (),
+    review_artifacts: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if architecture.get("client_id") != tenant:
@@ -38,11 +40,18 @@ def build_consultant_delivery_plan(
         raise DeliveryPlanError(f"connector_artifacts may contain at most {MAX_DELIVERY_CONNECTORS} items")
     if any(not isinstance(item, Mapping) for item in connectors):
         raise DeliveryPlanError("connector_artifacts must contain objects")
+    review_items = list(review_artifacts)
+    if len(review_items) > MAX_DELIVERY_REVIEW_ARTIFACTS:
+        raise DeliveryPlanError(f"review_artifacts may contain at most {MAX_DELIVERY_REVIEW_ARTIFACTS} items")
+    if any(not isinstance(item, Mapping) for item in review_items):
+        raise DeliveryPlanError("review_artifacts must contain objects")
     checks = {
         "architecture": architecture.get("readiness") == "ready",
         "evaluation": evaluation.get("production_readiness") == "pass",
         "governance": governance.get("status") == "pass",
-        "credentials": all(item.get("credentials_included") is not True for item in connectors),
+        "credentials": all(
+            item.get("credentials_included") is not True for item in [*connectors, *review_items]
+        ),
     }
     components = architecture.get("components", [])
     if not isinstance(components, list):
@@ -53,7 +62,10 @@ def build_consultant_delivery_plan(
     case_count = evaluation.get("case_count", 0)
     if isinstance(case_count, bool) or not isinstance(case_count, int) or case_count < 0:
         raise DeliveryPlanError("evaluation.case_count must be a non-negative integer")
-    review_package, review_package_digest = _build_review_package(tenant, connectors)
+    review_package, review_package_digest = build_consultant_artifact_review_package(
+        client_id=tenant,
+        artifacts=[*connectors, *review_items],
+    )
     return {
         "format": "wait-local-agent.consultant-delivery-plan",
         "format_version": 1,
@@ -69,6 +81,7 @@ def build_consultant_delivery_plan(
                 item.get("kind") == "knowledge_source" for item in components if isinstance(item, Mapping)
             ),
             "connectors_prepared": len(connectors),
+            "review_artifacts_prepared": len(review_items),
             "test_scenarios": case_count,
             "security_evaluation": governance.get("status", "needs_review"),
         },
@@ -105,32 +118,45 @@ def _text(value: object, field: str, maximum: int) -> str:
     return normalized
 
 
-def _build_review_package(
-    tenant: str,
-    connectors: Sequence[Mapping[str, object]],
+def build_consultant_artifact_review_package(
+    *,
+    client_id: str,
+    artifacts: Sequence[Mapping[str, object]],
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Build a bounded deterministic review manifest, never a deployable package."""
 
-    if not connectors:
+    tenant = _text(client_id, "client_id", 128)
+    if not artifacts:
         return None, None
+    if len(artifacts) > MAX_DELIVERY_CONNECTORS + MAX_DELIVERY_REVIEW_ARTIFACTS:
+        raise DeliveryPlanError(
+            f"review package may contain at most "
+            f"{MAX_DELIVERY_CONNECTORS + MAX_DELIVERY_REVIEW_ARTIFACTS} artifacts"
+        )
 
-    artifacts: list[dict[str, Any]] = []
-    for connector in connectors:
-        redacted = redact_value(dict(connector))
+    safe_artifacts: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, Mapping):
+            raise DeliveryPlanError("review_artifacts must contain objects")
+        if artifact.get("client_id") not in {None, tenant}:
+            raise DeliveryPlanError("review artifact is outside the requested tenant")
+        if artifact.get("execution_started") is True or artifact.get("deployment_started") is True:
+            raise DeliveryPlanError("review artifacts must not report execution or deployment started")
+        redacted = redact_value(dict(artifact))
         if not isinstance(redacted, dict):
-            raise DeliveryPlanError("connector_artifacts must contain JSON objects")
+            raise DeliveryPlanError("review_artifacts must contain JSON objects")
         # ``redact_value`` treats credential-related keys as sensitive. Preserve
         # this required safety assertion when it is explicitly supplied as false.
-        if connector.get("credentials_included") is False:
+        if artifact.get("credentials_included") is False:
             redacted["credentials_included"] = False
-        artifacts.append(redacted)
+        safe_artifacts.append(redacted)
 
     package: dict[str, Any] = {
         "format": "wait-local-agent.consultant-review-package",
         "format_version": 1,
         "client_id": tenant,
-        "artifact_count": len(artifacts),
-        "artifacts": artifacts,
+        "artifact_count": len(safe_artifacts),
+        "artifacts": safe_artifacts,
         "package_status": "review_only",
         "credentials_included": False,
         "deployment_started": False,
@@ -144,9 +170,9 @@ def _build_review_package(
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise DeliveryPlanError("connector_artifacts must contain JSON-compatible values") from exc
+        raise DeliveryPlanError("review_artifacts must contain JSON-compatible values") from exc
     if len(serialized) > MAX_DELIVERY_REVIEW_PACKAGE_BYTES:
         raise DeliveryPlanError(
-            f"connector_artifacts review package may be at most {MAX_DELIVERY_REVIEW_PACKAGE_BYTES} bytes"
+            f"review_artifacts review package may be at most {MAX_DELIVERY_REVIEW_PACKAGE_BYTES} bytes"
         )
     return package, f"sha256:{hashlib.sha256(serialized).hexdigest()}"

@@ -41,10 +41,11 @@ scripts/demo_employee_onboarding.sh
 The fixture seeds only `TCK-1001` for tenant `acme`. Specialist agents execute
 the existing bounded `ticket-triage` action; their target Microsoft, PSA, RMM,
 documentation, and Teams tools are architecture declarations, not live calls.
-The result reports environment verification and governance as review gates when
-external credentials are absent, records local supervisor/evaluation evidence,
-and explicitly leaves artifact generation, live provider execution, and
-deployment unstarted.
+The walkthrough also generates and validates three deterministic review-only
+manifests for Power Apps/Dataverse, Power Automate, and Copilot Studio, then
+packages their redacted metadata with a digest. That package is not an
+`.msapp`, solution zip, provisioned Copilot, or deployable Power Platform
+package. Live provider execution and deployment remain unstarted and explicit.
 
 The same composition is available to an authenticated technician through
 `POST /consultant/demos/employee-onboarding` when the appliance is in local
