@@ -15,6 +15,7 @@ from wait_local_agent.workiq import (
     WorkIqValidationError,
     _validate_entity_path,
     classify_work_iq_operation,
+    classify_work_iq_request,
 )
 
 
@@ -71,6 +72,90 @@ def test_workiq_operation_policy_fails_closed_for_generic_or_unknown_requests() 
     assert classify_work_iq_operation("create_entity", resource_paths="/me/events") == "write"
     assert classify_work_iq_operation("unexpected", resource_paths="/me/messages") == "unknown"
     assert classify_work_iq_operation("fetch", resource_paths=["/authentication/methods"]) == "unknown"
+
+
+def test_workiq_request_policy_considers_arguments_identity_tenant_and_local_policy() -> None:
+    allowed = classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="acme",
+        identity="technician-1",
+        local_policy={"allowed_operations": ["fetch"], "allowed_path_prefixes": ["/me/"]},
+    )
+    assert allowed.classification == "read"
+
+    denied_path = classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/sites/contoso"]},
+        tenant="acme",
+        identity="technician-1",
+        local_policy={"allowed_path_prefixes": ["/me/"]},
+    )
+    assert denied_path.classification == "blocked"
+
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="acme",
+        identity="technician-1",
+        local_policy={"offline": True},
+    ).classification == "blocked"
+    assert classify_work_iq_request(
+        "call_function",
+        arguments={"functionUrl": "/me/calendarView"},
+        tenant="acme",
+        identity="technician-1",
+    ).classification == "high-risk"
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="",
+        identity="technician-1",
+    ).classification == "unknown"
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="other",
+        identity="technician-1",
+        local_policy={"tenant_id": "acme"},
+    ).classification == "blocked"
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="acme",
+        identity="technician-1",
+        local_policy={"allowed_identities": ["technician-2"]},
+    ).classification == "blocked"
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="acme",
+        identity=None,
+        local_policy={"require_identity": True},
+    ).classification == "blocked"
+    assert classify_work_iq_request(
+        "fetch",
+        arguments={"entityUrls": ["/me/messages"]},
+        tenant="acme",
+        identity="technician-1",
+        local_policy={"allowed_identities": "technician-1"},
+    ).classification == "unknown"
+
+
+def test_workiq_client_blocks_before_mcp_when_local_policy_denies(settings) -> None:
+    fake = FakeMcpClient(_result({"results": []}))
+    client = WorkIqClient(settings, mcp_client=fake)
+
+    response = client.fetch(
+        ["/me/messages"],
+        tenant_id="acme",
+        identity="technician-1",
+        local_policy={"offline": True},
+    )
+
+    assert response.status == "failed"
+    assert response.classification == "blocked"
+    assert fake.calls == []
 
 
 def test_workiq_schema_search_not_configured_and_remote_failures(settings) -> None:
@@ -189,6 +274,7 @@ def test_workiq_smart_action_is_tenant_scoped_and_read_only(settings) -> None:
 
     assert success.status == "success"
     assert success.output["connector_status"] == "ready"
+    assert success.evidence[0]["classification"] == "read"
     assert fake.calls[0][0] == "fetch"
     outside = service.invoke(
         "workiq-fetch",
