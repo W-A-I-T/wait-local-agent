@@ -3,9 +3,11 @@
 > Produced: 2026-06-10  
 > Based on direct repo inspection + live NeoAgent/competitor research
 
-> **Current-state note (2026-08-09):** This document retains the original
-> packaging and architecture proposal, but it is not the authoritative shipped
-> capability list. The current implementation truth is in
+> **Current-state note (2026-08-13):** This document retains the original
+> packaging, competitive, and architecture proposal as historical context, but
+> it is not the authoritative roadmap or shipped capability list. The current
+> product direction is the root [`ROADMAP.md`](../ROADMAP.md), and the current
+> implementation truth is in
 > [`docs/status.md`](status.md), [`docs/neoagent-parity-matrix.md`](neoagent-parity-matrix.md),
 > and [`docs/ui-feature-evidence.md`](ui-feature-evidence.md). The staged rows
 > below are historical planning context unless they are marked as implemented
