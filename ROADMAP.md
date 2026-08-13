@@ -87,10 +87,13 @@ credential or undocumented vendor API remains an explicit boundary.
   architecture projections, workflow design, use-case catalog, delivery
   handoff, governance review, evaluation contracts, monitoring, and bounded
   supervisor/child-agent plans.
-- No-probe environment discovery that matches customer declarations to the
-  existing connector catalog, preserves configured/detected/
-  permission-limited/not-configured/unknown states, and carries evidence into
-  the blueprint candidate and architecture review.
+- Environment discovery that matches customer declarations to the existing
+  connector catalog, preserves configured/detected/permission-limited/
+  not-configured/unknown states, and carries evidence into the blueprint
+  candidate and architecture review. It can explicitly invoke the existing
+  fixed, read-only connector health contracts; only positive tenant-bound
+  health evidence becomes `authorized`, and provider or policy failures remain
+  visible rather than becoming empty results.
 - Deterministic architecture decisions for blueprint components, with explicit
   targets, alternatives, dependencies, permissions, licenses, read/write and
   approval boundaries, risk, data movement, complexity, reversibility, tests,

@@ -855,6 +855,7 @@ def _environment(value: object, *, client_id: str) -> tuple[dict[str, object], .
         "provider_status",
         "http_probing_enabled",
         "write_actions_enabled",
+        "probe",
     }
     statuses = {
         "configured",
@@ -905,6 +906,35 @@ def _environment(value: object, *, client_id: str) -> tuple[dict[str, object], .
                 if text_field == "tenant_scope" and text_value != client_id:
                     raise BlueprintValidationError(f"environment[{index}].tenant_scope is outside the blueprint tenant")
                 normalized[text_field] = text_value
+        if "probe" in item:
+            probe = _object(item["probe"], f"environment[{index}].probe")
+            _reject_unknown(
+                probe,
+                {"status", "layer", "message"},
+                f"environment[{index}].probe",
+            )
+            probe_status = _text(
+                probe.get("status"),
+                f"environment[{index}].probe.status",
+                max_length=16,
+            )
+            if probe_status not in {"passed", "failed", "not_run"}:
+                raise BlueprintValidationError(f"environment[{index}].probe.status is unsupported")
+            probe_layer = _text(
+                probe.get("layer"),
+                f"environment[{index}].probe.layer",
+                max_length=32,
+            )
+            probe_message = _optional_text(
+                probe.get("message"),
+                f"environment[{index}].probe.message",
+                max_length=240,
+            )
+            normalized["probe"] = {
+                "status": probe_status,
+                "layer": probe_layer,
+                "message": probe_message or "",
+            }
         result.append(normalized)
     return tuple(result)
 

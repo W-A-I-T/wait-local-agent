@@ -83,6 +83,7 @@ from wait_local_agent.connectors import (
     execute_m365_approval_request,
     list_connector_statuses,
     list_secret_records,
+    probe_connector_health,
     update_connectwise_approval_fields,
     update_halopsa_approval_fields,
 )
@@ -595,6 +596,7 @@ class DiscoveryTurnRequest(BaseModel):
 class EnvironmentDiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     systems: list[object] = Field(default_factory=list, max_length=32)
+    probe: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -4959,12 +4961,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
-            return discover_solution_environment(
+            connector_statuses = list_connector_statuses(active_settings)
+            result = discover_solution_environment(
                 client_id=scoped_client_id,
                 systems=payload.systems,
-                connector_statuses=list_connector_statuses(active_settings),
+                connector_statuses=connector_statuses,
                 configured_client_id=active_settings.client_id,
             )
+            if payload.probe:
+                connector_ids = [
+                    cast(str, item["connector_id"])
+                    for item in cast(list[dict[str, object]], result["systems"])
+                    if isinstance(item.get("connector_id"), str)
+                    and item.get("status") == "configured"
+                ]
+                probe_results = probe_connector_health(
+                    connector_ids,
+                    active_settings,
+                    halopsa_client=halopsa_client,
+                    hudu_client=hudu_client,
+                    connectwise_client=connectwise_client,
+                    syncro_client=syncro_client,
+                    servicenow_client=servicenow_client,
+                    autotask_client=autotask_client,
+                    itglue_client=itglue_client,
+                    confluence_client=confluence_client,
+                    notion_client=notion_client,
+                    sharepoint_client=sharepoint_client,
+                    m365_client=m365_client,
+                    timezest_client=timezest_client,
+                    scalepad_client=scalepad_client,
+                )
+                result = discover_solution_environment(
+                    client_id=scoped_client_id,
+                    systems=payload.systems,
+                    connector_statuses=connector_statuses,
+                    configured_client_id=active_settings.client_id,
+                    probe_results=probe_results,
+                )
+            status_counts: dict[str, int] = {}
+            for item in cast(list[dict[str, object]], result["systems"]):
+                status = item.get("status")
+                if isinstance(status, str):
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            store.add_audit_event(
+                "consultant.environment_discovery",
+                scoped_client_id,
+                f"probe_requested={payload.probe} probe_performed={result['probe_performed']} "
+                f"system_statuses={json.dumps(status_counts, sort_keys=True)}",
+                client_id=scoped_client_id,
+                approver_id=context.approver_id or "api",
+            )
+            return result
         except DiscoveryValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

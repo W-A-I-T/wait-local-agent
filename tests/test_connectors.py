@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+import wait_local_agent.connectors as connectors_module
 from wait_local_agent import cloud_connectors
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
@@ -28,6 +29,7 @@ from wait_local_agent.connectors import (
     execute_halopsa_approval_request,
     execute_m365_approval_request,
     list_connector_statuses,
+    probe_connector_health,
     update_connectwise_approval_fields,
     update_halopsa_approval_fields,
     validate_connectwise_action_fields,
@@ -51,6 +53,7 @@ from wait_local_agent.connectors import (
 )
 from wait_local_agent.m365_graph import (
     M365GraphAuthenticationMethodDeleteResult,
+    M365GraphClient,
     M365GraphGroupMembershipResult,
     M365GraphLicenseChangeResult,
     M365GraphMailboxSettingsUpdateResult,
@@ -65,7 +68,7 @@ from wait_local_agent.m365_graph import (
     M365GraphSessionRevokeResult,
     M365GraphUserDisableResult,
 )
-from wait_local_agent.models import ConnectWiseWriteResult, HaloWriteResult
+from wait_local_agent.models import ConnectorReadResult, ConnectWiseWriteResult, HaloWriteResult
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
 
@@ -86,6 +89,64 @@ class FakeConnectWiseClient:
             status_code=200,
             remote_id="42",
         )
+
+
+class FakeHealthClient:
+    def __init__(self, result: ConnectorReadResult) -> None:
+        self.result = result
+
+    def health(self) -> ConnectorReadResult:
+        return self.result
+
+
+def test_probe_connector_health_is_explicit_and_read_only(settings) -> None:
+    active = replace(
+        settings,
+        allow_http_probing=True,
+        m365_graph_base_url="https://graph.example",
+        m365_access_token="fixture-token",
+    )
+    results = probe_connector_health(
+        ["m365", "m365", "rmm"],
+        active,
+        m365_client=cast(
+            M365GraphClient,
+            FakeHealthClient(ConnectorReadResult("ready", "health succeeded")),
+        ),
+    )
+
+    assert results["m365"] == {"passed": True, "layer": "connector", "message": "health succeeded"}
+    assert results["rmm"]["passed"] is False
+    assert results["rmm"]["layer"] == "connector"
+
+
+def test_probe_connector_health_fails_closed_when_http_is_disabled(settings) -> None:
+    results = probe_connector_health(["m365"], settings)
+
+    assert results["m365"] == {
+        "passed": False,
+        "layer": "safety",
+        "message": "provider health probing is blocked by local policy",
+    }
+
+
+def test_probe_connector_health_converts_health_exceptions_to_failure_evidence(monkeypatch, settings) -> None:
+    active = replace(
+        settings,
+        allow_http_probing=True,
+        m365_graph_base_url="https://graph.example",
+        m365_access_token="fixture-token",
+    )
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("token=should-not-escape")
+
+    monkeypatch.setattr(connectors_module, "validate_connector_credentials", fail)
+    result = probe_connector_health(["m365"], active)
+
+    assert result["m365"]["passed"] is False
+    assert result["m365"]["layer"] == "connector"
+    assert result["m365"]["message"] == "token=[redacted]"
 
 
 class FakeM365Client:

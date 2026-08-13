@@ -47,6 +47,59 @@ def test_environment_discovery_preserves_unknown_and_local_policy_boundaries() -
     assert result["readiness"] == "needs_environment_verification"
 
 
+def test_environment_discovery_promotes_only_explicit_health_evidence() -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["Microsoft 365", "HaloPSA", "NinjaOne"],
+        connector_statuses=[
+            _status("m365", "Microsoft 365 / Entra", "configured"),
+            _status("halopsa", "HaloPSA", "configured"),
+            _status("rmm", "NinjaOne RMM", "configured"),
+        ],
+        configured_client_id="acme",
+        probe_results={
+            "m365": {"passed": True, "layer": "connector", "message": "Graph health succeeded"},
+            "halopsa": {
+                "passed": False,
+                "layer": "auth",
+                "message": "provider rejected the health request",
+            },
+            "rmm": {"passed": False, "layer": "connector", "message": "probe unsupported"},
+        },
+    )
+
+    systems = {item["name"]: item for item in result["systems"]}
+    assert systems["Microsoft 365"]["status"] == "authorized"
+    assert systems["Microsoft 365"]["probe"]["status"] == "passed"
+    assert systems["HaloPSA"]["status"] == "permission-limited"
+    assert "not treated as empty" in systems["HaloPSA"]["limitation"]
+    assert systems["NinjaOne"]["status"] == "unknown"
+    assert result["probe_requested"] is True
+    assert result["probe_performed"] is True
+    assert result["readiness"] == "needs_environment_verification"
+
+
+@pytest.mark.parametrize(
+    ("layer", "expected_status"),
+    [
+        ("connectivity", "unavailable"),
+        ("safety", "permission-limited"),
+        ("config", "not_configured"),
+        ("unexpected", "unknown"),
+    ],
+)
+def test_environment_discovery_maps_health_failure_layers(layer: str, expected_status: str) -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["Microsoft 365"],
+        connector_statuses=[_status("m365", "Microsoft 365 / Entra", "configured")],
+        configured_client_id="acme",
+        probe_results={"m365": {"passed": False, "layer": layer, "message": "fixture"}},
+    )
+
+    assert result["systems"][0]["status"] == expected_status
+
+
 def test_environment_discovery_does_not_claim_other_tenant_configuration() -> None:
     result = discover_environment(
         client_id="acme",

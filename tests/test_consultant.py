@@ -716,6 +716,18 @@ def test_blueprint_environment_contract_rejects_malformed_records() -> None:
             ],
             "outside the blueprint tenant",
         ),
+        (
+            [
+                {
+                    "id": "m365",
+                    "name": "M365",
+                    "kind": "m365",
+                    "status": "configured",
+                    "probe": {"status": "invalid", "layer": "connector", "message": "fixture"},
+                }
+            ],
+            "probe.status is unsupported",
+        ),
     ]
     for environment, message in cases:
         payload = {**_payload(), "environment": environment}

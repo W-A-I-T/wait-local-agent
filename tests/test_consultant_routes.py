@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 
+import wait_local_agent.api.app as app_module
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     CopilotStudioPlanRequest,
@@ -1115,6 +1116,74 @@ def test_environment_discovery_route_returns_explicit_local_evidence(settings) -
     systems = {item["name"]: item for item in result["systems"]}
     assert systems["Microsoft 365"]["status"] == "not_configured"
     assert systems["Custom API"]["status"] == "detected"
+
+
+def test_environment_discovery_route_records_probe_request_without_claiming_success(settings) -> None:
+    result = _endpoint(settings, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
+        _technician(),
+    )
+
+    assert result["probe_requested"] is True
+    assert result["probe_performed"] is False
+    assert result["systems"][0]["status"] == "not_configured"
+
+
+def test_environment_discovery_route_projects_positive_health_evidence_and_audits(monkeypatch, settings) -> None:
+    active = settings.__class__(
+        **{
+            **settings.__dict__,
+            "allow_http_probing": True,
+            "client_id": "acme",
+            "m365_graph_base_url": "https://graph.example",
+            "m365_access_token": "fixture-token",
+        }
+    )
+    monkeypatch.setattr(
+        app_module,
+        "probe_connector_health",
+        lambda connector_ids, active_settings, **clients: {
+            connector_id: {"passed": True, "layer": "connector", "message": "health succeeded"}
+            for connector_id in connector_ids
+        },
+    )
+
+    result = _endpoint(active, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
+        _technician(),
+    )
+
+    assert result["probe_performed"] is True
+    assert result["systems"][0]["status"] == "authorized"
+    assert result["systems"][0]["evidence"][-1] == "provider_health_response"
+    audit_events = Store(active.data_path).list_audit_events(client_id="acme")
+    assert any(event.event_type == "consultant.environment_discovery" for event in audit_events)
+
+
+def test_environment_discovery_does_not_probe_foreign_tenant_configuration(monkeypatch, settings) -> None:
+    active = settings.__class__(
+        **{
+            **settings.__dict__,
+            "allow_http_probing": True,
+            "client_id": "beta",
+            "m365_graph_base_url": "https://graph.example",
+            "m365_access_token": "fixture-token",
+        }
+    )
+    calls: list[str] = []
+
+    def probe(connector_ids, active_settings, **clients):
+        calls.extend(connector_ids)
+        return {}
+
+    monkeypatch.setattr(app_module, "probe_connector_health", probe)
+    result = _endpoint(active, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
+        _technician(),
+    )
+
+    assert calls == []
+    assert result["systems"][0]["status"] == "permission-limited"
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:
