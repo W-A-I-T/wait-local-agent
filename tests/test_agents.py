@@ -701,6 +701,101 @@ def test_agent_step_failure_policy_rejects_unconfigured_fallback(settings) -> No
         )
 
 
+@pytest.mark.parametrize(
+    ("steps", "enabled_tools", "message"),
+    [
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": "retry"}],
+            ["ticket-triage"],
+            "must be an object",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"unknown": True}}],
+            ["ticket-triage"],
+            "may only contain",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"mode": "unknown"}}],
+            ["ticket-triage"],
+            "mode must be one",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"mode": "retry", "max_retries": 0}}],
+            ["ticket-triage"],
+            "requires max_retries",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"mode": "stop", "max_retries": 1}}],
+            ["ticket-triage"],
+            "only valid for retry",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"mode": "stop", "fallback_tool_id": ""}}],
+            ["ticket-triage"],
+            "non-empty string",
+        ),
+        (
+            [{"tool_id": "ticket-triage", "failure_policy": {"mode": "fallback"}}],
+            ["ticket-triage"],
+            "requires fallback_tool_id",
+        ),
+        (
+            [
+                {
+                    "tool_id": "ticket-triage",
+                    "failure_policy": {"mode": "fallback", "fallback_tool_id": "ticket-triage"},
+                }
+            ],
+            ["ticket-triage"],
+            "must differ",
+        ),
+        (
+            [
+                {
+                    "tool_id": "ticket-triage",
+                    "failure_policy": {"mode": "fallback", "fallback_tool_id": "ticket-summary"},
+                },
+                {
+                    "tool_id": "ticket-summary",
+                    "failure_policy": {"mode": "fallback", "fallback_tool_id": "ticket-triage"},
+                },
+            ],
+            ["ticket-triage", "ticket-summary"],
+            "cycle detected",
+        ),
+    ],
+)
+def test_failure_policy_validation_rejects_unsafe_shapes(steps, enabled_tools, message) -> None:
+    with pytest.raises(AgentDefinitionError, match=message):
+        agents_module._validate_failure_policies(steps, enabled_tools)  # noqa: SLF001
+
+
+def test_failure_policy_helpers_bound_metadata_and_recovery_lineage() -> None:
+    assert agents_module._step_failure_policy({}) == {  # noqa: SLF001
+        "mode": "stop",
+        "max_retries": 0,
+        "fallback_tool_id": None,
+    }
+    metadata = agents_module._failure_policy_metadata(  # noqa: SLF001
+        {
+            "steps": [
+                {
+                    "index": 0,
+                    "tool_id": "ticket-triage",
+                    "status": "failed",
+                    "attempt": 1,
+                    "failure_policy": {"mode": "retry", "fallback_tool_id": None},
+                }
+            ],
+            "failure_policy_terminal": "blocked",
+        }
+    )
+    assert cast(dict[str, object], metadata["failure_policy"])["terminal"] == "blocked"
+    assert agents_module._exception_lineage(  # noqa: SLF001
+        "failed", "provider unavailable", policy_mode="retry"
+    ) == {"kind": "retry_exhausted", "recoverable": True, "next_action": "explicit_retry"}
+
+
 def test_continuation_lineage_is_bounded_and_redacted() -> None:
     assert agents_module._continuation_lineage(  # noqa: SLF001 - exercise the persisted evidence contract.
         {
