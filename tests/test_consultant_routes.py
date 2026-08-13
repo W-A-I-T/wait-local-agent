@@ -155,6 +155,9 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert delivery["production_deployment_requires_approval"] is True
     assert delivery["summary"]["review_artifacts_prepared"] == 1
     assert delivery["review_package_generated"] is True
+    assert delivery["delivery_bundle_generated"] is True
+    assert delivery["delivery_bundle_status"] == "review_only"
+    assert delivery["delivery_bundle"]["manifest"]["deployable"] is False
     assert delivery["deployment_package_generated"] is False
 
     copilot = _endpoint(settings, "/consultant/copilot-studio/plan")(
