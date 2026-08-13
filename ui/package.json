@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "bash ../scripts/validate_ui_browser.sh"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

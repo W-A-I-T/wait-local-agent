@@ -69,7 +69,7 @@ and responsive matrix for every interactive surface.
 
 Environment:
 
-- Current merged main at `30de3ee`.
+- Current merged main at `3712d7f`.
 - Vite dashboard on `127.0.0.1:5196` with a local deterministic API on
   `127.0.0.1:8796`, connector probing and writes disabled.
 - Firefox through the Playwright CLI skill at the desktop viewport.
@@ -111,3 +111,33 @@ This proves one bounded Consultant success path plus the incomplete-discovery
 state. It does not complete the full control-success, denied, offline,
 provider-error, cancellation, recovery, keyboard, or responsive matrix tracked
 in issue [#257](https://github.com/W-A-I-T/wait-local-agent/issues/257).
+
+## 2026-08-13 executable route/control matrix
+
+The repository now includes `scripts/validate_ui_browser.sh`, exposed as
+`npm run test:browser` from `ui/`. It runs against an already-running Vite and
+FastAPI stack and uses the Playwright CLI with a real browser; it does not start
+the appliance, enable provider writes, or fabricate provider results.
+
+Run it against a local demo-safe stack with:
+
+```bash
+WAIT_BROWSER_UI_URL=http://127.0.0.1:5199 \
+WAIT_BROWSER_BROWSER=firefox \
+WAIT_BROWSER_REPORT=output/playwright/ui-browser-matrix.json \
+bash scripts/validate_ui_browser.sh
+```
+
+The current replay passed all 21 operator/direct-link destinations and checked
+route headings, visible control names, desktop overflow, Consultant responsive
+layout at `390 × 844`, first-tab keyboard focus, a controlled provider `503`
+failure, and an unavailable-appliance transport state. A separate token-
+enforced replay passed the permission state with the visible permission message
+and `access unavailable` status. The generated report is ignored because it is
+environment-specific evidence.
+
+The provider-error and offline checks are controlled browser fixtures. The
+offline fixture combines browser offline mode with an unavailable auth route;
+it is not evidence that a particular customer network or external provider is
+reachable. Full per-control successful provider execution, cancellation,
+recovery, and live-provider behavior remain open under issue #257.

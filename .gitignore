@@ -27,3 +27,7 @@ desktop/src-tauri/Cargo.lock
 # Internal workflow state — task plans and status are not part of the public surface
 ai/tasks/*/plan.md
 ai/tasks/*/status.json
+
+# Local Playwright CLI traces and generated matrix reports
+.playwright-cli/
+output/playwright/*.json
