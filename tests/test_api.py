@@ -223,6 +223,29 @@ def test_provider_health_is_admin_triggered_and_audited(settings, monkeypatch) -
     assert any(event["event_type"] == "model_provider.health" for event in client.get("/audit").json())
 
 
+def test_provider_health_requires_admin_role(settings, monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "probe_model_providers",
+        lambda active_settings: {
+            "local": {"provider": "deterministic", "model": "llama3.1", "status": "ready", "probe": "not_required"},
+            "remote": {"provider": None, "model": None, "status": "not_configured", "probe": "not_run"},
+        },
+    )
+    secured = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+    )
+    client = TestClient(create_app(secured))
+
+    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer viewer-token"}).status_code == 403
+    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer tech-token"}).status_code == 403
+    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer admin-token"}).status_code == 200
+
+
 def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
     priced_settings = replace(
         settings,
