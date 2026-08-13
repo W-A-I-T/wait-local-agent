@@ -127,6 +127,34 @@ def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_pat
     asyncio.run(scenario())
 
 
+def test_scheduler_playbook_job_reuses_bounded_playbook_and_approval_path(tmp_path: Path, settings) -> None:
+    db_path = tmp_path / "playbook-schedule.db"
+    _seed_tickets(db_path)
+    with Store(db_path)._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+
+    async def scenario() -> None:
+        store = Store(db_path)
+        service = SmartActionService(store, replace(settings, data_path=db_path))
+        manager = SchedulerManager(store, enabled=False, smart_action_service=service)
+        scheduled_job = manager.register(
+            "security-response-review",
+            "0 9 * * *",
+            {"ticket_id": "TCK-1001", "client_id": "acme", "input": {}},
+            job_kind="playbook",
+        )
+
+        await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+
+        events = store.list_audit_events(client_id="acme")
+        assert any(event.event_type == "msp.playbook.started" for event in events)
+        assert any(event.event_type == "msp.playbook.stopped" for event in events)
+        assert any(event.event_type == "scheduled_job.triggered" for event in events)
+        assert store.list_approval_requests(client_id="acme")
+
+    asyncio.run(scenario())
+
+
 def test_scheduled_workflow_completion_triggers_tenant_scoped_event_agent(tmp_path: Path, settings) -> None:
     db_path = tmp_path / "completion.db"
     _seed_tickets(db_path)

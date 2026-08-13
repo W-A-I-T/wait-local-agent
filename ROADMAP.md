@@ -44,6 +44,9 @@ credential or undocumented vendor API remains an explicit boundary.
   authentication-method, and license reviews. Richer mappings,
   historical/provider ingestion, compliance/software review, and
   scheduled/event-triggered operations remain open.
+- Validated static and tenant-published playbooks can now be registered with the
+  existing scheduler and execute through the same controlled coordinator;
+  event-triggered playbook subscriptions remain a separate follow-up.
 - General conditional approval policy composition without weakening built-in
   tool requirements or tenant boundaries.
 - Connector-aware backfill plans and richer provider-backed lifecycle/QBR

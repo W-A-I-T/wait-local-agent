@@ -58,6 +58,12 @@ persisted blueprint without duplicating it, requires an existing scoped fixture
 ticket, and keeps live provider execution, artifact generation, and deployment
 disabled.
 
+Validated static and tenant-published MSP playbooks can also be registered as
+scheduled jobs through the existing scheduler. Workflow playbooks retain their
+normal approval and completion-event paths; report playbooks require explicit
+client and period evidence. Event-triggered playbook subscriptions and live
+provider success remain unsupported boundaries.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

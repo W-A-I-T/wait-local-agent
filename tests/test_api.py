@@ -1688,6 +1688,49 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 
 
+def test_scheduled_playbook_route_validates_and_persists_report_target(settings) -> None:
+    store = Store(settings.data_path)
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/scheduled-jobs",
+        json={
+            "playbook_id": "qbr-review",
+            "schedule_type": "interval",
+            "interval_seconds": 3600,
+            "params": {
+                "client_id": "acme",
+                "input": {"period_start": "2026-01-01", "period_end": "2026-01-31"},
+            },
+        },
+    )
+    listed = client.get("/scheduled-jobs")
+    missing_input = client.post(
+        "/scheduled-jobs",
+        json={"playbook_id": "qbr-review", "params": {"client_id": "acme"}},
+    )
+    mixed_targets = client.post(
+        "/scheduled-jobs",
+        json={
+            "playbook_id": "qbr-review",
+            "report_type": "qbr",
+            "params": {
+                "client_id": "acme",
+                "input": {"period_start": "2026-01-01", "period_end": "2026-01-31"},
+            },
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["job_kind"] == "playbook"
+    assert created.json()["playbook_id"] == "qbr-review"
+    assert created.json()["template_id"] == "qbr-review"
+    assert listed.json()[0]["playbook_id"] == "qbr-review"
+    assert missing_input.status_code == 422
+    assert mixed_targets.status_code == 422
+    assert store.get_scheduled_job(created.json()["id"]) is not None
+
+
 def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target(settings) -> None:
     store = Store(settings.data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))

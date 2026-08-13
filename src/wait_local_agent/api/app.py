@@ -758,6 +758,7 @@ class EventIngestRequest(BaseModel):
 class ScheduledJobCreateRequest(BaseModel):
     template_id: str | None = None
     report_type: Literal["qbr", "automation_opportunity", "recurring_service_review"] | None = None
+    playbook_id: str | None = None
     agent_id: str | None = None
     entity_id: str | None = None
     cron: str = ""
@@ -5254,6 +5255,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ScheduledJobCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.playbook_id is not None:
+            return _create_scheduled_playbook_job(request, context)
         if request.report_type is not None:
             return _create_scheduled_report_job(request, context)
         if request.agent_id is not None:
@@ -5280,6 +5283,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.template_id,
                 request.cron,
                 params,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
+                timezone=request.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_playbook_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if request.template_id is not None or request.report_type is not None or request.agent_id is not None:
+            raise HTTPException(status_code=422, detail="playbook schedules cannot include another target")
+        if request.entity_id is not None:
+            raise HTTPException(status_code=422, detail="playbook schedules use params.ticket_id")
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        raw_ticket_id = request.params.get("ticket_id")
+        if raw_ticket_id is not None and not isinstance(raw_ticket_id, str):
+            raise HTTPException(status_code=422, detail="params.ticket_id must be a string")
+        raw_input = request.params.get("input", {})
+        if not isinstance(raw_input, dict):
+            raise HTTPException(status_code=422, detail="params.input must be an object")
+        try:
+            preview = preview_msp_playbook(
+                store,
+                request.playbook_id or "",
+                ticket_id=raw_ticket_id.strip() if isinstance(raw_ticket_id, str) and raw_ticket_id.strip() else None,
+                client_id=scoped_client_id,
+                input_payload=raw_input,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook not found") from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ticket not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        effective_client_id = preview.get("client_id")
+        if not isinstance(effective_client_id, str) or not effective_client_id:
+            raise HTTPException(status_code=422, detail="scheduled playbook requires a client scope")
+        params = dict(request.params)
+        params["client_id"] = effective_client_id
+        if isinstance(raw_ticket_id, str) and raw_ticket_id.strip():
+            params["ticket_id"] = raw_ticket_id.strip()
+        params["input"] = dict(raw_input)
+        try:
+            scheduled_job = scheduler.register(
+                request.playbook_id or "",
+                request.cron,
+                params,
+                job_kind="playbook",
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
@@ -5953,6 +6015,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "id": job.id,
             "job_kind": job.job_kind,
             "template_id": job.template_id,
+            "playbook_id": job.template_id if job.job_kind == "playbook" else None,
             "agent_id": job.agent_id,
             "entity_id": job.entity_id,
             "cron": job.cron,
