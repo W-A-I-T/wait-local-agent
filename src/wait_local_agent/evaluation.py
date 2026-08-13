@@ -22,6 +22,9 @@ MAX_EXPECTED_TOOLS = 8
 MAX_LATENCY_MS = 120_000
 MAX_SECURITY_DIMENSIONS = 16
 MAX_SECRET_INPUT_KEYS = 8
+MAX_CASE_INPUT_FIELDS = 16
+MAX_CASE_INPUT_BYTES = 16_384
+MAX_CASE_INPUT_DEPTH = 8
 SECURITY_DIMENSIONS = (
     "rbac",
     "tool_injection",
@@ -228,16 +231,22 @@ class AgentServiceEvaluationExecutor:
         self.entity_id = entity_id
         self.actor = actor
         self.actor_role = actor_role
-        self.input_payload = dict(input_payload or {})
+        self.input_payload = _bounded_input_payload(input_payload or {}, "evaluation execution input")
         self.client_id = client_id
 
     def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
         started = time.monotonic()
+        case_input = _bounded_input_payload(case.get("input", {}), "evaluation case input")
+        input_payload = (
+            _bounded_input_payload({**self.input_payload, **case_input}, "evaluation merged input")
+            if case_input
+            else dict(self.input_payload)
+        )
         result = self.agent_service.run(
             self.definition,
             entity_id=self.entity_id,
             actor=self.actor,
-            input_payload=self.input_payload,
+            input_payload=input_payload,
             actor_role=self.actor_role,
         )
         tool_ids: list[str] = []
@@ -270,7 +279,7 @@ class AgentServiceEvaluationExecutor:
             definition_client_id=self.definition.client_id,
             result_aware=bool(getattr(self.definition, "result_aware", False)),
             required_dimensions=cast(list[str], case.get("required_security_dimensions", [])),
-            input_payload=self.input_payload,
+            input_payload=input_payload,
             secret_input_keys=cast(list[str], case.get("secret_input_keys", [])),
             definition_enabled_tools=cast(list[str], getattr(self.definition, "enabled_tools", [])),
         )
@@ -325,6 +334,7 @@ def _case(value: object) -> dict[str, object]:
         "regression_expected",
         "required_security_dimensions",
         "secret_input_keys",
+        "input",
     }
     unknown = sorted(set(case) - allowed)
     if unknown:
@@ -349,6 +359,7 @@ def _case(value: object) -> dict[str, object]:
         "secret_input_keys": _string_list(
             case.get("secret_input_keys", []), "secret_input_keys", MAX_SECRET_INPUT_KEYS
         ),
+        "input": _bounded_input_payload(case.get("input", {}), "evaluation case input"),
     }
 
 
@@ -636,3 +647,40 @@ def _security_dimensions(value: object) -> list[str]:
     if unknown:
         raise EvaluationValidationError(f"unsupported security dimensions: {', '.join(unknown)}")
     return dimensions
+
+
+def _bounded_input_payload(value: object, field: str) -> dict[str, object]:
+    """Validate evaluation inputs without redacting the in-memory fixture values."""
+
+    if not isinstance(value, Mapping):
+        raise EvaluationValidationError(f"{field} must be an object")
+    payload = dict(value)
+    if not payload:
+        return {}
+    if len(payload) > MAX_CASE_INPUT_FIELDS:
+        raise EvaluationValidationError(f"{field} must contain at most {MAX_CASE_INPUT_FIELDS} fields")
+    if any(not isinstance(key, str) or not key.strip() or len(key) > 80 for key in payload):
+        raise EvaluationValidationError(f"{field} field names must be non-empty text of at most 80 characters")
+    try:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise EvaluationValidationError(f"{field} must contain JSON-compatible values") from exc
+    if len(encoded.encode("utf-8")) > MAX_CASE_INPUT_BYTES:
+        raise EvaluationValidationError(f"{field} must be at most {MAX_CASE_INPUT_BYTES} bytes")
+    if _input_depth(payload) > MAX_CASE_INPUT_DEPTH:
+        raise EvaluationValidationError(f"{field} nesting exceeds {MAX_CASE_INPUT_DEPTH} levels")
+    return payload
+
+
+def _input_depth(value: object, depth: int = 0) -> int:
+    if isinstance(value, Mapping):
+        return max(((_input_depth(item, depth + 1)) for item in value.values()), default=depth)
+    if isinstance(value, list):
+        return max((_input_depth(item, depth + 1) for item in value), default=depth)
+    return depth

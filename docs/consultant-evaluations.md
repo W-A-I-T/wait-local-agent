@@ -83,6 +83,17 @@ POST /consultant/evaluations
 }
 ```
 
+The `execution.input` object is a bounded baseline for the controlled run. A
+case may provide an `input` object to override or add fields for that case;
+case values win on key collisions, and the merge is shallow. Case inputs are
+validated before execution to at most 16 top-level fields, 16 KiB of JSON, and
+8 nesting levels. They are passed only to the existing tenant-scoped
+`AgentService` call and are not copied into the evaluation result. This lets a
+test set exercise distinct failure, injection, or malformed-input fixtures
+without creating another execution engine. Secret fixture values remain
+in-memory execution inputs and must be named through `secret_input_keys` when
+secret-leakage evidence is requested.
+
 Execution never creates a second agent engine, enables write actions, bypasses
 approval, or claims a live provider deployment. A test is `pass` only when all
 requested dimensions reach 100%; missing or failed execution evidence produces
