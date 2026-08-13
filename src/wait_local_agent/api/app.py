@@ -140,6 +140,12 @@ from wait_local_agent.models import (
     WorkflowRun,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
+from wait_local_agent.msp_playbooks import (
+    list_msp_playbooks,
+    playbook_view,
+    preview_msp_playbook,
+    run_msp_playbook,
+)
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
     APPROVAL_RATE_DERIVATION,
@@ -362,6 +368,12 @@ class M365MailMessageDeleteDraftRequest(BaseModel):
 
 class WorkflowRunRequest(BaseModel):
     ticket_id: str
+    client_id: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class MspPlaybookRunRequest(BaseModel):
+    ticket_id: str | None = None
     client_id: str | None = None
     payload: dict[str, object] = Field(default_factory=dict)
 
@@ -4143,6 +4155,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/workflows/templates")
     def workflow_templates(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(template) for template in list_workflow_templates()]
+
+    @app.get("/msp/playbooks")
+    def msp_playbooks(_: ViewerAccess) -> list[dict[str, object]]:
+        return [playbook_view(playbook) for playbook in list_msp_playbooks()]
+
+    @app.post("/msp/playbooks/{playbook_id}/preview")
+    def preview_msp_playbook_route(
+        playbook_id: str,
+        request: MspPlaybookRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return preview_msp_playbook(
+                store,
+                playbook_id,
+                ticket_id=request.ticket_id,
+                client_id=scoped_client_id,
+                input_payload=request.payload,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook not found") from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ticket not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/msp/playbooks/{playbook_id}/runs")
+    def run_msp_playbook_route(
+        playbook_id: str,
+        request: MspPlaybookRunRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            result = run_msp_playbook(
+                store,
+                playbook_id,
+                ticket_id=request.ticket_id,
+                client_id=scoped_client_id,
+                actor=context.approver_id or "api",
+                trigger_source="msp_playbook_api",
+                input_payload=request.payload,
+                tool_executor=smart_action_service,
+                smart_action_service=smart_action_service,
+                on_workflow_run=lambda run: _dispatch_workflow_completion_event(
+                    event_dispatcher, run, context.approver_id or "api"
+                ),
+            )
+            return result
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook not found") from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ticket not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/consultant/blueprints", status_code=201)
     def create_consultant_blueprint(

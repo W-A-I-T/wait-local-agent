@@ -109,6 +109,11 @@ from wait_local_agent.m365_graph import (
     M365GraphReadResponse,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
+from wait_local_agent.msp_playbooks import (
+    list_msp_playbooks,
+    preview_msp_playbook,
+    run_msp_playbook,
+)
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.power_apps import (
@@ -2413,6 +2418,73 @@ def list_workflows() -> None:
             f"{template.id} {template.trigger} approval_required={template.approval_required}"
             f" payload_required={required_text or '-'}"
         )
+
+
+@workflows_app.command("playbooks")
+def list_msp_playbook_commands() -> None:
+    """List the bounded, versioned MSP playbook catalog."""
+
+    for playbook in list_msp_playbooks():
+        typer.echo(
+            f"{playbook.id} version={playbook.version} trigger={playbook.trigger} "
+            f"risk={playbook.risk_level} steps={len(playbook.steps)}"
+        )
+
+
+@workflows_app.command("playbook-preview")
+def preview_msp_playbook_command(
+    playbook_id: str,
+    ticket_id: str | None = None,
+    payload: Annotated[str | None, typer.Option("--payload", help="JSON object or JSON file.")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        result = preview_msp_playbook(
+            _store(),
+            playbook_id,
+            ticket_id=ticket_id,
+            client_id=client_id,
+            input_payload=_load_smart_action_payload(payload),
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("MSP playbook not found", param_hint="playbook_id") from exc
+    except LookupError as exc:
+        raise typer.BadParameter("ticket not found", param_hint="ticket_id") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-run")
+def run_msp_playbook_command(
+    playbook_id: str,
+    ticket_id: str | None = None,
+    payload: Annotated[str | None, typer.Option("--payload", help="JSON object or JSON file.")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    smart_action_service = SmartActionService(store, settings)
+    try:
+        result = run_msp_playbook(
+            store,
+            playbook_id,
+            ticket_id=ticket_id,
+            client_id=client_id,
+            actor="cli",
+            trigger_source="msp_playbook_cli",
+            input_payload=_load_smart_action_payload(payload),
+            tool_executor=smart_action_service,
+            smart_action_service=smart_action_service,
+            on_workflow_run=lambda run: _dispatch_cli_workflow_completion(store, settings, run),
+        )
+    except KeyError as exc:
+        raise typer.BadParameter("MSP playbook not found", param_hint="playbook_id") from exc
+    except LookupError as exc:
+        raise typer.BadParameter("ticket not found", param_hint="ticket_id") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
 
 @workflows_app.command("gallery")
