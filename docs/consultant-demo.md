@@ -57,3 +57,10 @@ as “Run local onboarding walkthrough.” The endpoint never seeds a ticket,
 calls an external provider, generates deployment artifacts, or starts a
 deployment. Outside that mode it returns a conflict, and a ticket or blueprint
 from another tenant is not eligible for the fixture.
+
+The Consultant screen exposes the returned delivery handoff after the
+walkthrough completes. It shows the review-only bundle status, target list,
+deterministic digest, manifest files, and explicit open items. This is an
+operator review handoff, not an official Power Platform solution archive or a
+deployment claim; provider packaging, environment evidence, PAC execution, and
+approval remain separate requirements.

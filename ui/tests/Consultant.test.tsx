@@ -90,9 +90,32 @@ describe("Consultant", () => {
               status: "review_only",
               items: [{ format: "wait-local-agent.power-apps-artifact" }],
               package_digest: "sha256:fixture",
+              delivery_bundle: {
+                manifest: {
+                  format: "wait-local-agent.consultant-delivery-bundle",
+                  format_version: 1,
+                  client_id: "acme",
+                  bundle_status: "review_only",
+                  deployable: false,
+                  credentials_included: false,
+                  execution_started: false,
+                  deployment_started: false,
+                  deployment_targets: ["Teams", "Power Automate"],
+                  source_review_package_digest: "sha256:review",
+                  files: [{ path: "architecture.json", media_type: "application/json", digest: "sha256:architecture" }],
+                  open_items: ["Operator evidence is required before deployment."],
+                },
+                files: [{ path: "architecture.json", media_type: "application/json", digest: "sha256:architecture", content: {} }],
+              },
+              delivery_bundle_digest: "sha256:delivery",
+              delivery_bundle_status: "review_only",
               deployment_package_generated: false,
             },
-            delivery: { production_readiness: "needs_review", deployment_started: false },
+            delivery: {
+              production_readiness: "needs_review",
+              deployment_started: false,
+              delivery_bundle_status: "review_only",
+            },
           },
           boundaries: {
             live_provider_execution: false,
@@ -264,6 +287,12 @@ describe("Consultant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run local onboarding walkthrough" }));
     expect(await screen.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
     expect(screen.getByText(/Artifacts: 1 review-only/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Delivery handoff" })).toBeInTheDocument();
+    expect(screen.getByText("Review-only.")).toBeInTheDocument();
+    expect(screen.getByText(/1 files · Teams, Power Automate/)).toBeInTheDocument();
+    expect(screen.getByText("sha256:delivery")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Review bundle files and open items"));
+    expect(screen.getByText(/Operator evidence is required before deployment/)).toBeInTheDocument();
     const onboardingCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/demos/employee-onboarding");
     expect(onboardingCall?.[1]).toMatchObject({
       body: expect.stringContaining('"blueprint_id":"bp-acme"'),

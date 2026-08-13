@@ -267,6 +267,24 @@ export type ConsultantMonitoring = {
   payloads_exposed: boolean;
 };
 
+export type ConsultantDeliveryBundle = {
+  manifest: {
+    format: string;
+    format_version: number;
+    client_id: string;
+    bundle_status: string;
+    deployable: boolean;
+    credentials_included: boolean;
+    execution_started: boolean;
+    deployment_started: boolean;
+    deployment_targets: string[];
+    source_review_package_digest: string;
+    files: Array<{ path: string; media_type: string; digest: string }>;
+    open_items: string[];
+  };
+  files: Array<{ path: string; media_type: string; digest: string; content: unknown }>;
+};
+
 export type ConsultantEmployeeOnboardingDemo = {
   format: string;
   format_version: number;
@@ -282,15 +300,26 @@ export type ConsultantEmployeeOnboardingDemo = {
       status: string;
       items: Array<Record<string, unknown>>;
       package_digest: string;
+      delivery_bundle?: ConsultantDeliveryBundle;
+      delivery_bundle_digest?: string;
+      delivery_bundle_status?: string;
       deployment_package_generated: boolean;
     };
-    delivery: { production_readiness: string; deployment_started: boolean };
+    delivery: {
+      production_readiness: string;
+      deployment_started: boolean;
+      delivery_bundle?: ConsultantDeliveryBundle;
+      delivery_bundle_digest?: string;
+      delivery_bundle_status?: string;
+    };
   };
   boundaries: {
     live_provider_execution: boolean;
     artifact_generation: boolean;
     artifact_generation_status: string;
     review_package_generated: boolean;
+    delivery_bundle_generated?: boolean;
+    delivery_bundle_status?: string;
     deployable_package_generated: boolean;
     deployment_started: boolean;
     production_deployment_requires_approval: boolean;
