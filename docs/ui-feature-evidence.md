@@ -114,7 +114,7 @@ unverifiable product claim.
   deployment remain false. This is not evidence that the broader route,
   responsive, accessibility, denied, offline, or provider-error matrix is
   complete.
-- Current `codex/consultant-browser-validation` slice on 2026-08-12: Firefox
+- Current browser-validation slice on 2026-08-12: Firefox
   exercised all 20 operator routes against a local demo-safe API with the
   request limiter disabled for deterministic navigation; every route exposed
   its expected primary heading, the browser reported 98 console messages with
