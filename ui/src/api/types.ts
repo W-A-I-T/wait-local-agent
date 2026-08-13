@@ -253,6 +253,30 @@ export type ConsultantMonitoring = {
   payloads_exposed: boolean;
 };
 
+export type ConsultantEmployeeOnboardingDemo = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  entity_id: string;
+  mode: "local_fixture" | string;
+  stages: {
+    blueprint: { id: string; solution_name: string; risk: string };
+    supervisor: { status: string; children?: Array<{ status?: string }> };
+    evaluation: { production_readiness: string; execution_started: boolean };
+    governance: { status: string };
+    delivery: { production_readiness: string; deployment_started: boolean };
+  };
+  boundaries: {
+    live_provider_execution: boolean;
+    artifact_generation: boolean;
+    deployment_started: boolean;
+    production_deployment_requires_approval: boolean;
+    external_systems_require_environment_verification: boolean;
+    sensitive_operations_require_human_approval: boolean;
+  };
+  audit: { audit_event_count: number; agent_run_count: number };
+};
+
 export type PowerAutomateFlowPlan = {
   format: string;
   format_version: number;
@@ -445,6 +469,12 @@ export type AgentTool = {
   approval_expiry_seconds?: number;
 };
 
+export type AgentFailurePolicy = {
+  mode: "stop" | "retry" | "fallback" | "human_input" | "technician_escalation" | "blocked";
+  max_retries?: number;
+  fallback_tool_id?: string | null;
+};
+
 export type AgentRunDetail = {
   id: number;
   agent_id: string;
@@ -455,6 +485,16 @@ export type AgentRunDetail = {
     context?: Record<string, unknown>;
     steps?: Array<Record<string, unknown>>;
     final_result?: Record<string, unknown>;
+  };
+  lineage?: {
+    retry_count: number;
+    retry_of_run_id?: number | null;
+    partial_history?: {
+      attempted_steps?: number;
+      completed_steps?: number;
+      failed_steps?: number;
+      partial?: boolean;
+    };
   };
   revision_version?: number | null;
   client_id?: string | null;
@@ -822,7 +862,7 @@ export type AgentDefinition = {
   entity_type: string;
   filters: Record<string, unknown>;
   enabled_tools: string[];
-  steps: Array<{ tool_id: string; payload: Record<string, unknown> }>;
+  steps: Array<{ tool_id: string; payload: Record<string, unknown>; failure_policy?: AgentFailurePolicy }>;
   max_steps: number;
   execution_timeout_seconds: number;
   client_id: string | null;

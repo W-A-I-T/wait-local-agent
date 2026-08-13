@@ -60,6 +60,20 @@ def test_environment_discovery_does_not_claim_other_tenant_configuration() -> No
     assert "not explicitly bound" in system["limitation"]
 
 
+def test_environment_discovery_preserves_failed_connector_as_unavailable() -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["ConnectWise"],
+        connector_statuses=[_status("connectwise", "ConnectWise", "failed")],
+        configured_client_id="acme",
+    )
+
+    system = result["systems"][0]
+    assert system["status"] == "unavailable"
+    assert "not being treated as an empty environment" in system["limitation"]
+    assert result["readiness"] == "needs_environment_verification"
+
+
 def test_environment_discovery_deduplicates_aliases_and_projects_unrequested_ready_connector() -> None:
     result = discover_environment(
         client_id="acme",
@@ -82,6 +96,18 @@ def test_environment_discovery_deduplicates_aliases_and_projects_unrequested_rea
     assert result["systems"][1]["status"] == "unknown"
     assert result["systems"][2]["status"] == "configured"
     assert result["systems"][2]["provider_status"] == "ready"
+
+
+def test_environment_discovery_deduplicates_distinct_aliases_for_one_connector() -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["Microsoft 365", "Entra", "Microsoft 365 / Entra"],
+        connector_statuses=[_status("m365", "Microsoft 365 / Entra", "not_configured")],
+        configured_client_id="acme",
+    )
+
+    assert [item["name"] for item in result["systems"]] == ["Microsoft 365"]
+    assert [item["id"] for item in result["systems"]] == ["m365"]
 
 
 @pytest.mark.parametrize(

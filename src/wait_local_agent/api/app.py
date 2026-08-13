@@ -90,6 +90,7 @@ from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadRespo
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     architect_solution_blueprint,
+    blueprint_payload,
     blueprint_view,
     parse_solution_blueprint,
     promote_discovery_candidate,
@@ -101,6 +102,10 @@ from wait_local_agent.discovery import (
     DiscoveryValidationError,
     build_solution_discovery,
     discover_solution_environment,
+)
+from wait_local_agent.employee_onboarding_demo import (
+    EmployeeOnboardingDemoError,
+    run_employee_onboarding_demo,
 )
 from wait_local_agent.evaluation import (
     AgentServiceEvaluationExecutor,
@@ -488,6 +493,15 @@ class EvaluationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EmployeeOnboardingDemoRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    entity_id: str = Field(default="TCK-1001", min_length=1, max_length=100)
+    blueprint_id: str | None = Field(default=None, min_length=1, max_length=64)
+    blueprint: dict[str, object] | None = Field(default=None, max_length=32)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class GovernanceRequest(BaseModel):
     architecture: dict[str, object]
     connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
@@ -562,6 +576,7 @@ class SupervisorPlanRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     task: str = Field(min_length=1, max_length=2000)
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
+    max_retries: int = Field(default=0, ge=0, le=3)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -572,6 +587,8 @@ class SupervisorRunRequest(BaseModel):
     child_agent_ids: list[str] = Field(min_length=1, max_length=8)
     input: dict[str, object] = Field(default_factory=dict, max_length=16)
     completed_run_ids: list[int] = Field(default_factory=list, max_length=8)
+    max_retries: int = Field(default=0, ge=0, le=3)
+    cancel_run_id: int | None = Field(default=None, ge=1)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -657,6 +674,7 @@ class ClientReportRequest(BaseModel):
 class AgentStepRequest(BaseModel):
     tool_id: str
     payload: dict[str, object] = Field(default_factory=dict)
+    failure_policy: dict[str, object] | None = None
 
 
 class AgentApprovalRuleRequest(BaseModel):
@@ -4342,6 +4360,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except BlueprintValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/consultant/demos/employee-onboarding")
+    def run_consultant_employee_onboarding_demo(
+        payload: EmployeeOnboardingDemoRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        if not active_settings.demo_mode or active_settings.allow_write_actions:
+            raise HTTPException(
+                status_code=409,
+                detail="employee-onboarding fixture requires local demo mode with writes disabled",
+            )
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="employee-onboarding demo requires a tenant scope")
+        if (payload.blueprint_id is None) == (payload.blueprint is None):
+            raise HTTPException(status_code=422, detail="provide exactly one of blueprint_id or blueprint")
+        try:
+            if payload.blueprint_id is not None:
+                persisted = store.get_solution_blueprint(payload.blueprint_id, client_id=scoped_client_id)
+                if persisted is None:
+                    raise HTTPException(status_code=404, detail="solution blueprint not found in tenant scope")
+                blueprint: dict[str, object] = blueprint_payload(persisted)
+            else:
+                blueprint = cast(dict[str, object], payload.blueprint)
+            return run_employee_onboarding_demo(
+                store=store,
+                settings=active_settings,
+                blueprint_payload=blueprint,
+                client_id=scoped_client_id,
+                entity_id=payload.entity_id,
+                blueprint_id=payload.blueprint_id,
+                persist_blueprint=payload.blueprint_id is None,
+            )
+        except EmployeeOnboardingDemoError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/consultant/blueprints")
     def consultant_blueprints(
         context: ViewerAccess,
@@ -4731,6 +4784,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task=payload.task,
                 child_agent_ids=payload.child_agent_ids,
                 definitions=definitions,
+                max_retries=payload.max_retries,
             )
         except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4757,6 +4811,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 actor_role=context.role,
                 input_payload=payload.input,
                 completed_run_ids=payload.completed_run_ids,
+                max_retries=payload.max_retries,
+                cancel_run_id=payload.cancel_run_id,
             )
         except SupervisorPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -6122,6 +6178,10 @@ def _agent_revision_diff_view(left, right) -> dict[str, object]:
 
 def _agent_run_view(run) -> dict[str, object]:
     state = _safe_json_object(run.state_json)
+    final_result = state.get("final_result") if isinstance(state.get("final_result"), dict) else {}
+    retry_count = state.get("retry_count") if isinstance(state.get("retry_count"), int) else 0
+    retry_of_run_id = state.get("retry_of_run_id") if isinstance(state.get("retry_of_run_id"), int) else None
+    history = final_result.get("history") if isinstance(final_result, dict) else None
     return cast(
         dict[str, object],
         redact_value(
@@ -6137,6 +6197,11 @@ def _agent_run_view(run) -> dict[str, object]:
                 "finished_at": run.finished_at,
                 "revision_version": run.revision_version,
                 "client_id": run.client_id,
+                "lineage": {
+                    "retry_count": retry_count,
+                    "retry_of_run_id": retry_of_run_id,
+                    "partial_history": history if isinstance(history, dict) else {},
+                },
             }
         ),
     )

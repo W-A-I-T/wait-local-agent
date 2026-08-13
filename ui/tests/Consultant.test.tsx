@@ -71,6 +71,31 @@ describe("Consultant", () => {
           payloads_exposed: false
         }), { status: 200 }));
       }
+      if (path === "/consultant/demos/employee-onboarding") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.employee-onboarding-demo",
+          format_version: 1,
+          client_id: "acme",
+          entity_id: "TCK-1001",
+          mode: "local_fixture",
+          stages: {
+            blueprint: { id: "bp-acme", solution_name: "Employee onboarding supervisor", risk: "high" },
+            supervisor: { status: "completed", children: [] },
+            evaluation: { production_readiness: "pass", execution_started: true },
+            governance: { status: "needs_review" },
+            delivery: { production_readiness: "needs_review", deployment_started: false },
+          },
+          boundaries: {
+            live_provider_execution: false,
+            artifact_generation: false,
+            deployment_started: false,
+            production_deployment_requires_approval: true,
+            external_systems_require_environment_verification: true,
+            sensitive_operations_require_human_approval: true,
+          },
+          audit: { audit_event_count: 32, agent_run_count: 8 },
+        }), { status: 200 }));
+      }
       if (path === "/consultant/workflows/power-automate/plan") {
         return Promise.resolve(new Response(JSON.stringify({
           format: "wait-local-agent.power-automate-flow-plan",
@@ -199,6 +224,12 @@ describe("Consultant", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run local onboarding walkthrough" }));
+    expect(await screen.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
+    const onboardingCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/demos/employee-onboarding");
+    expect(onboardingCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"blueprint_id":"bp-acme"'),
+    });
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
     fireEvent.change(screen.getByLabelText("Solution name"), { target: { value: "Employee onboarding review" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));

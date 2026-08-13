@@ -64,6 +64,31 @@ def test_copilot_studio_plan_is_review_only_and_preserves_boundaries() -> None:
             "unsupported fields",
         ),
         ("knowledge_sources", ["token=secret"], "secret-like"),
+        ("topics", [{"id": "topic", "name": "Topic"}, {"id": "topic", "name": "Again"}], "duplicate topic"),
+        (
+            "actions",
+            [{"id": "lookup", "connector_id": "m365"}, {"id": "lookup", "connector_id": "m365"}],
+            "duplicate action",
+        ),
+        (
+            "actions",
+            [{"id": "lookup", "connector_id": "m365", "method": "TRACE"}],
+            "unsupported action method",
+        ),
+        (
+            "actions",
+            [{"id": "lookup", "connector_id": "m365", "approval_required": "yes"}],
+            "approval_required must be boolean",
+        ),
+        ("topics", "not-a-list", "topics must contain"),
+        ("topics", ["not-an-object"], "topics must contain objects"),
+        ("topics", [{"id": "topic", "name": "Topic", "trigger_phrases": "start"}], "trigger_phrases must contain"),
+        (
+            "topics",
+            [{"id": "topic", "name": "Topic", "trigger_phrases": ["start", "start"]}],
+            "trigger_phrases must not contain duplicates",
+        ),
+        ("copilot_name", "", "copilot_name must be non-empty text"),
     ],
 )
 def test_copilot_studio_plan_rejects_unsafe_or_unreviewable_inputs(

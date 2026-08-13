@@ -15,13 +15,13 @@ visible here instead of being presented as a completed UI feature.
 | `/tickets` | Ticket lookup, summary, approval draft, local end-user conversation review, support reply, and manually prepared HaloPSA message-sync approval | `/connectors/halopsa/*`, `/tickets/*` | Existing UI tests; browser route render; sync requires explicit client mapping and remote ownership verification |
 | `/approvals` | Approval queue and gated execution | `/approval-requests/*`, `/connectors/halopsa/approval-requests/*` | Existing UI tests; browser route render |
 | `/analytics` | Filtered operational metrics and operator-priced model usage estimates | `/analytics/summary` | Existing UI tests; browser route render |
-| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; local Chromium smoke verified render and visible ServiceNow and Autotask note/time-entry/status/resolution/assignment approval tools against a fresh local database |
+| `/agents` | Definition builder, tool catalog, additional and conditional approval-rule editor (ticket priority/status/requester role), bounded step failure-policy editor, edit/version lifecycle, revision compare/restore, run detail | `/agents/*`, `/tools`, `/agent-runs/*` | Existing UI tests cover create/run/edit/history/compare/restore and conditional rule submission; the editor persists bounded retry/fallback/human-input/technician-escalation/blocked policies, and run detail shows redacted steps, deterministic recovery, partial history, and existing-route cancel/retry controls; local Chromium smoke verified render and visible ServiceNow and Autotask note/time-entry/status/resolution/assignment approval tools against a fresh local database |
 | `/backfills` | Preview, queue, pause, cancel, rerun | `/agent-backfills/*` | Existing UI tests; browser route render |
 | `/executions` | Run history, detail, artifact download | `/executions/*` | Existing UI tests; browser route render |
 | `/knowledge` | Ingest and search | `/knowledge/*` | Existing UI tests; browser route render |
 | `/workflows` | Run, inspect, compare | `/workflows/*`, `/workflow-runs/*` | Existing UI tests; browser route render |
 | `/templates` | Gallery create/edit/import/export/revisions/run | `/workflow-templates/*` | Existing UI tests; browser route render; import control is enabled only after a JSON artifact is selected and imports a disabled local copy for review |
-| `/consultant` | Tenant-scoped blueprint review, explicit discovery intake and promotion, guided discovery, workflow design, and review-only Power Platform artifacts | `/consultant/*` | Chromium evidence on 2026-08-12 loaded a synthetic local blueprint, exercised incomplete discovery, guided-session validation and continuation, Power Automate planning, Power Apps artifact build, and malformed JSON recovery; focused UI/API regression coverage now verifies complete discovery can persist a named, risk-reviewed blueprint without execution or deployment; external execution/deployment remains unavailable |
+| `/consultant` | Tenant-scoped blueprint review, explicit discovery intake and promotion, guided discovery, workflow design, local employee-onboarding fixture, and review-only Power Platform artifacts | `/consultant/*` | Chromium evidence on 2026-08-12 loaded a synthetic local blueprint, exercised incomplete discovery, guided-session validation and continuation, Power Automate planning, Power Apps artifact build, and malformed JSON recovery; focused UI/API regression coverage now verifies complete discovery can persist a named, risk-reviewed blueprint and run the selected persisted blueprint through the bounded local onboarding fixture without execution or deployment; a real browser replay also verified that an explicitly entered workspace ID reaches `POST /consultant/discovery` when demo auth has no bound tenant scope (HTTP 200, zero console errors); live provider execution and deployment remain unavailable, and full browser coverage remains open under issue #257 |
 | `/collectors` | Validate, preview, run, export | `/collectors/*` | Existing UI tests; browser route render |
 | `/reports` | Hardening, restore exercise, deterministic client QBR, automation-opportunity, and recurring-service-review generation, report detail/export | `/reports/*`, `/hardening/*`, `/backup/*` | Existing UI tests cover generation controls and evidence states; browser route render |
 | `/audit` | Event list and exports | `/audit*`, `/audit-events/export` | Browser route render |
@@ -114,6 +114,29 @@ unverifiable product claim.
   deployment remain false. This is not evidence that the broader route,
   responsive, accessibility, denied, offline, or provider-error matrix is
   complete.
+- Current Chromium tenant-resolution replay: at 1440x1000, `/consultant`
+  loaded against the local demo API, accepted `acme` in Customer workspace ID
+  with an empty authenticated scope, submitted `POST /consultant/discovery`
+  with HTTP 200, rendered the explicit “More discovery is required” state,
+  and reported zero console errors and zero warnings. The broader route,
+  responsive, accessibility, denied, offline, and provider-error matrix
+  remains open.
+- Current Chromium route sweep: all 20 operator and direct-link end-user
+  destinations loaded through the local Vite/API stack. The Settings route
+  initially exposed an accessibility warning for the admin secret and API
+  token forms; both forms now declare `autocomplete` semantics, the focused UI
+  tests cover the contract, and the replay reports zero warnings. The Founder
+  Pack's expected `409 not configured` response remains an explicit
+  unavailable state (and an expected handled network error), not a fake
+  success; the broader control, permission, offline, responsive, and
+  provider-error matrix remains open.
+- Current Chromium Tickets replay: the panel correctly distinguishes the
+  role-level ability to prepare approval drafts from live provider write health;
+  its status now reads `approval drafts enabled` while the dashboard continues
+  to report blocked live writes when no provider adapter is configured. The
+  approval draft control remains disabled until a ticket is selected and the
+  broader permission, offline, responsive, and provider-error matrix remains
+  open.
 - Current browser-validation slice on 2026-08-12: Firefox
   exercised all 20 operator routes against a local demo-safe API with the
   request limiter disabled for deterministic navigation; every route exposed
@@ -129,7 +152,8 @@ unverifiable product claim.
 - Dependency audit: repository-locked environment reports no known Python
   dependency vulnerabilities; the editable project itself is intentionally
   excluded from the third-party scan.
-- Current repository backend validation: full pytest passed 2,128 tests; the
+- Current repository backend validation: full pytest passed 2,159 tests at the
+  repository's 95% coverage threshold; the
   existing FastAPI/Starlette and founder-surface deprecation warnings remain
   non-failing warnings.
 

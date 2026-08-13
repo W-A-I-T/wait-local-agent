@@ -1,0 +1,75 @@
+{
+  "format": "wait-local-agent.employee-onboarding-child-agent-map",
+  "format_version": 1,
+  "client_id": "acme",
+  "mode": "local_fixture",
+  "live_provider_execution": false,
+  "artifact_generation": false,
+  "deployment_started": false,
+  "supervisor_id": "onboarding-supervisor",
+  "child_agents": [
+    {
+      "id": "onboarding-supervisor",
+      "role": "supervisor",
+      "target_tools": ["ticket-triage"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": []
+    },
+    {
+      "id": "identity-agent",
+      "role": "identity",
+      "target_tools": ["m365-identity-lookup"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["onboarding-supervisor"]
+    },
+    {
+      "id": "licensing-agent",
+      "role": "licensing",
+      "target_tools": ["m365-live-context"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["identity-agent"]
+    },
+    {
+      "id": "intune-agent",
+      "role": "intune",
+      "target_tools": ["m365-live-context"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["licensing-agent"]
+    },
+    {
+      "id": "psa-agent",
+      "role": "psa",
+      "target_tools": ["connectwise-ticket-lookup"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["onboarding-supervisor"]
+    },
+    {
+      "id": "rmm-agent",
+      "role": "rmm",
+      "target_tools": ["rmm-device-lookup"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["intune-agent"]
+    },
+    {
+      "id": "documentation-agent",
+      "role": "documentation",
+      "target_tools": ["hudu-documentation-search"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["onboarding-supervisor"]
+    },
+    {
+      "id": "communications-agent",
+      "role": "communications",
+      "target_tools": ["m365-teams-context"],
+      "local_fixture_tools": ["ticket-triage"],
+      "depends_on": ["documentation-agent"]
+    }
+  ],
+  "sensitive_steps": [
+    "identity creation",
+    "license assignment",
+    "RMM operation",
+    "manager notification"
+  ],
+  "boundary_note": "The local fixture executes only the bounded ticket-triage stand-in. Target tools are architecture declarations; live provider calls, generated artifacts, and deployment remain unstarted."
+}

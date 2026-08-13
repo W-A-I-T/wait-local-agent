@@ -88,9 +88,10 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Broader guided discovery ergonomics, including resumable operator views and
   richer transcript review. The canonical employee-onboarding fixture now
-  demonstrates discovery-to-architecture promotion, controlled local
-  evaluation, governance, delivery, and approval creation; live provider
-  execution and deployment remain separate evidence-gated increments.
+  demonstrates discovery-to-architecture promotion, an explicit bounded
+  multi-agent child map, controlled local evaluation, governance, delivery,
+  and approval creation; live provider execution and deployment remain
+  separate evidence-gated increments.
 
 ## Microsoft / Power Platform
 

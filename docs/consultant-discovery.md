@@ -60,6 +60,11 @@ unknown customer declaration is `detected`, not silently treated as an empty or
 supported environment. A connector configured for another or unbound tenant is
 also `permission-limited`.
 
+If the local connector health record is `failed` for a tenant-bound connector,
+the projection is `unavailable` with the failure retained as a limitation. It
+does not turn the failed provider into an empty system list or infer that the
+provider is authorized.
+
 The discovery response includes the same environment evidence in its
 `blueprint_candidate.environment` field. A parsed Solution Blueprint may retain
 these records, and the architecture view keeps any status below reachable,

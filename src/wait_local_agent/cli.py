@@ -3474,7 +3474,14 @@ def plan_microsoft_supervisor(source: Path) -> None:
     client_id = payload.get("client_id")
     task = payload.get("task")
     child_agent_ids = payload.get("child_agent_ids")
-    if not isinstance(client_id, str) or not isinstance(task, str) or not isinstance(child_agent_ids, list):
+    max_retries = payload.get("max_retries", 0)
+    if (
+        not isinstance(client_id, str)
+        or not isinstance(task, str)
+        or not isinstance(child_agent_ids, list)
+        or isinstance(max_retries, bool)
+        or not isinstance(max_retries, int)
+    ):
         raise typer.BadParameter("source must contain client_id, task, and child_agent_ids")
     if any(not isinstance(item, str) for item in child_agent_ids):
         raise typer.BadParameter("child_agent_ids must contain text values")
@@ -3487,6 +3494,7 @@ def plan_microsoft_supervisor(source: Path) -> None:
             task=task,
             child_agent_ids=child_agent_ids,
             definitions=service.list_definitions(client_id),
+            max_retries=max_retries,
         )
     except SupervisorPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
@@ -3505,6 +3513,8 @@ def run_microsoft_supervisor(
     child_agent_ids = payload.get("child_agent_ids")
     input_payload = payload.get("input", {})
     completed_run_ids = payload.get("completed_run_ids", [])
+    max_retries = payload.get("max_retries", 0)
+    cancel_run_id = payload.get("cancel_run_id")
     if (
         not isinstance(client_id, str)
         or not isinstance(entity_id, str)
@@ -3512,6 +3522,9 @@ def run_microsoft_supervisor(
         or not isinstance(child_agent_ids, list)
         or not isinstance(input_payload, dict)
         or not isinstance(completed_run_ids, list)
+        or isinstance(max_retries, bool)
+        or not isinstance(max_retries, int)
+        or (cancel_run_id is not None and (isinstance(cancel_run_id, bool) or not isinstance(cancel_run_id, int)))
     ):
         raise typer.BadParameter(
             "source must contain client_id, entity_id, task, child_agent_ids, and an input object"
@@ -3541,6 +3554,8 @@ def run_microsoft_supervisor(
             actor_role=context.role,
             input_payload=input_payload,
             completed_run_ids=completed_run_ids,
+            max_retries=max_retries,
+            cancel_run_id=cancel_run_id,
         )
     except SupervisorPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
@@ -3677,11 +3692,19 @@ def list_agents() -> None:
             if definition.execution_window_start and definition.execution_window_end
             else " window=always"
         )
+        failure_policy_values: list[str] = []
+        for step in definition.steps:
+            policy = step.get("failure_policy")
+            if isinstance(policy, dict):
+                mode = policy.get("mode", "stop")
+                failure_policy_values.append(f"{step.get('tool_id', 'unknown')}:{mode}")
+        failure_policies = ",".join(failure_policy_values) or "-"
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
             f"enabled={definition.enabled} version={definition.version}{window} "
             f"context={','.join(definition.context_sources) or '-'} "
-            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'}"
+            f"approval_expiry={definition.approval_expiry_seconds or 'tool-default'} "
+            f"failure_policies={failure_policies}"
         )
 
 

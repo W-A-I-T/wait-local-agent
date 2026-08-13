@@ -48,7 +48,16 @@ POST /consultant/evaluations
 Controlled execution is available only in local demo mode with writes disabled.
 It runs the tenant-scoped, enabled agent definition through the existing
 runtime, captures actual tool actions, approvals, status, run ID, and evidence,
-and reports provider failures as failed evidence:
+and reports provider failures as failed evidence. It emits bounded security
+evidence that the local runtime can prove deterministically: matching tenant
+scope and tool required-role checks (`rbac`), the absence of successful write
+actions while writes are disabled (`unexpected_writes`), and requested lifecycle
+evidence from persisted status/history/exception lineage (`timeout`,
+`cancellation`, `retries`, `partial_failure`, `provider_failure`,
+`malformed_provider_output`, and result-aware `duplicate_prevention`). The
+adapter does not infer `tool_injection`, `secret_leakage`, or `rollback`; those
+dimensions remain explicit and fail closed until their dedicated evidence is
+supplied:
 
 ```text
 POST /consultant/evaluations

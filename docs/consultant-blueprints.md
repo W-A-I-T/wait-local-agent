@@ -71,7 +71,11 @@ The canonical synthetic employee-onboarding fixture at
 promotion boundary across discovery, environment evidence, architecture,
 controlled local evaluation, governance, delivery, and approval creation. Its
 Power Platform targets intentionally remain `needs_review`; the fixture does
-not claim live provider access or deployment.
+not claim live provider access or deployment. The companion
+`examples/consultant/employee-onboarding-child-agent-map.json` declares the
+identity, licensing, Intune, PSA, RMM, documentation, and communications
+children and explicitly maps their target tools to a `ticket-triage` local
+fixture stand-in.
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
 within the blueprint tenant; blueprint creation still does not create or run

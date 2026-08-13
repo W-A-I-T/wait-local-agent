@@ -52,11 +52,9 @@ def evaluate_tool_contract(
     test_set: list[dict[str, object]],
     observations: Mapping[str, object],
 ) -> dict[str, Any]:
-    if not isinstance(test_set, list) or not 1 <= len(test_set) <= MAX_EVALUATION_CASES:
-        raise EvaluationValidationError(f"test_set must contain 1-{MAX_EVALUATION_CASES} cases")
+    normalized_cases = _validated_cases(test_set)
     cases: list[dict[str, object]] = []
-    for raw_case in test_set:
-        case = _case(raw_case)
+    for case in normalized_cases:
         case_id = cast(str, case["id"])
         observed = _observation(observations.get(case_id), case)
         expected_tools = set(cast(list[str], case["expected_tool_ids"]))
@@ -146,7 +144,7 @@ def execute_tool_contract(
     than passing or disappearing as empty results.
     """
 
-    normalized_cases = [_case(raw_case) for raw_case in _validate_test_set(test_set)]
+    normalized_cases = _validated_cases(test_set)
     observations: dict[str, object] = {}
     execution_errors: list[dict[str, str]] = []
     for case in normalized_cases:
@@ -237,6 +235,16 @@ class AgentServiceEvaluationExecutor:
                     "error": redact_text(str(raw_step.get("error_detail", "")))[:240],
                 }
             )
+        security_evidence = _controlled_security_evidence(
+            self.agent_service,
+            result,
+            result.steps,
+            actor_role=self.actor_role,
+            client_id=self.client_id,
+            definition_client_id=self.definition.client_id,
+            result_aware=bool(getattr(self.definition, "result_aware", False)),
+            required_dimensions=cast(list[str], case.get("required_security_dimensions", [])),
+        )
         # Deterministic local execution does not pass untrusted ticket text to
         # a model. If model inference is enabled, the runtime must supply an
         # explicit injection result rather than this adapter claiming safety.
@@ -254,6 +262,7 @@ class AgentServiceEvaluationExecutor:
             "execution_status": result.status,
             "run_id": result.run_id,
             "error_detail": redact_text(result.error_detail)[:240],
+            "security_evidence": security_evidence,
         }
 
 
@@ -261,6 +270,14 @@ def _validate_test_set(test_set: object) -> list[object]:
     if not isinstance(test_set, list) or not 1 <= len(test_set) <= MAX_EVALUATION_CASES:
         raise EvaluationValidationError(f"test_set must contain 1-{MAX_EVALUATION_CASES} cases")
     return test_set
+
+
+def _validated_cases(test_set: object) -> list[dict[str, object]]:
+    cases = [_case(raw_case) for raw_case in _validate_test_set(test_set)]
+    identifiers = [cast(str, case["id"]) for case in cases]
+    if len(set(identifiers)) != len(identifiers):
+        raise EvaluationValidationError("test_set case ids must not contain duplicates")
+    return cases
 
 
 def _case(value: object) -> dict[str, object]:
@@ -368,6 +385,110 @@ def _failed_observation(
     if required_security:
         result["security_evidence"] = {dimension: False for dimension in required_security}
     return result
+
+
+def _controlled_security_evidence(
+    agent_service: AgentService,
+    result: object,
+    steps: list[dict[str, object]],
+    *,
+    actor_role: Role,
+    client_id: str,
+    definition_client_id: str | None,
+    result_aware: bool,
+    required_dimensions: list[str],
+) -> dict[str, bool]:
+    """Return only security facts the local runtime can prove deterministically.
+
+    Lifecycle evidence is derived only from the bounded result status and the
+    persisted final-result lineage. This intentionally does not infer injection,
+    secret safety, or rollback from a successful fixture run; those dimensions
+    remain explicit evidence requirements and therefore fail closed unless a
+    caller supplies dedicated evidence.
+    """
+
+    raw_tools: list[Any] = getattr(agent_service, "list_tools", lambda: [])()
+    tools = {tool.id: tool for tool in raw_tools if isinstance(getattr(tool, "id", None), str)}
+    rbac_safe = definition_client_id == client_id
+    unexpected_write = False
+    for step in steps:
+        tool_id = step.get("tool_id")
+        tool = tools.get(tool_id) if isinstance(tool_id, str) else None
+        if tool is None or not _role_allows(getattr(tool, "required_role", None), actor_role):
+            rbac_safe = False
+        if (
+            tool is not None
+            and getattr(tool, "access_mode", None) == "write"
+            and step.get("status") == "success"
+        ):
+            unexpected_write = True
+    writes_disabled = not bool(getattr(agent_service.settings, "allow_write_actions", True))
+    evidence = {
+        "rbac": rbac_safe,
+        "unexpected_writes": writes_disabled and not unexpected_write,
+    }
+    if not required_dimensions:
+        return evidence
+
+    status = getattr(result, "status", "")
+    status = status if isinstance(status, str) else ""
+    error_detail = getattr(result, "error_detail", "")
+    error_detail = error_detail if isinstance(error_detail, str) else ""
+    final_result = getattr(result, "final_result", {})
+    if not isinstance(final_result, Mapping):
+        final_result = {}
+    history = final_result.get("history")
+    if not isinstance(history, Mapping):
+        history = {}
+    exception = final_result.get("exception")
+    if not isinstance(exception, Mapping):
+        exception = {}
+    retry_count = final_result.get("retry_count")
+    retry_of_run_id = final_result.get("retry_of_run_id")
+    tool_ids = [
+        tool_id
+        for step in steps
+        if isinstance((tool_id := step.get("tool_id")), str)
+    ]
+    action_run_ids = [
+        action_run_id
+        for step in steps
+        if isinstance((action_run_id := step.get("action_run_id")), int)
+        and not isinstance(action_run_id, bool)
+    ]
+    lifecycle_evidence = {
+        "timeout": status == "failed" and "timed out" in error_detail.casefold(),
+        "cancellation": status == "cancelled" and "cancelled" in error_detail.casefold(),
+        "retries": (
+            isinstance(retry_count, int)
+            and not isinstance(retry_count, bool)
+            and retry_count > 0
+            and isinstance(retry_of_run_id, int)
+            and not isinstance(retry_of_run_id, bool)
+        ),
+        "duplicate_prevention": (
+            result_aware
+            and bool(tool_ids)
+            and len(tool_ids) == len(set(tool_ids))
+            and len(action_run_ids) == len(set(action_run_ids))
+        ),
+        "partial_failure": history.get("partial") is True,
+        "provider_failure": exception.get("kind") == "provider_failure",
+        "malformed_provider_output": exception.get("kind") == "malformed_output",
+    }
+    evidence.update(
+        {
+            dimension: lifecycle_evidence[dimension]
+            for dimension in required_dimensions
+            if dimension in lifecycle_evidence
+        }
+    )
+    return evidence
+
+
+def _role_allows(required_role: object, actor_role: Role) -> bool:
+    levels = {"end_user": 0, "viewer": 1, "technician": 2, "admin": 3}
+    return isinstance(required_role, str) and levels.get(required_role.casefold(), -1) <= int(actor_role)
 
 
 def _bounded_error(error: Exception) -> str:

@@ -17,10 +17,12 @@ from wait_local_agent.api.app import (
     DiscoveryRequest,
     DiscoverySessionStartRequest,
     DiscoveryTurnRequest,
+    EmployeeOnboardingDemoRequest,
     EnvironmentDiscoveryRequest,
     EvaluationExecutionRequest,
     EvaluationRequest,
     GovernanceRequest,
+    OpenApiConnectorRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
@@ -167,6 +169,24 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert copilot["deployment_started"] is False
 
 
+def test_copilot_studio_plan_route_scopes_tenant_and_maps_validation(settings) -> None:
+    endpoint = _endpoint(settings, "/consultant/copilot-studio/plan")
+    request = CopilotStudioPlanRequest(
+        client_id="acme",
+        copilot_name="Employee onboarding copilot",
+        business_goal="Guide HR through an auditable onboarding request.",
+        actions=[{"id": "write", "connector_id": "m365", "method": "POST", "approval_required": False}],
+    )
+
+    with pytest.raises(HTTPException) as forbidden:
+        endpoint(request, _technician(client_id="other"))
+    assert forbidden.value.status_code == 403
+
+    with pytest.raises(HTTPException) as invalid:
+        endpoint(request, _technician())
+    assert invalid.value.status_code == 422
+
+
 def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
     created = _endpoint(settings, "/consultant/blueprints")(
@@ -206,6 +226,8 @@ def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture
     ]
     assert result["execution_started"] is False
     assert result["deployment_started"] is False
+    assert result["supervisor"]["mode"] == "supervisor"
+    assert len(result["supervisor"]["children"]) == len(payload["agents"])
     assert {item["chosen_target"] for item in result["decisions"]} >= {
         "microsoft_graph",
         "psa",
@@ -219,6 +241,15 @@ def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture
 
 def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    child_map = json.loads(Path("examples/consultant/employee-onboarding-child-agent-map.json").read_text())
+    blueprint_agents = {agent["id"]: agent for agent in payload["agents"]}
+    assert set(blueprint_agents) == {child["id"] for child in child_map["child_agents"]}
+    assert child_map["mode"] == "local_fixture"
+    assert child_map["live_provider_execution"] is False
+    assert child_map["deployment_started"] is False
+    for child in child_map["child_agents"]:
+        assert child["target_tools"] == blueprint_agents[child["id"]]["tools"]
+        assert child["local_fixture_tools"] == ["ticket-triage"]
     blueprint = _endpoint(settings, "/consultant/blueprints")(
         SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
         _technician(),
@@ -233,6 +264,43 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
+
+    runtime_ids: dict[str, str] = {}
+    for child in child_map["child_agents"]:
+        dependencies = [runtime_ids[dependency_id] for dependency_id in child["depends_on"]]
+        definition = service.create(
+            name=f"{child['role'].title()} onboarding fixture",
+            description="Local fixture child for bounded employee-onboarding orchestration.",
+            enabled=True,
+            trigger="manual",
+            entity_type="ticket",
+            filters={},
+            enabled_tools=child["local_fixture_tools"],
+            steps=[{"tool_id": "ticket-triage", "payload": {}}],
+            max_steps=1,
+            execution_timeout_seconds=30,
+            client_id="acme",
+            depends_on_agent_ids=dependencies,
+        )
+        runtime_ids[child["id"]] = definition.id
+
+    supervisor_result = _endpoint(settings, "/consultant/supervisor/run")(
+        SupervisorRunRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            task=payload["business_goal"]["statement"],
+            child_agent_ids=[runtime_ids[child["id"]] for child in child_map["child_agents"]],
+            input={"ticket_id": "TCK-1001", "fixture_mode": child_map["mode"]},
+        ),
+        _technician(),
+    )
+    assert supervisor_result["status"] == "completed"
+    assert supervisor_result["execution_started"] is True
+    assert supervisor_result["cross_tenant_context"] is False
+    assert len(supervisor_result["children"]) == len(child_map["child_agents"])
+    assert all(child["status"] == "completed" for child in supervisor_result["children"])
+    assert len(store.list_agent_runs(client_id="acme")) == len(child_map["child_agents"])
+
     agent = service.create(
         name="Employee onboarding supervisor fixture",
         description="Synthetic local fixture for the employee onboarding blueprint",
@@ -254,6 +322,7 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
                     "expected_tool_ids": ["ticket-triage"],
                     "forbidden_tool_ids": [],
                     "expected_approval_tool_ids": [],
+                    "required_security_dimensions": ["rbac", "unexpected_writes"],
                 }
             ],
             execution=EvaluationExecutionRequest(
@@ -266,6 +335,8 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     )
     assert evaluation["execution_mode"] == "controlled"
     assert evaluation["production_readiness"] == "pass"
+    assert evaluation["dimensions"]["rbac"] == 100.0
+    assert evaluation["dimensions"]["unexpected_writes"] == 100.0
     assert evaluation["cases"][0]["execution"]["execution_status"] == "completed"
 
     governance = _endpoint(settings, "/consultant/governance/evaluate")(
@@ -535,6 +606,48 @@ def test_power_platform_deployment_route_creates_approval_and_stays_gated(settin
     assert approval["payload"]["credentials_included"] is False
 
 
+def test_power_platform_deployment_route_records_approved_execution(settings, monkeypatch) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_execution",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+            stage="build",
+        ),
+        _request(),
+        _technician(),
+    )
+    approval_id = request_approval["approval"]["id"]
+    Store(settings.data_path).update_approval_request(approval_id, "approved", approver_id="admin")
+
+    def fake_execute(*args, **kwargs):
+        assert kwargs["approved"] is True
+        return {
+            "status": "succeeded",
+            "message": "bounded PAC fixture succeeded",
+            "stage": "build",
+            "artifact_digest": "sha256:" + "a" * 64,
+        }
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    result = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")(
+        approval_id,
+        _request(),
+        _admin(),
+    )
+
+    assert result["status"] == "approved"
+    assert result["execution_status"] == "succeeded"
+    assert result["output"]["status"] == "succeeded"
+    persisted = Store(settings.data_path).get_approval_request(approval_id)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.execution_status == "succeeded"
+
+
 def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> None:
     with pytest.raises(HTTPException, match="outside authenticated scope"):
         _endpoint(settings, "/consultant/solutions/deployment-approvals")(
@@ -746,6 +859,155 @@ def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settin
             ),
             _technician(),
         )
+
+
+def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = _endpoint(settings, "/consultant/demos/employee-onboarding")(
+        EmployeeOnboardingDemoRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            blueprint=payload,
+        ),
+        _technician(),
+    )
+
+    assert result["format"] == "wait-local-agent.employee-onboarding-demo"
+    assert result["mode"] == "local_fixture"
+    assert result["stages"]["supervisor"]["status"] == "completed"
+    assert result["stages"]["evaluation"]["production_readiness"] == "pass"
+    assert result["boundaries"]["live_provider_execution"] is False
+    assert result["boundaries"]["deployment_started"] is False
+
+
+def test_employee_onboarding_demo_endpoint_resolves_persisted_blueprint_in_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
+    )
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = _endpoint(settings, "/consultant/demos/employee-onboarding")(
+        EmployeeOnboardingDemoRequest(
+            client_id="acme",
+            blueprint_id=blueprint["id"],
+            entity_id="TCK-1001",
+        ),
+        _technician(),
+    )
+
+    assert result["client_id"] == "acme"
+    assert result["stages"]["blueprint"]["id"] == blueprint["id"]
+    assert len(Store(settings.data_path).list_solution_blueprints(client_id="acme")) == 1
+
+
+def test_employee_onboarding_demo_endpoint_enforces_local_mode_and_tenant_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    request = EmployeeOnboardingDemoRequest(client_id="acme", blueprint=payload)
+
+    with pytest.raises(HTTPException, match="tenant scope") as missing_scope:
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(request, _technician(client_id=""))
+    assert missing_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(request, _technician(client_id="beta"))
+
+    secured_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
+    with pytest.raises(HTTPException, match="local demo mode"):
+        _endpoint(secured_settings, "/consultant/demos/employee-onboarding")(request, _technician())
+
+    with pytest.raises(HTTPException, match="exactly one"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint_id="bp_missing", blueprint=payload),
+            _technician(),
+        )
+
+    with pytest.raises(HTTPException, match="solution blueprint not found"):
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint_id="bp_missing"),
+            _technician(),
+        )
+
+
+def test_employee_onboarding_demo_endpoint_does_not_invent_fixture_ticket(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+
+    with pytest.raises(HTTPException, match="tenant-scoped ticket") as missing_ticket:
+        _endpoint(settings, "/consultant/demos/employee-onboarding")(
+            EmployeeOnboardingDemoRequest(client_id="acme", blueprint=payload),
+            _technician(),
+        )
+    assert missing_ticket.value.status_code == 422
+
+
+def test_consultant_blueprint_reads_preserve_tenant_scope(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(**{**payload, "client_id": "acme"}),
+        _technician(),
+    )
+
+    with pytest.raises(HTTPException, match="no tenant") as missing_scope:
+        _get_endpoint(settings, "/consultant/blueprints")(_technician(client_id=""), "acme")
+    assert missing_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="no tenant") as architecture_scope:
+        _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+            blueprint["id"],
+            _technician(client_id=""),
+        )
+    assert architecture_scope.value.status_code == 403
+
+    with pytest.raises(HTTPException, match="not found") as missing_blueprint:
+        _get_endpoint(settings, "/consultant/blueprints/{blueprint_id}/architecture")(
+            "bp-missing",
+            _technician(),
+        )
+    assert missing_blueprint.value.status_code == 404
+
+
+def test_consultant_routes_reject_missing_tenant_and_invalid_connector_definitions(settings) -> None:
+    power_apps_request = PowerAppsPlanRequest(
+        client_id="acme",
+        app_name="Onboarding",
+        entities=[],
+        screens=[],
+        actions=[],
+    )
+    with pytest.raises(HTTPException, match="no tenant"):
+        _endpoint(settings, "/consultant/power-apps/plan")(power_apps_request, _technician(client_id=""))
+    with pytest.raises(HTTPException, match="no tenant"):
+        _endpoint(settings, "/consultant/power-apps/build")(power_apps_request, _technician(client_id=""))
+
+    connector_request = OpenApiConnectorRequest(connector_id="employee-api", definition={})
+    with pytest.raises(HTTPException, match="OpenAPI") as validation_error:
+        _endpoint(settings, "/consultant/connectors/openapi/validate")(connector_request, _technician())
+    assert validation_error.value.status_code == 422
+    with pytest.raises(HTTPException, match="OpenAPI") as generation_error:
+        _endpoint(settings, "/consultant/connectors/openapi/generate")(connector_request, _technician())
+    assert generation_error.value.status_code == 422
+
+    with pytest.raises(HTTPException, match="no tenant") as discovery_error:
+        _endpoint(settings, "/consultant/discovery")(
+            DiscoveryRequest(client_id="acme", answers={}),
+            _technician(client_id=""),
+        )
+    assert discovery_error.value.status_code == 403
+    with pytest.raises(HTTPException, match="no tenant") as promotion_error:
+        _endpoint(settings, "/consultant/discovery/promote")(
+            DiscoveryBlueprintPromotionRequest(client_id="acme", solution_name="Onboarding", risk="medium", answers={}),
+            _technician(client_id=""),
+        )
+    assert promotion_error.value.status_code == 403
 
 
 def test_environment_discovery_route_returns_explicit_local_evidence(settings) -> None:

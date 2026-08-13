@@ -27,8 +27,9 @@ POST /consultant/connectors/openapi/generate
 
 Definitions must use HTTPS, contain at least one supported action with a unique
 `operationId`, and cannot contain parameter defaults, examples, or credential-
-like parameter names. The package output is explicitly `review_only`; Power
-Platform import and deployment remain future governed steps.
+like parameter names. The package output is explicitly `review_only`; connector
+import and deployment through this factory are not implemented in this
+repository.
 
 WAIT also exposes a no-side-effect `pac` planning surface:
 
@@ -41,6 +42,15 @@ wait-local-agent microsoft solution plan onboarding WAIT_Dev wait /workspace/onb
 starting it. `plan` emits the proposed `pac solution init`, `pack`, and `check`
 arguments. It does not create directories, overwrite files, contact Dataverse,
 or execute a subprocess.
+
+This no-side-effect planning command is distinct from the staged solution
+deployment surface. WAIT also exposes approval-gated solution stages through
+`/consultant/solutions/deployment-approvals` and the corresponding
+`microsoft solution deployment-plan`, `request-deployment-approval`, and
+`execute-stage` CLI commands. That path can run fixed, shell-free `pac` stages
+only after the documented local feature flags, workspace, executable, tenant
+scope, approval, and promotion-evidence checks pass; see
+[`docs/consultant-power-platform-deployment.md`](consultant-power-platform-deployment.md).
 
 See Microsoft's [custom connector OpenAPI definition guidance](https://learn.microsoft.com/en-us/connectors/custom-connectors/define-openapi-definition)
 for the external import contract.

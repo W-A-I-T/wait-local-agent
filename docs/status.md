@@ -8,14 +8,20 @@ reachable API, CLI, UI, test, and execution boundary exists.
 The repository currently provides review-oriented blueprint, discovery,
 architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
 Platform preparation surfaces, including a credential-free Copilot Studio
-handoff plan. External credentials, provider availability, and
-deployment authorization remain explicit prerequisites; artifact generation is
-not deployment. Planned Power Platform stages report no deployment start, and
-TEST/PROD approval requests require explicit preceding-stage, evaluation,
-governance, artifact-digest, and rollback evidence. The preceding-stage
-approval must be same-tenant, approved, successfully executed, and match the
-submitted package digest; live provider verification and rollback execution
-remain unsupported boundaries.
+handoff plan. It also provides a separate staged Power Platform solution
+deployment path with explicit approval and execution records. External
+credentials, provider availability, and deployment authorization remain
+explicit prerequisites; artifact generation and planning are not deployment.
+Planned stages report no deployment start, and TEST/PROD approval requests
+require explicit preceding-stage, evaluation, governance, artifact-digest, and
+rollback evidence. The preceding-stage approval must be same-tenant, approved,
+successfully executed, and match the submitted package digest; live provider
+verification and rollback execution remain unsupported boundaries. See
+[`docs/consultant-power-platform-deployment.md`](consultant-power-platform-deployment.md)
+for the execution boundary.
+
+The repository-wide requirement-to-evidence and release-risk index is
+[`docs/enterprise-validation-matrix.md`](enterprise-validation-matrix.md).
 
 Tenant-scoped environment discovery matches explicit system declarations to
 local connector configuration without probing providers; configured,
@@ -38,6 +44,19 @@ tool-injection, secret-leakage, unexpected-write, timeout, retry, cancellation,
 provider-failure, malformed-output, duplicate-prevention, partial-failure, and
 rollback dimensions. Missing evidence fails the requested dimension; the
 contract does not infer live-provider or production evidence from fixtures.
+
+The canonical employee-onboarding walkthrough now composes the existing
+discovery, environment, blueprint, architecture, supervisor, controlled
+evaluation, governance, delivery, and audit primitives in an isolated local
+fixture. It executes only the bounded local `ticket-triage` stand-in; target
+Microsoft/PSA/RMM/documentation/Teams actions, live provider execution,
+artifact generation, and deployment remain explicit review or approval gates.
+
+The same walkthrough is reachable through a tenant-scoped technician API
+endpoint and the Consultant screen in local demo mode. It resolves a selected
+persisted blueprint without duplicating it, requires an existing scoped fixture
+ticket, and keeps live provider execution, artifact generation, and deployment
+disabled.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
@@ -81,8 +100,10 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   After each successful step, the executor supplies only the redacted operational
   result and remaining catalog to the configured provider, validates one returned
   tool against the definition, and falls back to the reviewed sequence when the
-  provider is unavailable or malformed. The default remains the fixed reviewed
-  sequence.
+  provider is unavailable or malformed. Each continuation step also records
+  bounded previous-step lineage (tool, status, index, and redacted error) without
+  duplicating raw tool output; failed or approval-paused paths remain explicit.
+  The default remains the fixed reviewed sequence.
 - API-backed dashboard for HaloPSA tickets, approval queue, event history, knowledge, workflows, connectors, and provider health.
 - Docker Compose appliance scaffold with API, UI, health check, and persistent SQLite volume.
 - Local backup and restore commands, including optional encrypted backups with the Fernet vault.
@@ -229,7 +250,18 @@ WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
   scope, persisted runs, approval pause/resume, grouped execution traces, and
   technician cancellation for active runs. A pending smart-action approval is
   revoked when its agent run is cancelled. Failed and cancelled runs expose a
-  bounded retry route with persisted retry lineage.
+  bounded retry route with persisted retry lineage. Run detail now exposes a
+  deterministic exception class and recovery hint, retry parent/attempt data,
+  and a redacted partial-history summary; the Agents screen uses the existing
+  cancel/retry routes and shows the same step and recovery state. This is
+  observability and controlled recovery, not unrestricted planner autonomy.
+  Each reviewed step may also declare one deterministic failure policy:
+  retry up to three times, use another explicitly configured enabled tool as a
+  fallback, request human input, escalate to a technician, or block for review.
+  Fallback cycles and unconfigured targets are rejected; attempts, policy, and
+  partial history remain redacted and auditable. The API run detail, CLI agent
+  listing, execution metadata, audit event, and Agents screen expose the same
+  bounded policy outcome.
   Event-triggered agents now accept authenticated ticket events with
   deterministic filters, idempotency keys, run-once-per-entity protection,
   redacted delivery records, delivery history APIs, and an operator-triggered

@@ -519,7 +519,13 @@ def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
         entity_type="ticket",
         filters={},
         enabled_tools=["ticket-triage"],
-        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        steps=[
+            {
+                "tool_id": "ticket-triage",
+                "payload": {},
+                "failure_policy": {"mode": "retry", "max_retries": 1},
+            }
+        ],
         max_steps=1,
         execution_timeout_seconds=30,
         client_id=None,
@@ -533,6 +539,7 @@ def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     assert result.exit_code == 0
     assert "Business-hours triage" in result.output
     assert "window=09:00-17:00 timezone=America/Vancouver" in result.output
+    assert "failure_policies=ticket-triage:retry" in result.output
 
 
 def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:

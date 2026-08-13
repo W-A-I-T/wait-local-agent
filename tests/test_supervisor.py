@@ -190,6 +190,78 @@ def test_supervisor_execution_preserves_pending_and_failure_results(settings, st
     assert result["resumption"]["next_child_agent_id"] == "identity"
 
 
+def test_supervisor_retries_failed_child_with_bounded_lineage(settings, monkeypatch) -> None:
+    child = _definition("identity")
+    store = Store(settings.data_path)
+    failed_run = AgentRun(
+        id=41, agent_id="identity", entity_id="TCK-1", actor="tech", status="failed",
+        current_step=1, state_json='{"input": {"ticket_id": "TCK-1"}, "retry_count": 0}',
+        started_at="", finished_at="", revision_version=1, client_id="acme",
+    )
+    monkeypatch.setattr(store, "get_agent_run", lambda run_id, _client_id: failed_run if run_id == 41 else None)
+
+    class Runner:
+        def __init__(self) -> None:
+            self.retry_context: dict[str, object] | None = None
+
+        def run(self, *_args, **_kwargs):
+            return AgentExecutionResult(41, "identity", "failed", 1, [], error_detail="temporary")
+
+        def retry(self, _definition, _run, *, actor, actor_role, supervisor_context=None):
+            assert actor == "tech"
+            assert actor_role == Role.TECHNICIAN
+            self.retry_context = supervisor_context
+            return AgentExecutionResult(42, "identity", "completed", 1, [], final_result={"summary": "ok"})
+
+    service = Runner()
+    result = execute_supervisor_delegation(
+        client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+        definitions=[child], agent_service=service, store=store, actor="tech", actor_role=Role.TECHNICIAN,
+        max_retries=1,
+    )
+
+    child_result = result["children"][0]
+    assert result["status"] == "completed"
+    assert child_result["run_id"] == 42
+    assert child_result["retry_count"] == 1
+    assert [attempt["status"] for attempt in child_result["attempts"]] == ["failed", "completed"]
+    assert child_result["lineage"]["retry_of_run_id"] == 41
+    assert service.retry_context is not None
+    assert service.retry_context["supervisor_id"] == "consultant-supervisor"
+    assert service.retry_context["retry_of_run_id"] == 41
+
+
+def test_supervisor_cancels_only_scoped_approval_paused_child(settings, monkeypatch) -> None:
+    child = _definition("identity")
+    store = Store(settings.data_path)
+    pending_run = AgentRun(
+        id=52, agent_id="identity", entity_id="TCK-1", actor="tech", status="pending_approval",
+        current_step=1, state_json='{"pending_approval_step": 0}',
+        started_at="", finished_at="", revision_version=1, client_id="acme",
+    )
+    monkeypatch.setattr(store, "get_agent_run", lambda run_id, _client_id: pending_run if run_id == 52 else None)
+
+    class Runner:
+        def run(self, *_args, **_kwargs):
+            raise AssertionError("cancelled child must not execute")
+
+        def cancel(self, _definition, run, *, actor, approver_role):
+            assert run.id == 52
+            assert actor == "tech"
+            assert approver_role == Role.TECHNICIAN
+            return AgentExecutionResult(52, "identity", "cancelled", 1, [], error_detail="cancelled")
+
+    result = execute_supervisor_delegation(
+        client_id="acme", entity_id="TCK-1", task="task", child_agent_ids=["identity"],
+        definitions=[child], agent_service=Runner(), store=store, actor="tech", actor_role=Role.TECHNICIAN,
+        cancel_run_id=52,
+    )
+
+    assert result["status"] == "cancelled"
+    assert result["cancellation"] == {"requested_run_id": 52, "applied": True}
+    assert result["children"][0]["status"] == "cancelled"
+
+
 def test_supervisor_resumes_completed_run_and_rejects_malformed_or_foreign_state(settings, monkeypatch) -> None:
     child = _definition("identity")
     store = Store(settings.data_path)

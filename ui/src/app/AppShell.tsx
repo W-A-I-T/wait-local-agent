@@ -36,6 +36,16 @@ export function AppShell() {
               event.preventDefault();
               void saveApiToken();
             }}>
+              <input
+                aria-hidden="true"
+                autoComplete="username"
+                className="sr-only"
+                name="username"
+                readOnly
+                tabIndex={-1}
+                value="local-appliance"
+                onChange={() => undefined}
+              />
               <label className="token-input">
                 <span className="sr-only">API token</span>
                 <input

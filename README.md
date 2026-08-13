@@ -8,7 +8,7 @@
 
 **WAIT AI Solutions Architect** turns business requirements into provider-neutral solution blueprints, projects them onto available WAIT-native and external implementation targets, and uses this runtime to safely orchestrate and govern execution. MSP operations remains an important vertical, not the platform's only identity.
 
-See the [capability roadmap](ROADMAP.md) and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first MSP capabilities and the rationale for deferred work.
+See the [capability roadmap](ROADMAP.md), [enterprise validation matrix](docs/enterprise-validation-matrix.md), and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first capabilities, release gates, and deferred work.
 
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 
@@ -115,6 +115,11 @@ The consultant surfaces in this repository are deterministic and review-oriented
   and the React workflow dashboard.
   Agent run history also exposes the exact revision snapshot and supports
   approval-safe cancel and bounded retry controls under `/agent-runs`.
+- Each reviewed agent step may declare a deterministic failure policy: up to
+  three bounded retries, an explicitly configured enabled-tool fallback, human
+  input, technician escalation, or blocked-for-review. Invalid fallback targets
+  and cycles are rejected; the API, CLI, Agents UI, execution metadata, and
+  audit trail retain the same redacted policy and partial-history evidence.
 - Event agents may declare same-tenant dependencies; matching chains execute in
   deterministic bounded order and unmet upstream work is recorded as a failed
   delivery.

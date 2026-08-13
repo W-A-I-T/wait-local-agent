@@ -23,6 +23,55 @@
       "purpose": "Coordinate reviewed onboarding steps and hand off bounded results.",
       "tools": ["ticket-triage"],
       "knowledge": ["employee-handbook"]
+    },
+    {
+      "id": "identity-agent",
+      "name": "Identity Agent",
+      "purpose": "Review identity prerequisites before any account write is approved.",
+      "tools": ["m365-identity-lookup"],
+      "knowledge": ["employee-handbook"]
+    },
+    {
+      "id": "licensing-agent",
+      "name": "Licensing Agent",
+      "purpose": "Review available Microsoft 365 license evidence before assignment approval.",
+      "tools": ["m365-live-context"],
+      "knowledge": ["employee-handbook"]
+    },
+    {
+      "id": "intune-agent",
+      "name": "Intune Agent",
+      "purpose": "Review bounded Intune device context before device actions are approved.",
+      "tools": ["m365-live-context"],
+      "knowledge": ["it-onboarding-runbook"]
+    },
+    {
+      "id": "psa-agent",
+      "name": "PSA Agent",
+      "purpose": "Review the tenant-scoped PSA record and prepare an auditable handoff.",
+      "tools": ["connectwise-ticket-lookup"],
+      "knowledge": ["it-onboarding-runbook"]
+    },
+    {
+      "id": "rmm-agent",
+      "name": "RMM Agent",
+      "purpose": "Review endpoint inventory before any RMM operation is approved.",
+      "tools": ["rmm-device-lookup"],
+      "knowledge": ["it-onboarding-runbook"]
+    },
+    {
+      "id": "documentation-agent",
+      "name": "Documentation Agent",
+      "purpose": "Retrieve tenant-scoped onboarding documentation and preserve evidence references.",
+      "tools": ["hudu-documentation-search"],
+      "knowledge": ["employee-handbook", "it-onboarding-runbook"]
+    },
+    {
+      "id": "communications-agent",
+      "name": "Communications Agent",
+      "purpose": "Prepare a manager notification handoff without sending it from the fixture.",
+      "tools": ["m365-teams-context"],
+      "knowledge": ["employee-handbook"]
     }
   ],
   "workflows": [

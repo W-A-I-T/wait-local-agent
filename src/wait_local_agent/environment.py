@@ -80,8 +80,10 @@ def discover_environment(
         key = _normalize(name)
         if key in seen:
             continue
-        seen.add(key)
         matched_status: ConnectorStatus | None = by_alias.get(key)
+        if matched_status is not None and matched_status.id in seen:
+            continue
+        seen.add(key)
         if matched_status is not None:
             seen.add(matched_status.id)
         systems.append(_declared_system(name, matched_status, tenant, configured_client_id))
@@ -175,6 +177,12 @@ def _status_view(
     elif status.status == "blocked":
         projected = "permission-limited"
         limitation = "local policy prevents provider probing; provider authorization is unknown"
+    elif status.status == "failed":
+        projected = "unavailable"
+        limitation = (
+            "connector health reported a failure; provider availability is not being treated "
+            "as an empty environment"
+        )
     elif status.status in {"configured", "ready"}:
         projected = "configured"
         limitation = "provider reachability, authentication, and authorization have not been probed"
