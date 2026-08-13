@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from wait_local_agent.event_dispatch import (
     _json_list,
     _next_retry_at,
 )
+from wait_local_agent.msp_playbooks import create_msp_playbook_subscription, update_msp_playbook_subscription
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 
@@ -100,6 +102,116 @@ def test_event_dispatch_matches_filters_redacts_and_is_idempotent(settings) -> N
     assert second_key.matched_agent_ids == [definition.id]
     assert second_key.run_ids == []
     assert len(store.list_agent_runs(client_id="acme")) == 1
+
+
+def test_event_dispatch_runs_tenant_scoped_playbook_subscription_once(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    subscription = create_msp_playbook_subscription(
+        store,
+        "ticket-intake-review",
+        event_type="ticket.created",
+        client_id="acme",
+        input_mapping={"priority": "priority"},
+    )
+    dispatcher = EventDispatcher(store, service)
+
+    first = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="playbook-event-1",
+        client_id="acme",
+    )
+
+    assert first.matched_playbook_ids == [subscription.id]
+    assert len(first.playbook_run_ids) == 1
+    assert first.delivery.matched_playbook_count == 1
+    assert json.loads(first.delivery.playbook_ids_json) == [subscription.id]
+    assert json.loads(first.delivery.playbook_run_ids_json) == first.playbook_run_ids
+    assert len(store.list_workflow_runs(client_id="acme")) == 6
+
+    duplicate = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "changed"},
+        idempotency_key="playbook-event-1",
+        client_id="acme",
+    )
+    assert duplicate.duplicate is True
+    assert duplicate.playbook_run_ids == first.playbook_run_ids
+    assert len(store.list_workflow_runs(client_id="acme")) == 6
+
+    update_msp_playbook_subscription(
+        store,
+        subscription.id,
+        client_id="acme",
+        enabled=False,
+    )
+    disabled = dispatcher.dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={"priority": "P1"},
+        idempotency_key="playbook-event-2",
+        client_id="acme",
+    )
+    assert disabled.matched_playbook_ids == []
+    assert disabled.playbook_run_ids == []
+    assert len(store.list_workflow_runs(client_id="acme")) == 6
+
+
+def test_event_dispatch_keeps_playbook_approval_pending_without_retrying_it(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    subscription = create_msp_playbook_subscription(
+        store,
+        "security-response-review",
+        event_type="ticket.created",
+        client_id="acme",
+    )
+
+    result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={},
+        idempotency_key="playbook-approval-event",
+        client_id="acme",
+    )
+
+    assert result.delivery.status == "completed"
+    assert result.errors == []
+    attempts = json.loads(result.delivery.playbook_attempts_json)
+    assert attempts[subscription.id]["status"] == "pending"
+    assert len(store.list_approval_requests(client_id="acme")) == 1
+
+
+def test_event_dispatch_does_not_run_tenant_subscription_for_unscoped_ticket(settings) -> None:
+    store = Store(settings.data_path)
+    _seed(store, client_id=None)
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    create_msp_playbook_subscription(
+        store,
+        "ticket-intake-review",
+        event_type="ticket.created",
+        client_id="acme",
+    )
+
+    result = EventDispatcher(store, service).dispatch(
+        event_type="ticket.created",
+        entity_type="ticket",
+        entity_id="TCK-1001",
+        payload={},
+        idempotency_key="unscoped-playbook-event",
+    )
+
+    assert result.matched_playbook_ids == []
+    assert result.playbook_run_ids == []
 
 
 def test_event_dispatch_rejects_unsupported_events_and_cross_tenant_entities(settings) -> None:

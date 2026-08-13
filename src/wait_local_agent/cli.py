@@ -116,14 +116,17 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
+    create_msp_playbook_subscription,
     list_msp_playbooks,
     msp_playbook_entry_view,
     msp_playbook_revision_diff,
     msp_playbook_revision_view,
+    msp_playbook_subscription_view,
     preview_msp_playbook,
     publish_msp_playbook,
     run_msp_playbook,
     update_msp_playbook,
+    update_msp_playbook_subscription,
 )
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
@@ -2628,6 +2631,62 @@ def restore_msp_playbook_entry_command(
     except (KeyError, ValueError) as exc:
         raise typer.BadParameter("MSP playbook revision not found", param_hint="entry_id") from exc
     typer.echo(json.dumps(msp_playbook_entry_view(entry), sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-subscriptions")
+def list_msp_playbook_subscriptions_command(client_id: str | None = None) -> None:
+    """List tenant-scoped event-triggered MSP playbook subscriptions."""
+
+    subscriptions = _store().list_msp_playbook_subscriptions(client_id)
+    typer.echo(json.dumps(
+        [msp_playbook_subscription_view(item) for item in subscriptions],
+        sort_keys=True,
+        indent=2,
+    ))
+
+
+@workflows_app.command("playbook-subscribe")
+def create_msp_playbook_subscription_command(
+    playbook_id: str,
+    event_type: str,
+    client_id: Annotated[str, typer.Option("--client-id")],
+    input_mapping: Annotated[str | None, typer.Option("--input-mapping", help="JSON object or JSON file.")] = None,
+    enabled: bool = True,
+) -> None:
+    try:
+        mapping = _load_smart_action_payload(input_mapping)
+        subscription = create_msp_playbook_subscription(
+            _store(),
+            playbook_id,
+            event_type=event_type,
+            client_id=client_id,
+            input_mapping=mapping,
+            enabled=enabled,
+        )
+    except (KeyError, PermissionError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="playbook_id") from exc
+    typer.echo(json.dumps(msp_playbook_subscription_view(subscription), sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-subscription-update")
+def update_msp_playbook_subscription_command(
+    subscription_id: str,
+    client_id: Annotated[str, typer.Option("--client-id")],
+    input_mapping: Annotated[str | None, typer.Option("--input-mapping", help="JSON object or JSON file.")] = None,
+    enabled: Annotated[bool | None, typer.Option("--enabled/--disabled")] = None,
+) -> None:
+    try:
+        mapping = None if input_mapping is None else _load_smart_action_payload(input_mapping)
+        subscription = update_msp_playbook_subscription(
+            _store(),
+            subscription_id,
+            client_id=client_id,
+            input_mapping=mapping,
+            enabled=enabled,
+        )
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="subscription_id") from exc
+    typer.echo(json.dumps(msp_playbook_subscription_view(subscription), sort_keys=True, indent=2))
 
 
 @workflows_app.command("gallery")

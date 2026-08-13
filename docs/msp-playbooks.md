@@ -97,6 +97,30 @@ rewriting history. Entries are tenant-filtered using the authenticated scope;
 preview and run reject disabled entries before any child workflow or report is
 created.
 
+## Event-triggered subscriptions
+
+Workflow playbooks whose declared trigger is one of the existing bounded event
+types can be subscribed for one tenant. Subscription creation requires an
+exact trigger match, an explicit client scope, and an optional bounded mapping
+from top-level event fields to playbook inputs. No provider callback or
+arbitrary event type is inferred.
+
+```text
+POST /msp/playbook-subscriptions
+GET  /msp/playbook-subscriptions
+PATCH /msp/playbook-subscriptions/{subscription_id}
+POST /msp/playbook-subscriptions/{subscription_id}/enable
+POST /msp/playbook-subscriptions/{subscription_id}/disable
+```
+
+The existing `EventDispatcher` invokes the existing playbook coordinator,
+persists matched subscription IDs, playbook run IDs, bounded attempt state,
+and redacted errors on the tenant-scoped event delivery, and preserves the
+playbook's normal approval pause. Event idempotency prevents a duplicate
+delivery from starting the playbook again. The equivalent CLI commands are
+`workflows playbook-subscribe`, `playbook-subscriptions`, and
+`playbook-subscription-update`.
+
 This slice is local and evidence-backed. It does not claim live provider
 success, vendor SLA compliance, measured time savings, or automatic ticket
 merge/close. Those values remain explicitly unsupported unless a future
@@ -106,9 +130,9 @@ The broader MSP issue remains open. Built-in versioned definitions and the
 preview/controlled-run contract plus the first tenant-edited aggregate
 publish/disable/restore/compare lifecycle slice plus scheduled playbook
 registration and execution through the existing scheduler are now present.
-Richer step input mappings, historical/provider ingestion, M365 compliance
-checks, software-inventory review, and event-triggered playbook subscriptions
-remain follow-up work. These new M365 playbooks prepare and gate requests; they
+Richer provider-backed step mappings, historical/provider ingestion, M365
+compliance checks, and software-inventory review remain follow-up work. These
+new M365 playbooks prepare and gate requests; they
 do not claim a live directory mutation without configured provider evidence. The
 existing workflow gallery continues to provide lifecycle operations for
 individual templates.

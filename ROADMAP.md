@@ -45,8 +45,11 @@ credential or undocumented vendor API remains an explicit boundary.
   historical/provider ingestion, compliance/software review, and
   scheduled/event-triggered operations remain open.
 - Validated static and tenant-published playbooks can now be registered with the
-  existing scheduler and execute through the same controlled coordinator;
-  event-triggered playbook subscriptions remain a separate follow-up.
+  existing scheduler and execute through the same controlled coordinator.
+  Tenant-scoped event subscriptions now reuse the existing EventDispatcher for
+  supported event types, with bounded input mapping, idempotent delivery, and
+  persisted playbook lineage; provider-backed mappings and broader catalog
+  coverage remain open.
 - General conditional approval policy composition without weakening built-in
   tool requirements or tenant boundaries.
 - Connector-aware backfill plans and richer provider-backed lifecycle/QBR

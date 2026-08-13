@@ -42,6 +42,7 @@ from wait_local_agent.models import (
     KnowledgeDocumentWrite,
     MspPlaybookEntry,
     MspPlaybookRevision,
+    MspPlaybookSubscription,
     RestoreExercise,
     RmmExecutionScope,
     ScheduledJob,
@@ -311,6 +312,10 @@ class Store:
                     matched_agent_count integer not null default 0,
                     agent_ids_json text not null default '[]',
                     run_ids_json text not null default '[]',
+                    matched_playbook_count integer not null default 0,
+                    playbook_ids_json text not null default '[]',
+                    playbook_run_ids_json text not null default '[]',
+                    playbook_attempts_json text not null default '{}',
                     error_detail text not null default '',
                     received_at text not null,
                     processed_at text not null default '',
@@ -323,6 +328,10 @@ class Store:
                 )
                 """
             )
+            self._ensure_column(connection, "event_deliveries", "matched_playbook_count", "integer not null default 0")
+            self._ensure_column(connection, "event_deliveries", "playbook_ids_json", "text not null default '[]'")
+            self._ensure_column(connection, "event_deliveries", "playbook_run_ids_json", "text not null default '[]'")
+            self._ensure_column(connection, "event_deliveries", "playbook_attempts_json", "text not null default '{}'")
             connection.execute(
                 """
                 create table if not exists workflow_runs (
@@ -427,6 +436,21 @@ class Store:
                     created_at text not null,
                     client_id text,
                     unique(playbook_id, version)
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists msp_playbook_subscriptions (
+                    id text primary key,
+                    playbook_id text not null,
+                    event_type text not null,
+                    client_id text not null,
+                    input_mapping_json text not null default '{}',
+                    enabled integer not null default 1,
+                    created_at text not null,
+                    updated_at text not null,
+                    unique(playbook_id, event_type, client_id)
                 )
                 """
             )
@@ -2406,9 +2430,11 @@ class Store:
                 insert or ignore into event_deliveries
                   (idempotency_key, event_type, entity_type, entity_id, payload_json,
                    status, matched_agent_count, agent_ids_json, run_ids_json,
+                   matched_playbook_count, playbook_ids_json, playbook_run_ids_json,
+                   playbook_attempts_json,
                    error_detail, received_at, processed_at, client_id,
                    agent_attempts_json, retry_count, max_retries, retry_delay_seconds, next_retry_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idempotency_key,
@@ -2420,6 +2446,10 @@ class Store:
                     0,
                     "[]",
                     "[]",
+                    0,
+                    "[]",
+                    "[]",
+                    "{}",
                     "",
                     received_at,
                     "",
@@ -2465,6 +2495,10 @@ class Store:
         matched_agent_count: int,
         agent_ids: list[str],
         run_ids: list[int],
+        matched_playbook_count: int = 0,
+        playbook_ids: list[str] | None = None,
+        playbook_run_ids: list[str] | None = None,
+        playbook_attempts: dict[str, dict[str, object]] | None = None,
         error_detail: str = "",
         agent_attempts: dict[str, dict[str, object]] | None = None,
         retry_count: int | None = None,
@@ -2478,6 +2512,10 @@ class Store:
                 update event_deliveries
                 set status = ?, matched_agent_count = ?, agent_ids_json = ?,
                     run_ids_json = ?, error_detail = ?, processed_at = ?,
+                    matched_playbook_count = ?,
+                    playbook_ids_json = coalesce(?, playbook_ids_json),
+                    playbook_run_ids_json = coalesce(?, playbook_run_ids_json),
+                    playbook_attempts_json = coalesce(?, playbook_attempts_json),
                     agent_attempts_json = coalesce(?, agent_attempts_json),
                     retry_count = coalesce(?, retry_count),
                     next_retry_at = coalesce(?, next_retry_at)
@@ -2490,6 +2528,10 @@ class Store:
                     _json_dumps_value(run_ids),
                     safe_error,
                     processed_at,
+                    matched_playbook_count,
+                    _json_dumps_value(playbook_ids) if playbook_ids is not None else None,
+                    _json_dumps_value(playbook_run_ids) if playbook_run_ids is not None else None,
+                    _json_dumps_value(playbook_attempts) if playbook_attempts is not None else None,
                     _json_dumps_value(agent_attempts) if agent_attempts is not None else None,
                     retry_count,
                     next_retry_at,
@@ -3554,6 +3596,144 @@ class Store:
             enabled=enabled if isinstance(enabled, bool) else None,
             client_id=existing.client_id,
         )
+
+    def create_msp_playbook_subscription(
+        self,
+        playbook_id: str,
+        event_type: str,
+        client_id: str,
+        input_mapping: dict[str, str],
+        *,
+        enabled: bool = True,
+        subscription_id: str | None = None,
+    ) -> MspPlaybookSubscription:
+        safe_playbook_id = _gallery_text(playbook_id, field="playbook_id", limit=120)
+        safe_event_type = _gallery_text(event_type, field="event_type", limit=120)
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            raise ValueError("MSP playbook subscriptions require a client scope")
+        safe_mapping = _json_dumps_value(input_mapping)
+        new_id = subscription_id or f"msp-subscription-{uuid.uuid4().hex}"
+        now = utc_now()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    insert into msp_playbook_subscriptions
+                      (id, playbook_id, event_type, client_id, input_mapping_json,
+                       enabled, created_at, updated_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id,
+                        safe_playbook_id,
+                        safe_event_type,
+                        normalized_client_id,
+                        safe_mapping,
+                        int(enabled),
+                        now,
+                        now,
+                    ),
+                )
+                self._add_audit_event(
+                    connection,
+                    "msp.playbook_subscription.created",
+                    new_id,
+                    f"{safe_playbook_id} subscribed to {safe_event_type}",
+                    client_id=normalized_client_id,
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("an identical MSP playbook subscription already exists") from exc
+        subscription = self.get_msp_playbook_subscription(new_id, normalized_client_id)
+        if subscription is None:
+            raise RuntimeError("MSP playbook subscription was not persisted")  # pragma: no cover
+        return subscription
+
+    def get_msp_playbook_subscription(
+        self,
+        subscription_id: str,
+        client_id: str | None = None,
+    ) -> MspPlaybookSubscription | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from msp_playbook_subscriptions where id = ?",
+                    (subscription_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from msp_playbook_subscriptions
+                    where id = ? and client_id = ?
+                    """,
+                    (subscription_id, normalized_client_id),
+                ).fetchone()
+        return _msp_playbook_subscription_from_row(row) if row else None
+
+    def list_msp_playbook_subscriptions(
+        self,
+        client_id: str | None = None,
+        *,
+        event_type: str | None = None,
+    ) -> list[MspPlaybookSubscription]:
+        normalized_client_id = _normalize_client_id(client_id)
+        clauses: list[str] = []
+        params: list[object] = []
+        if normalized_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(normalized_client_id)
+        if event_type is not None:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        where = f" where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from msp_playbook_subscriptions{where} order by client_id, playbook_id, id"  # nosec B608: static query fragments only
+                , params,
+            ).fetchall()
+        return [_msp_playbook_subscription_from_row(row) for row in rows]
+
+    def update_msp_playbook_subscription(
+        self,
+        subscription_id: str,
+        *,
+        client_id: str,
+        input_mapping: dict[str, str] | None = None,
+        enabled: bool | None = None,
+    ) -> MspPlaybookSubscription:
+        existing = self.get_msp_playbook_subscription(subscription_id, client_id)
+        if existing is None:
+            raise KeyError(subscription_id)
+        next_mapping = (
+            existing.input_mapping_json
+            if input_mapping is None
+            else _json_dumps_value(input_mapping)
+        )
+        next_enabled = existing.enabled if enabled is None else bool(enabled)
+        if next_mapping == existing.input_mapping_json and next_enabled == existing.enabled:
+            return existing
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update msp_playbook_subscriptions
+                set input_mapping_json = ?, enabled = ?, updated_at = ?
+                where id = ? and client_id = ?
+                """,
+                (next_mapping, int(next_enabled), now, subscription_id, existing.client_id),
+            )
+            self._add_audit_event(
+                connection,
+                "msp.playbook_subscription.updated",
+                subscription_id,
+                f"MSP playbook subscription enabled={next_enabled}",
+                client_id=existing.client_id,
+            )
+        updated = self.get_msp_playbook_subscription(subscription_id, existing.client_id)
+        if updated is None:
+            raise RuntimeError("MSP playbook subscription was not persisted")  # pragma: no cover
+        return updated
 
     def create_agent_definition(
         self,
@@ -6488,6 +6668,7 @@ def _optional_text(value: object) -> str | None:
 def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload = dict(row)
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
+    payload["matched_playbook_count"] = int(payload.get("matched_playbook_count") or 0)
     payload["retry_count"] = int(payload.get("retry_count") or 0)
     raw_max_retries = payload.get("max_retries")
     payload["max_retries"] = int(raw_max_retries) if raw_max_retries is not None else DEFAULT_EVENT_MAX_RETRIES
@@ -6499,6 +6680,9 @@ def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["payload_json"] = _redact_json_text(str(payload["payload_json"]))
     payload["error_detail"] = _redact_text(str(payload["error_detail"]))
+    payload["playbook_ids_json"] = _redact_json_text(str(payload.get("playbook_ids_json") or "[]"))
+    payload["playbook_run_ids_json"] = _redact_json_text(str(payload.get("playbook_run_ids_json") or "[]"))
+    payload["playbook_attempts_json"] = _redact_json_text(str(payload.get("playbook_attempts_json") or "{}"))
     return EventDelivery(**payload)
 
 
@@ -6591,6 +6775,14 @@ def _msp_playbook_revision_from_row(row: sqlite3.Row) -> MspPlaybookRevision:
     payload["snapshot_json"] = _redact_json_text(str(payload["snapshot_json"]))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return MspPlaybookRevision(**payload)
+
+
+def _msp_playbook_subscription_from_row(row: sqlite3.Row) -> MspPlaybookSubscription:
+    payload = dict(row)
+    payload["enabled"] = bool(payload["enabled"])
+    payload["client_id"] = _normalize_client_id(payload.get("client_id")) or ""
+    payload["input_mapping_json"] = _redact_json_text(str(payload["input_mapping_json"]))
+    return MspPlaybookSubscription(**payload)
 
 
 def _msp_playbook_snapshot_json(definition_json: str, provenance: str, enabled: bool) -> str:

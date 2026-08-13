@@ -158,15 +158,18 @@ from wait_local_agent.models import (
 )
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
+    create_msp_playbook_subscription,
     list_msp_playbooks,
     msp_playbook_entry_view,
     msp_playbook_revision_diff,
     msp_playbook_revision_view,
+    msp_playbook_subscription_view,
     playbook_view,
     preview_msp_playbook,
     publish_msp_playbook,
     run_msp_playbook,
     update_msp_playbook,
+    update_msp_playbook_subscription,
 )
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
@@ -422,6 +425,21 @@ class MspPlaybookEntryUpdateRequest(BaseModel):
     definition: dict[str, object] | None = None
     provenance: str | None = Field(default=None, min_length=1, max_length=1000)
     enabled: bool | None = None
+
+
+class MspPlaybookSubscriptionCreateRequest(BaseModel):
+    playbook_id: str = Field(min_length=1, max_length=120)
+    event_type: str = Field(min_length=1, max_length=120)
+    input_mapping: dict[str, object] = Field(default_factory=dict, max_length=16)
+    enabled: bool = True
+    client_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class MspPlaybookSubscriptionUpdateRequest(BaseModel):
+    input_mapping: dict[str, object] | None = Field(default=None, max_length=16)
+    enabled: bool | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class TemplateGalleryCreateRequest(BaseModel):
@@ -4308,6 +4326,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:  # pragma: no cover
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/msp/playbook-subscriptions")
+    def msp_playbook_subscriptions(context: ViewerAccess) -> list[dict[str, object]]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        return [
+            msp_playbook_subscription_view(subscription)
+            for subscription in store.list_msp_playbook_subscriptions(scoped_client_id)
+        ]
+
+    @app.post("/msp/playbook-subscriptions", status_code=201)
+    def create_msp_playbook_subscription_route(
+        request: MspPlaybookSubscriptionCreateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=422, detail="client_id is required for a playbook subscription")
+        try:
+            subscription = create_msp_playbook_subscription(
+                store,
+                request.playbook_id,
+                event_type=request.event_type,
+                client_id=scoped_client_id,
+                input_mapping=request.input_mapping,
+                enabled=request.enabled,
+            )
+            return msp_playbook_subscription_view(subscription)
+        except (KeyError, PermissionError) as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/msp/playbook-subscriptions/{subscription_id}")
+    def get_msp_playbook_subscription_route(
+        subscription_id: str,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if context.role < Role.ADMIN and scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+        subscription = store.get_msp_playbook_subscription(subscription_id, scoped_client_id)
+        if subscription is None:
+            raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+        return msp_playbook_subscription_view(subscription)
+
+    @app.patch("/msp/playbook-subscriptions/{subscription_id}")
+    def update_msp_playbook_subscription_route(
+        subscription_id: str,
+        request: MspPlaybookSubscriptionUpdateRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _smart_action_client_scope(context, None)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+        try:
+            subscription = update_msp_playbook_subscription(
+                store,
+                subscription_id,
+                client_id=scoped_client_id,
+                input_mapping=request.input_mapping,
+                enabled=request.enabled,
+            )
+            return msp_playbook_subscription_view(subscription)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MSP playbook subscription not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/msp/playbook-subscriptions/{subscription_id}/enable")
+    def enable_msp_playbook_subscription_route(
+        subscription_id: str,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        return update_msp_playbook_subscription_route(
+            subscription_id,
+            MspPlaybookSubscriptionUpdateRequest(enabled=True),
+            context,
+        )
+
+    @app.post("/msp/playbook-subscriptions/{subscription_id}/disable")
+    def disable_msp_playbook_subscription_route(
+        subscription_id: str,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        return update_msp_playbook_subscription_route(
+            subscription_id,
+            MspPlaybookSubscriptionUpdateRequest(enabled=False),
+            context,
+        )
+
     @app.post("/msp/playbooks/{playbook_id}/preview")
     def preview_msp_playbook_route(
         playbook_id: str,
@@ -6273,6 +6382,8 @@ def _event_dispatch_view(result) -> dict[str, object]:
         "duplicate": result.duplicate,
         "matched_agent_ids": result.matched_agent_ids,
         "run_ids": result.run_ids,
+        "matched_playbook_ids": result.matched_playbook_ids,
+        "playbook_run_ids": result.playbook_run_ids,
         "errors": result.errors,
     }
 
@@ -6289,6 +6400,10 @@ def _event_delivery_view(delivery) -> dict[str, object]:
         "matched_agent_count": delivery.matched_agent_count,
         "agent_ids": _safe_json_values(delivery.agent_ids_json),
         "run_ids": _safe_json_values(delivery.run_ids_json),
+        "matched_playbook_count": delivery.matched_playbook_count,
+        "playbook_ids": _safe_json_values(delivery.playbook_ids_json),
+        "playbook_run_ids": _safe_json_values(delivery.playbook_run_ids_json),
+        "playbook_attempts": _safe_redacted_json_object(delivery.playbook_attempts_json),
         "error_detail": redact_text(delivery.error_detail),
         "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
         "retry_count": delivery.retry_count,

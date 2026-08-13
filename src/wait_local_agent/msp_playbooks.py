@@ -14,7 +14,8 @@ from datetime import date
 from typing import Any
 from uuid import uuid4
 
-from wait_local_agent.models import WorkflowRun
+from wait_local_agent.agents import SUPPORTED_EVENT_TYPES
+from wait_local_agent.models import MspPlaybookSubscription, WorkflowRun
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.reports.msp import (
     build_automation_opportunity_report,
@@ -33,6 +34,7 @@ from wait_local_agent.workflows import (
 
 MAX_PLAYBOOK_PAYLOAD_FIELDS = 24
 MAX_PLAYBOOK_PAYLOAD_BYTES = 12_000
+MAX_PLAYBOOK_SUBSCRIPTION_FIELDS = 16
 
 
 @dataclass(frozen=True)
@@ -558,6 +560,85 @@ def update_msp_playbook(
     )
 
 
+def create_msp_playbook_subscription(
+    store: Store,
+    playbook_id: str,
+    *,
+    event_type: str,
+    client_id: str,
+    input_mapping: Mapping[str, object] | None = None,
+    enabled: bool = True,
+):
+    """Create an explicit tenant-scoped event subscription for a workflow playbook."""
+
+    playbook = resolve_msp_playbook(store, playbook_id, client_id)
+    safe_event_type = _bounded_text(event_type, "event_type", 120)
+    if safe_event_type not in SUPPORTED_EVENT_TYPES:
+        raise ValueError("event_type is not supported by the event dispatcher")
+    if playbook.trigger != safe_event_type:
+        raise ValueError(
+            f"event_type must match the playbook trigger ({playbook.trigger})"
+        )
+    if any(step.kind != "workflow" for step in playbook.steps):
+        raise ValueError("event-triggered subscriptions support workflow playbooks only")
+    safe_client_id = _bounded_text(client_id, "client_id", 128)
+    mapping = _subscription_mapping(input_mapping)
+    return store.create_msp_playbook_subscription(
+        playbook_id,
+        safe_event_type,
+        safe_client_id,
+        mapping,
+        enabled=enabled,
+    )
+
+
+def msp_playbook_subscription_view(subscription: MspPlaybookSubscription) -> dict[str, object]:
+    return {
+        "id": subscription.id,
+        "playbook_id": subscription.playbook_id,
+        "event_type": subscription.event_type,
+        "client_id": subscription.client_id,
+        "input_mapping": _json_object(subscription.input_mapping_json),
+        "enabled": subscription.enabled,
+        "created_at": subscription.created_at,
+        "updated_at": subscription.updated_at,
+    }
+
+
+def msp_playbook_subscription_input(
+    subscription: MspPlaybookSubscription,
+    event_context: Mapping[str, object],
+) -> dict[str, object]:
+    """Copy only explicitly mapped top-level event fields into a playbook input."""
+
+    mapping = _json_object(subscription.input_mapping_json)
+    return {
+        target: event_context[source]
+        for target, source in mapping.items()
+        if isinstance(target, str) and isinstance(source, str) and source in event_context
+    }
+
+
+def update_msp_playbook_subscription(
+    store: Store,
+    subscription_id: str,
+    *,
+    client_id: str,
+    input_mapping: Mapping[str, object] | None = None,
+    enabled: bool | None = None,
+):
+    existing = store.get_msp_playbook_subscription(subscription_id, client_id)
+    if existing is None:
+        raise KeyError(subscription_id)
+    mapping = None if input_mapping is None else _subscription_mapping(input_mapping)
+    return store.update_msp_playbook_subscription(
+        subscription_id,
+        client_id=client_id,
+        input_mapping=mapping,
+        enabled=enabled,
+    )
+
+
 def resolve_msp_playbook(
     store: Store,
     playbook_id: str,
@@ -744,6 +825,24 @@ def _bounded_string_list(value: object, field: str) -> list[str]:
     if len(set(result)) != len(result):
         raise ValueError(f"{field} must not contain duplicates")
     return result
+
+
+def _subscription_mapping(value: Mapping[str, object] | None) -> dict[str, str]:
+    raw = dict(value or {})
+    if len(raw) > MAX_PLAYBOOK_SUBSCRIPTION_FIELDS:
+        raise ValueError(
+            f"input_mapping may contain at most {MAX_PLAYBOOK_SUBSCRIPTION_FIELDS} fields"
+        )
+    mapping: dict[str, str] = {}
+    for target, source in raw.items():
+        if not isinstance(target, str) or not isinstance(source, str):
+            raise ValueError("input_mapping keys and values must be strings")
+        safe_target = _bounded_text(target, "input_mapping target", 120)
+        safe_source = _bounded_text(source, "input_mapping source", 120)
+        if safe_target in mapping:
+            raise ValueError("input_mapping contains duplicate targets")
+        mapping[safe_target] = safe_source
+    return mapping
 
 
 def _json_object(value: object) -> dict[str, object]:
