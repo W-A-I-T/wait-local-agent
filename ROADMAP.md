@@ -1,199 +1,91 @@
-# WAIT Local Agent Roadmap
+# Capability Roadmap
 
-## Product direction
+## Positioning
 
-WAIT Local Agent is the local-first execution, orchestration, connector,
-approval, policy, evidence, audit, and governance runtime underneath WAIT AI
-Solutions Architect. A customer problem should move through discovery,
-provider-neutral solution design, governed implementation selection,
-evaluation, approval, bounded delivery, monitoring, and evidence.
+WAIT Local Agent is a local-first, open-source MSP copilot for operators who
+want to keep client data on their own hardware. The default operating model is
+local-first. The open core is Apache 2.0; optional paid packs can add
+product-specific connectors, reports, and deployment capabilities without
+changing that local default.
 
-The open core remains useful without a remote model, cloud control plane, vendor
-credential, or hosted credit balance. Deterministic policy is authoritative for
-tenant and client scope, permissions, write classification, approvals,
-redaction, deployment gates, and audit evidence. Model assistance may interpret
-or draft from evidence, but it cannot invent evidence or override safety.
+This is a parity roadmap, not a claim that WAIT Local Agent already provides
+everything in a competing product. “Today” means behavior available in this
+public repository and its documented open-core contracts. An optional pack or
+a future interface is not counted as shipped here.
 
-“Shipped” in this roadmap means reachable through the documented API, CLI, UI,
-or local fixture and covered by relevant tests. A generated artifact is not a
-deployment, a mock provider is not live verification, and an unavailable
-credential or undocumented vendor API remains an explicit boundary.
+## Capability roadmap
 
-## Core Platform
+| Capability | Today | Planned |
+| --- | --- | --- |
+| Agents vs deterministic workflows | A bounded agent definition can run a short, persisted sequence of existing smart actions for a ticket manually, from a persisted schedule, or from an authenticated deterministic event delivery. It has an explicit tool allowlist, an 8-step maximum, a 120-second execution bound, tenant scope, selectable ticket/client/local-knowledge context, approval pause/resume, active-run cancellation, bounded retries, event filters, idempotency, run-once-per-entity protection, and same-tenant event dependencies. Conversational and unrestricted autonomous agents are not shipped. | Add richer context policies and conversational surfaces. |
+| Smart actions: triage, summary, suggest-resolution, find-similar-tickets, dispatch | Deterministic ticket summary/classification, cited local knowledge retrieval, explicit read-only knowledge search, ticket-quality, sentiment, escalation, similarity, dispatch suggestion, and read-only collector previews are shipped. The `/tools` catalog projects their schemas, risk, role, approval, and read/write metadata; the agent executor reuses the existing smart-action and collector services. | Extend the catalog only when a real existing capability is wrapped; keep deterministic logic ahead of model inference. |
+| Triggered + scheduled runs | Persisted workflow/agent schedules use APScheduler cron, interval, and one-time triggers with validated IANA timezones; authenticated event-triggered agents use deterministic filters, idempotency, run-once-per-entity protection, bounded retry policy, execution windows, and delivery audit history. | Add broader event sources and richer trigger policy composition. |
+| Backfills | Persisted agent backfills provide preflight ticket checks, bounded sequential or parallel execution, dry-run estimates, progress counts, pause/cancel state, and failed-item reruns under `/agent-backfills`. | Add connector-aware batch plans and richer operator progress views. |
+| Deterministic + AI filters | Deterministic workflow gates are shipped; an optional local OpenAI-compatible provider can assist with classification, summarization, and drafting. There is no general visual combined-filter builder. | Add inspectable filter composition and local-model guardrails. |
+| Technician-in-the-loop approvals | Approval requests, previews, edits, approver identity capture, bounded expiry, approval-gated HaloPSA and ConnectWise PSA writes, RMM jobs, communication delivery, and Microsoft 365 actions are shipped through the shared catalog/runtime. | Extend the same explicit approval contract to new actions and connectors. |
+| Per-tool permissions | Role-based access plus connector-specific read/write and connection-check gates are shipped; this is not yet a per-tool None/read/write matrix. | Add capability-level permissions without weakening the local safety defaults. |
+| Execution step logs + audit | Workflow status, connector execution history, immutable audit events, JSON/CSV export, grouped agent tool-step traces, redacted retry lineage, cancellation, artifacts, and provider/model usage metadata are shipped. | Add richer trigger context and per-step retry comparison. |
+| Version history/rollback | Agent definitions and gallery templates persist immutable redacted revisions, expose diffs, link runs to the exact definition/template version, and restore prior revisions as new versions through authenticated API, CLI, and React routes. | Add richer step-level run comparison. |
+| Analytics: time saved, success rate, execution volume | React `/analytics` and `/analytics/summary` provide tenant/client/date-filtered execution volume, outcomes, approval rate, ticket resolution evidence, declared time-saved estimates, and operator-priced model usage/cost estimates; credentials and hidden reasoning are excluded. | Add provider-backed lifecycle analytics and measured savings only when explicit evidence exists. |
+| Templates gallery | A fixed public workflow-template catalog and tenant-scoped provenance-bearing gallery are shipped; gallery runs resolve to reviewed core implementations. | Add import/export, review lifecycle, and optional signed pack distribution. |
+| PSA connectors | HaloPSA reads and approval-gated writes; ConnectWise PSA reads plus bounded status/assignment/field writes; Syncro, ServiceNow, and Autotask read routes are shipped. Broader provider write parity remains intentionally bounded. | Add one provider write surface at a time behind documented contracts and mocks. |
+| RMM connectors | Local collectors plus tenant-scoped NinjaOne, Datto RMM, and read-only N-central device/alert/task metadata are shipped; NinjaOne and Datto have bounded approval-gated actions. | Add ConnectWise RMM, ScreenConnect, Kaseya, and richer N-central remediation only with provider contracts and tests. |
+| Documentation connectors | Local knowledge, Hudu, IT Glue detail, Confluence page/body search, and SharePoint metadata/text-document retrieval are shipped as bounded read paths. | Add list-wide content search and binary/office extraction only with safe provider fixtures. |
+| M365/Entra actions | Tenant-scoped Graph reads and approval-gated bounded user, group, license, session, mailbox, message, and Intune managed-device actions are shipped through API/CLI/tool catalog paths. | Add broader resource reads and mutations with strict IDs, approval, and provider tests. |
+| Technician chat + white-label end-user support | Local technician chat and optional separately tokenized end-user ticket/status/message/escalation support are shipped. Native Teams/Slack conversation adapters, live PSA sync, outbound receipts, and branding are not shipped. | Add external channel adapters and branding only as explicit opt-ins reusing the same runtime. |
+| Phone agent | Not shipped. | Deferred because it requires a telephony SaaS dependency and conflicts with the local-first default unless an operator explicitly enables a cloud-connected mode. |
+| Credit metering | Hosted credit depletion is intentionally not part of the local runtime. Provider-reported tokens and optional operator-supplied input/output rates are recorded as redacted metadata and aggregated as clearly labeled estimates. | Add richer provider-native usage/cost APIs only when explicitly enabled; do not introduce hosted-credit assumptions into the open core. |
+| Local collectors + cloud inventory | Read-only local collector modules are exposed through a registry, preview, confirmation, persisted runs, and evidence export. AWS, Azure, GCP, and M365 adapter classes exist as code-level groundwork in the repository, but are not exposed through any CLI command or API route. | Finish full collector-registry exposure, credential preflight, and cloud-inventory adapter UX. |
+| Launch Passport evidence export | Collector bundle, hardening, and restore-evidence report types are in the public core. Founder routes define an optional-pack contract for preflight, bundle export, upload preview, explicit upload, and status; the private implementation is not present by default. | Complete the Launch Passport upload/polling integration while retaining diff preview and explicit confirmation. |
 
-### Current foundation
+## This cycle
 
-- Local FastAPI, Typer, SQLite, scheduler, event, workflow, agent, connector,
-  tool-catalog, approval, audit, evidence, backup, and redaction primitives.
-- Tenant/client-scoped data access, role checks, bounded execution, cancellation,
-  retries, idempotency, offline enforcement, and deterministic local behavior.
-- Optional local or explicitly enabled remote provider adapters behind the same
-  bounded model-provider contract.
-- Inbound governed MCP and bounded outbound MCP, with host, tenant, policy, and
-  execution restrictions.
+The following items remain open or are being prepared for the next compatible
+open-core increment. Current facts are also tracked in
+[`docs/status.md`](docs/status.md) and the
+[`docs/neoagent-parity-matrix.md`](docs/neoagent-parity-matrix.md):
 
-### Next increments
+- Broader PSA, RMM, documentation, and Microsoft 365 coverage behind governed
+  shared contracts and mocked provider tests.
+- Bounded MSP playbook composition now includes tenant-scoped published
+  aggregate definitions with validated edit, enable/disable, revision compare,
+  restore-as-new-version, preview, approval-aware execution, and audit evidence;
+  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). Richer mappings,
+  historical/provider ingestion, and scheduled/event-triggered operations remain
+  open.
+- General conditional approval policy composition without weakening built-in
+  tool requirements or tenant boundaries.
+- Connector-aware backfill plans and richer provider-backed lifecycle/QBR
+  evidence; estimates must remain labeled and evidence-derived.
+- Native notification/channel adapters, delivery receipts, and optional
+  white-label end-user branding.
+- Richer model-provider lifecycle and cost APIs while preserving deterministic
+  local operation and explicit offline denial.
+- Browser validation in an environment with an installed Chromium binary; the
+  current CI and UI test evidence remains separate from that environment gap.
 
-- Capability-level permission matrices and richer, inspectable policy
-  composition without weakening built-in tool requirements.
-- Connector-aware plans, richer event sources, execution comparison, and
-  provider lifecycle evidence.
-- Stable public contracts for optional packs and provider breadth driven by
-  demonstrated solution demand.
+## Deferred with rationale
 
-## AI Solutions Architect
+- **Phone agent:** telephony introduces a hosted dependency, audio/data-flow
+  concerns, and a default cloud path that does not fit local-first operation.
+- **Teams bots:** technician chat and a white-label end-user bot require Azure
+  bot registration and tenant-specific cloud connectivity. They remain an
+  optional mode rather than a default appliance dependency.
+- **Additional PSA and RMM vendors:** each vendor requires separate API,
+  credential, permission, rate-limit, and test coverage. Prioritization will
+  follow demonstrated operator demand, with read-only coverage before writes.
+- **Credit metering:** hosted credits are a SaaS billing concept. The local
+  equivalent is transparent usage accounting paired with analytics, without
+  making local operation depend on an external balance.
+- **Full natural-language builder:** a reliable builder should follow the
+  reviewed template and guided-form foundation. Shipping it first would make
+  workflow behavior harder to inspect and approve.
 
-### Current foundation
+## How to influence priorities
 
-- Guided discovery, including tenant/principal-scoped persisted sessions with
-  bounded one-question turns, explicit transcript evidence, and no-inference
-  next-question state; tenant-scoped provider-neutral `SolutionBlueprint` data,
-  architecture projections, workflow design, use-case catalog, delivery
-  handoff, governance review, evaluation contracts, monitoring, and bounded
-  supervisor/child-agent plans.
-- No-probe environment discovery that matches customer declarations to the
-  existing connector catalog, preserves configured/detected/
-  permission-limited/not-configured/unknown states, and carries evidence into
-  the blueprint candidate and architecture review.
-- Deterministic architecture decisions for blueprint components, with explicit
-  targets, alternatives, dependencies, permissions, licenses, read/write and
-  approval boundaries, risk, data movement, complexity, reversibility, tests,
-  deployment requirements, and evidence gaps.
-- Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
-  deployment, and delivery artifacts that preserve the distinction between
-  plan, generate, validate, package, and deploy.
-
-### Next increments
-
-- Broader guided discovery ergonomics, including resumable operator views and
-  richer transcript review. The canonical employee-onboarding fixture now
-  demonstrates discovery-to-architecture promotion, an explicit bounded
-  multi-agent child map, controlled local evaluation, governance, delivery,
-  and approval creation; live provider execution and deployment remain
-  separate evidence-gated increments.
-
-## Microsoft / Power Platform
-
-### Current foundation
-
-- Bounded Microsoft Graph and Teams reads/actions, Work IQ read boundaries,
-  Power Platform connector artifacts, Power Apps metadata/build artifacts,
-  Power Automate planning, Copilot Studio handoff planning, and
-  deployment-stage records. Planned stages remain
-  non-mutating; TEST and PROD approval requests require preceding-stage
-  success, passing evaluation/governance, artifact digest, and rollback
-  evidence.
-- PAC execution is allowlisted, fixed-argument, approval-gated, bounded,
-  digest-bound, shell-disabled, and reports unavailable credentials or tools
-  explicitly.
-
-### Next increments
-
-- Complete blueprint-to-artifact validation and packaging across supported
-  Copilot Studio, Power Automate, Power Apps/Dataverse, connector, and PAC
-  paths.
-- Complete DEV → TEST → PROD validation with live-provider result verification
-  and rollback execution evidence. Promotion evidence is now bound to a
-  same-tenant persisted preceding-stage approval and matching artifact digest;
-  local artifacts still never imply provider success.
-- Expand Work IQ only for documented operations whose path, function,
-  arguments, tenant, identity, and local policy produce a deterministic
-  READ/WRITE/ACTION/HIGH-RISK/BLOCKED/UNKNOWN decision. Unknown fails closed.
-
-## MSP Operations Vertical
-
-MSP Operations remains a first-class product vertical, not a legacy mode. The
-existing ticket, PSA, RMM, Microsoft 365, documentation, reporting,
-technician-chat, scheduled/event workflow, approval, and audit capabilities are
-preserved and extended through the shared runtime.
-
-### Current foundation
-
-- Ticket triage, classification, summary, similar-ticket lookup,
-  documentation-assisted resolution, ticket QA, sentiment/escalation,
-  dispatch, bounded L1 actions, SLA/stale-ticket signals, and evidence-backed
-  reports.
-- Governed HaloPSA, ConnectWise, Syncro, ServiceNow, Autotask, RMM,
-  documentation, Microsoft 365, Teams, and communication surfaces where the
-  provider contract, scope, approval, audit, and tests exist.
-- A bounded MSP playbook composition layer now exposes versioned local review
-  and report definitions with dry-run previews, explicit required inputs,
-  sequential stop-at-approval/failure execution, child result IDs, and
-  playbook audit events; see `docs/msp-playbooks.md`.
-
-### Next increments
-
-- Complete reusable, versioned playbooks for triage, duplicate handling,
-  resolution, dispatch, stale/SLA sweeps, onboarding/offboarding, security
-  response, QBR, service review, license review, and automation-opportunity
-  analysis.
-- Add provider-backed connector operations one at a time, retaining explicit
-  unsupported boundaries for undocumented mutations such as unsupported
-  marketplace actions.
-- Complete technician notifications, optional end-user support, and
-  white-label flows without a second chat or execution backend.
-
-The NeoAgent parity matrix is retained as an **MSP Operations capability
-comparison** and evidence index. It is not the master product roadmap.
-
-## Evaluation / Governance
-
-### Current foundation
-
-- Review-oriented evaluation contracts plus controlled local-fixture execution
-  through the existing AgentService, deterministic governance and DLP mapping,
-  provider/tool policy, audit evidence, redaction, and tenant/RBAC boundaries;
-  bounded explicit evidence dimensions for injection, secret leakage,
-  unexpected writes, provider failure, rollback, and related failure modes.
-
-### Next increments
-
-- Expand controlled evaluation from the current local AgentService fixture path
-  to the full required security, provider-failure, rollback, and regression
-  matrix without enabling production execution.
-- Cover functional behavior, tool selection, forbidden tools, approvals,
-  grounding, tenant isolation, RBAC, prompt/tool injection, secret leakage,
-  unexpected writes, timeouts, retries, cancellation, provider failure,
-  malformed output, duplicate prevention, partial failure, rollback, latency,
-  and regression.
-- Keep evaluation isolated from production unless separately authorized and
-  preserve failure evidence instead of converting it to empty or successful
-  results.
-
-## Enterprise Readiness
-
-- Maintain a repeatable backend gate: pytest at the repository threshold, Ruff,
-  mypy, Bandit, pip-audit, public-surface audit, and CI.
-- Maintain UI tests, production build, real-browser route/control coverage,
-  responsive/accessibility checks, and loading, empty, denied, offline, and
-  provider-error states.
-- Verify tenant/client isolation, approval-before-write, input validation,
-  redaction, injection resistance, timeout/retry/cancellation, idempotency,
-  duplicate prevention, offline operation, and no fake-success paths.
-- Prepare Windows/macOS signing, updater verification, provenance, rollback,
-  release validation, backups, observability, and deployment hardening. Missing
-  external certificates remain an explicit operational prerequisite.
-
-## Founder / Engineering Vertical
-
-- Preserve project inspection, evidence collection, Launch Passport handoff,
-  engineering automation, local hardening, backup/restore, and release
-  evidence as governed consumers of the same runtime.
-- Keep founder workflows separate in audience and authorization while reusing
-  the core evidence, approval, audit, and connector contracts.
-
-## Future Integrations
-
-Provider breadth follows actual solution demand. New PSA, RMM, documentation,
-Microsoft, MCP, marketplace, and custom-service integrations require a
-documented contract, bounded scope, explicit permissions, approval rules for
-writes, redaction, audit evidence, failure handling, and mocked/local tests
-before they are represented as shipped capability.
-
-## Delivery and completion evidence
-
-Every increment should identify the affected source paths, interface, tests,
-security boundaries, external prerequisites, and unsupported cases. The
-repository is coherent when `README.md`, this roadmap, `docs/status.md`, the
-architecture documents, the parity comparison, issue backlog, and live CI all
-describe the same verified behavior.
+Open a focused request in the [GitHub issue tracker](https://github.com/W-A-I-T/wait-local-agent/issues)
+with the workflow, connector, evidence, or local-first constraint you need.
+Include the current manual steps, the systems involved, whether read-only
+access is sufficient, and what approval or audit evidence an operator must see.
+Well-scoped demand helps determine which connector and template work belongs in
+the open core, an optional pack, or a later cloud-connected mode.

@@ -111,8 +111,13 @@ from wait_local_agent.m365_graph import (
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
     list_msp_playbooks,
+    msp_playbook_entry_view,
+    msp_playbook_revision_diff,
+    msp_playbook_revision_view,
     preview_msp_playbook,
+    publish_msp_playbook,
     run_msp_playbook,
+    update_msp_playbook,
 )
 from wait_local_agent.notion import NotionClient, NotionReadResponse
 from wait_local_agent.observability import build_analytics_summary
@@ -2448,9 +2453,11 @@ def preview_msp_playbook_command(
         )
     except KeyError as exc:
         raise typer.BadParameter("MSP playbook not found", param_hint="playbook_id") from exc
-    except LookupError as exc:
+    except LookupError as exc:  # pragma: no cover
         raise typer.BadParameter("ticket not found", param_hint="ticket_id") from exc
-    except ValueError as exc:
+    except PermissionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="playbook_id") from exc
+    except ValueError as exc:  # pragma: no cover
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
 
@@ -2480,11 +2487,110 @@ def run_msp_playbook_command(
         )
     except KeyError as exc:
         raise typer.BadParameter("MSP playbook not found", param_hint="playbook_id") from exc
-    except LookupError as exc:
+    except LookupError as exc:  # pragma: no cover
         raise typer.BadParameter("ticket not found", param_hint="ticket_id") from exc
-    except ValueError as exc:
+    except PermissionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="playbook_id") from exc
+    except ValueError as exc:  # pragma: no cover
         raise typer.BadParameter(str(exc)) from exc
-    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))  # pragma: no cover
+
+
+@workflows_app.command("playbook-entries")
+def list_msp_playbook_entries_command(client_id: str | None = None) -> None:
+    """List tenant-scoped published MSP playbook entries."""
+
+    for entry in _store().list_msp_playbook_entries(client_id):
+        typer.echo(
+            f"{entry.id} source={entry.source_playbook_id} version={entry.version} "
+            f"enabled={entry.enabled} client_id={entry.client_id or '-'}"
+        )
+
+
+@workflows_app.command("playbook-entry-publish")
+def publish_msp_playbook_entry_command(
+    source_playbook_id: str,
+    provenance: str,
+    definition: Annotated[Path | None, typer.Option("--definition", help="JSON definition file.")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    enabled: bool = True,
+) -> None:
+    try:
+        definition_payload = _load_json_config(definition) if definition is not None else None
+        entry = publish_msp_playbook(
+            _store(),
+            source_playbook_id,
+            provenance=provenance,
+            definition=definition_payload,
+            client_id=client_id,
+            enabled=enabled,
+        )
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="source_playbook_id") from exc
+    typer.echo(json.dumps(msp_playbook_entry_view(entry), sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-entry-update")
+def update_msp_playbook_entry_command(
+    entry_id: str,
+    definition: Annotated[Path | None, typer.Option("--definition", help="JSON definition file.")] = None,
+    provenance: Annotated[str | None, typer.Option("--provenance")] = None,
+    enabled: Annotated[bool | None, typer.Option("--enabled/--disabled")] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+) -> None:
+    try:
+        definition_payload = _load_json_config(definition) if definition is not None else None
+        entry = update_msp_playbook(
+            _store(),
+            entry_id,
+            client_id=client_id,
+            definition=definition_payload,
+            provenance=provenance,
+            enabled=enabled,
+        )
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="entry_id") from exc
+    typer.echo(json.dumps(msp_playbook_entry_view(entry), sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-entry-revisions")
+def list_msp_playbook_entry_revisions_command(
+    entry_id: str,
+    client_id: str | None = None,
+) -> None:
+    revisions = _store().list_msp_playbook_revisions(entry_id, client_id)
+    if not revisions:
+        raise typer.BadParameter("MSP playbook entry not found", param_hint="entry_id")
+    typer.echo(json.dumps([msp_playbook_revision_view(item) for item in revisions], sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-entry-diff")
+def diff_msp_playbook_entry_command(
+    entry_id: str,
+    from_version: int,
+    to_version: int,
+    client_id: str | None = None,
+) -> None:
+    store = _store()
+    entry = store.get_msp_playbook_entry(entry_id, client_id)
+    left = store.get_msp_playbook_revision(entry_id, from_version, entry.client_id) if entry else None
+    right = store.get_msp_playbook_revision(entry_id, to_version, entry.client_id) if entry else None
+    if left is None or right is None:
+        raise typer.BadParameter("MSP playbook revision not found", param_hint="entry_id")
+    typer.echo(json.dumps(msp_playbook_revision_diff(left, right), sort_keys=True, indent=2))
+
+
+@workflows_app.command("playbook-entry-restore")
+def restore_msp_playbook_entry_command(
+    entry_id: str,
+    version: int,
+    client_id: str | None = None,
+) -> None:
+    try:
+        entry = _store().restore_msp_playbook_revision(entry_id, version, client_id)
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter("MSP playbook revision not found", param_hint="entry_id") from exc
+    typer.echo(json.dumps(msp_playbook_entry_view(entry), sort_keys=True, indent=2))
 
 
 @workflows_app.command("gallery")
