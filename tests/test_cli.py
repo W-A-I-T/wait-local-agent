@@ -566,6 +566,20 @@ def test_agents_cancel_retry_and_resume_use_persisted_scope(monkeypatch, tmp_pat
     assert json.loads(resumed.output)["status"] == "completed"
 
 
+def test_agents_cli_reports_missing_definition_and_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    runner = CliRunner()
+
+    missing_definition = runner.invoke(app, ["agents", "run", "missing-agent", "TCK-1001"])
+    assert missing_definition.exit_code != 0
+    assert "agent not found" in missing_definition.output
+
+    for command in ("show-run", "cancel", "retry", "resume"):
+        missing_run = runner.invoke(app, ["agents", command, "999999"])
+        assert missing_run.exit_code != 0
+        assert "agent run not found" in missing_run.output
+
+
 def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
