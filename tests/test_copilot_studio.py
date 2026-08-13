@@ -73,3 +73,51 @@ def test_copilot_studio_plan_rejects_unsafe_or_unreviewable_inputs(
 ) -> None:
     with pytest.raises(CopilotStudioPlanError, match=message):
         build_copilot_studio_plan(**_plan(**{field: value}))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "topics",
+            [
+                {"id": "topic", "name": "One"},
+                {"id": "topic", "name": "Two"},
+            ],
+            "duplicate topic id",
+        ),
+        (
+            "actions",
+            [
+                {"id": "lookup", "connector_id": "m365"},
+                {"id": "lookup", "connector_id": "m365"},
+            ],
+            "duplicate action id",
+        ),
+        (
+            "actions",
+            [{"id": "lookup", "connector_id": "m365", "method": "OPTIONS"}],
+            "unsupported action method",
+        ),
+        (
+            "actions",
+            [{"id": "lookup", "connector_id": "m365", "approval_required": "yes"}],
+            "approval_required must be boolean",
+        ),
+        ("topics", ["not-an-object"], "topics must contain objects"),
+        ("knowledge_sources", ["duplicate", "duplicate"], "must not contain duplicates"),
+        ("client_id", "", "client_id must be non-empty text"),
+    ],
+)
+def test_copilot_studio_plan_rejects_duplicate_and_malformed_collections(
+    field: str, value: object, message: str
+) -> None:
+    with pytest.raises(CopilotStudioPlanError, match=message):
+        build_copilot_studio_plan(**_plan(**{field: value}))
+
+
+def test_copilot_studio_plan_rejects_collection_limits() -> None:
+    with pytest.raises(CopilotStudioPlanError, match="topics must contain 0-32"):
+        build_copilot_studio_plan(**_plan(topics=[{"id": f"topic-{index}", "name": "Topic"} for index in range(33)]))
+    with pytest.raises(CopilotStudioPlanError, match="knowledge_sources must contain 0-32"):
+        build_copilot_studio_plan(**_plan(knowledge_sources=[f"source-{index}" for index in range(33)]))
