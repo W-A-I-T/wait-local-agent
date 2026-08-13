@@ -1,0 +1,22 @@
+{
+  "client_id": "demo",
+  "app_name": "Employee onboarding workspace",
+  "entities": [
+    {
+      "logical_name": "employee",
+      "display_name": "Employee",
+      "fields": [
+        {"name": "display_name", "type": "string", "required": true},
+        {"name": "start_date", "type": "date", "required": true}
+      ]
+    }
+  ],
+  "screens": [
+    {"id": "employee_browse", "title": "Employees", "entity": "employee", "mode": "browse"},
+    {"id": "employee_edit", "title": "Edit employee", "entity": "employee", "mode": "edit"}
+  ],
+  "actions": [
+    {"id": "employee_lookup", "connector_id": "m365", "method": "GET"},
+    {"id": "employee_create", "connector_id": "m365", "method": "POST", "approval_required": true}
+  ]
+}

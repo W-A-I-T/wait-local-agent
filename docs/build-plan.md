@@ -3,9 +3,15 @@
 > Phased implementation plan for WAIT Local Agent from current Phase 1 beta to commercial launch.
 > Produced: 2026-06-10 based on direct repo inspection.
 
+> Status reconciliation (2026-08-09): this document preserves the historical
+> sequencing and task sketches below. The current implementation/evidence
+> source is `docs/status.md` and `docs/neoagent-parity-matrix.md`; later work
+> has shipped beyond several original phase labels. Do not treat an old
+> “Not yet” line in this historical plan as a current capability claim.
+
 ---
 
-## Current State Summary
+## Historical Phase 1 Snapshot
 
 The repo is at Phase 1 beta ("Sellable Local Ticket Copilot"). What is fully built:
 
@@ -16,7 +22,8 @@ The repo is at Phase 1 beta ("Sellable Local Ticket Copilot"). What is fully bui
 - React/Vite dashboard, Docker Compose appliance, backup/restore
 - CI/CD: ruff, mypy, bandit, pip-audit, pytest 95%+ coverage, UI build
 
-**Phase 1 blockers** (must fix before public promotion):
+**Historical Phase 1 blockers** (the current status is maintained in
+`docs/status.md`):
 1. No API authentication — any LAN caller can invoke all endpoints including HaloPSA writes
 2. No encrypted secrets — connector credentials in plaintext env vars
 3. Redaction gaps — `_redact_payload()` misses `apikey`, `auth_token`, `bearer` key variants
@@ -208,7 +215,11 @@ Add `slowapi` to `pyproject.toml`. Add `@limiter.limit("100/minute")` to all rou
 
 **Goal**: A real MSP can install, connect HaloPSA + IT Glue, triage tickets, run weekly automated follow-ups, and produce a QBR report.
 
-Note: Phase 3 paid connector code (IT Glue, QBR) goes in `W-A-I-T/wait-local-agent-packs` (private). The public repo gets the connector framework updates and APScheduler integration.
+Historical note: the original Phase 3 plan placed the richer IT Glue and QBR
+implementation in `W-A-I-T/wait-local-agent-packs` (private). The current
+public core now provides bounded deterministic JSON/Markdown/PDF QBR and
+automation-opportunity reports from local evidence. Provider-backed lifecycle
+enrichment and measured ROI remain separate future capabilities.
 
 ### Task 3.1 — IT Glue Connector (private repo: packs/msp/itglue.py)
 
@@ -248,7 +259,7 @@ Migration: add `client_id TEXT` (nullable) to `tickets`, `approval_requests`, `a
 
 All list routes: accept `?client_id=` filter. Default: return all (backward compatible).
 
-### Task 3.4 — QBR Report Generator (private repo: packs/msp/reports/qbr.py)
+### Historical Task 3.4 — QBR Report Generator (superseded by the bounded open-core report)
 
 ```python
 class QBRReportBuilder:
@@ -282,7 +293,7 @@ Create `scripts/install.sh`:
 
 Create `scripts/upgrade.sh`: pulls latest image + restart + runs migrations.
 
-**Exit criteria**: MSP can install via `install.sh`, connect HaloPSA + IT Glue, ingest runbooks, triage tickets, schedule weekly follow-up, export QBR PDF for a client.
+**Exit criteria**: MSP can install via `install.sh`, connect HaloPSA + IT Glue, ingest runbooks, triage tickets, schedule weekly follow-up, and export a local QBR PDF for a client.
 
 **Not yet**: ConnectWise, Autotask, M365, RMM, Founder Pack.
 
@@ -294,7 +305,13 @@ Create `scripts/upgrade.sh`: pulls latest image + restart + runs migrations.
 
 Note: All paid connectors go in `wait-local-agent-packs`. Founder Pack code goes in `wait-local-agent-packs/packs/founder/`. CLI commands and API routes go in the public repo.
 
-### Task 4.1 — ConnectWise PSA Connector (private repo)
+### Task 4.1 — ConnectWise PSA Connector (public core bounded slice shipped)
+
+The original private-repo design below is retained as the historical target.
+The public core now exposes tenant-scoped ConnectWise ticket/company reads and
+approval-gated status, assignment, and allowlisted ticket-field writes through
+the shared smart-action catalog and the dedicated draft/approval API. Notes and
+other richer action parity remain future work.
 
 ```python
 class ConnectWiseConnector:
@@ -322,7 +339,7 @@ class AutotaskConnector:
     async def draft_note(self, ticket_id, note_text, is_internal: bool) -> ApprovalRequest: ...
 ```
 
-### Task 4.3 — M365 / Entra Read-Only Connector (private repo)
+### Task 4.3 — M365 / Entra bounded connector (public core bounded slice shipped)
 
 ```python
 class M365Connector:
@@ -333,14 +350,27 @@ class M365Connector:
     async def get_user_mfa_status(self, user_id: str): ...
     async def list_groups(self): ...
     async def list_applications(self): ...
-    # Read-only in Phase 4
+    # Reads plus separately approval-gated user lifecycle and group membership actions
 ```
 
-Config: `WAIT_M365_TENANT_ID`, `WAIT_M365_CLIENT_ID`, `WAIT_M365_CLIENT_SECRET`.
+The shipped public-core adapter uses an operator-supplied delegated or
+application bearer token through `WAIT_M365_GRAPH_BASE_URL` and
+`WAIT_M365_ACCESS_TOKEN`. Write paths additionally require the explicit HTTP
+and write safety flags and an admin approval. Current write coverage includes
+user creation, user disable/offboarding, strict-ID group membership add/remove,
+strict-ID direct user license add/remove, session revocation, mailbox settings,
+message move/read-state/delete, and Intune managed-device sync, reboot,
+retirement, and remote lock. Broader resources remain future slices.
 
-Docs: `docs/connectors/m365-setup.md` — MSAL app registration guide.
+Docs: `docs/cloud-permissions-m365.md` and `docs/connector-setup.md`.
 
-### Task 4.4 — NinjaOne RMM Read-Only Connector (private repo)
+### Task 4.4 — NinjaOne RMM Read-Only Connector (public core bounded slice shipped)
+
+The public core now includes the bounded NinjaOne adapter, plus Datto RMM
+read/quick-job surfaces and N-central inventory/issue/task metadata with a
+bounded approval-gated direct-task/status path.
+The original design sketch remains below; broader RMM vendor coverage and
+provider-native remediation remain future work.
 
 ```python
 class NinjaOneConnector:
@@ -503,11 +533,13 @@ Auto-refresh LP upload token before expiry. Store last token + expiry in `founde
 3. HMAC-signed offline license key system (validates without WAIT Sync)
 4. Feature gating: `pack_enabled("msp")` check before executing any paid feature
 5. White-label branding: `WAIT_PRODUCT_NAME`, `WAIT_BRAND_LOGO_URL`
-6. N-able RMM connector (read-only)
-7. Kaseya VSA connector (read-only)
+6. Broader N-central remediation and additional RMM connectors; the bounded
+  N-central inventory/direct-task adapter is already shipped in public core
+7. Kaseya VSA broader remediation and webhook parity beyond the bounded,
+   approval-gated script contract
 8. Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration
 
-**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-able + Kaseya pass mock tests.
+**Exit criteria**: `wait packs install msp --license <key>` installs and gates correctly; white-label branding configurable; N-central, N-sight, and Kaseya bounded adapters pass mock tests, including Kaseya approval-gated script operations.
 
 ---
 

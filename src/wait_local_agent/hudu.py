@@ -10,6 +10,7 @@ from wait_local_agent.models import ConnectorReadResult, HuduArticle, HuduCompan
 
 QueryValue = str | int | float | bool | None
 Normalizer = Callable[[Mapping[str, object]], HuduCompany | HuduArticle | HuduFolder | None]
+MAX_ARTICLE_CONTENT_LENGTH = 20_000
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,16 @@ def _normalize_article(row: Mapping[str, object]) -> HuduArticle | None:
         folder_id=_first_string(row, "folder_id"),
         updated_at=_first_string(row, "updated_at", "updated"),
         url=_first_string(row, "url", "public_url"),
+        content=_article_content(row),
     )
+
+
+def _article_content(row: Mapping[str, object]) -> str:
+    for key in ("content", "content_body", "body", "article_body", "content_html"):
+        value = row.get(key)
+        if isinstance(value, str):
+            return value[:MAX_ARTICLE_CONTENT_LENGTH]
+    return ""
 
 
 def _normalize_folder(row: Mapping[str, object]) -> HuduFolder | None:

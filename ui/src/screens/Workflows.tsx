@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import { type WorkflowRun, type WorkflowTemplate } from "../api/types";
+import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
 
 export function Workflows() {
   const { isAdmin, canWrite } = useDashboard();
@@ -9,10 +9,15 @@ export function Workflows() {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [selectedRun, setSelectedRun] = useState<WorkflowRun | null>(null);
+  const [compareFrom, setCompareFrom] = useState("");
+  const [compareTo, setCompareTo] = useState("");
+  const [comparison, setComparison] = useState<WorkflowRunComparison | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [ticketId, setTicketId] = useState("");
   const [clientId, setClientId] = useState("");
+  const [payloadText, setPayloadText] = useState("{}");
   const [message, setMessage] = useState("");
+  const selectedTemplate = templates.find((template) => template.id === templateId);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -40,8 +45,24 @@ export function Workflows() {
       setMessage("Choose a template and provide a ticket id.");
       return;
     }
+    let inputPayload: Record<string, unknown>;
     try {
-      const payload = { template_id: templateId, ticket_id: ticketId, client_id: clientId || undefined };
+      const parsed: unknown = JSON.parse(payloadText);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("not an object");
+      }
+      inputPayload = parsed as Record<string, unknown>;
+    } catch {
+      setMessage("Payload must be valid JSON object.");
+      return;
+    }
+    try {
+      const payload = {
+        template_id: templateId,
+        ticket_id: ticketId,
+        client_id: clientId || undefined,
+        payload: inputPayload
+      };
       await apiFetch<WorkflowRun>(`/workflows/templates/${encodeURIComponent(templateId)}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -60,6 +81,21 @@ export function Workflows() {
       setSelectedRun(detail);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Workflow detail unavailable.");
+    }
+  }
+
+  async function compareRuns() {
+    if (!compareFrom || !compareTo || compareFrom === compareTo) {
+      setMessage("Choose two different workflow runs to compare.");
+      return;
+    }
+    try {
+      const detail = await apiFetch<WorkflowRunComparison>(
+        `/workflow-runs/${encodeURIComponent(compareFrom)}/compare/${encodeURIComponent(compareTo)}`
+      );
+      setComparison(detail);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Workflow comparison unavailable.");
     }
   }
 
@@ -89,7 +125,22 @@ export function Workflows() {
               Client id (optional)
               <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
             </label>
+            <label>
+              Template payload JSON
+              <textarea
+                rows={4}
+                value={payloadText}
+                onChange={(event) => setPayloadText(event.target.value)}
+                aria-describedby="workflow-payload-help"
+              />
+            </label>
           </div>
+          <p id="workflow-payload-help" className="screen-note">
+            {selectedTemplate?.payload_schema?.required?.length
+              ? `Required: ${selectedTemplate.payload_schema.required.join(", ")}. `
+              : "No additional fields are required. "}
+            Use a bounded JSON object; the server validates the selected template schema.
+          </p>
           <button type="submit" disabled={!canWrite || !templateId || !ticketId}>
             Start Workflow
           </button>
@@ -105,7 +156,7 @@ export function Workflows() {
                 <span>{template.description || template.trigger}</span>
               </div>
               <span>{template.approval_required ? "requires approval" : "no approval"}</span>
-              <em>{template.risk_level}</em>
+              <em>{template.tool_id ? `tool: ${template.tool_id}` : template.risk_level}</em>
             </article>
           ))}
         </div>
@@ -127,6 +178,43 @@ export function Workflows() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="panel settings-panel">
+        <div className="panel-heading">
+          <h2>Compare workflow runs</h2>
+          <span>{comparison ? (comparison.changed ? `${comparison.changes.length} changes` : "no changes") : "select two"}</span>
+        </div>
+        <div className="grid">
+          <label>
+            From run
+            <select value={compareFrom} onChange={(event) => setCompareFrom(event.target.value)}>
+              <option value="">Choose run</option>
+              {runs.map((run) => <option key={`from-${run.id}`} value={String(run.id)}>Run {run.id}</option>)}
+            </select>
+          </label>
+          <label>
+            To run
+            <select value={compareTo} onChange={(event) => setCompareTo(event.target.value)}>
+              <option value="">Choose run</option>
+              {runs.map((run) => <option key={`to-${run.id}`} value={String(run.id)}>Run {run.id}</option>)}
+            </select>
+          </label>
+        </div>
+        <button type="button" onClick={() => void compareRuns()} disabled={!compareFrom || !compareTo || compareFrom === compareTo}>
+          Compare runs
+        </button>
+        {comparison ? (
+          <div className="event-list">
+            {comparison.changes.length === 0 ? <p>These runs have no changed operational fields.</p> : null}
+            {comparison.changes.map((change) => (
+              <article className="event-row" key={change.field}>
+                <strong>{change.field}</strong>
+                <span>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</span>
+              </article>
+            ))}
+          </div>
+        ) : <p>Compare status, ticket, approval, and executed template-version fields.</p>}
       </section>
 
       <section className="panel settings-panel">

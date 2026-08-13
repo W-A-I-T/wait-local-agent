@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.ListeningPortsCollectorModule
 
@@ -292,6 +295,101 @@ def test_collect_returns_empty_on_non_linux(
     assert result["ok"] is True
     assert result["items"] == []
 
+    typed_result = collectors.ListeningPortsCollector().collect({})
+    assert typed_result.status is CollectionStatus.EMPTY
+    assert typed_result.source_outcomes[0].remediation_hint is not None
+
+
+def test_typed_collect_converts_legacy_records_to_typed_result(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    _use_proc_net(monkeypatch, proc_root)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.SUCCESS
+    assert result.source_outcomes[0].record_count == 1
+    assert result.assets[0].canonical_id == "socket:tcp:0.0.0.0:5000"
+    assert result.observations[0].canonical_id == result.assets[0].canonical_id
+
+
+def test_listening_ports_round_trips_through_governed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+    settings,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    _use_proc_net(monkeypatch, proc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.ListeningPortsCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    assert service.validate("listening-ports", {}).passed is True
+    preview = service.preview("listening-ports", {})
+    run = service.run("listening-ports", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert len(store.list_canonical_assets(run_id=run.id)) == 1
+    assert len(store.list_asset_observations(run_id=run.id)) == 4
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
+
+
+def test_typed_listening_ports_permission_error_is_not_authorized(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _use_proc_net(monkeypatch, proc_root)
+
+    def deny_socket_file(*args: Any, **kwargs: Any) -> str:
+        raise PermissionError("socket table denied")
+
+    monkeypatch.setattr(Path, "read_text", deny_socket_file)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+    assert result.source_outcomes[0].error_detail == "socket table denied"
+
+
+def test_typed_listening_ports_collect_returns_partial_when_one_table_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_socket_table(proc_root, "tcp", [_socket_row(0, "00000000:1388", "0A")])
+    (proc_root / "tcp6").mkdir()
+    _use_proc_net(monkeypatch, proc_root)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert len(result.assets) == 1
+    assert any(outcome.status is CollectionStatus.UNAVAILABLE for outcome in result.source_outcomes)
+
+
+def test_typed_listening_ports_generic_exception_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _use_proc_net(monkeypatch, proc_root)
+
+    def explode(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("socket parser unavailable")
+
+    monkeypatch.setattr(Path, "read_text", explode)
+
+    result = collectors.ListeningPortsCollector().collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert result.source_outcomes[0].error_code == "collection_unavailable"
+    assert result.source_outcomes[0].error_detail == "socket parser unavailable"
+
 
 def test_collect_returns_empty_when_socket_files_missing(
     monkeypatch: pytest.MonkeyPatch,
@@ -302,50 +400,6 @@ def test_collect_returns_empty_when_socket_files_missing(
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"] == []
-
-
-# --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_listening_ports_collector_is_idempotent() -> None:
-    collectors._register_listening_ports_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("listening-ports")
-        assert module is not None
-        assert module.module_id == "listening-ports"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    collectors._register_listening_ports_collector()
-    collectors._register_listening_ports_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("listening-ports") == 1
-    assert any(getattr(m, "module_id", None) == "listening-ports" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "listening-ports"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("listening-ports") == 1
-    assert "ListeningPortsCollectorModule" in collectors.__dict__["__all__"]
 
 
 # --------------------------------------------------------------------------- #

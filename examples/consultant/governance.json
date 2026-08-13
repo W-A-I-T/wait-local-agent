@@ -1,0 +1,9 @@
+{
+  "architecture": {
+    "client_id": "demo",
+    "readiness": "ready",
+    "components": [],
+    "open_items": []
+  },
+  "connector_artifacts": []
+}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Protocol
+from typing import Any, Protocol
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import KnowledgeChunk
@@ -55,15 +55,19 @@ class QdrantKnowledgeSearch:
             ) from exc
 
         self.settings = settings
-        self._embedding = TextEmbedding(model_name=settings.embedding_model)
+        # These optional packages have changed client method signatures across
+        # releases; keep their dynamically imported boundary untyped while the
+        # local search contract remains statically checked.
+        self._embedding: Any = TextEmbedding(model_name=settings.embedding_model)
+        client_factory: Any = QdrantClient
         if settings.qdrant_url:
-            self._client = QdrantClient(
+            self._client: Any = client_factory(
                 url=settings.qdrant_url,
                 timeout=settings.connector_timeout_seconds,
             )
         else:
             settings.qdrant_path.mkdir(parents=True, exist_ok=True)
-            self._client = QdrantClient(path=str(settings.qdrant_path))
+            self._client = client_factory(path=str(settings.qdrant_path))
         self._models = __import__("qdrant_client.models", fromlist=["PointStruct"])
         self._ensure_collection(VectorParams=VectorParams, Distance=Distance)
 

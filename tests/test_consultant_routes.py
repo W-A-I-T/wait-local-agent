@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
+from starlette.requests import Request
+
+from wait_local_agent.agents import AgentService
+from wait_local_agent.api.app import (
+    DeliveryPlanRequest,
+    DiscoveryRequest,
+    PowerAppsPlanRequest,
+    PowerAutomatePlanRequest,
+    PowerPlatformDeploymentRequest,
+    SupervisorRunRequest,
+    TeamsMessageDraftRequest,
+    create_app,
+)
+from wait_local_agent.rbac import AuthContext, Role
+from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.store import Store
+
+
+def _endpoint(settings, path: str):
+    app = create_app(settings)
+    return next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == path and route.methods and "POST" in route.methods
+    )
+
+
+def _technician(client_id: str = "acme") -> AuthContext:
+    return AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id=client_id)
+
+
+def _admin(client_id: str = "acme") -> AuthContext:
+    return AuthContext(role=Role.ADMIN, presented_token="admin-token", client_id=client_id)
+
+
+def _request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/consultant/solutions/deployment-approvals",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "client": ("test", 1234),
+            "server": ("test", 80),
+            "root_path": "",
+        }
+    )
+
+
+def test_consultant_planning_routes_are_directly_callable_and_review_only(settings) -> None:
+    discovery = _endpoint(settings, "/consultant/discovery")(
+        DiscoveryRequest(
+            client_id="acme",
+            answers={
+                "business_goal": "Reduce onboarding effort",
+                "users": ["HR"],
+                "knowledge": ["Handbook"],
+                "systems": ["Entra"],
+                "reads": ["Employee"],
+                "changes": ["Create user"],
+                "approvals": ["Create user"],
+                "failure_handling": "Pause",
+                "data_location": ["SharePoint"],
+                "data_leaves_tenant": False,
+            },
+        ),
+        _technician(),
+    )
+    power_apps = _endpoint(settings, "/consultant/power-apps/plan")(
+        PowerAppsPlanRequest(
+            client_id="acme",
+            app_name="Onboarding",
+            entities=[{"logical_name": "employee", "fields": []}],
+            screens=[{"id": "browse", "entity": "employee"}],
+            actions=[{"id": "lookup", "connector_id": "m365", "method": "GET"}],
+        ),
+        _technician(),
+    )
+    power_apps_artifact = _endpoint(settings, "/consultant/power-apps/build")(
+        PowerAppsPlanRequest(
+            client_id="acme",
+            app_name="Onboarding",
+            entities=[{"logical_name": "employee", "fields": []}],
+            screens=[{"id": "browse", "entity": "employee"}],
+            actions=[{"id": "lookup", "connector_id": "m365", "method": "GET"}],
+        ),
+        _technician(),
+    )
+    flow = _endpoint(settings, "/consultant/workflows/power-automate/plan")(
+        PowerAutomatePlanRequest(
+            client_id="acme",
+            workflow_id="onboarding",
+            workflow_name="Onboarding",
+            trigger="HR request",
+            steps=[{"id": "review", "name": "Review", "kind": "approval"}],
+        ),
+        _technician(),
+    )
+    delivery = _endpoint(settings, "/consultant/delivery-plan")(
+        DeliveryPlanRequest(
+            client_id="acme",
+            architecture={"client_id": "acme", "readiness": "ready", "components": [], "approval_policy": {}},
+            evaluation={"production_readiness": "pass", "case_count": 1},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Teams"],
+        ),
+        _technician(),
+    )
+
+    assert discovery["readiness"] == "ready_for_architecture"
+    assert power_apps["dataverse_write_started"] is False
+    assert power_apps_artifact["format"] == "wait-local-agent.power-apps-artifact"
+    assert power_apps_artifact["deployment_started"] is False
+    assert flow["export_status"] == "review_only"
+    assert delivery["production_deployment_requires_approval"] is True
+
+
+def test_power_platform_deployment_route_creates_approval_and_stays_gated(settings) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_review",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[
+                {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+                {"name": "test", "environment_url": "https://test.crm.dynamics.com"},
+            ],
+            stage="dev",
+        ),
+        _request(),
+        _technician(),
+    )
+
+    assert request_approval["plan"]["deployment_started"] is False
+    approval = request_approval["approval"]
+    assert approval["action_type"] == "power_platform.solution_stage"
+    assert approval["status"] == "pending"
+    assert approval["can_execute"] is False
+    assert approval["payload"]["credentials_included"] is False
+
+
+def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> None:
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+            PowerPlatformDeploymentRequest(
+                client_id="beta",
+                solution_name="onboarding_review",
+                publisher_name="WAITConsulting",
+                publisher_prefix="wlp",
+                output_directory="/tmp/wait-consultant-solution",
+                deployment_targets=[
+                    {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+                ],
+            ),
+            _request(),
+            _technician("acme"),
+        )
+
+
+def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
+    draft = _endpoint(settings, "/connectors/m365/teams/message-drafts")(
+        TeamsMessageDraftRequest(
+            team_id="team-1",
+            channel_id="channel-1",
+            body="Welcome to the team",
+            client_id="acme",
+        ),
+        _request(),
+        _admin(),
+    )
+
+    assert draft["action_type"] == "teams.message.send"
+    assert draft["status"] == "pending"
+    assert draft["payload"]["connector"] == "m365-teams"
+    assert draft["can_execute"] is False
+
+
+def test_supervisor_run_orders_persisted_children_and_returns_child_runs(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    identity = service.create(
+        name="Identity child",
+        description="Identity review",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    security = service.create(
+        name="Security child",
+        description="Security review",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+        depends_on_agent_ids=[identity.id],
+    )
+
+    result = _endpoint(settings, "/consultant/supervisor/run")(
+        SupervisorRunRequest(
+            client_id="acme",
+            entity_id="TCK-1001",
+            task="Review onboarding",
+            child_agent_ids=[security.id, identity.id],
+            input={"ticket_id": "TCK-1001"},
+        ),
+        _technician(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["supervisor"]["ordered_child_agent_ids"] == [identity.id, security.id]
+    assert [child["status"] for child in result["children"]] == ["completed", "completed"]
+
+
+def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/discovery")(
+            DiscoveryRequest(client_id="beta", answers={}),
+            _technician("acme"),
+        )
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        _endpoint(settings, "/consultant/power-apps/build")(
+            PowerAppsPlanRequest(
+                client_id="beta",
+                app_name="Onboarding",
+                entities=[],
+                screens=[],
+                actions=[],
+            ),
+            _technician("acme"),
+        )

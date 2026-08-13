@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.DatabaseInventoryCollectorModule
 
@@ -341,48 +344,73 @@ def test_collect_swallows_glob_error(monkeypatch: pytest.MonkeyPatch, etc_root: 
     assert result["items"][0]["canonical_asset"]["attributes"]["engine"] == "redis"
 
 
-# --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_database_inventory_collector_is_idempotent() -> None:
-    collectors._register_database_inventory_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("database-inventory")
-        assert module is not None
-        assert module.module_id == "database-inventory"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
+def test_typed_database_collect_returns_partial_with_source_failure(
     monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
 ) -> None:
-    calls: dict[str, Any] = {}
+    redis_config = _write_redis_config(etc_root)
+    mysql_config = etc_root / "mysql" / "my.cnf"
+    mysql_config.parent.mkdir(parents=True)
+    mysql_config.write_text("port=3306\ndatadir=/var/lib/mysql\n")
+    _use_etc(monkeypatch, etc_root)
 
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
+    real_read_text = Path.read_text
 
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
+    def deny_mysql(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == mysql_config:
+            raise PermissionError("mysql config denied")
+        return real_read_text(self, *args, **kwargs)
 
-    collectors._register_database_inventory_collector()
-    collectors._register_database_inventory_collector()
+    monkeypatch.setattr(Path, "read_text", deny_mysql)
+    result = collectors.DatabaseInventoryCollector().collect({})
 
-    assert [getattr(m, "module_id", None) for m in listed].count("database-inventory") == 1
-    assert any(getattr(m, "module_id", None) == "database-inventory" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "database-inventory"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("database-inventory") == 1
-    assert "DatabaseInventoryCollectorModule" in collectors.__dict__["__all__"]
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["db:redis"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+    assert redis_config.exists()
+
+
+def test_typed_database_collect_maps_total_unavailable_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
+) -> None:
+    redis_config = _write_redis_config(etc_root)
+    _use_etc(monkeypatch, etc_root)
+
+    real_read_text = Path.read_text
+
+    def deny_redis(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == redis_config:
+            raise OSError("database source unavailable")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_redis)
+    result = collectors.DatabaseInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.UNAVAILABLE
+    assert result.source_outcomes[0].error_code == "collection_unavailable"
+
+
+def test_typed_database_round_trip_persists_and_exports(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    etc_root: Path,
+) -> None:
+    _write_redis_config(etc_root)
+    _use_etc(monkeypatch, etc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.DatabaseInventoryCollector())
+    service = CollectorService(Store(settings.data_path), registry)
+
+    assert service.validate("database-inventory", {}).passed is True
+    preview = service.preview("database-inventory", {})
+    run = service.run("database-inventory", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 # --------------------------------------------------------------------------- #

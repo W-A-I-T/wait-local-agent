@@ -27,6 +27,20 @@ class FakeResourceManagerClient:
         ]
 
 
+class LazyGcpCredentialError(Exception):
+    pass
+
+
+class LazyProjectsPager:
+    def __iter__(self) -> Any:
+        raise LazyGcpCredentialError("invalid GCP credential")
+
+
+class LazyResourceManagerClient:
+    def search_projects(self) -> LazyProjectsPager:
+        return LazyProjectsPager()
+
+
 class FakeComputeClient:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -369,10 +383,17 @@ def test_preview_returns_not_ok_for_invalid_config() -> None:
     assert any("limit" in error for error in result["errors"])
 
 
+def test_gcp_preflight_materializes_lazy_project_pager() -> None:
+    with pytest.raises(LazyGcpCredentialError):
+        _connector().preflight({"session": SimpleNamespace(client=lambda _: LazyResourceManagerClient())})
+
+
 def test_collect_honors_explicit_limit_after_deterministic_sort() -> None:
     result = _connector().collect({"session": FakeSession(), "limit": 2})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 2
     assert [item["canonical_asset"]["asset_id"] for item in result["items"]] == [
         "gcp:compute:wait-prod:us-central1-b:101",
@@ -384,7 +405,9 @@ def test_collect_with_limit_zero_returns_empty_without_clients() -> None:
     session = FakeSession()
     result = _connector().collect({"session": session, "limit": 0})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert any("capped at 0 assets" in error for error in result["errors"])
     assert result["preview"] is False
     assert result["items"] == []
     assert result["assets"] == []
@@ -426,7 +449,9 @@ def test_gcp_errors_are_isolated_per_resource_type(session: FakeSession, absent_
     result = _connector().collect({"session": session})
     asset_ids = [item["canonical_asset"]["asset_id"] for item in result["items"]]
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert absent_asset_id not in asset_ids
 
 
@@ -477,7 +502,9 @@ def test_creates_google_cloud_clients_from_imported_sdk_modules(monkeypatch: pyt
 
     result = _connector().collect({"limit": 1})
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "partial"
+    assert result["errors"]
     assert result["count"] == 1
     assert requested_clients == ["resource-manager", "compute", "storage", "iam"]
 

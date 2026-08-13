@@ -19,6 +19,9 @@ type WizardProps = {
   onClose: () => void;
   children: ReactNode;
   progressLabel?: string;
+  title?: string;
+  nextLabel?: string;
+  submitLabel?: string;
 };
 
 export function Wizard({
@@ -32,10 +35,13 @@ export function Wizard({
   onSubmit,
   onClose,
   children,
-  progressLabel
+  progressLabel,
+  title = "Set up your MSP operations",
+  nextLabel = "Next",
+  submitLabel = "Complete"
 }: WizardProps) {
   const isLast = activeStep === steps.length - 1;
-  const label = isLast ? "Complete" : "Next";
+  const label = isLast ? submitLabel : nextLabel;
 
   async function handlePrimary() {
     if (isLast) {
@@ -48,7 +54,7 @@ export function Wizard({
   return (
     <section className="wizard-panel panel">
       <div className="panel-heading wizard-heading">
-        <h2>Set up your MSP operations</h2>
+        <h2>{title}</h2>
         <button className="icon-button" type="button" onClick={onClose}>Dismiss</button>
       </div>
 

@@ -1,6 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
+import { Analytics } from "./screens/Analytics";
+import { Agents } from "./screens/Agents";
+import { Backfills } from "./screens/Backfills";
+import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
+import { Consultant } from "./screens/Consultant";
 import { Collectors } from "./screens/Collectors";
 import { FounderJourney } from "./surfaces/founder/FounderJourney";
 import { Knowledge } from "./screens/Knowledge";
@@ -9,8 +14,11 @@ import { Audit } from "./screens/Audit";
 import { Reports } from "./screens/Reports";
 import { ScheduledJobs } from "./screens/ScheduledJobs";
 import { Workflows } from "./screens/Workflows";
+import { WorkflowDesigner } from "./screens/WorkflowDesigner";
 import { Tickets } from "./screens/Tickets";
+import { Templates } from "./screens/Templates";
 import { Settings } from "./screens/Settings";
+import { TechnicianChat } from "./screens/TechnicianChat";
 
 export function AppRoutes() {
   return (
@@ -19,6 +27,9 @@ export function AppRoutes() {
       <Route path="connectors" element={<Connectors />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
+      <Route path="workflow-designer" element={<WorkflowDesigner />} />
+      <Route path="templates" element={<Templates />} />
+      <Route path="consultant" element={<Consultant />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
       <Route path="audit" element={<Audit />} />
@@ -26,6 +37,11 @@ export function AppRoutes() {
       <Route path="founder" element={<FounderJourney />} />
       <Route path="tickets" element={<Tickets />} />
       <Route path="approvals" element={<Approvals />} />
+      <Route path="analytics" element={<Analytics />} />
+      <Route path="agents" element={<Agents />} />
+      <Route path="technician-chat" element={<TechnicianChat />} />
+      <Route path="backfills" element={<Backfills />} />
+      <Route path="executions" element={<Executions />} />
       <Route path="settings" element={<Settings />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -4,6 +4,25 @@ WAIT Local Agent is the local-first MSP automation appliance: private ticket
 intelligence, cited local knowledge, HaloPSA-first workflow drafts, technician
 approval, and auditable local execution.
 
+## Current verified state
+
+The phase list below is retained as historical planning context; it is not a
+current capability inventory. For current behavior, use
+[`docs/status.md`](status.md) and the clean-room
+[`docs/neoagent-parity-matrix.md`](neoagent-parity-matrix.md). The public core
+now includes bounded agent planning/execution, tenant-scoped approvals and
+retries, HaloPSA and ConnectWise governed writes, bounded NinjaOne/Datto/RMM
+and Microsoft 365 actions, local technician and end-user support surfaces,
+client-scoped QBR/automation reports, provider usage/cost estimates, and
+admin-triggered documented model-list health checks, tenant-mapped TimeZest
+scheduling-request reads plus approval-gated documented create, and separately
+mapped ScalePad Core client and ControlMap risk-summary reads.
+Remaining gaps include
+broader provider write parity, native channel adapters, live end-user PSA
+synchronization, provider-backed lifecycle evidence, Kaseya remediation, and
+connector-specific approval policy composition beyond explicit ticket and
+requester-role rules.
+
 ## Phase 0: Product Packaging
 
 - Docker Compose appliance with API, dashboard, SQLite volume, health checks, and
@@ -37,14 +56,17 @@ approval, and auditable local execution.
 
 - Keep the workflow engine minimal and inspectable: trigger, filter, action,
   approval policy, run state, and event log.
-- Ship five MSP templates first: ticket triage, assign technician, inactive
-  ticket follow-up, P1 alert, and documentation-assisted response.
+- The initial five MSP templates are shipped: ticket triage, assign technician,
+  inactive ticket follow-up, P1 alert, and documentation-assisted response.
+  The public catalog also includes quality, sentiment, escalation, and
+  similar-ticket review templates backed by existing deterministic tools.
 - Prefer deterministic rules for routing and gating. Use local model inference
   only for classification, summarization, drafting, and reasoning support.
 
 ## Phase 4: MSP Stack Expansion
 
-- Documentation connectors: Hudu first, then IT Glue and SharePoint.
+- Documentation connectors: Hudu first, then IT Glue, Notion, and SharePoint;
+  the current bounded Notion read surface is tracked in the parity matrix.
 - RMM: read-only inventory before approved script recommendation and execution.
 - Microsoft 365 and Entra: read-only identity, group, license, and mailbox
   lookup before approved changes.
@@ -92,8 +114,12 @@ approval, and auditable local execution.
 - HMAC-signed offline license key system.
 - Feature gating: paid features blocked without valid license.
 - White-label branding configuration.
-- N-able RMM connector (read-only).
-- Kaseya VSA connector (read-only).
+- Broader N-central remediation and additional RMM connectors beyond the
+  bounded inventory/direct-task vendor surfaces already shipped.
+- Kaseya VSA device/notification inventory plus approval-gated script
+  catalog/detail, execution, and locally scoped execution polling are now in
+  the public core; broader remediation and webhook callbacks remain future
+  work.
 - Enterprise hardening guide: TLS, reverse proxy, HashiCorp Vault integration,
   air-gap deployment.
 
@@ -112,9 +138,13 @@ approval, and auditable local execution.
 
 See `docs/commercial-model.md` for the full product tier breakdown:
 
+The following tier table is a historical packaging proposal, not an active
+entitlement contract. The public repository's currently exercisable boundaries
+are the API/CLI/UI paths documented in `docs/status.md` and the parity matrix.
+
 | Tier | Price | Contents |
 | --- | --- | --- |
-| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 5 templates, approval queue |
+| Open Core | Free (Apache 2.0) | Full runtime, HaloPSA + Hudu, 12 templates, approval queue |
 | WAIT MSP Pack | $99/month | + IT Glue, ConnectWise, Autotask, M365, RMM, QBR reports, ROI dashboard |
 | WAIT Founder Pack | $49/month | + Project scanner, evidence vault, LP preflight, LP bundle export |
 | WAIT Sync | $29/month | + Template marketplace, encrypted cloud backup, team sync |

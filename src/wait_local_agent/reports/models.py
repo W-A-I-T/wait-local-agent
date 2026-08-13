@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from wait_local_agent.models import utc_now
+
+EvidenceStatus = Literal["not_run", "no_evidence", "partial", "completed"]
 
 
 class ReportType(StrEnum):
@@ -16,6 +18,7 @@ class ReportType(StrEnum):
     AUDIT_EXPORT = "audit_export"
     QBR = "qbr"
     AUTOMATION_OPPORTUNITY = "automation_opportunity"
+    RECURRING_SERVICE_REVIEW = "recurring_service_review"
     FOUNDER_PREFLIGHT = "founder_preflight"
     DEVELOPER_HANDOFF = "developer_handoff"
     COLLECTOR_BUNDLE = "collector_bundle"
@@ -51,6 +54,7 @@ class GeneratedReport:
     project_id: str
     sections: list[ReportSection]
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_status: EvidenceStatus = "not_run"
 
     @staticmethod
     def new(
@@ -61,6 +65,7 @@ class GeneratedReport:
         client_id: str = "",
         project_id: str = "",
         metadata: dict[str, Any] | None = None,
+        evidence_status: EvidenceStatus = "not_run",
     ) -> GeneratedReport:
         return GeneratedReport(
             id=str(uuid4()),
@@ -72,6 +77,7 @@ class GeneratedReport:
             project_id=project_id,
             sections=sections,
             metadata=metadata or {},
+            evidence_status=evidence_status,
         )
 
     def sections_json(self) -> str:

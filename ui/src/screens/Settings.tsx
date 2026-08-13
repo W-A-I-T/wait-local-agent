@@ -1,17 +1,25 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
+import { projectLaunchPassportStatus } from "../api/founder";
 import { useDashboard } from "../app/DashboardContext";
-import { type PackInfo, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
+import { RoleGate } from "../components/RoleGate";
+import { StatusChip } from "../components/StatusChip";
+import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
 export function Settings() {
-  const { isAdmin } = useDashboard();
+  const { isAdmin, loading, role } = useDashboard();
+  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
+  const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
+  const [launchPassportState, setLaunchPassportState] = useState<"loading" | "not_configured" | "available" | "unavailable">("loading");
 
   const [packPath, setPackPath] = useState("");
   const [packLicense, setPackLicense] = useState("");
@@ -21,34 +29,61 @@ export function Settings() {
   const [backupEncrypt, setBackupEncrypt] = useState(false);
   const [restoreSource, setRestoreSource] = useState("");
   const [restoreEncrypt, setRestoreEncrypt] = useState(false);
+  const [restoreAcknowledged, setRestoreAcknowledged] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [providerRows, securityRows, packRows, secretRows, updateRows] = await Promise.all([
+      const [providerRows, securityRows, packRows, secretRows, updateRows, launchPassportResult] = await Promise.all([
         apiFetch<ProviderSettings>("/settings/providers"),
         apiFetch<SecuritySettings>("/settings/security"),
         apiFetch<PackInfo[]>("/packs"),
         apiFetch<SecretRecord[]>("/secrets"),
-        apiFetch<UpdateStatus>("/update-status")
+        apiFetch<UpdateStatus>("/update-status"),
+        canViewLaunchPassport
+          ? apiFetch<LaunchPassportStatus>("/founder/lp-status").then(
+            (value) => ({ kind: "available" as const, value }),
+            (error: unknown) => ({ kind: "unavailable" as const, error })
+          )
+          : Promise.resolve({ kind: "not_requested" as const })
       ]);
       setProviders(providerRows);
       setSecurity(securityRows);
       setPacks(packRows);
       setSecrets(secretRows);
       setStatus(updateRows);
+      if (launchPassportResult.kind === "available") {
+        setLaunchPassport(projectLaunchPassportStatus(launchPassportResult.value));
+        setLaunchPassportState("available");
+      } else if (launchPassportResult.kind === "unavailable" && isLaunchPassportNotConfigured(launchPassportResult.error)) {
+        setLaunchPassport(null);
+        setLaunchPassportState("not_configured");
+      } else {
+        setLaunchPassport(null);
+        setLaunchPassportState("unavailable");
+      }
       setStatusMessage("Settings loaded.");
     } catch (error) {
-      if (error instanceof Error && /403/.test(error.message)) {
+      if (error instanceof ApiRequestError && error.status === 403) {
         setStatusMessage("Insufficient role for admin settings.");
         return;
       }
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     }
-  }, []);
+  }, [canViewLaunchPassport]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function checkProviderHealth() {
+    try {
+      setStatusMessage("Checking configured model providers…");
+      setProviderHealth(await apiFetch<ProviderHealth>("/settings/providers/health"));
+      setStatusMessage("Provider health check complete.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to check provider health.");
+    }
+  }
 
   async function installPack(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -104,6 +139,7 @@ export function Settings() {
       });
       setStatusMessage("Restore requested.");
       setRestoreSource("");
+      setRestoreAcknowledged(false);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Restore failed.");
     }
@@ -169,6 +205,18 @@ export function Settings() {
             <dd>{providers?.local_model_provider || "n/a"}</dd>
           </div>
           <div>
+            <dt>Remote fallback</dt>
+            <dd>
+              {providers?.remote_model_enabled
+                ? `${providers.remote_model_provider || "configured"} enabled`
+                : "disabled or not configured"}
+            </dd>
+          </div>
+          <div>
+            <dt>Offline mode</dt>
+            <dd>{providers?.offline_mode ? "enabled — remote model calls denied" : "disabled"}</dd>
+          </div>
+          <div>
             <dt>Secret manager</dt>
             <dd>{providers?.vector_backend || "n/a"}</dd>
           </div>
@@ -181,8 +229,56 @@ export function Settings() {
 
       <section className="panel">
         <div className="panel-heading">
+          <h2>Launch Passport</h2>
+          <span>Optional project connection</span>
+        </div>
+        <RoleGate
+          role={accessRole}
+          allowed={["admin"]}
+          fallback={<p className="screen-note">Only administrators can view this project connection.</p>}
+        >
+          {launchPassportState === "loading" ? <p className="screen-note">Checking connection state…</p> : null}
+          {launchPassportState === "not_configured" ? (
+            <div className="connection-state">
+              <StatusChip status="not_configured" hint="The appliance continues to work without this optional connection." />
+              <p>This appliance is ready to use on its own. Connect a Launch Passport project later when the connection service is available.</p>
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <p>The current service exposes connection status but not an in-app configuration action. It needs a configuration route before this screen can safely submit project details.</p>
+              </details>
+            </div>
+          ) : null}
+          {launchPassportState === "available" ? (
+            <div className="connection-state">
+              <StatusChip status={launchPassport?.status ?? "connected"} />
+              <p>Connected to project {launchPassport?.lp_project_id ?? "this project"}.</p>
+              <div className="status-chip-wrap">
+                <StatusChip
+                  status={launchPassport?.token_configured ? "configured" : "not_configured"}
+                  hint={launchPassport?.token_configured ? "Project access is saved on this appliance." : "Project access needs to be added."}
+                />
+                <StatusChip
+                  status={launchPassport?.capabilities?.launch_scan ? "available" : "upload_only"}
+                  hint={launchPassport?.capabilities?.launch_scan ? "Remote scan launch is available." : "Remote scan launch is optional and is not enabled for this project."}
+                />
+              </div>
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <p>The connection setting is stored on this appliance. Access values are never displayed here.</p>
+              </details>
+            </div>
+          ) : null}
+          {launchPassportState === "unavailable" ? <p className="screen-note">Connection state is temporarily unavailable. Your local appliance can still be used normally.</p> : null}
+        </RoleGate>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
           <h2>Providers</h2>
-          <span>runtime stack</span>
+          <div className="row-actions">
+            <span>runtime stack</span>
+            {isAdmin ? <button className="icon-button" type="button" onClick={() => void checkProviderHealth()}>Check model health</button> : null}
+          </div>
         </div>
         <div className="settings-list">
           {providers ? (
@@ -194,6 +290,14 @@ export function Settings() {
             ))
           ) : <p>No provider data available.</p>}
         </div>
+        {providerHealth ? (
+          <div className="connection-state" aria-live="polite">
+            <strong>Model provider health</strong>
+            <span>Local: {providerHealth.local.status}{providerHealth.local.probe === "models" ? ` · ${providerHealth.local.model}` : ""}</span>
+            <span>Remote: {providerHealth.remote.status}{providerHealth.remote.probe === "models" ? ` · ${providerHealth.remote.model}` : ""}</span>
+            <p className="screen-note">Checks use only the configured provider’s documented model-list endpoint. Disabled, offline, unsupported, and unavailable states are reported without exposing credentials.</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -268,8 +372,17 @@ export function Settings() {
                   onChange={(event) => setRestoreEncrypt(event.target.checked)}
                 />
                 Source is encrypted
+                </label>
+              <label className="switch-label">
+                <input
+                  type="checkbox"
+                  checked={restoreAcknowledged}
+                  onChange={(event) => setRestoreAcknowledged(event.target.checked)}
+                />
+                I understand this replaces the current local state
               </label>
-              <button type="submit">Restore</button>
+              <p className="screen-note">Restore replaces the appliance's current local database. Create a fresh backup first if you may need to undo this operation.</p>
+              <button type="submit" disabled={!restoreSource || !restoreAcknowledged}>Restore</button>
             </form>
           </>
         ) : <p className="screen-note">Backups require admin permissions.</p>}
@@ -306,4 +419,9 @@ export function Settings() {
       </section>
     </section>
   );
+}
+
+function isLaunchPassportNotConfigured(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && (error.status === 409 || /not configured/i.test(`${error.message} ${error.technicalDetail}`));
 }

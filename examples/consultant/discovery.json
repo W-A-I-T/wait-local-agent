@@ -1,0 +1,23 @@
+{
+  "client_id": "demo",
+  "answers": {
+    "solution_name": "Employee onboarding",
+    "business_goal": "Reduce manual onboarding work",
+    "users": ["HR", "IT"],
+    "knowledge": ["SharePoint HR policies"],
+    "systems": ["Microsoft Entra", "Teams"],
+    "reads": ["Employee record", "HR policy"],
+    "changes": ["Create user", "Assign license"],
+    "approvals": ["Assign license"],
+    "failure_handling": "Pause and create an approval review",
+    "licenses": ["Microsoft 365 E3"],
+    "data_location": ["Tenant SharePoint"],
+    "data_leaves_tenant": false,
+    "impact": {
+      "monthly_runs": 80,
+      "minutes_saved_per_run": 25,
+      "affected_users": 12,
+      "hourly_value": 60
+    }
+  }
+}

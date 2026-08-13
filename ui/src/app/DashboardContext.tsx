@@ -8,6 +8,7 @@ import type {
   ApprovalRequest,
   AuthRoleResponse,
   ConnectorStatus,
+  EventDelivery,
   EventHistory,
   HaloReadResult,
   HaloTicket,
@@ -43,11 +44,13 @@ type DashboardContextValue = {
   haloTickets: HaloTicket[];
   approvalRequests: ApprovalRequest[];
   pendingApprovals: ApprovalRequest[];
+  eventDeliveries: EventDelivery[];
   eventHistory: EventHistory[];
   workflowRuns: WorkflowRun[];
   refreshErrors: string[];
   statusMessage: string;
   loading: boolean;
+  roleResolved: boolean;
   busyId: number | "draft" | null;
   selectedTicketId: string;
   canWrite: boolean;
@@ -62,6 +65,7 @@ type DashboardContextValue = {
   createDraft: (ticketId: string, actionType: string, fields: Record<string, string>) => Promise<void>;
   updateApproval: (requestId: number, status: "approved" | "rejected") => Promise<void>;
   executeApproval: (requestId: number) => Promise<void>;
+  retryEventDelivery: (deliveryId: number) => Promise<void>;
   savePayloadFields: (request: ApprovalRequest, fields: Record<string, string>) => Promise<void>;
   workflowFor: (request: ApprovalRequest) => WorkflowRun | undefined;
 };
@@ -70,11 +74,13 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
-  const [role, setRole] = useState<AuthRoleResponse["role"]>("admin");
+  const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [roleResolved, setRoleResolved] = useState(false);
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
+  const [eventDeliveries, setEventDeliveries] = useState<EventDelivery[]>([]);
   const [eventHistory, setEventHistory] = useState<EventHistory[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState("");
@@ -83,6 +89,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
+  const roleRequestIdRef = useRef(0);
   const configuration = useConfiguredState();
 
   useEffect(() => {
@@ -90,14 +97,21 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [selectedTicketId]);
 
   const refresh = useCallback(async () => {
+    const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
+    setRole("viewer");
+    setRoleResolved(false);
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
         apiFetch<HaloReadResult>("/connectors/halopsa/write-health"),
         apiFetch<HaloTicketsResponse>("/connectors/halopsa/tickets"),
         apiFetch<ApprovalRequest[]>("/approval-requests"),
+        apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),
         apiFetch<WorkflowRun[]>("/workflow-runs")
       ]);
@@ -111,21 +125,33 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         items: []
       });
 
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
       setRole(auth.role);
+      setRoleResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
       setHaloTickets(asArray(ticketResponse.items));
       setApprovalRequests(asArray(settledValue(results[3] as PromiseSettledResult<ApprovalRequest[]>, [])));
-      setEventHistory(asArray(settledValue(results[4] as PromiseSettledResult<EventHistory[]>, [])));
-      setWorkflowRuns(asArray(settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])));
+      setEventDeliveries(asArray(settledValue(results[4] as PromiseSettledResult<EventDelivery[]>, [])));
+      setEventHistory(asArray(settledValue(results[5] as PromiseSettledResult<EventHistory[]>, [])));
+      setWorkflowRuns(asArray(settledValue(results[6] as PromiseSettledResult<WorkflowRun[]>, [])));
       setRefreshErrors(errors);
       if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
     } catch (error) {
+      if (roleRequestId !== roleRequestIdRef.current) {
+        return;
+      }
+      setRole("viewer");
+      setRoleResolved(false);
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
     } finally {
-      setLoading(false);
+      if (roleRequestId === roleRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -210,6 +236,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, [refresh]);
 
+  const retryEventDelivery = useCallback(async (deliveryId: number) => {
+    try {
+      const result = await apiFetch<{ delivery: EventDelivery }>(`/automation/event-deliveries/${deliveryId}/retry`, {
+        method: "POST"
+      });
+      setStatusMessage(`Event delivery ${deliveryId} ${result.delivery.status}.`);
+      await refresh();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Event delivery retry failed.");
+    }
+  }, [refresh]);
+
   const savePayloadFields = useCallback(async (request: ApprovalRequest, fields: Record<string, string>) => {
     setBusyId(request.id);
     try {
@@ -246,15 +284,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       haloTickets,
       approvalRequests,
       pendingApprovals: approvalRequests.filter((request) => request.status === "pending"),
+      eventDeliveries,
       eventHistory,
       workflowRuns,
       refreshErrors,
       statusMessage,
       loading,
+      roleResolved,
       busyId,
       selectedTicketId,
-      canWrite: role !== "viewer",
-      isAdmin: role === "admin",
+      canWrite: roleResolved && role !== "viewer",
+      isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       setApiToken,
@@ -265,6 +305,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       createDraft,
       updateApproval,
       executeApproval,
+      retryEventDelivery,
       savePayloadFields,
       workflowFor: (request) => {
         if (request.workflow_run_id === undefined || request.workflow_run_id === null) {
@@ -284,10 +325,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     createDraft,
     eventHistory,
     executeApproval,
+    eventDeliveries,
     haloTickets,
     loading,
+    roleResolved,
     refresh,
     refreshErrors,
+    retryEventDelivery,
     role,
     saveApiToken,
     savePayloadFields,

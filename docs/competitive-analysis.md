@@ -3,6 +3,11 @@
 > Research date: 2026-06-10  
 > Sources: neoagent.io (live fetch), Capterra, search results, guardz.com, rallied.ai, getthread.com
 
+> Current-code note: the competitor facts and market observations below retain
+> their original research snapshot. WAIT capability rows are maintained against
+> the current public core; bounded read, preview, and approval-gated support is
+> not equivalent to full provider parity.
+
 ---
 
 ## Market Category Map
@@ -32,7 +37,7 @@ The MSP AI automation market in 2026 divides into four categories:
 | **MSPbots** | Standalone AI agent | $399–$1,799/mo | ConnectWise, Autotask, HaloPSA | Cloud SaaS | ✗ | ✗ | Bot + approvals | Price; local; open-source |
 | **Mizo** | AI triage entry | <$250/mo entry | ConnectWise, Autotask | Cloud SaaS | ✗ | ✗ | Human reviews all | Full workflow, not just triage |
 | **Rewst** | Rule-based RPA | Not public (high) | Any with REST API | Cloud (hybrid scripting) | Partial | ✗ | Explicit rule-defined | No developer required; deterministic built-in |
-| **WAIT Local Agent** | **Local-first open agent** | **Free + $49–$499/mo packs** | HaloPSA, Hudu (now); IT Glue, CW, Autotask, M365, RMM (Phase 3–4) | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Always-required human approval** | **Unique category** |
+| **WAIT Local Agent** | **Local-first open agent** | **Open core; pack pricing not established in this repo** | HaloPSA, Hudu, ConnectWise, Autotask, ServiceNow, TimeZest scheduling-request reads plus approval-gated create, tenant-mapped ScalePad Core client and ControlMap risk-summary/compliance-health reads, IT Glue, Confluence, Notion, SharePoint, bounded M365, NinjaOne, Datto, N-central, and N-sight device/check/performance-history/asset-details/monitoring-details inventory, failing-check, patch-read, approval-gated patch-approval, and documented automated-task capabilities | **Self-hosted Docker** | **✓** | **✓ Apache 2.0** | **Approval required for supported writes; reads and analysis are non-mutating** | **Local, inspectable, bounded** |
 
 ---
 
@@ -47,7 +52,7 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 - **Deployment**: Cloud-only, Microsoft Azure; no self-hosted option
 - **PSA**: ConnectWise PSA, Autotask, HaloPSA, ServiceNow
 - **RMM**: NinjaOne, Datto RMM, N-able, ConnectWise RMM variants, Kaseya
-- **Documentation**: IT Glue, Hudu
+- **Documentation**: IT Glue, Hudu, Notion
 - **Identity**: Microsoft Entra ID, on-prem AD/Exchange
 - **Comms**: Slack, Microsoft Teams
 - **Distribution**: Pax8, D&H, Sherweb, Ingram Micro
@@ -62,40 +67,44 @@ NeoAgent is the market leader in the standalone MSP AI agent category. Understan
 |-----------|----------|----------------------|-------------|----------------|
 | HaloPSA read + gated write | ✓ | ✓ (`halopsa.py`) | — | Done |
 | Hudu read | ✓ | ✓ (`hudu.py`) | — | Done |
-| ConnectWise PSA | ✓ | ✗ | Connector | Phase 4 |
-| Autotask | ✓ | ✗ | Connector | Phase 4 |
-| ServiceNow | ✓ | ✗ | Low priority | Phase 7+ |
-| NinjaOne RMM | ✓ | ✗ | Connector | Phase 4 |
-| Datto RMM | ✓ | ✗ | Connector | Phase 4 |
-| N-able | ✓ | ✗ | Connector | Phase 5 |
-| Kaseya | ✓ | ✗ | Connector | Phase 5 |
-| IT Glue | ✓ | ✗ | Connector | Phase 3 |
-| M365 / Entra | ✓ | ✗ (stub) | Connector | Phase 4 |
-| Slack / Teams | ✓ | ✗ | Low priority | Phase 5 |
-| Scheduled / proactive tasks | ✓ | ✗ | APScheduler | Phase 3 |
-| QBR / ROI reporting | ✓ | ✗ | Report engine | Phase 3 |
+| ConnectWise PSA | ✓ | ✓ bounded reads + approval-gated allowlisted ticket updates | Deeper write/action parity | Incremental |
+| Autotask | ✓ | ✓ ticket/company inventory plus approval-gated ticket-note/time-entry/status/resolution/assignment updates | Broader write operations | Incremental |
+| ServiceNow | ✓ | ✓ incident/company inventory plus approval-gated work-note/state/assignment/resolution-metadata updates | Broader write operations | Incremental |
+| NinjaOne RMM | ✓ | ✓ bounded devices, alerts, scripts, previews, and approved execution | Broader remediation parity | Incremental |
+| Datto RMM | ✓ | ✓ bounded devices, alerts, components, and approved quick jobs | Broader remediation parity | Incremental |
+| N-able | ✓ | ✓ N-central device/issue/task metadata plus bounded approved direct-task/status path; N-sight device/check/performance-history/asset-details/software-inventory/hardware-inventory/monitoring-details inventory, documented failing-check alerts, mapped-device patch reads, supported-antivirus product/threat/definition/update-check-history/scan/quarantine reads, approval-gated patch approval, quarantine release/removal, documented antivirus scan start/pause/resume/cancellation, and documented automated-task execution | Broader N-sight writes, software/hardware deployment, generic script management, and remediation | Incremental |
+| TimeZest | ✓ | ✓ tenant-mapped scheduling-request status/metadata plus approval-gated documented create | Reschedule, cancel, and broader marketplace workflows | Incremental |
+| ScalePad | ✓ | ✓ tenant-mapped Core client lookup and separately mapped ControlMap risk-summary/compliance-health reads | Writes, unscoped reads, and broader product APIs | Incremental |
+| Kaseya | ✓ | ✓ bounded VSA X device/notification reads plus approval-gated script operations | Broader remediation and webhook parity | Incremental |
+| ScreenConnect | Public RESTful API Manager session reads and `SendCommandToSession` | ✓ bounded tenant-scoped session/device lookup plus optional local command catalog and approval-gated submission | Provider-native alert lookup, script discovery, and command polling | Incremental |
+| IT Glue | ✓ | ✓ read-only organization/document retrieval | Broader search and write operations | Incremental |
+| Notion | ✓ | ✓ bounded mapped-page title search, page-markdown retrieval, and data-source row query | Comments, writes, provider-native filters, and broader search remain unavailable | Incremental |
+| M365 / Entra | ✓ | ✓ bounded reads plus approved user, group, license, session, Intune, mailbox-settings, and message mutations | Broader resource and policy coverage | Incremental |
+| Slack / Teams | ✓ | ✓ preview, configured webhook delivery, and local delivery receipts | Native provider features and provider-issued receipt IDs | Incremental |
+| Scheduled / proactive tasks | ✓ | ✓ (bounded cron + event agents) | Broader recurrence and event sources | Phase 3 |
+| QBR / ROI reporting | ✓ | Bounded client-scoped QBR and automation-opportunity reports from local evidence with JSON, Markdown, and PDF export | Provider-backed lifecycle enrichment and measured ROI | Incremental |
 | Pax8 / distribution channel | ✓ | ✗ | GTM work | Phase 8 |
 | SOC 2 certification | ✓ (Type I) | ✗ | Compliance work | Phase 7+ |
 | **Self-hosted / on-prem** | ✗ | **✓ Docker Compose** | — | **Core win** |
 | **Privacy (no data leaves)** | ✗ | **✓ by design** | — | **Core win** |
 | **Open-source inspectable** | ✗ | **✓ Apache 2.0** | — | **Core win** |
-| **Air-gap compatible** | ✗ | **✓ fully offline** | — | **Enterprise win** |
-| **Startup/founder mode** | ✗ | ✗ (planned) | Build Phase 4 | New market |
+| **Air-gap compatible** | ✗ | **✓ local core can run offline** | Cloud connector features require connectivity | **Local-core win** |
+| **Startup/founder mode** | ✗ | **Public API/CLI contract; private pack not included** | Full founder pack implementation | Separate pack work |
 | **LP evidence export** | ✗ | ✗ (planned) | Build Phase 5 | WAIT ecosystem |
-| **Price** | $1,000–$2,000/mo | **Free core / $99 MSP Pack** | — | **10–20× cheaper** |
+| **Price** | $1,000–$2,000/mo | **Open core; public pack pricing not established** | Commercial pricing and support model | GTM work |
 
 ### Where WAIT Wins Against NeoAgent
 
-1. **Privacy**: Zero client data leaves the MSP's hardware. No other tool offers this.
+1. **Privacy**: The local core can keep client data on the MSP's appliance by default; configured external connectors are explicit opt-ins.
 2. **Open-source**: MSPs and enterprise clients can read every line. No black box.
-3. **Air-gap**: Runs fully offline. Cannot be matched by any cloud tool.
-4. **Price**: $1,000–$2,000/month vs. $0 core / $99/month MSP Pack. $11,000–$23,000/year saved.
-5. **Startup/founder mode**: Completely new market that NeoAgent does not address.
+3. **Air-gap**: Core local workflows can run offline; external connector operations are unavailable without connectivity.
+4. **Price**: The open core has no public pack price in this repository; commercial savings are not claimed here.
+5. **Startup/founder mode**: The public repository defines the Founder API/CLI boundary while the private pack remains separate.
 6. **PSA-agnostic**: Works with HaloPSA, ConnectWise, Autotask, and others — not locked to one vendor ecosystem.
 
 ### Where NeoAgent Wins
 
-1. **Integration breadth**: Wider PSA/RMM/M365 coverage today (WAIT is catching up in Phases 3–4).
+1. **Integration breadth**: Wider provider depth, native actions, and hosted integrations in several areas; WAIT's current support remains bounded and local-first.
 2. **Distribution**: Pax8, Ingram Micro, Sherweb channel partnerships.
 3. **SOC 2**: Type I certified; Type II in progress.
 4. **Setup speed**: "Live in two hours" vs. self-hosted Docker install.

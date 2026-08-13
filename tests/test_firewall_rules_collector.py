@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.FirewallRulesCollectorModule
 
@@ -328,63 +331,63 @@ def test_collect_swallows_unreadable_file_as_directory(
     assert result["items"][0]["canonical_asset"]["attributes"]["source_file"] == "/etc/iptables/rules.v4"
 
 
-# --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_firewall_rules_collector_is_idempotent() -> None:
-    collectors._register_firewall_rules_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("firewall-rules")
-        assert module is not None
-        assert module.module_id == "firewall-rules"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
+def test_typed_firewall_collect_returns_partial_with_source_failure(
     monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
 ) -> None:
-    calls: dict[str, Any] = {}
+    (firewall_root / "nftables.conf").mkdir()
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
 
-    class RegistryObject:
-        def register(self, module: Any) -> None:
-            calls["register"] = module
+    result = collectors.FirewallRulesCollector().collect({})
 
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    collectors._register_firewall_rules_collector()
-    collectors._register_firewall_rules_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("firewall-rules") == 1
-    assert any(getattr(m, "module_id", None) == "firewall-rules" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "firewall-rules"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert [
-        getattr(m, "module_id", None) for m in registry_tuple
-    ].count("firewall-rules") == 1
-    assert "FirewallRulesCollectorModule" in collectors.__dict__["__all__"]
+    assert result.status is CollectionStatus.PARTIAL
+    assert len(result.assets) == 1
+    assert any(outcome.status is CollectionStatus.UNAVAILABLE for outcome in result.source_outcomes)
 
 
-def test_register_creates_module_registry_when_no_registry_exists(
+def test_typed_firewall_collect_maps_total_permission_failure(
     monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
 ) -> None:
-    monkeypatch.delattr(collectors, "MODULE_REGISTRY", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTOR_MODULES", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTOR_REGISTRY", raising=False)
-    monkeypatch.delattr(collectors, "COLLECTORS", raising=False)
-    monkeypatch.delattr(collectors, "collector_registry", raising=False)
+    rules_path = firewall_root / "rules.v4"
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
 
-    collectors._register_firewall_rules_collector()
+    real_read_text = Path.read_text
 
-    registry = collectors.__dict__["MODULE_REGISTRY"]
-    assert registry["firewall-rules"].module_id == "firewall-rules"
+    def deny_rules(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == rules_path:
+            raise PermissionError("firewall rules denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_rules)
+    result = collectors.FirewallRulesCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+
+
+def test_typed_firewall_round_trip_persists_and_exports(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    firewall_root: Path,
+) -> None:
+    _write_firewall_file(firewall_root, "rules.v4", "-A INPUT -j ACCEPT\n")
+    _use_firewall_configs(monkeypatch, firewall_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.FirewallRulesCollector())
+    service = CollectorService(Store(settings.data_path), registry)
+
+    assert service.validate("firewall-rules", {}).passed is True
+    preview = service.preview("firewall-rules", {})
+    run = service.run("firewall-rules", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
 
 
 # --------------------------------------------------------------------------- #

@@ -53,6 +53,7 @@ Expected demo defaults:
 write_actions_enabled=false
 http_probing_enabled=false
 cloud_fallback_enabled=false
+offline_mode=false
 llm_inference_enabled=false
 api_auth_required=false
 demo_mode=true
@@ -98,3 +99,15 @@ Demo mode allows local unauthenticated access only when `WAIT_DEMO_MODE=true` an
 WAIT_DEMO_MODE=false WAIT_API_TOKEN=local-token wait-local-agent serve
 curl -H 'Authorization: Bearer local-token' http://127.0.0.1:8788/health
 ```
+
+## Consultant mode demo
+
+The Microsoft consultant-mode surfaces also have a deterministic local
+walkthrough:
+
+```bash
+scripts/demo_consultant_mode.sh
+```
+
+See [docs/consultant-demo.md](consultant-demo.md) for the scope and synthetic
+inputs. It does not contact Microsoft services or deploy a solution.

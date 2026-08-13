@@ -14,6 +14,9 @@ from typing import Any
 import pytest
 
 from wait_local_agent import collectors
+from wait_local_agent.collectors import CollectionStatus, CollectorRegistry, CollectorService
+from wait_local_agent.reports.models import ReportType
+from wait_local_agent.store import Store
 
 Module = collectors.ProcessInventoryCollectorModule
 
@@ -139,6 +142,24 @@ def test_collect_parses_pid_name_cmdline_and_state(
     assert observations["process.name"] == "python"
     assert observations["process.cmdline"] == "python app.py"
     assert observations["process.state"] == "R (running)"
+
+
+def test_collect_reads_process_inventory_through_fake_host_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    host_root = tmp_path / "host"
+    proc_root = host_root / "proc"
+    proc_root.mkdir(parents=True)
+    _write_process(proc_root, 41, name="host-worker", cmdline=b"host-worker\x00--serve\x00")
+    monkeypatch.setenv("WAIT_HOST_ROOT", str(host_root))
+    monkeypatch.setattr(collectors, "_ProcessInventoryPath", collectors.collection_path)
+
+    result = _collector().collect()
+
+    assert result["count"] == 1
+    asset = result["items"][0]["canonical_asset"]
+    assert asset["asset_id"] == "process:41"
+    assert asset["attributes"]["name"] == "host-worker"
 
 
 def test_collect_sorts_records_by_pid_and_ignores_non_numeric_entries(
@@ -269,6 +290,76 @@ def test_collect_returns_empty_on_non_linux(
     assert result["ok"] is True
     assert result["items"] == []
 
+    typed_result = collectors.ProcessInventoryCollector().collect({})
+    assert typed_result.status is CollectionStatus.EMPTY
+    assert typed_result.source_outcomes[0].remediation_hint is not None
+
+
+def test_typed_collect_maps_permission_error_to_not_authorized(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
+
+    def deny_reader(path: Path, *, strict: bool = False) -> str:
+        raise PermissionError(f"denied: {path}")
+
+    monkeypatch.setattr(collectors, "_read_process_inventory_text", deny_reader)
+
+    result = collectors.ProcessInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.NOT_AUTHORIZED
+    assert result.source_outcomes[0].error_code == "permission_denied"
+    assert result.source_outcomes[0].error_detail == "denied: " + str(proc_root / "1" / "status")
+
+
+def test_typed_process_collect_returns_partial_when_one_entry_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+) -> None:
+    _write_process(proc_root, 100)
+    _write_process(proc_root, 101)
+    _use_proc(monkeypatch, proc_root)
+    real_read_text = Path.read_text
+
+    def deny_process(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.parent.name == "101":
+            raise PermissionError("process metadata denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_process)
+    result = collectors.ProcessInventoryCollector().collect({})
+
+    assert result.status is CollectionStatus.PARTIAL
+    assert [asset.canonical_id for asset in result.assets] == ["process:100"]
+    assert any(outcome.status is CollectionStatus.NOT_AUTHORIZED for outcome in result.source_outcomes)
+
+
+def test_process_inventory_round_trips_through_governed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    proc_root: Path,
+    settings,
+) -> None:
+    _write_process(proc_root, 1)
+    _use_proc(monkeypatch, proc_root)
+    registry = CollectorRegistry()
+    registry.register(collectors.ProcessInventoryCollector())
+    store = Store(settings.data_path)
+    service = CollectorService(store, registry)
+
+    assert service.validate("process-inventory", {}).passed is True
+    preview = service.preview("process-inventory", {})
+    run = service.run("process-inventory", {}, confirm=True)
+    report = service.export_report(run.id or 0, ReportType.COLLECTOR_BUNDLE)
+
+    assert preview.estimated_assets == 1
+    assert run.status == "completed"
+    assert '"status":"success"' in run.result_json
+    assert len(store.list_canonical_assets(run_id=run.id)) == 1
+    assert len(store.list_asset_observations(run_id=run.id)) == 4
+    assert report.report_type is ReportType.COLLECTOR_BUNDLE
+
 
 def test_collect_returns_empty_when_proc_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -279,55 +370,6 @@ def test_collect_returns_empty_when_proc_missing(
     result = _collector().collect()
     assert result["ok"] is True
     assert result["items"] == []
-
-
-# --------------------------------------------------------------------------- #
-# registration
-# --------------------------------------------------------------------------- #
-
-
-def test_register_process_inventory_collector_is_idempotent() -> None:
-    # Runs at import; calling again must not raise and must keep the module known.
-    collectors._register_process_inventory_collector()
-    registry = collectors.__dict__.get("MODULE_REGISTRY")
-    if isinstance(registry, dict):
-        module = registry.get("process-inventory")
-        assert module is not None
-        assert module.module_id == "process-inventory"
-
-
-def test_register_supports_list_set_tuple_and_register_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class RegistryObject:
-        # Rejects the 2-arg form so the module falls back to register(module).
-        def register(self, module: Any) -> None:
-            calls["register"] = module
-
-    listed: list[Any] = []
-    setted: set[Any] = set()
-    monkeypatch.setattr(collectors, "COLLECTOR_MODULES", listed, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTORS", setted, raising=False)
-    monkeypatch.setattr(collectors, "COLLECTOR_REGISTRY", RegistryObject(), raising=False)
-    monkeypatch.setattr(collectors, "collector_registry", (), raising=False)
-    monkeypatch.setattr(collectors, "__all__", [], raising=False)
-
-    # First registration populates every shape.
-    collectors._register_process_inventory_collector()
-    # Second registration exercises the "already present" guards (list/tuple).
-    collectors._register_process_inventory_collector()
-
-    assert [getattr(m, "module_id", None) for m in listed].count("process-inventory") == 1
-    assert any(getattr(m, "module_id", None) == "process-inventory" for m in setted)
-    assert getattr(calls.get("register"), "module_id", None) == "process-inventory"
-    registry_tuple = collectors.__dict__["collector_registry"]
-    assert (
-        [getattr(m, "module_id", None) for m in registry_tuple].count("process-inventory")
-        == 1
-    )
-    assert "ProcessInventoryCollectorModule" in collectors.__dict__["__all__"]
 
 
 # --------------------------------------------------------------------------- #

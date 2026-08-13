@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from io import BytesIO
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 from typer.testing import CliRunner
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
+from wait_local_agent.reports.builders import (
+    build_appliance_hardening_report,
+    build_restore_evidence_report,
+)
 from wait_local_agent.reports.models import (
     GeneratedReport,
     ReportFormat,
@@ -15,14 +23,17 @@ from wait_local_agent.reports.models import (
     ReportType,
     sections_from_json,
 )
+from wait_local_agent.reports.msp import build_recurring_service_review_report
 from wait_local_agent.reports.renderers import (
     REDACTED,
+    redact_value,
     render_json,
     render_markdown,
+    render_pdf,
     render_report,
 )
 from wait_local_agent.reports.schemas import REPORT_JSON_SCHEMA, validate_report_payload
-from wait_local_agent.reports.service import ReportService
+from wait_local_agent.reports.service import ReportService, _metadata_evidence_status
 from wait_local_agent.store import Store
 
 
@@ -37,6 +48,10 @@ def _sections() -> list[ReportSection]:
         ),
         ReportSection(title="Empty Section", summary="No findings in this pass."),
     ]
+
+
+def test_unknown_report_evidence_metadata_is_safe_by_default() -> None:
+    assert _metadata_evidence_status({"evidence_status": "invented"}) == "not_run"
 
 
 def _service(settings) -> ReportService:
@@ -109,6 +124,104 @@ def test_json_render_round_trips_sections(settings) -> None:
     assert sections_from_json(report.sections_json()) == report.sections
 
 
+def test_hardening_and_restore_reports_are_not_run_without_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    hardening_sections, hardening_metadata = build_appliance_hardening_report(store)
+    restore_sections, restore_metadata = build_restore_evidence_report(store)
+
+    hardening = _service(settings).create_report(
+        ReportType.APPLIANCE_HARDENING,
+        "Hardening",
+        hardening_sections,
+        metadata=hardening_metadata,
+    )
+    restore = _service(settings).create_report(
+        ReportType.RESTORE_EVIDENCE,
+        "Restore",
+        restore_sections,
+        metadata=restore_metadata,
+    )
+
+    assert hardening.evidence_status == "not_run"
+    assert restore.evidence_status == "not_run"
+    assert json.loads(render_json(hardening))["evidence_status"] == "not_run"
+    assert "Evidence status: `not_run`" in render_markdown(restore)
+
+
+def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
+            ("acme", "2026-01-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", "TCK-1001"),
+        )
+        connection.execute(
+            "update tickets set client_id = ?, status = ?, created_at = ?, updated_at = ? where id = ?",
+            ("acme", "closed", "2026-02-01T00:00:00+00:00", "2026-02-03T00:00:00+00:00", "TCK-1002"),
+        )
+
+    sections, metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+        follow_up_after_days=14,
+    )
+
+    assert metadata["client_id"] == "acme"
+    assert metadata["period_ticket_count"] == 2
+    assert metadata["current_open_ticket_count"] == 1
+    assert metadata["follow_up_candidate_count"] == 1
+    assert metadata["evidence_status"] == "partial"
+    assert "vendor_sla_compliance" in metadata["claims_excluded"]
+    assert sections[1].findings[0]["candidates"][0]["ticket_id"] == "TCK-1001"
+    assert store.list_tickets(client_id="other-client") == []
+
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        build_recurring_service_review_report(
+            store,
+            client_id="acme",
+            period_start="2026-01-01",
+            period_end="2026-03-31",
+            follow_up_after_days=0,
+        )
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        build_recurring_service_review_report(
+            store,
+            client_id="acme",
+            period_start="2026-01-01",
+            period_end="2026-03-31",
+            follow_up_after_days=True,
+        )
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set created_at = ?, updated_at = ? where id = ?",
+            ("", "", "TCK-1001"),
+        )
+    _, empty_timestamp_metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+    )
+    assert empty_timestamp_metadata["follow_up_candidate_count"] == 0
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set created_at = ?, updated_at = ? where id = ?",
+            ("not-a-date", "not-a-date", "TCK-1001"),
+        )
+    _, invalid_timestamp_metadata = build_recurring_service_review_report(
+        store,
+        client_id="acme",
+        period_start="2026-01-01",
+        period_end="2026-03-31",
+    )
+    assert invalid_timestamp_metadata["follow_up_candidate_count"] == 0
+
+
 def test_markdown_render_contains_headers_and_recommendations() -> None:
     report = GeneratedReport.new(
         ReportType.CONNECTOR_HEALTH,
@@ -134,16 +247,18 @@ def test_markdown_render_contains_headers_and_recommendations() -> None:
     assert "## Metadata" in rendered
 
 
-def test_render_report_dispatch_and_pdf_rejection() -> None:
+def test_render_report_dispatch_and_pdf_contains_report_content() -> None:
     report = GeneratedReport.new(ReportType.AUDIT_EXPORT, "Audit", _sections())
 
-    assert render_report(report, ReportFormat.JSON).startswith("{")
-    assert render_report(report, ReportFormat.MARKDOWN).startswith("# Audit")
-    try:
-        render_report(report, ReportFormat.PDF)
-        raise AssertionError("pdf rendering should not be available yet")
-    except ValueError as exc:
-        assert "pdf" in str(exc)
+    json_export = render_report(report, ReportFormat.JSON)
+    markdown_export = render_report(report, ReportFormat.MARKDOWN)
+    assert isinstance(json_export, str) and json_export.startswith("{")
+    assert isinstance(markdown_export, str) and markdown_export.startswith("# Audit")
+    pdf = render_pdf(report)
+    assert pdf.startswith(b"%PDF-")
+    assert "Audit" in "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages)
+    dispatched_pdf = render_report(report, ReportFormat.PDF)
+    assert isinstance(dispatched_pdf, bytes) and dispatched_pdf.startswith(b"%PDF-")
 
 
 def test_renders_never_include_secret_values() -> None:
@@ -164,11 +279,30 @@ def test_renders_never_include_secret_values() -> None:
 
     as_json = render_json(report)
     as_markdown = render_markdown(report)
+    as_pdf = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(render_pdf(report))).pages)
 
-    for rendered in (as_json, as_markdown):
+    for rendered in (as_json, as_markdown, as_pdf):
         assert secret_value not in rendered
         assert REDACTED in rendered
     assert "keep-me" in as_json
+
+
+def test_redact_value_covers_sensitive_and_deliberately_safe_values() -> None:
+    payload = {
+        "apiKey": "secret-value",
+        "nested": [{"password": "nested-secret", "monkey": "keep-monkey"}],
+        "keyboard": "keep-keyboard",
+        "count": 3,
+    }
+
+    redacted = redact_value(payload)
+
+    assert redacted == {
+        "apiKey": REDACTED,
+        "nested": [{"password": REDACTED, "monkey": "keep-monkey"}],
+        "keyboard": "keep-keyboard",
+        "count": 3,
+    }
 
 
 def test_sections_from_json_rejects_non_list_payload() -> None:
@@ -208,7 +342,7 @@ def test_export_writes_audit_event_and_missing_report_raises(settings) -> None:
     rendered = service.export_report(report.id, ReportFormat.MARKDOWN)
     events = service.store.list_audit_events()
 
-    assert rendered.startswith("# Audit Snapshot")
+    assert isinstance(rendered, str) and rendered.startswith("# Audit Snapshot")
     assert any(event.event_type == "report.exported" for event in events)
     try:
         service.export_report("missing-id", ReportFormat.JSON)
@@ -232,6 +366,7 @@ def test_api_report_list_detail_and_export(settings) -> None:
     exported_md = client.get(
         f"/reports/{report.id}/export", params={"export_format": "markdown"}
     )
+    exported_pdf = client.get(f"/reports/{report.id}/export", params={"export_format": "pdf"})
     missing = client.get("/reports/nope")
     missing_export = client.get("/reports/nope/export")
 
@@ -247,6 +382,10 @@ def test_api_report_list_detail_and_export(settings) -> None:
     assert exported_md.status_code == 200
     assert exported_md.headers["content-type"].startswith("text/markdown")
     assert exported_md.text.startswith("# API Report")
+    assert exported_pdf.status_code == 200
+    assert exported_pdf.headers["content-type"].startswith("application/pdf")
+    assert exported_pdf.headers["content-disposition"].endswith(f'wait-report-{report.id}.pdf"')
+    assert exported_pdf.content.startswith(b"%PDF-")
     assert missing.status_code == 404
     assert missing_export.status_code == 404
 
@@ -268,6 +407,7 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     report = service.create_report(ReportType.QBR, "CLI Report", _sections(), client_id="acme")
     runner = CliRunner()
     output_path = tmp_path / "exports" / "report.md"
+    pdf_output_path = tmp_path / "exports" / "report.pdf"
 
     listing = runner.invoke(app, ["reports", "list"])
     filtered = runner.invoke(app, ["reports", "list", "--report-type", "qbr"])
@@ -289,6 +429,11 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     inline = runner.invoke(app, ["reports", "export", report.id])
     bad_format = runner.invoke(app, ["reports", "export", report.id, "--export-format", "nope"])
     missing_export = runner.invoke(app, ["reports", "export", "missing-id"])
+    pdf_exported = runner.invoke(
+        app,
+        ["reports", "export", report.id, "--export-format", "pdf", "--output", str(pdf_output_path)],
+    )
+    pdf_inline = runner.invoke(app, ["reports", "export", report.id, "--export-format", "pdf"])
 
     assert listing.exit_code == 0
     assert report.id in listing.output
@@ -305,3 +450,34 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     assert '"report_type": "qbr"' in inline.output
     assert bad_format.exit_code == 1
     assert missing_export.exit_code == 1
+    assert pdf_exported.exit_code == 0
+    assert pdf_output_path.read_bytes().startswith(b"%PDF-")
+    assert pdf_inline.exit_code == 1
+    assert "requires --output" in pdf_inline.output
+
+
+def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    store = Store(data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "reports",
+            "recurring-service-review",
+            "--period-start",
+            "2026-01-01",
+            "--period-end",
+            "2026-03-31",
+            "--client-id",
+            "acme",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"report_type": "recurring_service_review"' in result.output
+    assert '"scope": "single client"' in result.output

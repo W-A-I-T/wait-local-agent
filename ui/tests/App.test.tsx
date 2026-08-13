@@ -36,6 +36,7 @@ const approvals = [
     execution_status: "not_started",
     execution_message: "",
     payload: { fields: { note: "Call customer", status: "In Progress" } },
+    expires_at: "2026-08-09T00:00:00+00:00",
     can_execute: false,
     block_reason: "",
     workflow_run_id: "run-1"
@@ -71,6 +72,21 @@ describe("App", () => {
     expect(screen.getAllByText("Hudu connector").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("heading", { name: "Payload Preview" }).length).toBeGreaterThan(0);
     expect(screen.getByText(/Workflow run run-1: running/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Automation delivery retries" })).toBeInTheDocument();
+    expect(screen.getByText("ticket.updated")).toBeInTheDocument();
+    expect(screen.getByText("Approval deadline: 2026-08-09T00:00:00+00:00")).toBeInTheDocument();
+  });
+
+  it("retries a failed automation delivery from the overview", async () => {
+    renderApp();
+
+    const retryButton = await screen.findByRole("button", { name: "Retry event delivery 7" });
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/automation/event-deliveries/7/retry",
+      expect.objectContaining({ method: "POST" })
+    ));
   });
 
   it("creates drafts, edits payload fields, and approves from controls", async () => {
@@ -151,7 +167,7 @@ describe("App", () => {
 
     expect(await screen.findByText("No approval requests yet.")).toBeInTheDocument();
     expect(screen.getByText("No workflow runs visible.")).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("/workflow-runs failed with HTTP 503");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
   });
 
   it("hides write controls for viewer role", async () => {
@@ -230,6 +246,25 @@ async function mockFetch(
   }
   if (path === "/approval-requests") {
     return json(approvals);
+  }
+  if (path === "/automation/event-deliveries") {
+    return json([{
+      id: 7,
+      idempotency_key: "evt-7",
+      event_type: "ticket.updated",
+      entity_type: "ticket",
+      entity_id: "HALO-1",
+      status: "failed",
+      error_detail: "Agent triage was blocked",
+      retry_count: 1,
+      max_retries: 3,
+      retry_delay_seconds: 60,
+      next_retry_at: "2026-08-09T00:01:00+00:00",
+      client_id: "acme"
+    }]);
+  }
+  if (path === "/automation/event-deliveries/7/retry") {
+    return json({ delivery: { id: 7, status: "completed" } });
   }
   if (path === "/workflow-runs") {
     return json([

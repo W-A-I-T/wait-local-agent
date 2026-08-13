@@ -8,11 +8,158 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | --- | --- | --- |
 | `WAIT_ALLOW_HTTP_PROBING` | `false` | Outbound HTTP calls to PSA, RMM, or knowledge systems |
 | `WAIT_ALLOW_WRITE_ACTIONS` | `false` | Live connector mutations |
+| `WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT` | `false` | Local `pac solution` stages after an approved request |
 | `WAIT_ALLOW_LLM_INFERENCE` | `false` | Local model calls |
 | `WAIT_ALLOW_CLOUD_FALLBACK` | `false` | Cloud model calls after local timeout |
+| `WAIT_OFFLINE_MODE` | `false` | Deny all remote model calls, even if fallback is configured |
+| `WAIT_REMOTE_MODEL_*` | empty | No remote provider is configured; a complete provider, base URL, model, and secret plus both model opt-ins are required |
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
+| `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
+
+Power Platform solution stages additionally require `WAIT_ALLOW_WRITE_ACTIONS=true`,
+`WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true`, an approved deployment-stage request,
+an authenticated `pac` executable on `PATH`, and a pre-existing
+`WAIT_POWER_PLATFORM_WORKSPACE`. Commands run without a shell and output is
+bounded and redacted; WAIT never accepts credentials in a deployment artifact.
+
+Remote model requests are never part of local-only operation. When explicitly
+enabled, the provider adapter sends only bounded, redacted ticket and local
+knowledge context; it does not send tenant IDs, local paths, credentials, or
+hidden reasoning. Provider/model labels are retained as safe operational
+metadata, while API keys remain in the configured env/vault secret boundary.
+
+`WAIT_OFFLINE_MODE=true` is an explicit local-only override for remote model
+fallback. It takes precedence over the cloud fallback flag and complete remote
+provider configuration; provider selection returns the local provider and no
+remote request is attempted.
+
+NinjaOne RMM calls use the same outbound HTTP gate. A tenant/client request is
+accepted only when its ID resolves through the operator-controlled
+`WAIT_NINJAONE_ORGANIZATION_MAP_JSON`; provider IDs and credentials are not
+request-supplied authorization inputs. Inventory and execution lookup apply
+returned-row scope checks. Script execution additionally requires
+`WAIT_ALLOW_WRITE_ACTIONS=true` and a completed technician approval.
+
+Datto RMM calls use the same outbound HTTP gate. Each request requires a
+client ID that resolves through operator-controlled
+`WAIT_DATTORMM_SITE_MAP_JSON`; provider site IDs and credentials are never
+request-supplied authorization inputs. Device and alert responses are checked
+against the mapped site when the provider returns a site identifier. The
+Quick-job execution additionally requires `WAIT_ALLOW_WRITE_ACTIONS=true` and
+is only reachable from the approved RMM script smart action. The adapter
+validates the component and device against the mapped tenant before issuing
+the documented quick-job request; job status lookup is bounded to the returned
+job identifier and does not expose component output.
+
+N-able N-central calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_NCENTRAL_ORG_UNIT_MAP_JSON`. Reads are limited to
+one configured page and reject returned devices, issues, or tasks outside the
+mapped organization units. The direct-task write is limited to an existing
+numeric task item and in-scope device/customer mapping, requires
+`WAIT_ALLOW_WRITE_ACTIONS=true` and the existing technician approval, and
+persists the returned execution ID with its tenant/script/device scope before
+status polling. Credentials, script source, and provider IDs are never
+request-supplied.
+
+N-able N-sight calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_NSIGHT_CLIENT_MAP_JSON`. The adapter uses the
+documented API-key request contract only after resolving that local map, then
+limits reads to the mapped sites and bounded device count. The API key remains
+in settings/vault and is not copied into action payloads, errors, or audit
+records. Patch approval, patch reprocessing, and allowlisted patch policy
+operations are separate technician-approved operations that require
+`WAIT_ALLOW_WRITE_ACTIONS=true`, recheck the mapped device and its patch
+inventory, and send only bounded numeric patch IDs. Script
+catalog discovery, arbitrary script execution, polling, and other writes remain
+unavailable unless a documented contract is implemented behind the same
+approval boundary. The documented `task_run_now` operation is exposed only for
+an explicitly identified automated-task check that is re-read from the mapped
+device, and it remains technician-approved and write-flag gated. The read-only
+`nsight-check-config` operation uses the documented `list_check_config` service
+only after re-reading the check from that mapped device; its XML is bounded and
+redacted before entering action output or audit data.
+The read-only `nsight-antivirus-scans` operation uses the documented
+`list_mav_scans` service only after rechecking the mapped device. Provider scan
+summaries and optional threat details are bounded and redacted before entering
+ action output or audit data; no unapproved antivirus mutation service is
+ exposed.
+The read-only `nsight-antivirus-update-history` operation uses the documented
+`list_av_history` service only after rechecking the mapped device. Check names
+are capped at 25 and dated statuses at 60 records, matching the provider's
+documented 60-day window; all values are bounded and redacted before action
+output or audit evidence.
+The read-only `nsight-software-inventory` operation uses the documented
+`list_all_software` service only after rechecking mapped-device membership and
+the asset ID returned by provider inventory. Software IDs, catalog IDs, names,
+versions, and install dates are bounded and redacted before action output or
+audit evidence; no software write or deployment service is exposed.
+The read-only `nsight-hardware-inventory` operation uses the documented
+`list_all_hardware` service only after rechecking mapped-device membership and
+the provider asset ID. Hardware IDs, names, types, manufacturers, status, and
+change flags are bounded and redacted before action output or audit evidence;
+no hardware write or deployment service is exposed.
+The read-only `nsight-antivirus-quarantine` operation uses the documented
+`mav_quarantine_list` service only after rechecking the mapped device. Quarantine
+IDs, status, event, threat, trace-count, and engine fields are bounded and
+redacted. The separate release and remove operations require technician
+approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, re-read the mapped device's
+quarantine IDs, accept at most 20 IDs, and never accept an ID absent from the
+provider result; provider failures remain explicit.
+The `nsight-antivirus-scan-start` operation is a separate high-risk action. It
+requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true`, rechecks
+mapped-device membership before calling the documented `mav_scan_start`
+service, and accepts no caller-supplied provider engine, credentials, or
+customer identifier.
+The separate `nsight-antivirus-scan-cancel` operation is also high-risk and
+requires technician approval and `WAIT_ALLOW_WRITE_ACTIONS=true` before it
+rechecks the mapped device and calls the documented `mav_scan_cancel` service.
+Provider failures, including a request to cancel a scan that is not running,
+remain explicit failures and are not converted to success.
+The separate `nsight-antivirus-scan-pause` and
+`nsight-antivirus-scan-resume` operations use the same high-risk approval,
+write-flag, and mapped-device checks before calling the documented
+`mav_scan_pause` and `mav_scan_resume` services. Provider failures remain
+explicit failed results.
+
+TimeZest calls use the same outbound HTTP gate and require a client ID that
+resolves through `WAIT_TIMEZEST_CLIENT_MAP_JSON` to exactly one documented
+Autotask or ConnectWise PSA company ID. The adapter builds the fixed company
+filter locally, rechecks the returned associated company, bounds the response,
+and keeps the bearer key out of action payloads, errors, and audit records.
+Scheduling-request creation is a separate high-risk smart action: it requires
+both HTTP probing and `WAIT_ALLOW_WRITE_ACTIONS`, a provider read/write key,
+documented allowlisted fields, a locally persisted approval, and a second
+technician/admin approval before POST. The mapped company is inserted by WAIT,
+not accepted as arbitrary caller-supplied association data. Reschedule and
+cancel operations remain unavailable because no documented provider mutation
+contract is claimed.
+
+ScalePad calls use the same outbound HTTP gate. Core client reads require a
+client ID that resolves through `WAIT_SCALEPAD_CLIENT_MAP_JSON` to exactly one
+ScalePad client ID. ControlMap risk-summary reads require a separate client ID
+mapping through `WAIT_SCALEPAD_RISK_TENANT_MAP_JSON` to exactly one documented
+`client.tenant_id`; the Core mapping is never reused implicitly. Each adapter
+sends the documented `x-api-key` header, fixes the provider filter locally,
+caps the page, rechecks returned provider scope, bounds and redacts returned
+records, and keeps the API key out of action payloads, errors, and audit
+records. Compliance-health reads use a separate explicit UUID map through
+`WAIT_SCALEPAD_COMPLIANCE_CLIENT_MAP_JSON`, validate the mapped UUID, and
+recheck a returned client identity when the provider supplies one. Core,
+ControlMap risk-summary, ControlMap compliance-health, and Lifecycle Manager
+IDs are never inferred to be interchangeable. Writes and other unscoped
+ScalePad product APIs are not inferred.
+
+ScreenConnect calls use the same outbound HTTP gate and require a client ID
+that resolves through `WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON`. Each
+mapped session ID must be an explicit UUID, and requests use only the
+documented RESTful API Manager session-detail operation or the approval-gated
+`SendCommandToSession` operation for a local catalog entry. The extension ID,
+Origin, base URL, and authentication secret are validated locally; credentials
+and session scope are never accepted in smart-action payloads. Local commands
+accept no runtime arguments and report provider acceptance; provider-native
+alerts, script discovery, and command polling remain unavailable.
 
 ## API authentication
 
@@ -29,6 +176,30 @@ Production-like local installs should set:
 WAIT_DEMO_MODE=false
 WAIT_API_TOKEN=<strong-local-token>
 ```
+
+End-user support requires a separate token and explicit fixed scope:
+
+```text
+WAIT_END_USER_SUPPORT_ENABLED=true
+WAIT_END_USER_TOKEN=<end-user-token>
+WAIT_END_USER_CLIENT_ID=<client-id>
+WAIT_END_USER_USER_ID=<requester-id>
+WAIT_END_USER_BRAND_NAME=Acme Support
+WAIT_END_USER_BRAND_TAGLINE=Help for Acme teams
+WAIT_END_USER_BRAND_ACCENT_COLOR=#123456
+WAIT_END_USER_BRAND_SURFACE_COLOR=#abcdef
+```
+
+The end-user token is not a technician or admin token. It cannot select a
+tenant in the request, invoke smart actions, or read tickets belonging to a
+different requester. Technician replies use the separate
+`/tickets/{ticket_id}/end-user-messages` operator route, require technician or
+admin authorization, retain the ticket's requester scope, and never expose the
+author identity or client ID to the end-user. End-user ticket responses contain
+only that requester's redacted subject and body plus status fields.
+`GET /end-user/config` uses the same token and fixed client/requester scope and
+returns only bounded display branding; it does not expose the client ID,
+credentials, or operator configuration.
 
 ## Secrets management
 
@@ -76,7 +247,104 @@ Every HaloPSA write follows this path:
 8. A succeeded approval cannot be executed again.
 ```
 
+Pending approval requests receive a bounded 24-hour deadline. Reading the queue
+or attempting a mutation expires overdue requests, records the expiration and a
+system actor in audit history, rejects any linked pending workflow or smart
+action run, and blocks edits, approval, and connector execution. Existing
+pending rows are assigned the same deadline during schema migration; expiration
+is intentionally not operator-disableable in this release.
+
+An agent definition may shorten that deadline for its approval-required tools;
+the override is validated, capped at 30 days, and never extends the tool-level
+approval policy.
+
+Scheduled jobs accept only validated IANA timezone names. Existing rows migrate
+to `UTC`; schedule timezones affect trigger interpretation but do not change
+tenant scope, approval policy, or connector authorization.
+
+Event-delivery retries require technician access and the original tenant scope.
+They are capped at three attempts and target only failed or dependency-blocked
+agents recorded for that delivery. Successful agent attempts are not replayed;
+retry payloads remain internal and delivery views use the existing redaction
+policy. Automatic retries run locally in bounded batches, use a 60-second
+initial delay with exponential backoff capped at one hour, and expose only the
+redacted `next_retry_at` timestamp.
+
+Workflow-template revision comparisons require viewer access and resolve both
+revisions through the same tenant-scoped gallery entry. Comparison responses
+contain only redacted stored definition fields; they do not restore, execute, or
+change a template.
+
+Workflow-run comparisons require viewer access and resolve both runs through the
+same authenticated tenant scope. Comparison responses redact run messages and
+contain only operational fields; they do not expose execution payloads or permit
+reruns, approval changes, or other mutations.
+
+Workflow-template exports are viewer-readable but omit local gallery ids,
+timestamps, and tenant identity. They apply the existing redaction policy to
+editable text. Imports require technician access, validate the artifact format
+and source template against the reviewed built-in catalog, apply the
+authenticated tenant scope, and create the copy disabled so an operator must
+review it before enabling execution. Imported artifacts cannot supply arbitrary
+tools, source metadata, or authorization scope.
+
+Execution metadata is stored through the same redacting JSON path as execution
+steps. Smart-action records may include only configured provider/model labels;
+credentials, prompts, and hidden reasoning are not added to execution metadata.
+
 Hudu is read-only in the public repo.
+
+The Syncro lookup and bounded ticket-comment-history tools are read-only, while
+`syncro-ticket-add-note` is the single explicitly allowlisted Syncro write. Both require an existing local
+ticket in the caller's tenant scope. The write requires
+`WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, and a
+completed approval request before calling the documented comment endpoint.
+Only bounded `subject`, `body`, `hidden`, and `do_not_email` fields are
+accepted; connector credentials are never accepted in tool payloads. The
+ServiceNow and Autotask agent lookup tools remain read-only and use the same
+local-ticket scope and returned-identifier checks.
+
+The IT Glue documentation tool is also read-only. It requires an explicit
+organization identifier matching the caller's tenant scope, bounds the
+organization document query and local result filter, and rejects returned
+documents that identify a different organization.
+
+Confluence and SharePoint documentation tools are read-only metadata surfaces.
+They require a space/site identifier matching the caller's tenant scope, bound
+the provider page or drive-item query, and do not return page bodies or file
+contents. Notion reads require a configured bearer token and explicit local
+client-to-page UUID map, validate mapped UUID scope before page retrieval, and
+bound search and markdown length. The separate `notion-page-comment` action
+accepts only a bounded Markdown body for a mapped page, previews locally, and
+requires technician approval plus `WAIT_ALLOW_WRITE_ACTIONS=true` before the
+provider call. The data-source query tool requires an explicit
+client-to-data-source UUID map, accepts only a bounded page size and validated
+continuation cursor, and sends no caller-supplied filter or mutation body;
+other Notion comments and page/property writes remain unavailable.
+
+The `m365-live-context` tool accepts only a fixed read-resource enum and bounded
+identity/page-size inputs. It never accepts a Graph token or tenant identifier;
+the existing configured-provider gates enforce outbound access. Message reads
+select metadata only and never return bodies, previews, or attachments, while
+all M365 mutations remain on the separate approval-draft and execution paths.
+Message moves are separately approval-gated, use only explicit
+mailbox/folder/message IDs, send only a destination folder ID to Graph, and do
+not expose send or message-content operations. Read-state changes are
+separately approval-gated, use the same explicit IDs, and send only the
+boolean `isRead` field to Graph.
+Message deletion is separately approval-gated, uses only explicit
+mailbox/folder/message IDs, sends no request body, and does not expose
+permanent deletion.
+Managed-device sync is separately approval-gated, uses only a strict device ID,
+sends no request body, and does not expose wipe or delete operations.
+Managed-device reboot follows the same approval, strict-ID, write-flag, and
+bodyless-request controls; wipe and delete operations remain unavailable.
+
+ConnectWise PSA ticket writes are restricted to three named actions and a
+closed field-to-JSON-patch map. They require HTTP probing, the global write
+flag, a persisted approval request, and explicit approval. The adapter rejects
+arbitrary endpoint paths, fields, company identifiers, and credential values;
+execution results retain only endpoint/status metadata.
 
 ## Audit trail and export
 

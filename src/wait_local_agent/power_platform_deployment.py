@@ -1,0 +1,303 @@
+"""Approval-backed, staged Power Platform solution deployment.
+
+Planning remains deterministic and side-effect free. Execution is deliberately
+separate: it accepts only a stored approval payload, invokes a fixed ``pac``
+command set without a shell, confines writes to the configured workspace, and
+returns redacted bounded output.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess  # nosec B404 - argv is fixed and shell execution is disabled below
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import cast
+from urllib.parse import urlsplit
+
+from wait_local_agent.config import Settings
+from wait_local_agent.power_platform import OpenApiDefinitionError, build_solution_command_plan
+from wait_local_agent.reports.renderers import redact_text
+
+MAX_DEPLOYMENT_TARGETS = 3
+MAX_STAGE_OUTPUT = 4_000
+MAX_COMMAND_TIMEOUT_SECONDS = 1_800.0
+_TARGET_NAMES = ("dev", "test", "prod")
+
+
+class PowerPlatformDeploymentError(ValueError):
+    """Raised when a Power Platform deployment request is unsafe or malformed."""
+
+
+CommandRunner = Callable[[list[str], Path, float], subprocess.CompletedProcess[str]]
+
+
+def build_power_platform_deployment_plan(
+    *,
+    solution_name: str,
+    publisher_name: str,
+    publisher_prefix: str,
+    output_directory: str,
+    deployment_targets: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Build a staged plan without invoking ``pac`` or touching the filesystem."""
+
+    try:
+        base = build_solution_command_plan(
+            solution_name,
+            publisher_name,
+            publisher_prefix,
+            output_directory,
+        )
+    except OpenApiDefinitionError as exc:
+        raise PowerPlatformDeploymentError(str(exc)) from exc
+    targets = _targets(deployment_targets)
+    commands = cast(list[list[str]], base["commands"])
+    zipfile = f"{output_directory.rstrip('/')}/{base['solution_name']}.zip"
+    stages: list[dict[str, object]] = [
+        {
+            "id": "build",
+            "name": "Build and solution checker",
+            "commands": commands,
+            "approval_required": True,
+            "deployment_started": False,
+        }
+    ]
+    for target in targets:
+        name = cast(str, target["name"])
+        stages.append(
+            {
+                "id": name,
+                "name": f"Import solution into {name.upper()}",
+                "commands": [[
+                    "pac",
+                    "solution",
+                    "import",
+                    "--path",
+                    zipfile,
+                    "--environment",
+                    cast(str, target["environment_url"]),
+                ]],
+                "approval_required": True,
+                "deployment_started": True,
+            }
+        )
+    return {
+        "format": "wait-local-agent.power-platform.deployment-plan",
+        "format_version": 1,
+        "solution": {
+            "name": base["solution_name"],
+            "publisher_name": base["publisher_name"],
+            "publisher_prefix": base["publisher_prefix"],
+            "output_directory": base["output_directory"],
+        },
+        "deployment_targets": targets,
+        "stages": stages,
+        "credentials_included": False,
+        "approval_required_for_every_stage": True,
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
+def build_power_platform_deployment_plan_from_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Rebuild a canonical plan from the minimal approval payload."""
+
+    required_text = ("solution_name", "publisher_name", "publisher_prefix", "output_directory")
+    values: dict[str, str] = {}
+    for field in required_text:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            raise PowerPlatformDeploymentError(f"approval payload field {field} is invalid")
+        values[field] = value
+    targets = payload.get("deployment_targets")
+    if not isinstance(targets, list) or any(not isinstance(item, Mapping) for item in targets):
+        raise PowerPlatformDeploymentError("approval payload deployment_targets is invalid")
+    return build_power_platform_deployment_plan(
+        **values,
+        deployment_targets=cast(Sequence[Mapping[str, object]], targets),
+    )
+
+
+def execute_power_platform_stage(
+    plan: Mapping[str, object],
+    stage_id: str,
+    settings: Settings,
+    *,
+    approved: bool,
+    runner: CommandRunner | None = None,
+) -> dict[str, object]:
+    """Execute one approved stage using a fixed, shell-free ``pac`` invocation."""
+
+    if not approved:
+        return _blocked(stage_id, "Power Platform execution requires a completed approval.")
+    if not settings.allow_write_actions:
+        return _blocked(stage_id, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
+    if not settings.allow_power_platform_deployment:
+        return _blocked(
+            stage_id,
+            "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.",
+        )
+    if plan.get("credentials_included") is True:
+        return _blocked(stage_id, "Power Platform deployment plans must not contain credentials.")
+    try:
+        stage = _stage(plan, stage_id)
+        workspace, output_directory = _execution_paths(plan, settings)
+        pac = shutil.which("pac")
+        if not pac:
+            return _blocked(stage_id, "The pac executable is not available on the local PATH.")
+    except PowerPlatformDeploymentError as exc:
+        return _blocked(stage_id, str(exc))
+
+    run = runner or _run_command
+    commands = cast(list[object], stage["commands"])
+    results: list[dict[str, object]] = []
+    timeout = min(max(float(settings.power_platform_command_timeout_seconds), 1.0), MAX_COMMAND_TIMEOUT_SECONDS)
+    for raw_command in commands:
+        if not isinstance(raw_command, list) or not all(isinstance(item, str) for item in raw_command):
+            return _failed(stage_id, "Power Platform stage contains an invalid command.", results)
+        if not raw_command or raw_command[0] != "pac":
+            return _failed(stage_id, "Power Platform stage contains a non-canonical command.", results)
+        command = [pac, *raw_command[1:]]
+        try:
+            completed = run(command, workspace, timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(stage_id, "Power Platform command timed out.", results)
+        except OSError:
+            return _failed(stage_id, "Power Platform command could not be started.", results)
+        command_result = {
+            "command": [redact_text(item) for item in command[:4]],
+            "return_code": completed.returncode,
+            "stdout": _bounded_output(completed.stdout),
+            "stderr": _bounded_output(completed.stderr),
+        }
+        results.append(command_result)
+        if completed.returncode != 0:
+            return _failed(stage_id, "Power Platform command failed.", results)
+    return {
+        "format": "wait-local-agent.power-platform.stage-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "succeeded",
+        "message": f"Power Platform stage {stage_id} completed.",
+        "commands": results,
+        "execution_started": True,
+        "deployment_started": bool(stage.get("deployment_started")),
+    }
+
+
+def _targets(value: Sequence[Mapping[str, object]]) -> list[dict[str, str]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise PowerPlatformDeploymentError("deployment_targets must be an array")
+    if not 1 <= len(value) <= MAX_DEPLOYMENT_TARGETS:
+        raise PowerPlatformDeploymentError(f"deployment_targets must contain 1-{MAX_DEPLOYMENT_TARGETS} items")
+    result: list[dict[str, str]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            raise PowerPlatformDeploymentError("deployment targets must contain objects")
+        name = raw.get("name")
+        if name != _TARGET_NAMES[index]:
+            raise PowerPlatformDeploymentError(
+                f"deployment targets must be ordered as {_TARGET_NAMES[:len(value)]}"
+            )
+        environment_url = raw.get("environment_url")
+        if not isinstance(environment_url, str) or not _safe_environment_url(environment_url):
+            raise PowerPlatformDeploymentError(f"{name}.environment_url must be a safe HTTPS URL")
+        result.append({"name": name, "environment_url": environment_url.strip()})
+    return result
+
+
+def _safe_environment_url(value: str) -> bool:
+    if len(value.strip()) > 253 or any(ord(char) < 32 for char in value):
+        return False
+    parsed = urlsplit(value.strip())
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.netloc)
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _stage(plan: Mapping[str, object], stage_id: str) -> Mapping[str, object]:
+    if not isinstance(stage_id, str) or stage_id not in {"build", "dev", "test", "prod"}:
+        raise PowerPlatformDeploymentError("stage_id must be build, dev, test, or prod")
+    stages = plan.get("stages")
+    if not isinstance(stages, list):
+        raise PowerPlatformDeploymentError("deployment plan stages are missing")
+    for stage in stages:
+        if isinstance(stage, Mapping) and stage.get("id") == stage_id:
+            return stage
+    raise PowerPlatformDeploymentError(f"stage is not present in the deployment plan: {stage_id}")
+
+
+def _execution_paths(plan: Mapping[str, object], settings: Settings) -> tuple[Path, Path]:
+    solution = plan.get("solution")
+    if not isinstance(solution, Mapping):
+        raise PowerPlatformDeploymentError("deployment plan solution is missing")
+    raw_output = solution.get("output_directory")
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        raise PowerPlatformDeploymentError("deployment output directory is missing")
+    workspace = settings.power_platform_workspace.expanduser().resolve()
+    output = Path(raw_output).expanduser().resolve()
+    if workspace == output or workspace not in output.parents:
+        raise PowerPlatformDeploymentError("deployment output directory must be inside WAIT_POWER_PLATFORM_WORKSPACE")
+    if not workspace.is_dir():
+        raise PowerPlatformDeploymentError("WAIT_POWER_PLATFORM_WORKSPACE must already exist")
+    if not output.exists() and output.parent != workspace and not output.parent.is_dir():
+        raise PowerPlatformDeploymentError("deployment output parent must already exist")
+    return workspace, output
+
+
+def _run_command(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # nosec B603 - command is fixed and validated before execution
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        shell=False,
+    )
+
+
+def _bounded_output(value: str | None) -> str:
+    return redact_text((value or "")[:MAX_STAGE_OUTPUT])
+
+
+def _blocked(stage_id: str, message: str) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.power-platform.stage-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "blocked",
+        "message": message,
+        "commands": [],
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
+def _failed(stage_id: str, message: str, commands: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.power-platform.stage-result",
+        "format_version": 1,
+        "stage_id": stage_id,
+        "status": "failed",
+        "message": message,
+        "commands": commands,
+        "execution_started": bool(commands),
+        "deployment_started": stage_id != "build" and bool(commands),
+    }
+
+
+__all__ = [
+    "PowerPlatformDeploymentError",
+    "build_power_platform_deployment_plan",
+    "build_power_platform_deployment_plan_from_payload",
+    "execute_power_platform_stage",
+]

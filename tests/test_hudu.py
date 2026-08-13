@@ -5,6 +5,7 @@ from dataclasses import replace
 import httpx
 
 from wait_local_agent.hudu import (
+    MAX_ARTICLE_CONTENT_LENGTH,
     HuduClient,
     _api_base_url,
     _normalize_article,
@@ -13,6 +14,7 @@ from wait_local_agent.hudu import (
     _payload_rows,
     _safe_endpoint,
 )
+from wait_local_agent.models import HuduArticle
 
 
 def test_hudu_reads_block_without_http_flag(settings) -> None:
@@ -69,7 +71,13 @@ def test_hudu_reads_send_api_key_and_normalize_payloads(settings) -> None:
         if request.url.path.endswith("/articles/7"):
             return httpx.Response(
                 200,
-                json={"id": 7, "name": "Runbook", "company_id": 1, "folder_id": 2},
+                json={
+                    "id": 7,
+                    "name": "Runbook",
+                    "company_id": 1,
+                    "folder_id": 2,
+                    "content": "token=do-not-return",
+                },
             )
         return httpx.Response(200, json={"folders": [{"id": 2, "name": "Ops"}]})
 
@@ -80,7 +88,10 @@ def test_hudu_reads_send_api_key_and_normalize_payloads(settings) -> None:
     folders = client.list_folders(company_id="1")
 
     assert companies.items[0].name == "Contoso"
-    assert article.items[0].id == "7"
+    article_item = article.items[0]
+    assert isinstance(article_item, HuduArticle)
+    assert article_item.id == "7"
+    assert article_item.content == "token=do-not-return"
     assert folders.items[0].name == "Ops"
     assert requests[0].headers["x-api-key"] == "api-key"
     assert requests[0].url.path == "/api/v1/companies"
@@ -159,3 +170,16 @@ def test_hudu_timeout_and_helper_edges(settings) -> None:
     assert company.archived is True
     assert _normalize_article({}) is None
     assert _normalize_folder({}) is None
+
+
+def test_hudu_article_content_is_bounded() -> None:
+    article = _normalize_article({"id": "7", "content": "x" * (MAX_ARTICLE_CONTENT_LENGTH + 1)})
+    body_article = _normalize_article({"id": "8", "body": "body content"})
+    empty_article = _normalize_article({"id": "9"})
+
+    assert article is not None
+    assert len(article.content) == MAX_ARTICLE_CONTENT_LENGTH
+    assert body_article is not None
+    assert body_article.content == "body content"
+    assert empty_article is not None
+    assert empty_article.content == ""

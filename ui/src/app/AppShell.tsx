@@ -11,6 +11,7 @@ export function AppShell() {
     clearApiToken,
     refresh,
     role,
+    roleResolved,
     writeHealth,
     liveWritesReady,
     statusMessage,
@@ -31,23 +32,29 @@ export function AppShell() {
               <RefreshCw size={17} aria-hidden="true" />
               Refresh
             </button>
-            <label className="token-input">
-              <span className="sr-only">API token</span>
-              <input
-                type="password"
-                placeholder="Bearer token"
-                value={apiToken}
-                onChange={(event) => setApiToken(event.target.value)}
-              />
-            </label>
-            <button className="icon-button" type="button" onClick={() => void saveApiToken()}>
-              <KeyRound size={17} aria-hidden="true" />
-              Save Token
-            </button>
+            <form className="token-form" onSubmit={(event) => {
+              event.preventDefault();
+              void saveApiToken();
+            }}>
+              <label className="token-input">
+                <span className="sr-only">API token</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Bearer token"
+                  value={apiToken}
+                  onChange={(event) => setApiToken(event.target.value)}
+                />
+              </label>
+              <button className="icon-button" type="submit">
+                <KeyRound size={17} aria-hidden="true" />
+                Save Token
+              </button>
+            </form>
             <button className="icon-button" type="button" onClick={() => void clearApiToken()}>
               Clear Token
             </button>
-            <div className="status-pill">Role: {role}</div>
+            <div className="status-pill">Role: {roleResolved ? role : "checking access"}</div>
             <div className={`status-pill ${liveWritesReady ? "" : "danger"}`}>
               {liveWritesReady ? (
                 <CheckCircle2 size={18} aria-hidden="true" />

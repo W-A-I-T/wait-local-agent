@@ -12,6 +12,7 @@ from wait_local_agent.config import Settings
 
 
 class Role(IntEnum):
+    END_USER = 0
     VIEWER = 1
     TECHNICIAN = 2
     ADMIN = 3
@@ -24,6 +25,8 @@ class Role(IntEnum):
 class AuthContext:
     role: Role
     presented_token: str | None
+    client_id: str | None = None
+    principal_id: str | None = None
 
     @property
     def approver_id(self) -> str | None:
@@ -38,14 +41,25 @@ def tokens_configured(settings: Settings) -> bool:
         or settings.admin_token
         or settings.tech_token
         or settings.viewer_token
+        or (settings.end_user_support_enabled and settings.end_user_token)
     )
 
 
 def resolve_auth_context(settings: Settings, authorization: str | None) -> AuthContext:
+    client_id = settings.client_id.strip() or None
     if not tokens_configured(settings) or settings.demo_mode:
-        return AuthContext(role=Role.ADMIN, presented_token=None)
+        return AuthContext(role=Role.ADMIN, presented_token=None, client_id=client_id)
 
     token = _extract_bearer_token(authorization)
+    if settings.end_user_support_enabled and settings.end_user_token and compare_digest(
+        token, settings.end_user_token
+    ):
+        return AuthContext(
+            role=Role.END_USER,
+            presented_token=token,
+            client_id=settings.end_user_client_id.strip() or None,
+            principal_id=settings.end_user_user_id.strip() or None,
+        )
     for candidate, role in (
         (settings.api_token, Role.ADMIN),
         (settings.admin_token, Role.ADMIN),
@@ -53,8 +67,15 @@ def resolve_auth_context(settings: Settings, authorization: str | None) -> AuthC
         (settings.viewer_token, Role.VIEWER),
     ):
         if candidate and compare_digest(token, candidate):
-            return AuthContext(role=role, presented_token=token)
+            return AuthContext(role=role, presented_token=token, client_id=client_id)
     raise _unauthorized("invalid bearer token")
+
+
+def require_end_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthContext:
+    context = resolve_auth_context(request.app.state.settings, authorization)
+    if context.role != Role.END_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="end-user access required")
+    return context
 
 
 def require_role(minimum: Role):
