@@ -21,8 +21,6 @@ SUPPORTED_REMOTE_MODEL_PROVIDERS = {
     "co" + "dex",
     "openai-compatible",
 }
-PROVIDER_CONFIGURATION_SCOPE = "appliance-wide"
-PROVIDER_REQUEST_CONTEXT_SCOPE = "tenant-scoped"
 _REMOTE_CONTEXT_LIMIT = 2_000
 _REMOTE_SOURCE_LIMIT = 800
 _MODEL_MAX_ATTEMPTS = 3
@@ -1106,11 +1104,7 @@ def _local_provider_health(
     transport: httpx.BaseTransport | None,
 ) -> dict[str, object]:
     provider = settings.local_model_provider.strip().lower() or "deterministic"
-    base = {
-        "provider": provider,
-        "model": settings.local_model_name,
-        "scope": PROVIDER_CONFIGURATION_SCOPE,
-    }
+    base = {"provider": provider, "model": settings.local_model_name}
     if not settings.allow_llm_inference or provider not in SUPPORTED_LOCAL_MODEL_PROVIDERS:
         return {**base, "status": "ready", "probe": "not_required", "detail": "deterministic local mode"}
     return _probe_models_endpoint(
@@ -1135,11 +1129,7 @@ def _remote_provider_health(
         and settings.remote_model_name.strip()
         and settings.remote_model_api_key.strip()
     )
-    base = {
-        "provider": provider or None,
-        "model": settings.remote_model_name or None,
-        "scope": PROVIDER_CONFIGURATION_SCOPE,
-    }
+    base = {"provider": provider or None, "model": settings.remote_model_name or None}
     if not configured:
         return {**base, "status": "not_configured", "probe": "not_run"}
     if settings.offline_mode:
@@ -1173,13 +1163,8 @@ def _probe_models_endpoint(
     headers: dict[str, str],
     transport: httpx.BaseTransport | None,
 ) -> dict[str, object]:
-    base = {
-        "provider": provider,
-        "model": model,
-        "scope": PROVIDER_CONFIGURATION_SCOPE,
-    }
     if not base_url.strip():
-        return {**base, "status": "not_configured", "probe": "not_run"}
+        return {"provider": provider, "model": model, "status": "not_configured", "probe": "not_run"}
     try:
         with httpx.Client(timeout=timeout_seconds, transport=transport, headers=headers) as client:
             response = client.get(f"{base_url.rstrip('/')}/models")
@@ -1187,7 +1172,8 @@ def _probe_models_endpoint(
             payload = response.json()
     except (httpx.HTTPError, ValueError):
         return {
-            **base,
+            "provider": provider,
+            "model": model,
             "status": "unavailable",
             "probe": "models",
             "model_available": None,
@@ -1195,7 +1181,8 @@ def _probe_models_endpoint(
     models = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(models, list):
         return {
-            **base,
+            "provider": provider,
+            "model": model,
             "status": "malformed_response",
             "probe": "models",
             "model_available": None,
@@ -1207,7 +1194,8 @@ def _probe_models_endpoint(
     }
     available = model in model_ids
     return {
-        **base,
+        "provider": provider,
+        "model": model,
         "status": "ready" if available else "model_unavailable",
         "probe": "models",
         "model_available": available,
@@ -1243,19 +1231,12 @@ def provider_metadata(settings: Settings, provider: ModelProvider | None = None)
     metadata: dict[str, object] = {
         "provider": settings.local_model_provider or "deterministic",
         "model": settings.local_model_name,
-        "scope": PROVIDER_CONFIGURATION_SCOPE,
-        "context_scope": PROVIDER_REQUEST_CONTEXT_SCOPE,
     }
     if isinstance(provider, FallbackModelProvider):
         metadata["fallback_provider"] = provider.fallback.profile.provider
         metadata["fallback_model"] = provider.fallback.profile.model
     elif isinstance(provider, RemoteModelProvider):
-        metadata = {
-            "provider": provider.profile.provider,
-            "model": provider.profile.model,
-            "scope": PROVIDER_CONFIGURATION_SCOPE,
-            "context_scope": PROVIDER_REQUEST_CONTEXT_SCOPE,
-        }
+        metadata = {"provider": provider.profile.provider, "model": provider.profile.model}
     call_metadata = _provider_call_metadata(provider)
     if call_metadata is not None:
         metadata.update(call_metadata)
