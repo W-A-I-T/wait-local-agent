@@ -4380,7 +4380,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, None)
         if scoped_client_id is None:
-            raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+            if context.role < Role.ADMIN:
+                raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+            existing = store.get_msp_playbook_subscription(subscription_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
+            scoped_client_id = existing.client_id
         try:
             subscription = update_msp_playbook_subscription(
                 store,
