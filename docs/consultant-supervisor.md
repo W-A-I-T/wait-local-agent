@@ -21,6 +21,11 @@ the selected children, and assigns a bounded task/result contract. Child
 agents receive only the tenant identifier, bounded supervisor task, and
 structured results from completed dependencies.
 
+Supervisor depth is explicitly one layer (`max_depth: 1`) and recursion is
+disabled. There is no child-agent self-spawn or supervisor tool in the
+delegated tool contract; selecting a child always names an existing persisted
+agent definition and keeps execution inside the existing `AgentService`.
+
 The run endpoint/command executes the explicitly selected children in
 dependency order through the existing `AgentService`. Each child run is
 persisted and audited using the existing runtime; approval-required children
