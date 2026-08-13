@@ -40,6 +40,8 @@ from wait_local_agent.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
+    MspPlaybookEntry,
+    MspPlaybookRevision,
     RestoreExercise,
     RmmExecutionScope,
     ScheduledJob,
@@ -396,6 +398,34 @@ class Store:
                     created_at text not null,
                     client_id text,
                     unique(gallery_id, version)
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists msp_playbook_entries (
+                    id text primary key,
+                    source_playbook_id text not null,
+                    definition_json text not null,
+                    provenance text not null,
+                    enabled integer not null default 1,
+                    version integer not null default 1,
+                    created_at text not null,
+                    updated_at text not null,
+                    client_id text
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists msp_playbook_revisions (
+                    id integer primary key autoincrement,
+                    playbook_id text not null,
+                    version integer not null,
+                    snapshot_json text not null,
+                    created_at text not null,
+                    client_id text,
+                    unique(playbook_id, version)
                 )
                 """
             )
@@ -3248,6 +3278,245 @@ class Store:
             instructions=_gallery_string_or_none(definition.get("instructions")),
             enabled=enabled_value if isinstance(enabled_value, bool) else None,
             definition=safe_workflow_definition,
+            client_id=existing.client_id,
+        )
+
+    def create_msp_playbook_entry(
+        self,
+        source_playbook_id: str,
+        definition: dict[str, object],
+        *,
+        provenance: str,
+        client_id: str | None = None,
+        enabled: bool = True,
+        entry_id: str | None = None,
+    ) -> MspPlaybookEntry:
+        safe_source = _gallery_text(source_playbook_id, field="source_playbook_id", limit=120)
+        safe_provenance = _gallery_text(provenance, field="provenance", limit=1000)
+        safe_definition = _json_dumps_value(definition)
+        normalized_client_id = _normalize_client_id(client_id)
+        new_entry_id = entry_id or f"msp-playbook-{uuid.uuid4().hex}"
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into msp_playbook_entries
+                  (id, source_playbook_id, definition_json, provenance, enabled,
+                   version, created_at, updated_at, client_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_entry_id,
+                    safe_source,
+                    safe_definition,
+                    safe_provenance,
+                    int(enabled),
+                    1,
+                    now,
+                    now,
+                    normalized_client_id,
+                ),
+            )
+            self._insert_msp_playbook_revision(
+                connection,
+                new_entry_id,
+                1,
+                _msp_playbook_snapshot_json(safe_definition, safe_provenance, enabled),
+                now,
+                normalized_client_id,
+            )
+            self._add_audit_event(
+                connection,
+                "msp.playbook_entry.created",
+                new_entry_id,
+                f"source {safe_source} added as MSP playbook version 1",
+                client_id=normalized_client_id,
+            )
+        entry = self.get_msp_playbook_entry(new_entry_id, normalized_client_id)
+        if entry is None:
+            raise RuntimeError("MSP playbook entry was not persisted")  # pragma: no cover
+        return entry
+
+    def get_msp_playbook_entry(
+        self,
+        entry_id: str,
+        client_id: str | None = None,
+    ) -> MspPlaybookEntry | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                row = connection.execute(
+                    "select * from msp_playbook_entries where id = ?", (entry_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from msp_playbook_entries
+                    where id = ? and client_id = ?
+                    """,
+                    (entry_id, normalized_client_id),
+                ).fetchone()
+        return _msp_playbook_entry_from_row(row) if row else None
+
+    def list_msp_playbook_entries(
+        self,
+        client_id: str | None = None,
+    ) -> list[MspPlaybookEntry]:
+        normalized_client_id = _normalize_client_id(client_id)
+        with self._connect() as connection:
+            if normalized_client_id is None:
+                rows = connection.execute(
+                    "select * from msp_playbook_entries order by source_playbook_id, id"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select * from msp_playbook_entries
+                    where client_id = ? order by source_playbook_id, id
+                    """,
+                    (normalized_client_id,),
+                ).fetchall()
+        return [_msp_playbook_entry_from_row(row) for row in rows]
+
+    def update_msp_playbook_entry(
+        self,
+        entry_id: str,
+        *,
+        definition: dict[str, object] | None = None,
+        provenance: str | None = None,
+        enabled: bool | None = None,
+        client_id: str | None = None,
+    ) -> MspPlaybookEntry:
+        existing = self.get_msp_playbook_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        next_definition = (
+            existing.definition_json if definition is None else _json_dumps_value(definition)
+        )
+        next_provenance = (
+            existing.provenance
+            if provenance is None
+            else _gallery_text(provenance, field="provenance", limit=1000)
+        )
+        next_enabled = existing.enabled if enabled is None else bool(enabled)
+        if (
+            next_definition == existing.definition_json
+            and next_provenance == existing.provenance
+            and next_enabled == existing.enabled
+        ):
+            return existing
+        next_version = existing.version + 1
+        now = utc_now()
+        normalized_client_id = _normalize_client_id(existing.client_id)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update msp_playbook_entries
+                set definition_json = ?, provenance = ?, enabled = ?, version = ?, updated_at = ?
+                where id = ?
+                """,
+                (next_definition, next_provenance, int(next_enabled), next_version, now, entry_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(entry_id)  # pragma: no cover
+            self._insert_msp_playbook_revision(
+                connection,
+                entry_id,
+                next_version,
+                _msp_playbook_snapshot_json(next_definition, next_provenance, next_enabled),
+                now,
+                normalized_client_id,
+            )
+            self._add_audit_event(
+                connection,
+                "msp.playbook_entry.updated",
+                entry_id,
+                f"MSP playbook updated to version {next_version}",
+                client_id=normalized_client_id,
+            )
+        updated = self.get_msp_playbook_entry(entry_id, normalized_client_id)
+        if updated is None:
+            raise RuntimeError("MSP playbook entry was not persisted")  # pragma: no cover
+        return updated
+
+    @staticmethod
+    def _insert_msp_playbook_revision(
+        connection: sqlite3.Connection,
+        playbook_id: str,
+        version: int,
+        snapshot_json: str,
+        created_at: str,
+        client_id: str | None,
+    ) -> None:
+        connection.execute(
+            """
+            insert into msp_playbook_revisions
+              (playbook_id, version, snapshot_json, created_at, client_id)
+            values (?, ?, ?, ?, ?)
+            """,
+            (playbook_id, version, snapshot_json, created_at, _normalize_client_id(client_id)),
+        )
+
+    def get_msp_playbook_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> MspPlaybookRevision | None:
+        entry = self.get_msp_playbook_entry(entry_id, client_id)
+        if entry is None:
+            return None  # pragma: no cover
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from msp_playbook_revisions
+                where playbook_id = ? and version = ?
+                """,
+                (entry_id, version),
+            ).fetchone()
+        return _msp_playbook_revision_from_row(row) if row else None
+
+    def list_msp_playbook_revisions(
+        self,
+        entry_id: str,
+        client_id: str | None = None,
+    ) -> list[MspPlaybookRevision]:
+        entry = self.get_msp_playbook_entry(entry_id, client_id)
+        if entry is None:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from msp_playbook_revisions
+                where playbook_id = ? order by version desc
+                """,
+                (entry_id,),
+            ).fetchall()
+        return [_msp_playbook_revision_from_row(row) for row in rows]
+
+    def restore_msp_playbook_revision(
+        self,
+        entry_id: str,
+        version: int,
+        client_id: str | None = None,
+    ) -> MspPlaybookEntry:
+        existing = self.get_msp_playbook_entry(entry_id, client_id)
+        if existing is None:
+            raise KeyError(entry_id)
+        revision = self.get_msp_playbook_revision(entry_id, version, existing.client_id)
+        if revision is None:
+            raise KeyError(f"{entry_id}:{version}")
+        snapshot = _json_object_or_empty(revision.snapshot_json)
+        definition = snapshot.get("definition")
+        if not isinstance(definition, dict):
+            raise ValueError("MSP playbook revision has no definition")  # pragma: no cover
+        provenance = snapshot.get("provenance")
+        enabled = snapshot.get("enabled")
+        return self.update_msp_playbook_entry(
+            entry_id,
+            definition=definition,
+            provenance=provenance if isinstance(provenance, str) else None,
+            enabled=enabled if isinstance(enabled, bool) else None,
             client_id=existing.client_id,
         )
 
@@ -6265,6 +6534,32 @@ def _template_gallery_revision_from_row(row: sqlite3.Row) -> TemplateGalleryRevi
     payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     return TemplateGalleryRevision(**payload)
+
+
+def _msp_playbook_entry_from_row(row: sqlite3.Row) -> MspPlaybookEntry:
+    payload = dict(row)
+    payload["definition_json"] = _redact_json_text(str(payload["definition_json"]))
+    payload["provenance"] = _redact_text(str(payload["provenance"]))
+    payload["enabled"] = bool(payload["enabled"])
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return MspPlaybookEntry(**payload)
+
+
+def _msp_playbook_revision_from_row(row: sqlite3.Row) -> MspPlaybookRevision:
+    payload = dict(row)
+    payload["snapshot_json"] = _redact_json_text(str(payload["snapshot_json"]))
+    payload["client_id"] = _normalize_client_id(payload.get("client_id"))
+    return MspPlaybookRevision(**payload)
+
+
+def _msp_playbook_snapshot_json(definition_json: str, provenance: str, enabled: bool) -> str:
+    return _json_dumps_value(
+        {
+            "definition": _json_object_or_empty(definition_json),
+            "provenance": provenance,
+            "enabled": enabled,
+        }
+    )
 
 
 def _template_gallery_definition_json(

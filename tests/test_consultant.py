@@ -9,6 +9,7 @@ import pytest
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     _decision_for_component,
+    _matching_environment,
     architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
@@ -105,6 +106,76 @@ def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets()
     with pytest.raises(BlueprintValidationError, match="secret material"):
         parse_solution_blueprint(
             {**_payload(), "discovery": {"users": ["api_key"]}},
+            client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_blueprint_normalizes_optional_or_duplicate_environment_evidence() -> None:
+    candidate = {
+        **_payload(),
+        "approvals": {"Assign license": "IT"},
+        "environment": [
+            {"id": "m365", "name": "Microsoft 365", "status": "configured", "kind": "m365"},
+            {"id": "m365", "name": "Microsoft 365", "status": "detected", "kind": "graph"},
+            {"id": "m365", "name": "Microsoft 365", "status": "detected", "kind": "graph"},
+        ],
+    }
+    blueprint = promote_discovery_candidate(
+        candidate,
+        client_id="acme",
+        solution_name="Onboarding",
+        risk="medium",
+        created_by="architect",
+    )
+
+    assert [item["id"] for item in blueprint.environment] == ["m365", "microsoft-365", "microsoft-365-2"]
+
+
+def test_blueprint_handles_optional_or_nonmatching_environment_values() -> None:
+    assert _matching_environment("m365", [{"name": None, "connector_id": "m365"}]) == {
+        "name": None,
+        "connector_id": "m365",
+    }
+    with pytest.raises(BlueprintValidationError, match="environment must be an array"):
+        promote_discovery_candidate(
+            {**_payload(), "approvals": {"Assign license": "IT"}, "environment": None},
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+    with pytest.raises(BlueprintValidationError, match=r"environment\[0\] must be an object"):
+        promote_discovery_candidate(
+            {**_payload(), "approvals": {"Assign license": "IT"}, "environment": [None]},
+            client_id="acme",
+            solution_name="Onboarding",
+            risk="medium",
+            created_by="architect",
+        )
+
+
+def test_blueprint_accepts_null_orchestration() -> None:
+    blueprint = parse_solution_blueprint(
+        {**_payload(), "orchestration": None},
+        client_id="acme",
+        created_by="architect",
+    )
+    assert blueprint.orchestration == ""
+
+
+@pytest.mark.parametrize(
+    ("discovery", "message"),
+    [
+        ([], "discovery must be an object"),
+        ({"owners": ["token=secret"]}, "discovery evidence cannot contain secret material"),
+        ({"data_leaves_tenant": "unknown"}, "discovery.data_leaves_tenant must be boolean"),
+    ],
+)
+def test_blueprint_rejects_malformed_discovery_evidence(discovery: object, message: str) -> None:
+    with pytest.raises(BlueprintValidationError, match=message):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": discovery},
             client_id="acme",
             created_by="architect",
         )
