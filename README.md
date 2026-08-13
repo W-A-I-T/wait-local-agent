@@ -8,7 +8,7 @@
 
 **WAIT AI Solutions Architect** turns business requirements into provider-neutral solution blueprints, projects them onto available WAIT-native and external implementation targets, and uses this runtime to safely orchestrate and govern execution. MSP operations remains an important vertical, not the platform's only identity.
 
-See the [capability roadmap](ROADMAP.md), [enterprise validation matrix](docs/enterprise-validation-matrix.md), and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first capabilities, release gates, and deferred work.
+See the [capability roadmap](ROADMAP.md), [enterprise validation matrix](docs/enterprise-validation-matrix.md), and [NeoAgent parity matrix](docs/neoagent-parity-matrix.md) for the honest status of local-first capabilities, release gates, and deferred work. The parity matrix is an MSP Operations capability comparison, not the master product roadmap.
 
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 

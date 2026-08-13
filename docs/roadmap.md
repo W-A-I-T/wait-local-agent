@@ -1,14 +1,20 @@
-# Roadmap
+# Historical Phase Roadmap
 
-WAIT Local Agent is the local-first MSP automation appliance: private ticket
-intelligence, cited local knowledge, HaloPSA-first workflow drafts, technician
-approval, and auditable local execution.
+This file preserves the original phased implementation plan for historical
+context. The authoritative product roadmap is the root [`ROADMAP.md`](../ROADMAP.md),
+which covers WAIT AI Solutions Architect, the shared local-first runtime,
+Microsoft/Power Platform, and the MSP Operations vertical together.
+
+WAIT Local Agent is the local-first execution, orchestration, connector,
+approval, policy, evidence, audit, and governance runtime underneath WAIT AI
+Solutions Architect. The phase list below is not a current capability
+inventory.
 
 ## Current verified state
 
 The phase list below is retained as historical planning context; it is not a
 current capability inventory. For current behavior, use
-[`docs/status.md`](status.md) and the clean-room
+[`docs/status.md`](status.md), the root roadmap, and the clean-room
 [`docs/neoagent-parity-matrix.md`](neoagent-parity-matrix.md). The public core
 now includes bounded agent planning/execution, tenant-scoped approvals and
 retries, HaloPSA and ConnectWise governed writes, bounded NinjaOne/Datto/RMM
