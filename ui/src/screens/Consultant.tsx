@@ -485,6 +485,35 @@ export function Consultant() {
             <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · deployable package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
           </div>
         ) : null}
+        {employeeOnboardingDemo?.stages.artifacts.delivery_bundle ? (
+          <div className="panel-subsection" aria-label="Consultant delivery handoff">
+            <div className="panel-heading">
+              <div>
+                <h3>Delivery handoff</h3>
+                <p className="screen-note">A deterministic, redacted review bundle is ready for operator handoff.</p>
+              </div>
+              <StatusChip status="evidence_partial" />
+            </div>
+            <p>
+              <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")} · deployable: {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployable ? "yes" : "no"}.
+            </p>
+            {employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest ? (
+              <p className="screen-note">Bundle digest: <code>{employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest}</code></p>
+            ) : null}
+            <details>
+              <summary>Review bundle files and open items</summary>
+              <ul>
+                {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.map((file) => (
+                  <li key={file.path}><code>{file.path}</code> · {file.digest}</li>
+                ))}
+              </ul>
+              <p><strong>Still required before any deployment:</strong></p>
+              <ul>
+                {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.open_items.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </details>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
