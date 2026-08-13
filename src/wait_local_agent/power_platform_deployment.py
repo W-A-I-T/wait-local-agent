@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import stat
 import subprocess  # nosec B404 - argv is fixed and shell execution is disabled below
+import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -25,6 +27,7 @@ MAX_DEPLOYMENT_TARGETS = 3
 MAX_STAGE_OUTPUT = 4_000
 MAX_COMMAND_TIMEOUT_SECONDS = 1_800.0
 MAX_ARTIFACT_BYTES = 500_000_000
+MAX_ARTIFACT_ENTRIES = 4_096
 _TARGET_NAMES = ("dev", "test", "prod")
 _PROMOTION_SOURCE_STAGES: dict[str, str | None] = {
     "build": None,
@@ -460,17 +463,77 @@ def _artifact_digest(plan: Mapping[str, object], workspace: Path, output_directo
     if not isinstance(name, str) or not name:
         return None
     artifact = (output_directory / f"{name}.zip").resolve()
-    if workspace == artifact or workspace not in artifact.parents or not artifact.is_file():
+    try:
+        return validate_power_platform_solution_package(artifact, workspace)
+    except PowerPlatformDeploymentError:
         return None
+
+
+def validate_power_platform_solution_package(
+    artifact_path: str | Path,
+    workspace: str | Path,
+) -> str:
+    """Validate a PAC solution archive before treating its digest as evidence.
+
+    PAC execution is allowed to write only inside the configured workspace. The
+    resulting file must also be a bounded, readable ZIP with no traversal,
+    duplicate, encrypted, or symlink members. The returned digest is computed
+    only after those checks pass, so a stage cannot report a successful package
+    merely because an arbitrary file has the expected name.
+    """
+
+    workspace_path = Path(workspace).expanduser().resolve()
+    artifact = Path(artifact_path).expanduser().resolve()
+    if workspace_path == artifact or workspace_path not in artifact.parents:
+        raise PowerPlatformDeploymentError("solution artifact must be inside WAIT_POWER_PLATFORM_WORKSPACE")
+    if artifact.is_symlink() or not artifact.is_file():
+        raise PowerPlatformDeploymentError("solution artifact is missing or is not a regular file")
     try:
         if artifact.stat().st_size > MAX_ARTIFACT_BYTES:
-            return None
-        digest = hashlib.sha256()
+            raise PowerPlatformDeploymentError("solution artifact exceeds the bounded size limit")
+        with zipfile.ZipFile(artifact) as archive:
+            entries = archive.infolist()
+            if not entries:
+                raise PowerPlatformDeploymentError("solution artifact archive is empty")
+            if len(entries) > MAX_ARTIFACT_ENTRIES:
+                raise PowerPlatformDeploymentError("solution artifact contains too many entries")
+            names: set[str] = set()
+            total_size = 0
+            for entry in entries:
+                name = entry.filename
+                if not name or any(ord(character) < 32 for character in name):
+                    raise PowerPlatformDeploymentError("solution artifact contains an unsafe member name")
+                if name in names:
+                    raise PowerPlatformDeploymentError("solution artifact contains duplicate member names")
+                names.add(name)
+                if name.startswith(("/", "\\")) or "\\" in name:
+                    raise PowerPlatformDeploymentError("solution artifact contains an unsafe member path")
+                parts = name.split("/")
+                if any(part in {"", ".", ".."} for part in parts[:-1]) or parts[-1] == "..":
+                    raise PowerPlatformDeploymentError("solution artifact contains a traversal member path")
+                if stat.S_ISLNK((entry.external_attr >> 16) & 0xFFFF):
+                    raise PowerPlatformDeploymentError("solution artifact contains a symlink member")
+                if entry.flag_bits & 0x1:
+                    raise PowerPlatformDeploymentError("solution artifact contains an encrypted member")
+                total_size += entry.file_size
+                if total_size > MAX_ARTIFACT_BYTES:
+                    raise PowerPlatformDeploymentError("solution artifact expands beyond the bounded size limit")
+            if archive.testzip() is not None:
+                raise PowerPlatformDeploymentError("solution artifact contains a member with an invalid checksum")
+    except PowerPlatformDeploymentError:
+        raise
+    except zipfile.BadZipFile as exc:
+        raise PowerPlatformDeploymentError("solution artifact is not a valid ZIP archive") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PowerPlatformDeploymentError("solution artifact could not be read safely") from exc
+
+    digest = hashlib.sha256()
+    try:
         with artifact.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-    except OSError:
-        return None
+    except OSError as exc:
+        raise PowerPlatformDeploymentError("solution artifact could not be hashed") from exc
     return f"sha256:{digest.hexdigest()}"
 
 
@@ -505,6 +568,7 @@ __all__ = [
     "build_power_platform_deployment_plan",
     "build_power_platform_deployment_plan_from_payload",
     "execute_power_platform_stage",
+    "validate_power_platform_solution_package",
     "validate_promotion_evidence",
     "validate_promotion_source",
 ]

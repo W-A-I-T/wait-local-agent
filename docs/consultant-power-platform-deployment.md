@@ -60,6 +60,13 @@ directory must be inside that workspace. Commands use `shell=False`, fixed
 argument positions, bounded timeouts, and redacted output. Credentials are
 never accepted in the plan or approval payload.
 
+After PAC completes, WAIT validates the expected solution archive before
+recording success: it must be a readable, bounded ZIP inside the configured
+workspace with safe member paths, no duplicate, encrypted, or symlink entries,
+and valid member checksums. The SHA-256 digest is recorded only after that
+validation. A valid local archive still proves package integrity, not provider
+import success or production deployment.
+
 Execution is intentionally one stage at a time so DEV, TEST, and PROD each
 retain a separate approval and audit record. A failed stage stops the pipeline;
 later stages are not started automatically.
