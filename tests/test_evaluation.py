@@ -256,6 +256,34 @@ def test_evaluation_normalizes_optional_security_evidence_and_rejects_bounds() -
         )
 
 
+def test_evaluation_reports_security_evidence_provenance_without_overriding_scores() -> None:
+    case = {**_case(), "required_security_dimensions": ["rbac", "rollback"]}
+    observed = evaluate_tool_contract(
+        [case],
+        {"onboarding": _observation(security_evidence={"rbac": True})},
+    )
+
+    assert observed["cases"][0]["security_evidence_provenance"] == {
+        "rbac": "observation",
+        "rollback": "unsupported",
+    }
+    assert observed["cases"][0]["passed"] is False
+
+    class RuntimeRunner:
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            return {
+                **_observation(security_evidence={"rbac": True, "rollback": False}),
+                "security_evidence_provenance": {"rbac": "runtime", "rollback": "runtime"},
+            }
+
+    controlled = execute_tool_contract([case], RuntimeRunner())
+    assert controlled["cases"][0]["security_evidence_provenance"] == {
+        "rbac": "runtime",
+        "rollback": "runtime",
+    }
+    assert controlled["cases"][0]["passed"] is False
+
+
 def test_controlled_evaluation_requires_tenant_and_identity_boundaries() -> None:
     definition = type("Definition", (), {"client_id": "acme"})()
     with pytest.raises(EvaluationValidationError, match="matching tenant"):
@@ -448,6 +476,8 @@ def test_runtime_evaluation_derives_bounded_lifecycle_evidence(dimension, result
     observed = executor.execute({"required_security_dimensions": [dimension]})
     security_evidence = cast(dict[str, bool], observed["security_evidence"])
     assert security_evidence[dimension] is expected
+    provenance = cast(dict[str, str], observed["security_evidence_provenance"])
+    assert provenance[dimension] == "runtime"
 
 
 def test_runtime_evaluation_derives_result_aware_duplicate_prevention() -> None:

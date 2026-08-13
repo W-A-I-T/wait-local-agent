@@ -25,6 +25,12 @@ dimension; it is never treated as a pass. These fields define the evaluation
 contract and evidence boundary. They do not claim that a local fixture has
 performed live-provider, rollback, or production-deployment verification.
 
+Each case reports `security_evidence_provenance` alongside requested security
+evidence. `observation` means the value was explicitly supplied by the fixture
+payload, `runtime` means the bounded local runtime derived it from the captured
+run, and `unsupported` means no evidence was available. Provenance is
+descriptive and cannot turn a false value into a pass.
+
 For example:
 
 ```json

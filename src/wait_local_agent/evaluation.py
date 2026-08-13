@@ -51,12 +51,18 @@ class EvaluationExecutor(Protocol):
 def evaluate_tool_contract(
     test_set: list[dict[str, object]],
     observations: Mapping[str, object],
+    *,
+    runtime_evidence_provenance: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     normalized_cases = _validated_cases(test_set)
     cases: list[dict[str, object]] = []
     for case in normalized_cases:
         case_id = cast(str, case["id"])
-        observed = _observation(observations.get(case_id), case)
+        observed = _observation(
+            observations.get(case_id),
+            case,
+            trusted_runtime_provenance=(runtime_evidence_provenance or {}).get(case_id),
+        )
         expected_tools = set(cast(list[str], case["expected_tool_ids"]))
         observed_tools = set(cast(list[str], observed["tool_ids"]))
         expected_approvals = set(cast(list[str], case["expected_approval_tool_ids"]))
@@ -84,7 +90,14 @@ def evaluate_tool_contract(
             checks["regression"] = cast(bool, observed["regression_passed"])
         execution_evidence = {
             key: observed[key]
-            for key in ("actions", "execution_status", "run_id", "error_detail", "security_evidence")
+            for key in (
+                "actions",
+                "execution_status",
+                "run_id",
+                "error_detail",
+                "security_evidence",
+                "security_evidence_provenance",
+            )
             if key in observed
         }
         case_result: dict[str, object] = {
@@ -92,6 +105,8 @@ def evaluate_tool_contract(
             "checks": checks,
             "passed": all(checks.values()),
         }
+        if "security_evidence_provenance" in observed:
+            case_result["security_evidence_provenance"] = observed["security_evidence_provenance"]
         if execution_evidence:
             case_result["execution"] = execution_evidence
         cases.append(case_result)
@@ -146,6 +161,7 @@ def execute_tool_contract(
 
     normalized_cases = _validated_cases(test_set)
     observations: dict[str, object] = {}
+    runtime_evidence_provenance: dict[str, Mapping[str, str]] = {}
     execution_errors: list[dict[str, str]] = []
     for case in normalized_cases:
         case_id = cast(str, case["id"])
@@ -155,6 +171,13 @@ def execute_tool_contract(
             if not isinstance(observed, Mapping):
                 raise EvaluationValidationError("controlled executor must return an object")
             observations[case_id] = dict(observed)
+            provenance = observed.get("security_evidence_provenance")
+            if isinstance(provenance, Mapping):
+                runtime_evidence_provenance[case_id] = {
+                    str(dimension): str(source)
+                    for dimension, source in provenance.items()
+                    if isinstance(dimension, str) and isinstance(source, str)
+                }
         except EvaluationValidationError:
             raise
         except Exception as exc:  # noqa: BLE001 - convert provider failure into explicit failed evidence.
@@ -165,6 +188,7 @@ def execute_tool_contract(
     result = evaluate_tool_contract(
         [cast(dict[str, object], case) for case in normalized_cases],
         observations,
+        runtime_evidence_provenance=runtime_evidence_provenance,
     )
     result["execution_started"] = True
     result["execution_mode"] = "controlled"
@@ -235,7 +259,7 @@ class AgentServiceEvaluationExecutor:
                     "error": redact_text(str(raw_step.get("error_detail", "")))[:240],
                 }
             )
-        security_evidence = _controlled_security_evidence(
+        security_evidence, security_evidence_provenance = _controlled_security_evidence(
             self.agent_service,
             result,
             result.steps,
@@ -263,6 +287,7 @@ class AgentServiceEvaluationExecutor:
             "run_id": result.run_id,
             "error_detail": redact_text(result.error_detail)[:240],
             "security_evidence": security_evidence,
+            "security_evidence_provenance": security_evidence_provenance,
         }
 
 
@@ -318,7 +343,12 @@ def _case(value: object) -> dict[str, object]:
     }
 
 
-def _observation(value: object, case: Mapping[str, object]) -> dict[str, object]:
+def _observation(
+    value: object,
+    case: Mapping[str, object],
+    *,
+    trusted_runtime_provenance: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise EvaluationValidationError("each test case requires an observation")
     observation = dict(value)
@@ -344,13 +374,24 @@ def _observation(value: object, case: Mapping[str, object]) -> dict[str, object]
     if not isinstance(raw_security_evidence, Mapping):
         raise EvaluationValidationError("observation.security_evidence must be an object")
     security_evidence: dict[str, bool] = {}
+    security_evidence_provenance: dict[str, str] = {}
+    trusted_runtime_provenance = trusted_runtime_provenance or {}
     for dimension in cast(list[str], case["required_security_dimensions"]):
         value = raw_security_evidence.get(dimension, False)
         if not isinstance(value, bool):
             raise EvaluationValidationError(f"security_evidence.{dimension} must be boolean evidence")
         security_evidence[dimension] = value
+        trusted_source = trusted_runtime_provenance.get(dimension)
+        security_evidence_provenance[dimension] = (
+            trusted_source
+            if trusted_source in {"runtime", "unsupported"}
+            else "observation"
+            if dimension in raw_security_evidence
+            else "unsupported"
+        )
     if security_evidence:
         result["security_evidence"] = security_evidence
+        result["security_evidence_provenance"] = security_evidence_provenance
     for field in ("actions", "execution_status", "run_id", "error_detail"):
         if field in observation:
             result[field] = observation[field]
@@ -384,6 +425,7 @@ def _failed_observation(
     required_security = cast(list[str], case["required_security_dimensions"])
     if required_security:
         result["security_evidence"] = {dimension: False for dimension in required_security}
+        result["security_evidence_provenance"] = {dimension: "unsupported" for dimension in required_security}
     return result
 
 
@@ -397,7 +439,7 @@ def _controlled_security_evidence(
     definition_client_id: str | None,
     result_aware: bool,
     required_dimensions: list[str],
-) -> dict[str, bool]:
+) -> tuple[dict[str, bool], dict[str, str]]:
     """Return only security facts the local runtime can prove deterministically.
 
     Lifecycle evidence is derived only from the bounded result status and the
@@ -427,8 +469,9 @@ def _controlled_security_evidence(
         "rbac": rbac_safe,
         "unexpected_writes": writes_disabled and not unexpected_write,
     }
+    provenance = {dimension: "runtime" for dimension in evidence}
     if not required_dimensions:
-        return evidence
+        return evidence, provenance
 
     status = getattr(result, "status", "")
     status = status if isinstance(status, str) else ""
@@ -483,7 +526,8 @@ def _controlled_security_evidence(
             if dimension in lifecycle_evidence
         }
     )
-    return evidence
+    provenance.update({dimension: "runtime" for dimension in evidence})
+    return evidence, provenance
 
 
 def _role_allows(required_role: object, actor_role: Role) -> bool:
