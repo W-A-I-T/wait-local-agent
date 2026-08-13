@@ -48,6 +48,7 @@ def test_msp_playbook_catalog_is_versioned_and_structured() -> None:
         "m365-password-reset-review",
         "m365-authentication-method-review",
         "m365-license-review",
+        "m365-compliance-review",
     }.issubset({playbook.id for playbook in playbooks})
     assert get_msp_playbook("ticket-intake-review") is not None
     assert get_msp_playbook("missing") is None
@@ -175,6 +176,7 @@ def test_playbook_run_composes_local_reviews(settings) -> None:
             {"user_id": "user-1", "sku_ids": ["sku-1"], "operation": "add"},
             "TCK-1001",
         ),
+        ("m365-compliance-review", {"limit": 10}, "TCK-1001"),
         (
             "automation-opportunity-review",
             {"period_start": "2026-01-01", "period_end": "2026-03-31"},

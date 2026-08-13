@@ -397,6 +397,24 @@ WORKFLOW_TEMPLATES: tuple[WorkflowTemplate, ...] = (
             },
         },
     ),
+    WorkflowTemplate(
+        id="m365-compliance-review",
+        name="Microsoft 365 Compliance Review",
+        trigger="schedule.daily",
+        description=(
+            "Read tenant-scoped managed-device and license evidence and identify observed "
+            "attention items; no regulatory compliance claim or write is inferred."
+        ),
+        action_type="m365.compliance_review",
+        approval_required=False,
+        risk_level="low",
+        preview_fields=("device_count", "license_count", "findings", "connector_status"),
+        tool_id="m365-compliance-review",
+        payload_schema={
+            "type": "object",
+            "properties": {"limit": "integer from 1 to 50 (default: 50)"},
+        },
+    ),
 )
 
 
@@ -634,6 +652,10 @@ def _bounded_workflow_payload(
             or not 1 <= follow_up_after_days <= 90
         ):
             raise ValueError("follow_up_after_days must be an integer between 1 and 90")
+    elif template.id == "m365-compliance-review":
+        limit = safe_payload.get("limit", 50)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise ValueError("limit must be an integer between 1 and 50")
     return safe_payload
 
 

@@ -42,7 +42,10 @@ credential or undocumented vendor API remains an explicit boundary.
   see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). The aggregate catalog
   now also covers inactive-ticket follow-up and bounded M365 password, explicit
   authentication-method, and license reviews. Richer mappings,
-  historical/provider ingestion, compliance/software review, and
+  historical/provider ingestion, and software-inventory review remain open;
+  the deterministic M365 compliance review now reads bounded Graph device and
+  license evidence and reports observed attention states without claiming
+  regulatory compliance or live-provider success.
   scheduled/event-triggered operations remain open.
 - Validated static and tenant-published playbooks can now be registered with the
   existing scheduler and execute through the same controlled coordinator.

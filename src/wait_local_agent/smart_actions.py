@@ -1862,6 +1862,131 @@ class M365LiveContextAction:
         )
 
 
+class M365ComplianceReviewAction:
+    manifest = SmartActionManifest(
+        action_id="m365-compliance-review",
+        title="Microsoft 365 compliance review",
+        description=(
+            "Read bounded Microsoft Graph managed-device and tenant-license evidence, "
+            "then identify observed attention items without asserting regulatory compliance."
+        ),
+        kind="deterministic",
+        input_schema={
+            "type": "object",
+            "required": ["ticket_id"],
+            "properties": {
+                "ticket_id": {"type": "string", "minLength": 1, "maxLength": 200},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+        output_schema={
+            "devices": "array",
+            "licenses": "array",
+            "findings": "array",
+            "device_count": "integer",
+            "license_count": "integer",
+            "connector_status": "string",
+        },
+        requires_approval=False,
+        estimated_minutes_saved=8,
+        risk_level="low",
+        required_role="technician",
+        access_mode="read",
+    )
+
+    def run(self, context: ActionContext, payload: dict[str, object]) -> ActionResult:
+        if set(payload) - {"ticket_id", "limit"}:
+            return _failed("M365 compliance review payload contains unsupported fields")
+        if _ticket_from_payload(context.store, payload, context.client_id) is None:
+            return _failed("ticket_id must identify an existing tenant-scoped ticket")
+        limit = payload.get("limit", 50)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            return _failed("limit must be an integer between 1 and 50")
+
+        from wait_local_agent.m365_graph import M365GraphClient
+
+        provider = cast(M365GraphReadProvider, context.m365_client or M365GraphClient(context.settings))
+        try:
+            device_response = provider.list_managed_devices(page_size=limit)
+            license_response = provider.list_subscribed_skus()
+        except Exception:
+            return _failed("Microsoft Graph compliance review failed")
+
+        device_result = getattr(device_response, "result", None)
+        license_result = getattr(license_response, "result", None)
+        device_status = str(getattr(device_result, "status", "failed"))
+        license_status = str(getattr(license_result, "status", "failed"))
+        if device_status != "ready" or license_status != "ready":
+            messages = [
+                redact_text(str(getattr(result, "message", "Microsoft Graph read failed"))).strip()
+                for result, status in ((device_result, device_status), (license_result, license_status))
+                if status != "ready"
+            ]
+            return ActionResult(
+                status="failed",
+                output={
+                    "devices": [],
+                    "licenses": [],
+                    "findings": [],
+                    "device_count": 0,
+                    "license_count": 0,
+                    "connector_status": (
+                        "partial"
+                        if device_status == "ready" or license_status == "ready"
+                        else "failed"
+                    ),
+                },
+                error_detail="; ".join(message for message in messages if message)[:240]
+                or "Microsoft Graph compliance evidence is unavailable",
+            )
+
+        devices = getattr(device_response, "items", None)
+        licenses = getattr(license_response, "items", None)
+        if (
+            not isinstance(devices, list)
+            or not isinstance(licenses, list)
+            or any(not hasattr(item, "__dataclass_fields__") for item in devices[:limit])
+            or any(not hasattr(item, "__dataclass_fields__") for item in licenses[:limit])
+        ):
+            return _failed("Microsoft Graph returned malformed compliance evidence")
+
+        normalized_devices = [
+            cast(dict[str, object], redact_value(asdict(item))) for item in devices[:limit]
+        ]
+        normalized_licenses = [
+            cast(dict[str, object], redact_value(asdict(item))) for item in licenses[:limit]
+        ]
+        findings = _m365_compliance_findings(normalized_devices, normalized_licenses)
+        evidence: list[dict[str, object]] = [
+            {
+                "type": "connector_read",
+                "connector": "m365",
+                "operation": "managed_devices.list",
+                "client_id": context.client_id,
+                "count": len(normalized_devices),
+            },
+            {
+                "type": "connector_read",
+                "connector": "m365",
+                "operation": "licenses.list",
+                "client_id": context.client_id,
+                "count": len(normalized_licenses),
+            },
+        ]
+        return ActionResult(
+            status="success",
+            output={
+                "devices": normalized_devices,
+                "licenses": normalized_licenses,
+                "findings": findings,
+                "device_count": len(normalized_devices),
+                "license_count": len(normalized_licenses),
+                "connector_status": "ready",
+            },
+            evidence=evidence,
+        )
+
+
 class TeamsGraphContextAction:
     manifest = SmartActionManifest(
         action_id="m365-teams-context",
@@ -8699,6 +8824,7 @@ def _build_default_registry() -> SmartActionRegistry:
         ScalePadGoalLookupAction(),
         ScalePadAssessmentLookupAction(),
         M365LiveContextAction(),
+        M365ComplianceReviewAction(),
         TeamsGraphContextAction(),
         M365GroupMembershipAction(),
         M365LicenseChangeAction(),
@@ -9442,6 +9568,65 @@ def _positive_thresholds(value: object) -> dict[str, int] | None:
             return None
         thresholds[priority.strip().lower()] = minutes
     return thresholds
+
+
+def _m365_compliance_findings(
+    devices: list[dict[str, object]],
+    licenses: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Classify only states present in the bounded Graph response."""
+
+    findings: list[dict[str, object]] = []
+    for device in devices:
+        state = str(device.get("compliance_state", "")).strip().lower()
+        if state == "compliant":
+            continue
+        findings.append(
+            {
+                "type": "managed_device_compliance",
+                "severity": "attention" if state in {"noncompliant", "error"} else "review",
+                "device_id": device.get("id", ""),
+                "observed_state": state or "unreported",
+                "message": (
+                    "Managed device reports a non-compliant state."
+                    if state in {"noncompliant", "error"}
+                    else "Managed device compliance state requires review."
+                ),
+            }
+        )
+
+    for license_item in licenses:
+        capability_status = str(license_item.get("capability_status", "")).strip().lower()
+        if capability_status != "enabled":
+            findings.append(
+                {
+                    "type": "tenant_license_status",
+                    "severity": "attention" if capability_status else "review",
+                    "license_id": license_item.get("id", ""),
+                    "observed_status": capability_status or "unreported",
+                    "message": "Tenant license capability status requires review.",
+                }
+            )
+        enabled = license_item.get("prepaid_enabled")
+        consumed = license_item.get("consumed_units")
+        if (
+            isinstance(enabled, int)
+            and not isinstance(enabled, bool)
+            and isinstance(consumed, int)
+            and not isinstance(consumed, bool)
+            and consumed > enabled
+        ):
+            findings.append(
+                {
+                    "type": "tenant_license_capacity",
+                    "severity": "attention",
+                    "license_id": license_item.get("id", ""),
+                    "enabled_units": enabled,
+                    "consumed_units": consumed,
+                    "message": "Observed consumed license units exceed enabled units.",
+                }
+            )
+    return findings
 
 
 def _parse_ticket_timestamp(value: str) -> datetime | None:
