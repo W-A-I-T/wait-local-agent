@@ -18,9 +18,19 @@ paths, blocks authentication and service-principal paths, and rejects
 
 WAIT intentionally exposes only a read-only subset in this slice. Operation
 risk is not inferred from a tool name alone: resource path, requested
-operation, tenant scope, authenticated identity, and arguments must remain
-inside the local policy boundary. Unknown or side-effecting operations remain
-blocked rather than being guessed from remote metadata.
+operation, tenant scope, authenticated identity, request arguments, and the
+local offline/path/operation policy are evaluated together by the deterministic
+request classifier. It returns a bounded `read`, `write`, `action`,
+`high-risk`, `blocked`, or `unknown` decision; only `read` can reach the MCP
+client in this adapter. Tenant and identity context is used locally and is
+not copied into the remote request body. Unknown or side-effecting operations
+remain blocked rather than being guessed from remote metadata.
+
+The classifier follows Microsoft's path-based entity model and policy boundary:
+the selected generic tool, relative resource path, request content, signed-in
+identity, and tenant policy are separate inputs to governance. See the
+[Work IQ entity model](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/entity-model)
+and [policy governance guidance](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/policy-governance-mcp).
 
 Configuration is optional:
 

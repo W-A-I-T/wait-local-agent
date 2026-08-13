@@ -9,6 +9,7 @@ create/update/delete/action tools and it does not acquire OAuth credentials.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
@@ -31,6 +32,20 @@ class WorkIqValidationError(ValueError):
 
 WorkIqStatus = Literal["ready", "not_configured", "failed"]
 WorkIqOperation = Literal["read", "write", "action", "function", "unknown"]
+WorkIqClassification = Literal["read", "write", "action", "high-risk", "blocked", "unknown"]
+
+
+@dataclass(frozen=True)
+class WorkIqPolicyDecision:
+    """Deterministic local decision for one Work IQ request.
+
+    The remote MCP catalog is never treated as an authorization source.  The
+    decision records the local classification and a bounded reason so callers
+    can distinguish malformed/unknown requests from policy-denied requests.
+    """
+
+    classification: WorkIqClassification
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,7 @@ class WorkIqReadResponse:
     status: WorkIqStatus
     message: str
     data: dict[str, Any]
+    classification: WorkIqClassification = "unknown"
 
 
 class WorkIqMcpClient(Protocol):
@@ -62,34 +78,200 @@ def classify_work_iq_operation(
     unknown requests fail closed for this adapter.
     """
 
-    if not isinstance(tool_name, str) or not tool_name.strip():
-        return "unknown"
-    normalized = tool_name.strip().casefold()
+    normalized = tool_name.strip().casefold() if isinstance(tool_name, str) else ""
     if normalized in {"create_entity", "update_entity", "delete_entity"}:
         return "write"
     if normalized == "do_action":
         return "action"
     if normalized == "call_function":
         return "function"
-    if normalized not in {"fetch", "search_paths", "get_schema"}:
-        return "unknown"
-    if operation is not None and operation not in {normalized, "fetch", "read"}:
-        return "unknown"
+    decision = classify_work_iq_request(
+        tool_name,
+        resource_paths=resource_paths,
+        operation=operation,
+    )
+    if decision.classification == "read":
+        return "read"
+    return "unknown"
+
+
+def classify_work_iq_request(
+    tool_name: object,
+    *,
+    resource_paths: object = None,
+    operation: object = None,
+    arguments: object = None,
+    tenant: object = None,
+    identity: object = None,
+    local_policy: object = None,
+) -> WorkIqPolicyDecision:
+    """Classify a request using all local policy inputs and fail closed.
+
+    Work IQ's generic tools intentionally make the resource path and request
+    body part of the security decision.  ``arguments`` is preferred when it
+    is supplied because it preserves the official tool-specific path names
+    (``entityUrl``, ``actionUrl``, and so on).  ``tenant`` and ``identity``
+    are local context only; they are not forwarded to the MCP server.
+    """
+
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return WorkIqPolicyDecision("unknown", "Work IQ tool name is missing")
+    normalized = tool_name.strip().casefold()
+    if not _valid_context_value(tenant) or not _valid_context_value(identity):
+        return WorkIqPolicyDecision("unknown", "Work IQ tenant and identity context must be bounded text")
+    policy = _normalized_policy(local_policy)
+    if policy is None:
+        return WorkIqPolicyDecision("unknown", "Work IQ local policy is malformed")
+    policy_tenant = policy.get("tenant_id", policy.get("tenant"))
+    if policy_tenant is not None and (
+        not isinstance(policy_tenant, str)
+        or not _valid_context_value(tenant)
+        or tenant != policy_tenant
+    ):
+        return WorkIqPolicyDecision("blocked", "Work IQ tenant is denied by local policy")
+    if policy.get("require_identity") is True and identity is None:
+        return WorkIqPolicyDecision("blocked", "Work IQ identity is required by local policy")
+    allowed_identities = policy.get("allowed_identities")
+    if isinstance(allowed_identities, (list, tuple)):
+        allowed = {value for value in allowed_identities if isinstance(value, str)}
+        if not isinstance(identity, str) or identity not in allowed:
+            return WorkIqPolicyDecision("blocked", "Work IQ identity is denied by local policy")
+    if policy.get("offline") is True or policy.get("allow_work_iq") is False:
+        return WorkIqPolicyDecision("blocked", "Work IQ is blocked by local policy")
+
+    expected_classification: WorkIqClassification
+    expected_operation: str
+    path_values = _request_paths(normalized, arguments, resource_paths)
+    if normalized in {"create_entity", "update_entity", "delete_entity"}:
+        expected_classification = "write"
+        expected_operation = normalized
+    elif normalized == "do_action":
+        expected_classification = "action"
+        expected_operation = normalized
+    elif normalized == "call_function":
+        expected_classification = "high-risk"
+        expected_operation = normalized
+    elif normalized in {"fetch", "search_paths", "get_schema"}:
+        expected_classification = "read"
+        expected_operation = normalized
+    else:
+        return WorkIqPolicyDecision("unknown", "Work IQ tool is outside the supported local contract")
+
+    if not _operation_matches(operation, normalized, expected_operation):
+        return WorkIqPolicyDecision("unknown", "Work IQ operation does not match the selected tool")
+    allowed_operations = policy.get("allowed_operations")
+    if isinstance(allowed_operations, (list, tuple)):
+        allowed = {str(value).strip().casefold() for value in allowed_operations if isinstance(value, str)}
+        accepted_names = {expected_operation}
+        if expected_classification == "read":
+            accepted_names.add("read")
+        if expected_classification == "write":
+            accepted_names.add("write")
+        if expected_classification == "action":
+            accepted_names.add("action")
+        if not accepted_names & allowed:
+            return WorkIqPolicyDecision("blocked", "Work IQ operation is denied by local policy")
+
     if normalized == "fetch":
-        if not isinstance(resource_paths, list) or any(not isinstance(path, str) for path in resource_paths):
-            return "unknown"
+        if not isinstance(path_values, list) or any(not isinstance(path, str) for path in path_values):
+            return WorkIqPolicyDecision("unknown", "Work IQ fetch paths are malformed")
         try:
-            _validate_entity_paths(cast(list[str], resource_paths))
-        except WorkIqValidationError:
-            return "unknown"
-    elif normalized == "get_schema":
-        if not isinstance(resource_paths, str):
-            return "unknown"
+            paths = _validate_entity_paths(cast(list[str], path_values))
+        except WorkIqValidationError as exc:
+            return WorkIqPolicyDecision("blocked", str(exc))
+        if not _paths_allowed(paths, policy):
+            return WorkIqPolicyDecision("blocked", "Work IQ path is denied by local policy")
+    elif normalized in {"get_schema", "create_entity", "update_entity", "delete_entity", "do_action", "call_function"}:
+        if not isinstance(path_values, str):
+            return WorkIqPolicyDecision("unknown", "Work IQ request path is missing")
         try:
-            _validate_entity_path(resource_paths)
-        except WorkIqValidationError:
-            return "unknown"
-    return "read"
+            path = _validate_entity_path(path_values)
+        except WorkIqValidationError as exc:
+            return WorkIqPolicyDecision("blocked", str(exc))
+        if not _paths_allowed([path], policy):
+            return WorkIqPolicyDecision("blocked", "Work IQ path is denied by local policy")
+    elif normalized == "search_paths":
+        if not isinstance(path_values, str) or not path_values.strip():
+            return WorkIqPolicyDecision("unknown", "Work IQ path search filter is missing")
+
+    if expected_classification != "read":
+        return WorkIqPolicyDecision(expected_classification, "Work IQ operation is not read-only")
+    return WorkIqPolicyDecision("read", "Work IQ request is allowed by local policy")
+
+
+def _valid_context_value(value: object) -> bool:
+    return value is None or (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value.strip()) <= 120
+        and all(ord(character) >= 32 for character in value)
+    )
+
+
+def _normalized_policy(value: object) -> dict[str, object] | None:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        return None
+    result = dict(value)
+    allowed_prefixes = result.get("allowed_path_prefixes")
+    if allowed_prefixes is not None and not isinstance(allowed_prefixes, (list, tuple)):
+        return None
+    if isinstance(allowed_prefixes, (list, tuple)) and any(
+        not isinstance(prefix, str) or not prefix.startswith("/") for prefix in allowed_prefixes
+    ):
+        return None
+    allowed_operations = result.get("allowed_operations")
+    if allowed_operations is not None and not isinstance(allowed_operations, (list, tuple)):
+        return None
+    allowed_identities = result.get("allowed_identities")
+    if allowed_identities is not None and (
+        not isinstance(allowed_identities, (list, tuple))
+        or any(not isinstance(identity, str) for identity in allowed_identities)
+    ):
+        return None
+    for boolean_key in ("offline", "allow_work_iq", "require_identity"):
+        if boolean_key in result and not isinstance(result[boolean_key], bool):
+            return None
+    return result
+
+
+def _operation_matches(operation: object, tool_name: str, expected_operation: str) -> bool:
+    if operation is None:
+        return True
+    return isinstance(operation, str) and operation.strip().casefold() in {
+        tool_name,
+        expected_operation,
+        "read" if expected_operation in {"fetch", "search_paths", "get_schema"} else expected_operation,
+    }
+
+
+def _request_paths(tool_name: str, arguments: object, resource_paths: object) -> object:
+    if arguments is None:
+        return resource_paths
+    if not isinstance(arguments, Mapping):
+        return None
+    field_by_tool = {
+        "fetch": "entityUrls",
+        "get_schema": "path",
+        "create_entity": "parentUrl",
+        "update_entity": "entityUrl",
+        "delete_entity": "entityUrl",
+        "do_action": "actionUrl",
+        "call_function": "functionUrl",
+    }
+    field = field_by_tool.get(tool_name)
+    if field is None:
+        return arguments.get("filter")
+    return arguments.get(field)
+
+
+def _paths_allowed(paths: list[str], policy: Mapping[str, object]) -> bool:
+    prefixes = policy.get("allowed_path_prefixes")
+    if not isinstance(prefixes, (list, tuple)):
+        return True
+    normalized = tuple(str(prefix).casefold() for prefix in prefixes)
+    return all(any(path.casefold().startswith(prefix) for prefix in normalized) for path in paths)
 
 
 class WorkIqClient:
@@ -108,54 +290,105 @@ class WorkIqClient:
                 )
             )
 
-    def fetch(self, entity_urls: list[str]) -> WorkIqReadResponse:
+    def fetch(
+        self,
+        entity_urls: list[str],
+        *,
+        tenant_id: str | None = None,
+        identity: str | None = None,
+        local_policy: Mapping[str, object] | None = None,
+    ) -> WorkIqReadResponse:
         try:
             paths = _validate_entity_paths(entity_urls)
         except WorkIqValidationError as exc:
-            return _failed(str(exc))
-        return self._read("fetch", {"entityUrls": paths})
+            return _failed(str(exc), classification="blocked")
+        return self._read(
+            "fetch",
+            {"entityUrls": paths},
+            tenant_id=tenant_id,
+            identity=identity,
+            local_policy=local_policy,
+        )
 
-    def search_paths(self, filter_text: str) -> WorkIqReadResponse:
+    def search_paths(
+        self,
+        filter_text: str,
+        *,
+        tenant_id: str | None = None,
+        identity: str | None = None,
+        local_policy: Mapping[str, object] | None = None,
+    ) -> WorkIqReadResponse:
         if not isinstance(filter_text, str) or not filter_text.strip():
-            return _failed("Work IQ path filter must be non-empty text")
+            return _failed("Work IQ path filter must be non-empty text", classification="blocked")
         normalized = filter_text.strip()
         if len(normalized) > MAX_WORKIQ_FILTER_LENGTH or any(ord(character) < 32 for character in normalized):
-            return _failed("Work IQ path filter is outside the bounded input limit")
-        return self._read("search_paths", {"filter": normalized})
+            return _failed("Work IQ path filter is outside the bounded input limit", classification="blocked")
+        return self._read(
+            "search_paths",
+            {"filter": normalized},
+            tenant_id=tenant_id,
+            identity=identity,
+            local_policy=local_policy,
+        )
 
-    def get_fetch_schema(self, path: str) -> WorkIqReadResponse:
+    def get_fetch_schema(
+        self,
+        path: str,
+        *,
+        tenant_id: str | None = None,
+        identity: str | None = None,
+        local_policy: Mapping[str, object] | None = None,
+    ) -> WorkIqReadResponse:
         try:
             normalized = _validate_entity_path(path)
         except WorkIqValidationError as exc:
-            return _failed(str(exc))
+            return _failed(str(exc), classification="blocked")
         return self._read(
             "get_schema",
             {"path": normalized, "operationType": "fetch", "format": "jsonschema"},
+            tenant_id=tenant_id,
+            identity=identity,
+            local_policy=local_policy,
         )
 
-    def _read(self, tool_name: str, arguments: dict[str, object]) -> WorkIqReadResponse:
-        resource_paths = arguments.get("entityUrls") if tool_name == "fetch" else arguments.get("path")
-        if classify_work_iq_operation(tool_name, resource_paths=resource_paths) != "read":
-            return _failed("Work IQ operation is blocked by local policy")
+    def _read(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        *,
+        tenant_id: str | None = None,
+        identity: str | None = None,
+        local_policy: Mapping[str, object] | None = None,
+    ) -> WorkIqReadResponse:
+        decision = classify_work_iq_request(
+            tool_name,
+            arguments=arguments,
+            tenant=tenant_id,
+            identity=identity,
+            local_policy=local_policy,
+        )
+        if decision.classification != "read":
+            return _failed(decision.reason, classification=decision.classification)
         if self._mcp_client is None:
             return WorkIqReadResponse(
                 "not_configured",
                 "Work IQ MCP access is not configured",
                 {},
+                "read",
             )
         try:
             if self._mcp_client.session_id is None:
                 self._mcp_client.initialize(client_name="wait-local-agent-workiq")
             result = self._mcp_client.call_tool(tool_name, arguments)
         except McpClientError:
-            return _failed("Work IQ MCP request failed")
+            return _failed("Work IQ MCP request failed", classification="read")
         if result.is_error:
-            return _failed(_tool_error_message(result))
+            return _failed(_tool_error_message(result), classification="read")
         payload = _result_payload(result)
         encoded = json.dumps(payload, separators=(",", ":"), default=str)
         if len(encoded) > MAX_WORKIQ_RESULT_BYTES:
-            return _failed("Work IQ response exceeded the bounded result size")
-        return WorkIqReadResponse("ready", "Work IQ MCP read succeeded", payload)
+            return _failed("Work IQ response exceeded the bounded result size", classification="read")
+        return WorkIqReadResponse("ready", "Work IQ MCP read succeeded", payload, "read")
 
 
 def _validate_entity_paths(entity_urls: list[str]) -> list[str]:
@@ -214,5 +447,5 @@ def _tool_error_message(result: McpToolCallResult) -> str:
     return "Work IQ MCP tool call failed"
 
 
-def _failed(message: str) -> WorkIqReadResponse:
-    return WorkIqReadResponse("failed", redact_text(message), {})
+def _failed(message: str, *, classification: WorkIqClassification = "blocked") -> WorkIqReadResponse:
+    return WorkIqReadResponse("failed", redact_text(message), {}, classification)

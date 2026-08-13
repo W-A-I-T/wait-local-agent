@@ -8463,7 +8463,17 @@ class WorkIqFetchAction:
             return _failed("each entity URL must be text")
         provider = context.work_iq_client or WorkIqClient(context.settings)
         try:
-            response = provider.fetch(cast(list[str], entity_urls))
+            if isinstance(provider, WorkIqClient):
+                response = provider.fetch(
+                    cast(list[str], entity_urls),
+                    tenant_id=scoped_client_id,
+                    identity=context.actor,
+                    local_policy={"offline": context.settings.offline_mode},
+                )
+            else:
+                # Preserve the small provider test/double contract while the
+                # governed WorkIqClient receives the full local context.
+                response = provider.fetch(cast(list[str], entity_urls))
         except Exception:
             return _failed("Work IQ read failed")
         output: dict[str, object] = {
@@ -8488,6 +8498,7 @@ class WorkIqFetchAction:
                     "type": "connector_read",
                     "connector": "work_iq",
                     "operation": "fetch",
+                    "classification": response.classification,
                     "client_id": scoped_client_id,
                     "paths": len(entity_urls),
                 }
