@@ -72,7 +72,11 @@ Validated static and tenant-published MSP playbooks can also be registered as
 scheduled jobs through the existing scheduler. Workflow playbooks retain their
 normal approval and completion-event paths; report playbooks require explicit
 client and period evidence. Event-triggered playbook subscriptions and live
-provider success remain unsupported boundaries.
+provider success remain separate boundaries. Tenant-scoped event subscriptions
+now reuse the existing EventDispatcher and playbook coordinator for supported
+event types, persist bounded playbook lineage and attempt state, and preserve
+approval pauses. They do not imply live provider success or replace the
+existing event-agent runtime.
 
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 

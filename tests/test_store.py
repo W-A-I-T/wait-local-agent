@@ -183,6 +183,43 @@ def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Pat
         )
 
 
+def test_store_msp_playbook_subscription_edges(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    with pytest.raises(ValueError, match="require a client scope"):
+        store.create_msp_playbook_subscription(
+            "ticket-intake-review",
+            "ticket.created",
+            " ",
+            {},
+        )
+
+    subscription = store.create_msp_playbook_subscription(
+        "ticket-intake-review",
+        "ticket.created",
+        "acme",
+        {"priority": "priority"},
+    )
+    assert store.get_msp_playbook_subscription(subscription.id, "other") is None
+    assert store.list_msp_playbook_subscriptions("acme", event_type="ticket.created") == [subscription]
+    assert store.update_msp_playbook_subscription(
+        subscription.id,
+        client_id="acme",
+        input_mapping=None,
+        enabled=None,
+    ) == subscription
+
+    with pytest.raises(ValueError, match="identical"):
+        store.create_msp_playbook_subscription(
+            "ticket-intake-review",
+            "ticket.created",
+            "acme",
+            {"priority": "priority"},
+        )
+    with pytest.raises(KeyError):
+        store.update_msp_playbook_subscription("missing", client_id="acme", enabled=False)
+
+
 def test_store_template_gallery_persists_provenance_and_scope(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     template = get_workflow_template("ticket-triage")
