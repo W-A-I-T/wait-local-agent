@@ -119,14 +119,17 @@ preserved and extended through the shared runtime.
 - A bounded MSP playbook composition layer now exposes versioned local review
   and report definitions with dry-run previews, explicit required inputs,
   sequential stop-at-approval/failure execution, child result IDs, and
-  playbook audit events; see `docs/msp-playbooks.md`.
+  playbook audit events. The first tenant-scoped aggregate lifecycle now also
+  supports validated publish, edit, enable/disable, revision compare, and
+  restore-as-new-version; see `docs/msp-playbooks.md`.
 
 ### Next increments
 
-- Complete reusable, versioned playbooks for triage, duplicate handling,
+- Complete the broader reusable, versioned playbook catalog for triage, duplicate handling,
   resolution, dispatch, stale/SLA sweeps, onboarding/offboarding, security
   response, QBR, service review, license review, and automation-opportunity
-  analysis.
+  analysis, including richer input mappings and provider-backed historical
+  evidence.
 - Add provider-backed connector operations one at a time, retaining explicit
   unsupported boundaries for undocumented mutations such as unsupported
   marketplace actions.

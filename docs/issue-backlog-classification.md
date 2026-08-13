@@ -2,9 +2,9 @@
 
 Audited against the 11 issues returned by the GitHub open-issue query on
 2026-08-12. Each issue has one primary roadmap category. Cross-category work is
-called out without changing the primary ownership boundary. PR #270's latest
-authoritative CI run passed both backend and UI checks; that is evidence for
-the integrated PR only, not proof that every release or browser gate is done.
+called out without changing the primary ownership boundary. Hosted CI status is
+reported against the current PR head when reviewed; it is evidence for the
+integrated PR only, not proof that every release or browser gate is done.
 
 | Issue | Primary category | Status and action | Remaining blocker |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ the integrated PR only, not proof that every release or browser gate is done.
 | [#258](https://github.com/W-A-I-T/wait-local-agent/issues/258) | E. Evaluation / Governance | Keep open; truth-audit every capability against reachable interfaces, tests, and unsupported boundaries. | Documentation still needs a final current-state pass after integration. |
 | [#257](https://github.com/W-A-I-T/wait-local-agent/issues/257) | F. Enterprise Readiness | Keep open; continue the route/control/state matrix, responsive behavior, and recovery pass. A current Chromium slice covers `/consultant` success, validation, server-error recovery, and review-only boundaries; see [UI and API wiring evidence](ui-feature-evidence.md). | Full route/control coverage, denied/offline/provider-error matrices, and responsive/accessibility evidence remain to be completed. |
 | [#256](https://github.com/W-A-I-T/wait-local-agent/issues/256) | D. MSP Operations Vertical | Keep open; add governed PSA and documentation operations; Microsoft and marketplace work remains explicitly cross-referenced to C/H. | Each provider operation still needs a documented contract, scope, approval, audit, and tests. |
-| [#255](https://github.com/W-A-I-T/wait-local-agent/issues/255) | D. MSP Operations Vertical | Keep open; the first bounded composition layer now covers versioned local review/report playbooks, preview, stop-at-approval execution, and audit; continue the full evidence-backed playbook and scheduled/event pass. | Tenant-edited aggregate lifecycle, richer step mappings, historical/provider ingestion, and several provider-backed operations remain partial. |
+| [#255](https://github.com/W-A-I-T/wait-local-agent/issues/255) | D. MSP Operations Vertical | Keep open; bounded composition now covers versioned local review/report playbooks, preview, stop-at-approval execution, audit, and a tenant-scoped publish/edit/disable/restore/compare slice; continue the full evidence-backed playbook and scheduled/event pass. | Richer step mappings, historical/provider ingestion, and several provider-backed operations remain partial. |
 | [#254](https://github.com/W-A-I-T/wait-local-agent/issues/254) | A. Core Platform | Keep open pending the final integrated acceptance audit; the existing executor now has bounded result-aware continuation, explicit retry/fallback/human-input/technician-escalation/blocked paths, cancellation, retry lineage, API/CLI/Agents UI state, audit/execution evidence, and focused tests. | Full-branch CI and the final cross-surface evidence review remain; broader human-task fulfillment and live-provider rollback remain outside this slice. |
 | [#253](https://github.com/W-A-I-T/wait-local-agent/issues/253) | D. MSP Operations Vertical | Keep open; complete technician notifications, end-user boundaries, and white-label flows through the shared runtime. | External delivery and branding remain opt-in/incomplete. |
 | [#252](https://github.com/W-A-I-T/wait-local-agent/issues/252) | D. MSP Operations Vertical | Keep open; deepen governed RMM parity one documented provider capability at a time. | Provider contracts, polling, failure paths, and write approvals remain incomplete. |

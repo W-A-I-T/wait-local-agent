@@ -26,6 +26,7 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.store import Store, _normalize_client_id
 from wait_local_agent.workflows import (
     WorkflowToolExecutor,
+    get_workflow_template,
     run_workflow_template,
     validate_workflow_input,
 )
@@ -291,6 +292,201 @@ def playbook_view(playbook: MspPlaybookDefinition) -> dict[str, object]:
     return asdict(playbook)
 
 
+def parse_msp_playbook_definition(
+    payload: Mapping[str, object],
+    *,
+    playbook_id: str,
+    version: int = 1,
+) -> MspPlaybookDefinition:
+    """Parse a local aggregate definition against the supported runtime catalog."""
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("MSP playbook definition must be an object")
+    safe_id = _bounded_text(playbook_id, "playbook_id", 120)
+    name = _bounded_text(payload.get("name"), "name", 120)
+    trigger = _bounded_text(payload.get("trigger"), "trigger", 120)
+    description = _bounded_text(payload.get("description"), "description", 2000)
+    risk_level = _bounded_text(payload.get("risk_level"), "risk_level", 20)
+    if risk_level not in {"low", "medium", "high"}:
+        raise ValueError("risk_level must be low, medium, or high")
+    raw_steps = payload.get("steps")
+    if not isinstance(raw_steps, (list, tuple)) or not 1 <= len(raw_steps) <= 12:
+        raise ValueError("steps must contain between 1 and 12 items")
+    steps: list[MspPlaybookStep] = []
+    seen_ids: set[str] = set()
+    for raw_step in raw_steps:
+        if not isinstance(raw_step, Mapping):
+            raise ValueError("each playbook step must be an object")
+        step_id = _bounded_text(raw_step.get("id"), "step id", 80)
+        if step_id in seen_ids:
+            raise ValueError(f"duplicate playbook step id: {step_id}")
+        seen_ids.add(step_id)
+        step_name = _bounded_text(raw_step.get("name"), f"step {step_id} name", 120)
+        kind = _bounded_text(raw_step.get("kind"), f"step {step_id} kind", 20)
+        step_description = _bounded_text(raw_step.get("description"), f"step {step_id} description", 1000)
+        required_inputs = _bounded_string_list(raw_step.get("required_inputs", []), f"step {step_id} required_inputs")
+        if kind == "workflow":
+            template_id = _bounded_text(
+                raw_step.get("workflow_template_id"), f"step {step_id} workflow_template_id", 120
+            )
+            if get_workflow_template(template_id) is None:
+                raise ValueError(f"unsupported workflow template: {template_id}")
+            steps.append(
+                MspPlaybookStep(
+                    id=step_id,
+                    name=step_name,
+                    kind=kind,
+                    description=step_description,
+                    workflow_template_id=template_id,
+                    required_inputs=tuple(required_inputs),
+                )
+            )
+        elif kind == "report":
+            report_type = _bounded_text(raw_step.get("report_type"), f"step {step_id} report_type", 80)
+            if report_type not in {item.value for item in ReportType}:
+                raise ValueError(f"unsupported report type: {report_type}")
+            steps.append(
+                MspPlaybookStep(
+                    id=step_id,
+                    name=step_name,
+                    kind=kind,
+                    description=step_description,
+                    report_type=report_type,
+                    required_inputs=tuple(required_inputs),
+                )
+            )
+        else:
+            raise ValueError("playbook step kind must be workflow or report")
+    output_evidence = _bounded_string_list(payload.get("output_evidence"), "output_evidence")
+    if not output_evidence:
+        raise ValueError("output_evidence must contain at least one item")
+    return MspPlaybookDefinition(
+        id=safe_id,
+        name=name,
+        version=version,
+        trigger=trigger,
+        description=description,
+        risk_level=risk_level,
+        steps=tuple(steps),
+        output_evidence=tuple(output_evidence),
+        local_fixture=bool(payload.get("local_fixture", True)),
+    )
+
+
+def publish_msp_playbook(
+    store: Store,
+    source_playbook_id: str,
+    *,
+    provenance: str,
+    client_id: str | None = None,
+    definition: Mapping[str, object] | None = None,
+    enabled: bool = True,
+):
+    source = get_msp_playbook(source_playbook_id)
+    if definition is None:
+        if source is None:
+            raise KeyError(source_playbook_id)
+        definition = playbook_view(source)
+    parsed = parse_msp_playbook_definition(definition, playbook_id=source_playbook_id)
+    return store.create_msp_playbook_entry(
+        source_playbook_id,
+        playbook_view(parsed),
+        provenance=provenance,
+        client_id=client_id,
+        enabled=enabled,
+    )
+
+
+def msp_playbook_entry_view(entry) -> dict[str, object]:
+    definition = _json_object(entry.definition_json)
+    return {
+        "id": entry.id,
+        "source_playbook_id": entry.source_playbook_id,
+        "definition": definition,
+        "provenance": entry.provenance,
+        "enabled": entry.enabled,
+        "version": entry.version,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+        "client_id": entry.client_id,
+    }
+
+
+def msp_playbook_revision_view(revision) -> dict[str, object]:
+    return {
+        "id": revision.id,
+        "playbook_id": revision.playbook_id,
+        "version": revision.version,
+        "snapshot": _json_object(revision.snapshot_json),
+        "created_at": revision.created_at,
+        "client_id": revision.client_id,
+    }
+
+
+def msp_playbook_revision_diff(left, right) -> dict[str, object]:
+    left_snapshot = _json_object(left.snapshot_json)
+    right_snapshot = _json_object(right.snapshot_json)
+    changed: list[str] = []
+    for key in ("definition", "provenance", "enabled"):
+        if left_snapshot.get(key) != right_snapshot.get(key):
+            changed.append(key)
+    return {
+        "playbook_id": left.playbook_id,
+        "from_version": left.version,
+        "to_version": right.version,
+        "changed_fields": changed,
+        "from": left_snapshot,
+        "to": right_snapshot,
+    }
+
+
+def update_msp_playbook(
+    store: Store,
+    entry_id: str,
+    *,
+    client_id: str | None = None,
+    definition: Mapping[str, object] | None = None,
+    provenance: str | None = None,
+    enabled: bool | None = None,
+):
+    entry = store.get_msp_playbook_entry(entry_id, client_id)
+    if entry is None:
+        raise KeyError(entry_id)
+    next_definition = _json_object(entry.definition_json) if definition is None else dict(definition)
+    parsed = parse_msp_playbook_definition(
+        next_definition,
+        playbook_id=entry.source_playbook_id,
+        version=entry.version + 1,
+    )
+    return store.update_msp_playbook_entry(
+        entry_id,
+        definition=playbook_view(parsed),
+        provenance=provenance,
+        enabled=enabled,
+        client_id=entry.client_id,
+    )
+
+
+def resolve_msp_playbook(
+    store: Store,
+    playbook_id: str,
+    client_id: str | None = None,
+) -> MspPlaybookDefinition:
+    static = get_msp_playbook(playbook_id)
+    if static is not None:
+        return static
+    entry = store.get_msp_playbook_entry(playbook_id, client_id)
+    if entry is None:
+        raise KeyError(playbook_id)
+    if not entry.enabled:
+        raise PermissionError("MSP playbook is disabled")
+    return parse_msp_playbook_definition(
+        _json_object(entry.definition_json),
+        playbook_id=entry.id,
+        version=entry.version,
+    )
+
+
 def preview_msp_playbook(
     store: Store,
     playbook_id: str,
@@ -299,7 +495,7 @@ def preview_msp_playbook(
     client_id: str | None = None,
     input_payload: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    playbook = _required_playbook(playbook_id)
+    playbook = _required_playbook(store, playbook_id, client_id)
     payload = _bounded_playbook_payload(input_payload)
     effective_client_id = _validate_scope_and_ticket(store, playbook, ticket_id, client_id)
     steps = _preview_steps(playbook, payload)
@@ -333,7 +529,7 @@ def run_msp_playbook(
 ) -> dict[str, object]:
     """Execute a playbook sequentially and stop at the first gate or failure."""
 
-    playbook = _required_playbook(playbook_id)
+    playbook = _required_playbook(store, playbook_id, client_id)
     payload = _bounded_playbook_payload(input_payload)
     effective_client_id = _validate_scope_and_ticket(store, playbook, ticket_id, client_id)
     # Validate every step before creating an approval or audit record. A later
@@ -437,11 +633,36 @@ def run_msp_playbook(
     }
 
 
-def _required_playbook(playbook_id: str) -> MspPlaybookDefinition:
-    playbook = get_msp_playbook(playbook_id)
-    if playbook is None:
-        raise KeyError(playbook_id)
-    return playbook
+def _required_playbook(store: Store, playbook_id: str, client_id: str | None) -> MspPlaybookDefinition:
+    return resolve_msp_playbook(store, playbook_id, client_id)
+
+
+def _bounded_text(value: object, field: str, limit: int) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    normalized = redact_text(value.strip())
+    if len(normalized) > limit:
+        raise ValueError(f"{field} must be at most {limit} characters")  # pragma: no cover
+    return normalized
+
+
+def _bounded_string_list(value: object, field: str) -> list[str]:
+    if not isinstance(value, (list, tuple)) or len(value) > 16:
+        raise ValueError(f"{field} must be a list of at most 16 strings")
+    result = [_bounded_text(item, field, 120) for item in value]
+    if len(set(result)) != len(result):
+        raise ValueError(f"{field} must not contain duplicates")
+    return result
+
+
+def _json_object(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("stored MSP playbook JSON is invalid") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("stored MSP playbook JSON must be an object")
+    return parsed
 
 
 def _bounded_playbook_payload(value: Mapping[str, object] | None) -> dict[str, object]:
