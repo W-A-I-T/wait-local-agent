@@ -156,6 +156,52 @@ def test_microsoft_evaluation_cli_runs_existing_agent_in_controlled_mode(monkeyp
     assert output["production_readiness"] == "pass"
     assert output["cases"][0]["execution"]["execution_status"] == "completed"
 
+    malformed_cases = [
+        ({"test_set": [{"id": "triage"}], "execution": []}, "execution must be an object"),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {"agent_id": 1, "entity_id": "TCK-1001", "client_id": "acme"},
+            },
+            "execution must contain",
+        ),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {
+                    "agent_id": agent.id,
+                    "entity_id": "TCK-1001",
+                    "client_id": "acme",
+                    "input": [],
+                },
+            },
+            "execution.input must be an object",
+        ),
+        (
+            {
+                "test_set": [{"id": "triage"}],
+                "execution": {"agent_id": "missing", "entity_id": "TCK-1001", "client_id": "acme"},
+            },
+            "agent was not found",
+        ),
+        (
+            {
+                "test_set": [],
+                "execution": {
+                    "agent_id": agent.id,
+                    "entity_id": "TCK-1001",
+                    "client_id": "acme",
+                },
+            },
+            "test_set must contain",
+        ),
+    ]
+    for malformed, message in malformed_cases:
+        source.write_text(json.dumps(malformed), encoding="utf-8")
+        invalid = CliRunner().invoke(app, ["microsoft", "evaluation", "run", str(source)])
+        assert invalid.exit_code != 0
+        assert message in invalid.output
+
 
 def test_microsoft_evaluation_cli_blocks_controlled_mode_when_writes_are_enabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
