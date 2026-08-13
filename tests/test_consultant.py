@@ -622,6 +622,82 @@ def test_architect_decision_engine_maps_targets_and_unknowns() -> None:
     assert fallback["status"] == "needs_review"
 
 
+def test_architect_decisions_consume_explicit_discovery_evidence_without_upgrading_it() -> None:
+    payload = {
+        **_payload(),
+        "knowledge": [],
+        "systems": ["Microsoft 365"],
+        "agents": [
+            {
+                "id": "onboarding-agent",
+                "name": "Onboarding agent",
+                "purpose": "Review onboarding requests",
+                "tools": [],
+                "knowledge": [],
+            }
+        ],
+        "workflows": [],
+        "deployment": ["local"],
+        "discovery": {
+            "reads": ["employee record", "manager record"],
+            "changes": ["prepare identity", "assign license"],
+            "approvals": ["assign license"],
+            "licenses": ["Microsoft 365 E3"],
+            "data_location": ["customer tenant"],
+            "data_residency": ["customer tenant"],
+            "data_leaves_tenant": False,
+            "rollback_expectations": "Pause and review failed steps.",
+        },
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    summary = architecture["decision_engine"]["evidence_summary"]
+    assert summary["source"] == "blueprint.discovery"
+    assert "reads" in summary["explicit_fields"]
+    assert "business_goal" in summary["missing_fields"]
+    assert summary["evidence_only"] is True
+    agent_decision = next(item for item in architecture["decisions"] if item["component_id"] == "onboarding-agent")
+    read_write = agent_decision["read_write_behavior"]
+    assert read_write["read"]["items"] == ["employee record", "manager record"]
+    assert read_write["write"]["items"] == ["prepare identity", "assign license"]
+    assert agent_decision["data_movement"] == "within_declared_tenant_and_local_boundary"
+    assert agent_decision["reversibility"] == "operator_declared"
+    assert agent_decision["licenses"] == [
+        {
+            "name": "Microsoft 365 E3",
+            "status": "declared",
+            "evidence": ["discovery.licenses"],
+            "verification": "not_verified",
+        }
+    ]
+    assert any(
+        item["name"] == "human_approval" and item["status"] == "declared"
+        for item in agent_decision["required_permissions"]
+    )
+
+
+def test_architect_decision_evidence_remains_unknown_without_discovery_answers() -> None:
+    blueprint = parse_solution_blueprint(_payload(), client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+    decision = next(item for item in architecture["decisions"] if item["component_id"] == "onboarding-supervisor")
+
+    assert decision["data_movement"] == "unknown"
+    assert decision["reversibility"] == "reversible_design_only"
+    assert decision["licenses"][0]["status"] == "unknown"
+    assert decision["read_write_behavior"]["read"]["status"] == "unknown"
+
+
 def test_architect_decision_engine_maps_connector_families_and_unknown_target() -> None:
     payload = {
         **_payload(),

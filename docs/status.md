@@ -37,8 +37,10 @@ policy failures as non-empty states with audit evidence.
 
 Architecture projections now include deterministic per-component decisions.
 They select only existing local/runtime boundaries, retain alternatives and
-dependencies, and report unknown permissions, licenses, data movement, and
-provider evidence as review gaps rather than inferred facts.
+dependencies, consume explicit discovery declarations for read/write scope,
+approvals, licenses, residency, data movement, and rollback expectations, and
+label those declarations as evidence-only. Provider permissions and live
+authorization remain review gaps rather than inferred facts.
 
 Guided discovery now has persisted tenant/principal-scoped sessions with
 bounded one-question turns. It records explicit user answers and the next
