@@ -62,10 +62,11 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn(mockFetch));
   });
 
-  it("renders API-backed HaloPSA live operations dashboard", async () => {
+  it("renders the API-backed Solutions Architect and MSP dashboard", async () => {
     renderApp();
 
-    expect(await screen.findByRole("heading", { name: "HaloPSA Live Operations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "WAIT AI Solutions Architect" })).toBeInTheDocument();
+    expect(screen.getByText("Local-first solution design, governed execution, and MSP operations.")).toBeInTheDocument();
     expect(screen.getByDisplayValue("local-appliance")).toHaveAttribute("autocomplete", "username");
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
@@ -187,7 +188,7 @@ describe("App", () => {
 
     renderApp();
 
-    await screen.findByRole("heading", { name: "HaloPSA Live Operations" });
+    await screen.findByRole("heading", { name: "WAIT AI Solutions Architect" });
 
     const authRoleCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/auth/role");
     expect(authRoleCall).toBeDefined();

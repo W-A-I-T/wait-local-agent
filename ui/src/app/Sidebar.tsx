@@ -50,7 +50,7 @@ export function Sidebar() {
         <ShieldCheck size={28} aria-hidden="true" />
         <div>
           <strong>WAIT Local Agent</strong>
-          <span>Local MSP appliance</span>
+          <span>Consultant and MSP runtime</span>
         </div>
       </div>
       <nav>
