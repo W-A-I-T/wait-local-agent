@@ -34,6 +34,25 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Next increments
 
+- Broader PSA, RMM, documentation, and Microsoft 365 coverage behind governed
+  shared contracts and mocked provider tests.
+- Bounded MSP playbook composition now includes tenant-scoped published
+  aggregate definitions with validated edit, enable/disable, revision compare,
+  restore-as-new-version, preview, approval-aware execution, and audit evidence;
+  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). Richer mappings,
+  historical/provider ingestion, and scheduled/event-triggered operations remain
+  open.
+- General conditional approval policy composition without weakening built-in
+  tool requirements or tenant boundaries.
+- Connector-aware backfill plans and richer provider-backed lifecycle/QBR
+  evidence; estimates must remain labeled and evidence-derived.
+- Native notification/channel adapters, delivery receipts, and optional
+  white-label end-user branding.
+- Richer model-provider lifecycle and cost APIs while preserving deterministic
+  local operation and explicit offline denial.
+- Browser validation in an environment with an installed Chromium binary; the
+  current CI and UI test evidence remains separate from that environment gap.
+
 - Capability-level permission matrices and richer, inspectable policy
   composition without weakening built-in tool requirements.
 - Connector-aware plans, richer event sources, execution comparison, and

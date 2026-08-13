@@ -408,6 +408,15 @@ def get_workflow_template(template_id: str) -> WorkflowTemplate | None:
     return next((template for template in WORKFLOW_TEMPLATES if template.id == template_id), None)
 
 
+def validate_workflow_input(template_id: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+    """Validate and redact workflow input without reading or mutating a ticket."""
+
+    template = get_workflow_template(template_id)
+    if template is None:
+        raise KeyError(template_id)
+    return _bounded_workflow_payload(template, {} if payload is None else payload)
+
+
 def run_workflow_template(
     store: Store,
     template_id: str,
