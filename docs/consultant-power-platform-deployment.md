@@ -81,8 +81,25 @@ fixed `pac solution import` command with `shell=False`. Output is redacted and
 reports PAC success or failure; validating the ZIP alone never reports a
 provider rollback as successful.
 
-This primitive does not automatically roll back a failed stage, choose an
-artifact, or bypass the existing approval and write/deployment flags. The
-public approval-route and CLI wiring for requesting a rollback remain a
-follow-up boundary; until that wiring exists, rollback execution is not
-claimed as a complete operator workflow.
+Rollback requests are now exposed through the same approval and audit boundary:
+
+```text
+POST /consultant/solutions/rollback-approvals
+POST /consultant/solutions/rollback-approvals/{request_id}/execute
+```
+
+The CLI exposes the equivalent commands:
+
+```bash
+wait-local-agent microsoft solution request-rollback-approval rollback.json --stage dev
+wait-local-agent microsoft solution execute-rollback <approval-id>
+```
+
+The request path validates the artifact and digest before creating a pending
+approval. The execute path requires an approved request and admin authority,
+re-validates the stored evidence and artifact, records the bounded result in
+the approval and audit records, and never chooses an artifact automatically.
+It does not automatically roll back a failed stage or bypass the existing
+write/deployment flags. A successful local `pac` return code is still only
+provider-command evidence; live tenant rollback verification remains an
+external boundary.

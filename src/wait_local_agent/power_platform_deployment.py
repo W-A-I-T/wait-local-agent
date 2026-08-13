@@ -246,6 +246,24 @@ def validate_promotion_evidence(stage_id: str, evidence: object) -> dict[str, ob
     }
 
 
+def validate_rollback_evidence(evidence: object) -> dict[str, object]:
+    """Validate the bounded evidence needed to re-import a prior package."""
+
+    if not isinstance(evidence, Mapping):
+        raise PowerPlatformDeploymentError("rollback_evidence must be an object")
+    raw = dict(evidence)
+    _reject_keys(raw, {"available", "strategy", "artifact_digest"}, "rollback_evidence")
+    if raw.get("available") is not True:
+        raise PowerPlatformDeploymentError("rollback_evidence is not available")
+    if raw.get("strategy") != _ROLLBACK_STRATEGY:
+        raise PowerPlatformDeploymentError("rollback_evidence.strategy is unsupported")
+    return {
+        "available": True,
+        "strategy": _ROLLBACK_STRATEGY,
+        "artifact_digest": _digest(raw.get("artifact_digest"), "rollback_evidence.artifact_digest"),
+    }
+
+
 def validate_promotion_source(
     stage_id: str,
     evidence: Mapping[str, object],
@@ -412,17 +430,9 @@ def execute_power_platform_rollback(
         return _rollback_blocked(stage_id, "Power Platform deployment plans must not contain credentials.")
     if stage_id not in _ROLLBACK_STAGES:
         return _rollback_blocked(stage_id, "Power Platform rollback target must be dev, test, or prod.")
-    if not isinstance(rollback_evidence, Mapping):
-        return _rollback_blocked(stage_id, "Power Platform rollback evidence is missing.")
-    if rollback_evidence.get("available") is not True:
-        return _rollback_blocked(stage_id, "Power Platform rollback evidence is not available.")
-    if rollback_evidence.get("strategy") != _ROLLBACK_STRATEGY:
-        return _rollback_blocked(stage_id, "Power Platform rollback strategy is unsupported.")
     try:
-        expected_digest = _digest(
-            rollback_evidence.get("artifact_digest"),
-            "rollback_evidence.artifact_digest",
-        )
+        normalized_evidence = validate_rollback_evidence(rollback_evidence)
+        expected_digest = cast(str, normalized_evidence["artifact_digest"])
         _stage(plan, stage_id)
         targets = _targets(cast(Sequence[Mapping[str, object]], plan.get("deployment_targets", [])))
         environment_url = next(target["environment_url"] for target in targets if target["name"] == stage_id)
@@ -722,4 +732,5 @@ __all__ = [
     "validate_power_platform_solution_package",
     "validate_promotion_evidence",
     "validate_promotion_source",
+    "validate_rollback_evidence",
 ]

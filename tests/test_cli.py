@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -286,6 +288,145 @@ def test_microsoft_solution_deployment_cli_stays_approval_gated(monkeypatch, tmp
     assert "must be approved" in pending.output
     assert invalid_stage.exit_code != 0
     assert "stage is not present" in invalid_stage.output
+
+
+def test_microsoft_solution_rollback_cli_stays_approval_gated(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    workspace = tmp_path / "power-platform"
+    workspace.mkdir()
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_WORKSPACE", str(workspace))
+    artifact = workspace / "previous.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = f"sha256:{hashlib.sha256(artifact.read_bytes()).hexdigest()}"
+    source = tmp_path / "rollback.json"
+    source.write_text(
+        json.dumps(
+            {
+                "client_id": "demo-client",
+                "solution_name": "onboarding",
+                "publisher_name": "WAIT",
+                "publisher_prefix": "wlp",
+                "output_directory": str(workspace / "solution"),
+                "deployment_targets": [
+                    {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}
+                ],
+                "rollback_artifact_path": str(artifact),
+                "rollback_evidence": {
+                    "available": True,
+                    "strategy": "reimport_previous_package",
+                    "artifact_digest": digest,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    requested = runner.invoke(app, ["microsoft", "solution", "request-rollback-approval", str(source)])
+    request_id = json.loads(requested.output)["id"]
+    pending = runner.invoke(app, ["microsoft", "solution", "execute-rollback", str(request_id)])
+    Store(tmp_path / "state.db").update_approval_request(request_id, "approved")
+    monkeypatch.setattr(
+        cli_module,
+        "execute_power_platform_rollback",
+        lambda *args, **kwargs: {
+            "status": "succeeded",
+            "message": "rollback complete",
+            "format": "wait-local-agent.power-platform.rollback-result",
+            "format_version": 1,
+            "stage_id": "dev",
+            "strategy": "reimport_previous_package",
+            "artifact_digest": digest,
+            "commands": [],
+        },
+    )
+    executed = runner.invoke(app, ["microsoft", "solution", "execute-rollback", str(request_id)])
+
+    assert requested.exit_code == 0, requested.output
+    assert json.loads(requested.output)["action_type"] == "power_platform.solution_rollback"
+    assert pending.exit_code != 0
+    assert "must be approved" in pending.output
+    assert executed.exit_code == 0, executed.output
+    assert json.loads(executed.output)["execution_status"] == "succeeded"
+
+
+def test_microsoft_solution_rollback_cli_rejects_malformed_inputs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    workspace = tmp_path / "power-platform"
+    workspace.mkdir()
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_WORKSPACE", str(workspace))
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}", encoding="utf-8")
+    invalid_types = tmp_path / "invalid-types.json"
+    invalid_types.write_text(
+        json.dumps(
+            {
+                "client_id": "demo-client",
+                "solution_name": "onboarding",
+                "publisher_name": "WAIT",
+                "publisher_prefix": "wlp",
+                "output_directory": str(workspace / "solution"),
+                "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+                "rollback_artifact_path": 12,
+                "rollback_evidence": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["microsoft", "solution", "request-rollback-approval", str(empty)])
+    invalid = runner.invoke(app, ["microsoft", "solution", "request-rollback-approval", str(invalid_types)])
+
+    assert missing.exit_code != 0
+    assert "rollback approval fields" in missing.output
+    assert invalid.exit_code != 0
+    assert "rollback artifact and evidence" in invalid.output
+
+    artifact = workspace / "previous.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = f"sha256:{hashlib.sha256(artifact.read_bytes()).hexdigest()}"
+    valid = {
+        "client_id": "demo-client",
+        "solution_name": "onboarding",
+        "publisher_name": "WAIT",
+        "publisher_prefix": "wlp",
+        "output_directory": str(workspace / "solution"),
+        "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+        "rollback_artifact_path": str(artifact),
+        "rollback_evidence": {
+            "available": True,
+            "strategy": "reimport_previous_package",
+            "artifact_digest": digest,
+        },
+    }
+    valid_source = tmp_path / "valid.json"
+    valid_source.write_text(json.dumps(valid), encoding="utf-8")
+    invalid_stage = runner.invoke(
+        app,
+        ["microsoft", "solution", "request-rollback-approval", str(valid_source), "--stage", "missing"],
+    )
+    absent_stage = runner.invoke(
+        app,
+        ["microsoft", "solution", "request-rollback-approval", str(valid_source), "--stage", "test"],
+    )
+    mismatch = dict(valid)
+    mismatch["rollback_evidence"] = {
+        "available": True,
+        "strategy": "reimport_previous_package",
+        "artifact_digest": "sha256:" + "0" * 64,
+    }
+    mismatch_source = tmp_path / "mismatch.json"
+    mismatch_source.write_text(json.dumps(mismatch), encoding="utf-8")
+    digest_mismatch = runner.invoke(app, ["microsoft", "solution", "request-rollback-approval", str(mismatch_source)])
+
+    assert invalid_stage.exit_code != 0
+    assert "rollback stage" in invalid_stage.output
+    assert absent_stage.exit_code != 0
+    assert "stage is not present" in absent_stage.output
+    assert digest_mismatch.exit_code != 0
+    assert "digest does not match" in digest_mismatch.output
 
 
 def test_microsoft_consultant_cli_rejects_malformed_sources(monkeypatch, tmp_path) -> None:
