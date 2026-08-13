@@ -24,8 +24,8 @@ export function AppShell() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <h1>HaloPSA Live Operations</h1>
-            <p>Approval-gated ticket writes, connector health, and local audit history.</p>
+            <h1>WAIT AI Solutions Architect</h1>
+            <p>Local-first solution design, governed execution, and MSP operations.</p>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" type="button" onClick={() => void refresh()}>
