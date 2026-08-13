@@ -87,3 +87,27 @@ Observed results:
 This is route/control inventory evidence only. It does not prove each control's
 success, denied, offline, provider-error, cancellation, or recovery path, so
 issue #257 remains open.
+
+## 2026-08-13 consultant discovery/save replay
+
+Environment:
+
+- Current-main API fixture on `127.0.0.1:8797` with demo mode and rate limiting
+  disabled; no live provider or deployment call enabled.
+- Patched dashboard on `127.0.0.1:5198` with Firefox through the Playwright CLI
+  skill at the desktop viewport.
+
+Observed results:
+
+- An incomplete discovery submission remained explicit with the missing-answer
+  list and did not enable architecture review.
+- After the required answers were supplied, discovery reported readiness for
+  architecture review and saving created the tenant-scoped `acme` blueprint.
+- The save result stayed visible as `Solution blueprint saved for architecture
+  review.`; the prior stale permission alert did not overwrite it when the new
+  blueprint became selected.
+
+This proves one bounded Consultant success path plus the incomplete-discovery
+state. It does not complete the full control-success, denied, offline,
+provider-error, cancellation, recovery, keyboard, or responsive matrix tracked
+in issue [#257](https://github.com/W-A-I-T/wait-local-agent/issues/257).

@@ -11,13 +11,16 @@ vi.mock("../src/app/DashboardContext", () => ({
 
 describe("Consultant", () => {
   let noBlueprints = false;
+  let blueprintListCalls = 0;
 
   beforeEach(() => {
     noBlueprints = false;
+    blueprintListCalls = 0;
     dashboard.clientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
+        blueprintListCalls += 1;
         return Promise.resolve(new Response(JSON.stringify(noBlueprints ? [] : [{
           id: "bp-acme",
           client_id: "acme",
@@ -310,5 +313,21 @@ describe("Consultant", () => {
     expect(discoveryCall?.[1]).toMatchObject({
       body: expect.stringContaining('"client_id":"acme-browser"'),
     });
+  });
+
+  it("does not reload the blueprint list when saving selects a new blueprint", async () => {
+    noBlueprints = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Solution name"), { target: { value: "Employee onboarding review" } });
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Automate employee onboarding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
+    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save solution blueprint" }));
+
+    expect(await screen.findByRole("button", { name: /Employee onboarding review/ })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/saved for architecture review/i);
+    expect(blueprintListCalls).toBe(1);
   });
 });

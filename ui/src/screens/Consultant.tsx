@@ -91,15 +91,22 @@ export function Consultant() {
       setUseCases(catalog.use_cases);
       setMonitoring(health);
       setDiscoverySessions(sessions);
-      if (selectedId && rows.some((row) => row.id === selectedId)) return;
-      setSelectedId(rows[0]?.id ?? null);
-      setArchitecture(null);
+      setSelectedId((currentSelectedId) => (
+        currentSelectedId && rows.some((row) => row.id === currentSelectedId)
+          ? currentSelectedId
+          : rows[0]?.id ?? null
+      ));
+      setArchitecture((currentArchitecture) => (
+        currentArchitecture && rows.some((row) => row.id === currentArchitecture.blueprint_id)
+          ? currentArchitecture
+          : null
+      ));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load consultant blueprints.");
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     void refresh();
