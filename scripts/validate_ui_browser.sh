@@ -178,6 +178,19 @@ print(json.dumps({"kind": "provider_error", "route": "/connectors", "result": pa
 PY
 )" >>"$RECORDS_PATH"
 
+# Recover from the controlled provider failure. A successful refresh must clear
+# the stale appliance error instead of leaving the dashboard in a false-failure
+# state. This still uses only the local deterministic fixture.
+run_json run-code 'async () => { await page.getByRole("button", { name: "Refresh", exact: true }).click(); await page.waitForTimeout(500); }' >/dev/null
+provider_recovery="$(run_eval '({ alerts: [...document.querySelectorAll("[role=alert]")].map(node => node.textContent?.trim()).filter(Boolean), statuses: [...document.querySelectorAll("[role=status]")].map(node => node.textContent?.trim()).filter(Boolean), body: document.body.innerText })')"
+printf '%s\n' "$(python3 - "$provider_recovery" <<'PY'
+import json
+import sys
+
+print(json.dumps({"kind": "provider_recovery", "route": "/connectors", "result": json.loads(sys.argv[1])}))
+PY
+)" >>"$RECORDS_PATH"
+
 # Simulate loss of connectivity after the page is loaded. The dashboard must
 # retain a visible appliance error and must not present a successful operation.
 run_json network-state-set offline >/dev/null
@@ -192,6 +205,18 @@ import sys
 
 payload = json.loads(sys.argv[1])
 print(json.dumps({"kind": "offline", "route": "/connectors", "result": payload}))
+PY
+)" >>"$RECORDS_PATH"
+
+# Restore the browser transport and verify that the next refresh recovers the
+# authenticated dashboard state without a reload or a false success message.
+run_json run-code 'async () => { await page.getByRole("button", { name: "Refresh", exact: true }).click(); await page.waitForTimeout(700); }' >/dev/null
+offline_recovery="$(run_eval '({ alerts: [...document.querySelectorAll("[role=alert]")].map(node => node.textContent?.trim()).filter(Boolean), statuses: [...document.querySelectorAll("[role=status]")].map(node => node.textContent?.trim()).filter(Boolean), body: document.body.innerText })')"
+printf '%s\n' "$(python3 - "$offline_recovery" <<'PY'
+import json
+import sys
+
+print(json.dumps({"kind": "offline_recovery", "route": "/connectors", "result": json.loads(sys.argv[1])}))
 PY
 )" >>"$RECORDS_PATH"
 
@@ -228,6 +253,11 @@ for kind, label in (("provider_error", "provider error"), ("offline", "offline")
     visible = " ".join(result["alerts"] + result["statuses"])
     if not visible:
         failures.append(f"{label}: no visible status or alert")
+
+for kind, label in (("provider_recovery", "provider recovery"), ("offline_recovery", "offline recovery")):
+    result = next(record for record in records if record["kind"] == kind)["result"]
+    if result["alerts"]:
+        failures.append(f"{label}: stale error remained after a successful refresh")
 
 permission_records = []
 if expect_permission.lower() == "true":
