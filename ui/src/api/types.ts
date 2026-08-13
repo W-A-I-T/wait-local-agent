@@ -889,6 +889,8 @@ export type ProviderSettings = {
   local_model_base_url: string;
   local_model_name: string;
   local_model_timeout_seconds: number;
+  provider_scope?: "appliance-wide";
+  context_scope?: "tenant-scoped";
   llm_inference_enabled: boolean;
   cloud_fallback_enabled?: boolean;
   offline_mode?: boolean;
@@ -907,6 +909,7 @@ export type ProviderHealth = {
   local: {
     provider: string | null;
     model: string | null;
+    scope?: "appliance-wide";
     status: string;
     probe: string;
     detail?: string;
@@ -915,6 +918,7 @@ export type ProviderHealth = {
   remote: {
     provider: string | null;
     model: string | null;
+    scope?: "appliance-wide";
     status: string;
     probe: string;
     model_available?: boolean | null;

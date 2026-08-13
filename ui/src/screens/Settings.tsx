@@ -205,6 +205,14 @@ export function Settings() {
             <dd>{providers?.local_model_provider || "n/a"}</dd>
           </div>
           <div>
+            <dt>Provider scope</dt>
+            <dd>{providers?.provider_scope || "unknown"}</dd>
+          </div>
+          <div>
+            <dt>Request context</dt>
+            <dd>{providers?.context_scope || "unknown"}</dd>
+          </div>
+          <div>
             <dt>Remote fallback</dt>
             <dd>
               {providers?.remote_model_enabled
