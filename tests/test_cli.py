@@ -456,7 +456,7 @@ def test_agents_list_reports_execution_window(monkeypatch, tmp_path) -> None:
     assert result.exit_code == 0
     assert "Business-hours triage" in result.output
     assert "window=09:00-17:00 timezone=America/Vancouver" in result.output
-    assert "failure_policies=ticket-triage:retry" in result.output
+    assert "failure_policies=ticket-triage:retry:retries=1" in result.output
 
 
 def test_workflow_gallery_artifact_export_and_import_are_bounded(monkeypatch, tmp_path) -> None:
