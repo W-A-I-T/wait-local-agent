@@ -1855,6 +1855,12 @@ dd svg {
     grid-template-columns: 1fr;
   }
 
+  .shell,
+  .sidebar,
+  .sidebar nav {
+    min-width: 0;
+  }
+
   .template-gallery-grid {
     grid-template-columns: 1fr;
   }
@@ -1881,7 +1887,40 @@ dd svg {
   }
 
   .sidebar {
+    padding: 14px 12px 10px;
+  }
+
+  .sidebar .brand {
+    margin-bottom: 10px;
+  }
+
+  .sidebar nav {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .sidebar nav a {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 10px;
+    white-space: nowrap;
+  }
+
+  .workspace {
+    min-width: 0;
     padding: 18px;
+  }
+
+  .topbar,
+  .screen-stack,
+  .panel,
+  .connector-row,
+  .connector-summary {
+    min-width: 0;
+    width: 100%;
   }
 
   .topbar,
@@ -1890,6 +1929,42 @@ dd svg {
   .document-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .topbar > div:first-child,
+  .topbar-actions,
+  .token-form,
+  .token-input,
+  .token-input input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .topbar h1 {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .token-form {
+    align-items: stretch;
+  }
+
+  .topbar-actions > .icon-button,
+  .topbar-actions > .status-pill {
+    align-self: flex-start;
+  }
+
+  .connector-row > div,
+  .connector-summary > div,
+  .panel-heading > div,
+  .topbar > div {
+    min-width: 0;
+  }
+
+  .connector-row span,
+  .connector-summary span,
+  .panel-heading span {
+    overflow-wrap: anywhere;
   }
 
   .ticket-meta {
