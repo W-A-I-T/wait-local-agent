@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,7 +65,7 @@ def test_msp_playbook_entry_lifecycle_is_tenant_scoped_and_versioned(settings) -
     diff = msp_playbook_revision_diff(revisions[1], revisions[0])
     assert diff["from_version"] == 1
     assert diff["to_version"] == 2
-    assert "definition" in diff["changed_fields"]
+    assert "definition" in cast(list[str], diff["changed_fields"])
     try:
         preview_msp_playbook(
             store,
@@ -164,7 +166,7 @@ def test_msp_playbook_definition_rejects_unsupported_execution_surfaces() -> Non
 )
 def test_msp_playbook_definition_validation_boundaries(payload, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        parse_msp_playbook_definition(payload, playbook_id="custom")  # type: ignore[arg-type]
+        parse_msp_playbook_definition(cast(Mapping[str, object], payload), playbook_id="custom")
 
 
 def test_msp_playbook_definition_rejects_duplicate_fields_and_bad_stored_json(tmp_path) -> None:
