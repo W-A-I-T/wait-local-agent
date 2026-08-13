@@ -47,6 +47,12 @@ open-core increment. Current facts are also tracked in
 
 - Broader PSA, RMM, documentation, and Microsoft 365 coverage behind governed
   shared contracts and mocked provider tests.
+- Bounded MSP playbook composition now includes tenant-scoped published
+  aggregate definitions with validated edit, enable/disable, revision compare,
+  restore-as-new-version, preview, approval-aware execution, and audit evidence;
+  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). Richer mappings,
+  historical/provider ingestion, and scheduled/event-triggered operations remain
+  open.
 - General conditional approval policy composition without weakening built-in
   tool requirements or tenant boundaries.
 - Connector-aware backfill plans and richer provider-backed lifecycle/QBR
