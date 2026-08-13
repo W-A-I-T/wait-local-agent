@@ -3485,7 +3485,12 @@ def list_agents() -> None:
             policy = step.get("failure_policy")
             if isinstance(policy, dict):
                 mode = policy.get("mode", "stop")
-                failure_policy_values.append(f"{step.get('tool_id', 'unknown')}:{mode}")
+                value = f"{step.get('tool_id', 'unknown')}:{mode}"
+                if mode == "retry":
+                    value += f":retries={policy.get('max_retries', 0)}"
+                if mode == "fallback":
+                    value += f":fallback={policy.get('fallback_tool_id', '')}"
+                failure_policy_values.append(value)
         failure_policies = ",".join(failure_policy_values) or "-"
         typer.echo(
             f"{definition.id} {definition.name} trigger={definition.trigger} "
