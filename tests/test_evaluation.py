@@ -282,8 +282,8 @@ def test_controlled_evaluation_requires_tenant_and_identity_boundaries() -> None
 
 def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
     class Result:
-        status = "completed"
         run_id = 9
+        status = "completed"
         error_detail = ""
         steps = [
             {
@@ -307,7 +307,7 @@ def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
         def run(self, *args, **kwargs):
             return Result()
 
-    definition = type("Definition", (), {"client_id": "acme"})()
+    definition = type("Definition", (), {"client_id": "acme", "result_aware": False})()
     executor = AgentServiceEvaluationExecutor(
         cast(AgentService, Service()),
         definition,
@@ -327,8 +327,8 @@ def test_runtime_evaluation_adapter_preserves_step_evidence() -> None:
 
 def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_enabled_writes() -> None:
     class Result:
-        status = "completed"
         run_id = 10
+        status = "completed"
         error_detail = ""
         steps = [{"tool_id": "unknown", "status": "success", "evidence": []}]
 
@@ -341,7 +341,7 @@ def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_e
         def run(self, *args, **kwargs):
             return Result()
 
-    definition = type("Definition", (), {"client_id": "acme"})()
+    definition = type("Definition", (), {"client_id": "acme", "result_aware": False})()
     result = AgentServiceEvaluationExecutor(
         cast(AgentService, Service()),
         definition,
@@ -351,6 +351,151 @@ def test_runtime_evaluation_security_evidence_fails_closed_for_unknown_tool_or_e
         client_id="acme",
     ).execute({"failure_expected": False})
     assert result["security_evidence"] == {"rbac": False, "unexpected_writes": False}
+
+
+@pytest.mark.parametrize(
+    ("dimension", "result", "expected"),
+    [
+        (
+            "timeout",
+            type("Result", (), {"run_id": 1, "status": "failed", "error_detail": "agent execution timed out"})(),
+            True,
+        ),
+        (
+            "cancellation",
+            type("Result", (), {"run_id": 1, "status": "cancelled", "error_detail": "agent run cancelled"})(),
+            True,
+        ),
+        (
+            "retries",
+            type(
+                "Result",
+                (),
+                {
+                    "run_id": 1,
+                    "status": "completed",
+                    "error_detail": "",
+                    "final_result": {"retry_count": 1, "retry_of_run_id": 4},
+                },
+            )(),
+            True,
+        ),
+        (
+            "partial_failure",
+            type(
+                "Result",
+                (),
+                {
+                    "run_id": 1,
+                    "status": "failed",
+                    "error_detail": "step failed",
+                    "final_result": {"history": {"partial": True}},
+                },
+            )(),
+            True,
+        ),
+        (
+            "provider_failure",
+            type(
+                "Result",
+                (),
+                {
+                    "run_id": 1,
+                    "status": "failed",
+                    "error_detail": "provider unavailable",
+                    "final_result": {"exception": {"kind": "provider_failure"}},
+                },
+            )(),
+            True,
+        ),
+        (
+            "malformed_provider_output",
+            type(
+                "Result",
+                (),
+                {
+                    "run_id": 1,
+                    "status": "failed",
+                    "error_detail": "malformed model output",
+                    "final_result": {"exception": {"kind": "malformed_output"}},
+                },
+            )(),
+            True,
+        ),
+    ],
+)
+def test_runtime_evaluation_derives_bounded_lifecycle_evidence(dimension, result, expected) -> None:
+    result.steps = [{"tool_id": "ticket-triage", "status": "success", "action_run_id": 1}]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return [type("Tool", (), {"id": "ticket-triage", "required_role": "technician", "access_mode": "read"})()]
+
+        def run(self, *args, **kwargs):
+            return result
+
+    definition = type("Definition", (), {"client_id": "acme", "result_aware": False})()
+    executor = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    )
+    observed = executor.execute({"required_security_dimensions": [dimension]})
+    security_evidence = cast(dict[str, bool], observed["security_evidence"])
+    assert security_evidence[dimension] is expected
+
+
+def test_runtime_evaluation_derives_result_aware_duplicate_prevention() -> None:
+    class Result:
+        run_id = 12
+        status = "completed"
+        error_detail = ""
+        final_result: dict[str, object] = {}
+        steps = [
+            {"tool_id": "ticket-triage", "status": "success", "action_run_id": 1},
+            {"tool_id": "ticket-summary", "status": "success", "action_run_id": 2},
+        ]
+
+    class Service:
+        settings = type("Settings", (), {"allow_llm_inference": False, "allow_write_actions": False})()
+
+        def list_tools(self):
+            return [
+                type("Tool", (), {"id": tool_id, "required_role": "technician", "access_mode": "read"})()
+                for tool_id in ("ticket-triage", "ticket-summary")
+            ]
+
+        def run(self, *args, **kwargs):
+            return Result()
+
+    definition = type("Definition", (), {"client_id": "acme", "result_aware": True})()
+    observed = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    ).execute({"required_security_dimensions": ["duplicate_prevention"]})
+    evidence = cast(dict[str, bool], observed["security_evidence"])
+    assert evidence["duplicate_prevention"] is True
+
+    Result.steps.append({"tool_id": "ticket-summary", "status": "success", "action_run_id": 3})
+    duplicate_observed = AgentServiceEvaluationExecutor(
+        cast(AgentService, Service()),
+        definition,
+        entity_id="T-1",
+        actor="tester",
+        actor_role=Role.TECHNICIAN,
+        client_id="acme",
+    ).execute({"required_security_dimensions": ["duplicate_prevention"]})
+    duplicate_evidence = cast(dict[str, bool], duplicate_observed["security_evidence"])
+    assert duplicate_evidence["duplicate_prevention"] is False
 
 
 @pytest.mark.parametrize(
