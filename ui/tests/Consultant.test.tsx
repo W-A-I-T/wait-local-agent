@@ -3,8 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
+const dashboard = vi.hoisted(() => ({ clientId: "acme" }));
+
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, clientId: "acme" })
+  useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId })
 }));
 
 describe("Consultant", () => {
@@ -12,6 +14,7 @@ describe("Consultant", () => {
 
   beforeEach(() => {
     noBlueprints = false;
+    dashboard.clientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
@@ -220,6 +223,23 @@ describe("Consultant", () => {
     const guidedCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/sessions");
     expect(guidedCall?.[1]).toMatchObject({
       body: expect.stringContaining('"client_id":"acme"'),
+    });
+  });
+
+  it("uses the entered workspace when the local demo has no authenticated tenant scope", async () => {
+    noBlueprints = true;
+    dashboard.clientId = "";
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Customer workspace ID"), { target: { value: "acme-browser" } });
+    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
+
+    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
+    const discoveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery");
+    expect(discoveryCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"client_id":"acme-browser"'),
     });
   });
 });
