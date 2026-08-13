@@ -41,6 +41,32 @@ wait-local-agent workflows playbook-preview security-response-review TCK-1001
 wait-local-agent workflows playbook-run security-response-review TCK-1001
 ```
 
+## Scheduled playbooks
+
+Any validated static or tenant-published playbook can also be registered as a
+scheduled job through the existing scheduler:
+
+```text
+POST /scheduled-jobs
+{
+  "playbook_id": "qbr-review",
+  "schedule_type": "interval",
+  "interval_seconds": 86400,
+  "params": {
+    "client_id": "acme",
+    "input": {"period_start": "2026-01-01", "period_end": "2026-01-31"}
+  }
+}
+```
+
+Workflow playbooks use `params.ticket_id`; report playbooks use the explicit
+client scope and report period inputs. Registration performs the same
+side-effect-free preview validation as the manual preview route. When the
+schedule fires, the existing `SchedulerManager` invokes `run_msp_playbook`,
+so workflow steps retain their normal approval, tenant, audit, and completion
+event boundaries. A schedule is execution evidence only after its triggered
+playbook result is recorded; it does not imply provider success.
+
 ## Published aggregate lifecycle
 
 The local catalog can also publish a tenant-scoped copy of a built-in (or a
@@ -78,9 +104,10 @@ provider contract and stored evidence establish them.
 
 The broader MSP issue remains open. Built-in versioned definitions and the
 preview/controlled-run contract plus the first tenant-edited aggregate
-publish/disable/restore/compare lifecycle slice are now present. Richer step
-input mappings, historical/provider ingestion, M365 compliance checks,
-software-inventory review, and several scheduled or event-triggered operations
+publish/disable/restore/compare lifecycle slice plus scheduled playbook
+registration and execution through the existing scheduler are now present.
+Richer step input mappings, historical/provider ingestion, M365 compliance
+checks, software-inventory review, and event-triggered playbook subscriptions
 remain follow-up work. These new M365 playbooks prepare and gate requests; they
 do not claim a live directory mutation without configured provider evidence. The
 existing workflow gallery continues to provide lifecycle operations for

@@ -13,6 +13,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
+from wait_local_agent.msp_playbooks import run_msp_playbook
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.reports.msp import (
     build_automation_opportunity_report,
@@ -168,6 +169,9 @@ class SchedulerManager:
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
         params = _safe_json_object(scheduled_job.params_json)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
+        if scheduled_job.job_kind == "playbook":
+            await self._run_playbook_job(scheduled_job, params, client_id)
+            return
         if scheduled_job.job_kind == "agent":
             await self._run_agent_job(scheduled_job, params, client_id)
             return
@@ -210,6 +214,57 @@ class SchedulerManager:
             status=run.status,
             client_id=run.client_id,
             actor="scheduler",
+        )
+
+    async def _run_playbook_job(
+        self,
+        scheduled_job: ScheduledJob,
+        params: dict[str, object],
+        client_id: str | None,
+    ) -> None:
+        """Run a scheduled playbook through the existing bounded coordinator."""
+
+        ticket_id = _string_or_none(params.get("ticket_id"))
+        input_payload = params.get("input", {})
+        try:
+            if not isinstance(input_payload, dict):
+                raise ValueError("scheduled playbook input must be an object")
+
+            def dispatch_completion(run: Any) -> None:
+                self._dispatch_completion(
+                    run_id=run.id,
+                    ticket_id=run.ticket_id,
+                    template_id=run.template_id,
+                    status=run.status,
+                    client_id=run.client_id,
+                    actor="scheduler",
+                )
+
+            result = run_msp_playbook(
+                self._store,
+                scheduled_job.template_id,
+                ticket_id=ticket_id,
+                client_id=client_id,
+                actor="scheduler",
+                trigger_source="scheduler",
+                input_payload=input_payload,
+                tool_executor=self._smart_action_service,
+                smart_action_service=self._smart_action_service,
+                on_workflow_run=dispatch_completion,
+            )
+        except Exception as exc:
+            self._store.add_audit_event(
+                "scheduled_job.trigger_failed",
+                str(scheduled_job.id),
+                f"playbook {scheduled_job.template_id} failed: {redact_text(str(exc))}",
+                client_id=client_id,
+            )
+            raise
+        self._store.add_audit_event(
+            "scheduled_job.triggered",
+            str(scheduled_job.id),
+            f"playbook {scheduled_job.template_id} created run {result['run_id']} ({result['status']})",
+            client_id=client_id,
         )
 
     async def _run_report_job(
@@ -537,6 +592,10 @@ def _validate_schedule_target(
     if job_kind == "report":
         if template_id not in _SCHEDULED_REPORT_TYPES or agent_id is not None or entity_id is not None:
             raise ValueError("report schedules require a supported report type only")
+        return
+    if job_kind == "playbook":
+        if not template_id or agent_id is not None or entity_id is not None:
+            raise ValueError("playbook schedules require playbook_id only")
         return
     raise ValueError("unsupported scheduled job kind")
 
