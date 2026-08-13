@@ -14,6 +14,7 @@ from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
     build_power_platform_deployment_plan_from_payload,
+    execute_power_platform_rollback,
     execute_power_platform_stage,
     validate_power_platform_solution_package,
     validate_promotion_evidence,
@@ -37,6 +38,14 @@ def _plan(output_directory: str = "/tmp/power-platform/solution") -> dict[str, o
         output_directory=output_directory,
         deployment_targets=_targets(),
     )
+
+
+def _rollback_evidence(digest: str) -> dict[str, object]:
+    return {
+        "available": True,
+        "strategy": "reimport_previous_package",
+        "artifact_digest": digest,
+    }
 
 
 def test_deployment_plan_is_staged_and_metadata_only() -> None:
@@ -514,6 +523,250 @@ def test_execution_requires_verifiable_artifact_and_uses_shell_free_runner(
     )
     assert result["status"] == "failed"
     assert "verifiable solution artifact" in str(result["message"])
+
+
+def test_rollback_reimports_only_a_verified_prior_package(settings, tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = validate_power_platform_solution_package(previous, workspace)
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    plan = _plan(str(workspace / "solution"))
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    calls: list[tuple[list[str], Path, float]] = []
+
+    def runner(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
+        calls.append((command, cwd, timeout))
+        return subprocess.CompletedProcess(command, 0, "rollback ok", "")
+
+    result = execute_power_platform_rollback(
+        plan,
+        "test",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence(digest),
+        approved=True,
+        runner=runner,
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["artifact_digest"] == digest
+    assert result["rollback_started"] is True
+    assert calls[0][0] == [
+        "/usr/local/bin/pac",
+        "solution",
+        "import",
+        "--path",
+        str(previous.resolve()),
+        "--environment",
+        "https://test.crm.dynamics.com",
+    ]
+    assert calls[0][1] == workspace.resolve()
+    assert calls[0][2] <= 1_800
+    assert result["commands"][0]["command"] == [  # type: ignore[index]
+        "pac",
+        "solution",
+        "import",
+        "--path",
+        "previous.zip",
+        "--environment",
+        "https://test.crm.dynamics.com",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("stage", "evidence", "artifact", "message"),
+    [
+        ("build", {}, "previous.zip", "target must be"),
+        ("test", {"available": False}, "previous.zip", "not available"),
+        (
+            "test",
+            {"available": True, "strategy": "custom", "artifact_digest": "sha256:" + "a" * 64},
+            "previous.zip",
+            "unsupported",
+        ),
+        ("test", _rollback_evidence("sha256:" + "a" * 64), "missing.zip", "missing"),
+    ],
+)
+def test_rollback_fails_closed_before_pac_for_unsafe_or_unavailable_inputs(
+    settings, tmp_path: Path, stage, evidence, artifact, message
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    result = execute_power_platform_rollback(
+        _plan(str(workspace / "solution")),
+        stage,
+        configured,
+        rollback_artifact_path=workspace / artifact,
+        rollback_evidence=evidence,
+        approved=True,
+        runner=lambda *_args: (_ for _ in ()).throw(AssertionError("PAC must not run")),
+    )
+    assert result["status"] == "blocked"
+    assert message in str(result["message"])
+
+
+def test_rollback_rejects_digest_mismatch_and_reports_pac_failure(settings, tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    plan = _plan(str(workspace / "solution"))
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    mismatch = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence("sha256:" + "a" * 64),
+        approved=True,
+        runner=lambda *_args: (_ for _ in ()).throw(AssertionError("PAC must not run")),
+    )
+    assert mismatch["status"] == "failed"
+    assert "digest does not match" in str(mismatch["message"])
+
+    def failed_runner(command, cwd, timeout):
+        return subprocess.CompletedProcess(command, 7, "token=secret", "provider denied")
+
+    digest = validate_power_platform_solution_package(previous, workspace)
+    failed = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence(digest),
+        approved=True,
+        runner=failed_runner,
+    )
+    assert failed["status"] == "failed"
+    assert failed["rollback_started"] is True
+    assert failed["artifact_digest"] == digest
+    assert failed["commands"][0]["stdout"] == "token=[redacted]"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("settings_update", "approved", "plan_update", "evidence", "message"),
+    [
+        ({}, False, {}, _rollback_evidence("sha256:" + "a" * 64), "completed approval"),
+        ({"allow_write_actions": False}, True, {}, _rollback_evidence("sha256:" + "a" * 64), "ALLOW_WRITE_ACTIONS"),
+        (
+            {"allow_power_platform_deployment": False},
+            True,
+            {},
+            _rollback_evidence("sha256:" + "a" * 64),
+            "ALLOW_POWER_PLATFORM_DEPLOYMENT",
+        ),
+        ({}, True, {"credentials_included": True}, _rollback_evidence("sha256:" + "a" * 64), "credentials"),
+        ({}, True, {}, {}, "not available"),
+        ({}, True, {}, {"available": True, "strategy": "reimport_previous_package"}, "artifact_digest"),
+    ],
+)
+def test_rollback_enforces_approval_flags_and_evidence_before_file_or_pac(
+    settings, tmp_path: Path, settings_update, approved, plan_update, evidence, message
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        **{
+            "allow_write_actions": True,
+            "allow_power_platform_deployment": True,
+            "power_platform_workspace": workspace,
+            **settings_update,
+        },
+    )
+    plan = {**_plan(str(workspace / "solution")), **plan_update}
+    result = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=workspace / "missing.zip",
+        rollback_evidence=evidence,
+        approved=approved,
+        runner=lambda *_args: (_ for _ in ()).throw(AssertionError("PAC must not run")),
+    )
+    assert result["status"] == "blocked"
+    assert message in str(result["message"])
+
+
+def test_rollback_reports_missing_pac_timeout_and_start_failure(settings, tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = validate_power_platform_solution_package(previous, workspace)
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    plan = _plan(str(workspace / "solution"))
+    evidence = _rollback_evidence(digest)
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: None)
+    missing = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=evidence,
+        approved=True,
+    )
+    assert missing["status"] == "blocked"
+    assert "not available" in str(missing["message"])
+
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+
+    def timeout_runner(command, cwd, timeout):
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    timed_out = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=evidence,
+        approved=True,
+        runner=timeout_runner,
+    )
+    assert timed_out["status"] == "failed"
+    assert "timed out" in str(timed_out["message"])
+
+    def os_error_runner(command, cwd, timeout):
+        raise OSError("pac unavailable")
+
+    not_started = execute_power_platform_rollback(
+        plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=evidence,
+        approved=True,
+        runner=os_error_runner,
+    )
+    assert not_started["status"] == "failed"
+    assert "could not be started" in str(not_started["message"])
 
     calls: list[dict[str, object]] = []
 

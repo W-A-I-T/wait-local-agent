@@ -16,7 +16,10 @@ Planned stages report no deployment start, and TEST/PROD approval requests
 require explicit preceding-stage, evaluation, governance, artifact-digest, and
 rollback evidence. The preceding-stage approval must be same-tenant, approved,
 successfully executed, and match the submitted package digest; live provider
-verification and rollback execution remain unsupported boundaries. See
+verification remains an explicit boundary. A separate bounded rollback
+primitive can re-import a digest-verified prior package only after an approved
+target-stage request; public rollback approval-route/CLI wiring and
+live-provider rollback evidence remain unsupported boundaries. See
 [`docs/consultant-power-platform-deployment.md`](consultant-power-platform-deployment.md)
 for the execution boundary.
 

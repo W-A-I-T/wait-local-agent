@@ -70,3 +70,19 @@ import success or production deployment.
 Execution is intentionally one stage at a time so DEV, TEST, and PROD each
 retain a separate approval and audit record. A failed stage stops the pipeline;
 later stages are not started automatically.
+
+## Rollback execution boundary
+
+The deployment runtime includes a separate `execute_power_platform_rollback`
+primitive for an explicitly approved target stage. It accepts only the
+`reimport_previous_package` strategy, requires a prior ZIP whose bounded
+contents and SHA-256 digest match the rollback evidence, and invokes the same
+fixed `pac solution import` command with `shell=False`. Output is redacted and
+reports PAC success or failure; validating the ZIP alone never reports a
+provider rollback as successful.
+
+This primitive does not automatically roll back a failed stage, choose an
+artifact, or bypass the existing approval and write/deployment flags. The
+public approval-route and CLI wiring for requesting a rollback remain a
+follow-up boundary; until that wiring exists, rollback execution is not
+claimed as a complete operator workflow.
