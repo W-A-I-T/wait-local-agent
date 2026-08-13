@@ -11,6 +11,22 @@ Platform preparation surfaces. External credentials, provider availability, and
 deployment authorization remain explicit prerequisites; artifact generation is
 not deployment.
 
+Tenant-scoped environment discovery matches explicit system declarations to
+local connector configuration without probing providers; configured,
+not-configured, detected, permission-limited, and unknown states remain
+explicit and flow into blueprint candidates and architecture review.
+
+Architecture projections now include deterministic per-component decisions.
+They select only existing local/runtime boundaries, retain alternatives and
+dependencies, and report unknown permissions, licenses, data movement, and
+provider evidence as review gaps rather than inferred facts.
+
+Guided discovery now has persisted tenant/principal-scoped sessions with
+bounded one-question turns. It records explicit user answers and the next
+unresolved question, exposes the bounded transcript, and keeps missing
+evidence visible. This is a review/intake workflow; it does not infer
+requirements, execute connectors, or deploy a Microsoft solution.
+
 WAIT Local Agent is moving from bootstrap demo to local MSP appliance.
 
 ## Ready now

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -48,6 +48,8 @@ _TOP_LEVEL_FIELDS = {
     "skills",
     "model",
     "orchestration",
+    "environment",
+    "discovery",
 }
 _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "instructions",
@@ -55,8 +57,12 @@ _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "skills",
     "model",
     "orchestration",
+    "environment",
+    "discovery",
 }
 _ORCHESTRATION_MODES = {"single_agent", "supervisor", "event_driven", "hybrid"}
+_VERIFIED_ENVIRONMENT_STATUSES = {"reachable", "authenticated", "authorized"}
+_LOCAL_DEPLOYMENT_TARGETS = {"local", "api", "cli", "agents", "mcp"}
 
 
 class BlueprintValidationError(ValueError):
@@ -162,20 +168,56 @@ def architect_solution_blueprint(
         )
 
     for name in blueprint.systems:
-        open_items.append(
-            {
-                "kind": "system_connector",
-                "component_id": name,
-                "detail": "connector selection and configuration are not inferred",
-            }
-        )
+        environment = _matching_environment(name, blueprint.environment)
+        verified = bool(environment and environment.get("status") in _VERIFIED_ENVIRONMENT_STATUSES)
+        if not verified:
+            open_items.append(
+                {
+                    "kind": "system_connector",
+                    "component_id": name,
+                    "detail": (
+                        str(environment.get("limitation"))
+                        if environment and environment.get("limitation")
+                        else "connector selection and configuration are not inferred"
+                    ),
+                }
+            )
         components.append(
             {
                 "id": name,
                 "kind": "system_connector",
                 "name": name,
-                "implementation": "existing_connector_or_mcp_boundary",
-                "status": "needs_review",
+                "implementation": "existing_connector_boundary" if verified else "existing_connector_or_mcp_boundary",
+                "connector_id": environment.get("connector_id") if environment else None,
+                "observed_status": environment.get("status") if environment else None,
+                "status": "ready" if verified else "needs_review",
+            }
+        )
+
+    for environment in blueprint.environment:
+        status = str(environment["status"])
+        connector_id = str(environment.get("connector_id") or "")
+        if status not in {"authorized", "authenticated", "reachable"}:
+            open_items.append(
+                {
+                    "kind": "environment",
+                    "component_id": str(environment["id"]),
+                    "detail": str(
+                        environment.get("limitation")
+                        or f"environment status is {status}; provider verification is incomplete"
+                    ),
+                }
+            )
+        components.append(
+            {
+                "id": environment["id"],
+                "kind": "environment",
+                "name": environment["name"],
+                "connector_id": connector_id or None,
+                "observed_status": status,
+                "evidence": list(cast(list[str], environment.get("evidence", []))),
+                "implementation": "existing_connector_boundary" if connector_id else "customer_declared_system",
+                "status": "ready" if status in {"authorized", "authenticated", "reachable"} else "needs_review",
             }
         )
 
@@ -201,6 +243,8 @@ def architect_solution_blueprint(
             }
         )
 
+    decisions = _architecture_decisions(blueprint, components, templates)
+    unresolved_decisions = [item for item in decisions if item["status"] != "ready"]
     return {
         "blueprint_id": blueprint.id,
         "client_id": blueprint.client_id,
@@ -208,12 +252,317 @@ def architect_solution_blueprint(
         "risk": blueprint.risk,
         "approval_policy": dict(blueprint.approvals),
         "components": components,
+        "decisions": decisions,
+        "decision_engine": {
+            "format": "wait-local-agent.architecture-decisions",
+            "format_version": 1,
+            "authority": "deterministic_local_catalogs_and_explicit_blueprint_evidence",
+            "inference_started": False,
+            "execution_started": False,
+            "deployment_started": False,
+            "decision_count": len(decisions),
+            "unresolved_decision_count": len(unresolved_decisions),
+        },
         "supervisor": _supervisor_plan(blueprint),
         "open_items": open_items,
-        "readiness": "ready" if not open_items else "needs_review",
+        "readiness": "ready" if not open_items and not unresolved_decisions else "needs_review",
         "execution_started": False,
         "deployment_started": False,
     }
+
+
+def _architecture_decisions(
+    blueprint: SolutionBlueprint,
+    components: list[dict[str, object]],
+    templates: Mapping[str, WorkflowTemplate],
+) -> list[dict[str, object]]:
+    return [_decision_for_component(blueprint, component, templates) for component in components]
+
+
+def _decision_for_component(
+    blueprint: SolutionBlueprint,
+    component: Mapping[str, object],
+    templates: Mapping[str, WorkflowTemplate],
+) -> dict[str, object]:
+    kind = str(component.get("kind", "unknown"))
+    component_id = str(component.get("id", "unknown"))
+    name = str(component.get("name", component_id))
+    status = str(
+        component.get("observed_status", component.get("status", "needs_review"))
+        if kind == "environment"
+        else component.get("status", "needs_review")
+    )
+    common: dict[str, object] = {
+        "id": f"decision-{_safe_decision_id(kind)}-{_safe_decision_id(component_id)}",
+        "capability": name,
+        "component_id": component_id,
+        "chosen_target": "unsupported",
+        "why": "No deterministic local target rule matched this component.",
+        "alternatives_considered": ["human_process"],
+        "systems_involved": list(blueprint.systems),
+        "dependencies": [],
+        "required_permissions": _unknown_requirement("provider permissions are not declared by the local catalog"),
+        "licenses": _unknown_requirement("licensing evidence is not present in the blueprint"),
+        "read_write_behavior": {
+            "read": "not_declared",
+            "write": "not_declared",
+            "evidence": "the blueprint does not declare action-level read/write behavior",
+        },
+        "approval_requirements": _approval_requirements(blueprint),
+        "risk": blueprint.risk,
+        "data_movement": "unknown",
+        "execution_boundary": "unknown",
+        "estimated_complexity": "unknown",
+        "reversibility": "unknown",
+        "testing_requirements": [
+            "functional behavior",
+            "tenant isolation",
+            "approval and forbidden-tool checks",
+        ],
+        "deployment_requirements": [
+            "review generated artifacts",
+            "obtain explicit human approval before deployment",
+        ],
+        "evidence": [],
+        "open_questions": [],
+        "status": "needs_review",
+    }
+
+    if kind == "agent":
+        unresolved = cast(list[object], component.get("unresolved_tool_ids", []))
+        common.update(
+            {
+                "chosen_target": "wait_agent",
+                "why": "The existing WAIT AgentService is the local runtime boundary for the declared agent.",
+                "alternatives_considered": [
+                    "microsoft_copilot_studio",
+                    "custom_service",
+                    "human_process",
+                ],
+                "dependencies": list(cast(list[str], component.get("requested_tool_ids", [])))
+                + list(cast(list[str], component.get("knowledge_references", []))),
+                "execution_boundary": "local",
+                "estimated_complexity": "medium" if component.get("requested_tool_ids") else "low",
+                "reversibility": "reversible_design_only",
+                "evidence": ["existing_agent_runtime", "blueprint_agent_declaration"],
+                "status": "needs_review" if unresolved else "ready",
+            }
+        )
+        if unresolved:
+            common["open_questions"] = ["resolve every requested tool against the local smart-action catalog"]
+        return common
+
+    if kind == "workflow":
+        template = templates.get(component_id)
+        template_approval = template.approval_required if template else False
+        dependencies: list[str] = []
+        if template:
+            dependencies.append(template.id)
+            if template.tool_id:
+                dependencies.append(template.tool_id)
+        common.update(
+            {
+                "chosen_target": "wait_workflow",
+                "why": (
+                    "The matching local workflow template supplies a bounded runtime path."
+                    if template
+                    else "WAIT can retain the workflow design, but no exact local template is available."
+                ),
+                "alternatives_considered": ["power_automate", "human_process"],
+                "dependencies": dependencies,
+                "read_write_behavior": {
+                    "read": "template_defined" if template else "not_declared",
+                    "write": "approval_gated" if template_approval else "not_declared",
+                    "evidence": "workflow template metadata" if template else "no matching workflow template",
+                },
+                "approval_requirements": _approval_requirements(blueprint, template_approval),
+                "execution_boundary": "local",
+                "estimated_complexity": "medium",
+                "reversibility": "reversible_design_only",
+                "evidence": ["existing_workflow_template"] if template else ["blueprint_workflow_declaration"],
+                "status": "ready" if template else "needs_review",
+            }
+        )
+        if not template:
+            common["open_questions"] = ["select or implement a bounded workflow template"]
+        return common
+
+    if kind == "knowledge_source":
+        common.update(
+            {
+                "chosen_target": "wait_agent",
+                "why": "Knowledge is consumed through the existing tenant-scoped WAIT knowledge boundary.",
+                "alternatives_considered": ["mcp", "direct_api", "human_process"],
+                "dependencies": [name],
+                "execution_boundary": "local",
+                "estimated_complexity": "medium",
+                "reversibility": "reversible_design_only",
+                "evidence": ["blueprint_knowledge_declaration"],
+                "open_questions": ["bind the named source to an authorized tenant-scoped provider or local corpus"],
+            }
+        )
+        return common
+
+    if kind == "system_connector":
+        if status == "ready":
+            chosen_target = _connector_target(component)
+            supported = chosen_target != "unsupported"
+            common.update(
+                {
+                    "chosen_target": chosen_target,
+                    "why": "Environment evidence resolved the declared system to an existing connector boundary.",
+                    "alternatives_considered": ["mcp", "direct_api", "human_process"],
+                    "dependencies": [str(component.get("connector_id"))],
+                    "data_movement": "tenant_scoped_external",
+                    "execution_boundary": "hybrid",
+                    "estimated_complexity": "medium",
+                    "reversibility": "reversible_with_provider_rollback",
+                    "evidence": ["verified_environment_status", "existing_connector_boundary"],
+                    "status": "ready" if supported else "needs_review",
+                }
+            )
+            if not supported:
+                common["open_questions"] = ["map the verified system to a supported connector target"]
+        else:
+            common.update(
+                {
+                    "why": "The declared system has no verified connector binding in the available evidence.",
+                    "alternatives_considered": ["mcp", "direct_api", "human_process"],
+                    "open_questions": ["identify and authorize the connector boundary before implementation"],
+                }
+            )
+        return common
+
+    if kind == "environment":
+        chosen_target = _connector_target(component)
+        verified = status in _VERIFIED_ENVIRONMENT_STATUSES
+        supported = chosen_target != "unsupported"
+        common.update(
+            {
+                "chosen_target": chosen_target,
+                "why": (
+                    "The existing connector boundary matches the environment kind."
+                    if component.get("connector_id")
+                    else "The customer declaration has no existing connector boundary."
+                ),
+                "alternatives_considered": ["wait_agent", "mcp", "direct_api", "human_process"],
+                "dependencies": [component.get("connector_id")] if component.get("connector_id") else [],
+                "read_write_behavior": {
+                    "read": "provider_status_required",
+                    "write": "approval_required_before_any_mutation",
+                    "evidence": "environment discovery does not probe providers",
+                },
+                "approval_requirements": ["human approval before any write action"],
+                "data_movement": "tenant_scoped_external" if component.get("connector_id") else "unknown",
+                "execution_boundary": "hybrid" if component.get("connector_id") else "unknown",
+                "estimated_complexity": "medium",
+                "reversibility": "reversible_with_provider_rollback" if verified else "unknown",
+                "evidence": list(cast(list[str], component.get("evidence", []))),
+                "status": "ready" if verified and supported else "needs_review",
+            }
+        )
+        if not verified or not supported:
+            common["open_questions"] = [
+                (
+                    "obtain provider reachability, authentication, and authorization evidence"
+                    if not verified
+                    else "map the verified system to a supported connector target"
+                )
+            ]
+        return common
+
+    if kind == "deployment":
+        target = _deployment_target(name)
+        supported = target != "unsupported"
+        common.update(
+            {
+                "chosen_target": target,
+                "why": (
+                    "The deployment target maps to an existing WAIT surface."
+                    if supported
+                    else "The requested deployment target is not provisioned by the local runtime."
+                ),
+                "alternatives_considered": ["wait_agent", "human_process"],
+                "execution_boundary": "local" if name.casefold() in _LOCAL_DEPLOYMENT_TARGETS else "cloud",
+                "estimated_complexity": "medium" if supported else "unknown",
+                "reversibility": "reversible_with_rollback" if supported else "unknown",
+                "evidence": ["supported_local_surface"] if supported else [],
+                "status": "ready" if supported else "needs_review",
+            }
+        )
+        if not supported:
+            common["open_questions"] = ["confirm supported packaging and deployment path"]
+        return common
+
+    return common
+
+
+def _unknown_requirement(evidence: str) -> list[dict[str, object]]:
+    return [{"name": "provider_requirement", "status": "unknown", "evidence": [evidence]}]
+
+
+def _approval_requirements(blueprint: SolutionBlueprint, template_approval: bool = False) -> list[str]:
+    requirements = [f"{action}: approval by {owner}" for action, owner in sorted(blueprint.approvals.items())]
+    if template_approval and "workflow_template" not in requirements:
+        requirements.append("workflow_template: approval required by local template")
+    return requirements
+
+
+def _connector_target(component: Mapping[str, object]) -> str:
+    kind = str(component.get("kind", "")).casefold()
+    connector_kind = str(component.get("connector_id", "")).casefold()
+    value = f"{kind} {connector_kind} {str(component.get('name', '')).casefold()}"
+    if "m365" in value or "entra" in value or "microsoft 365" in value:
+        return "microsoft_graph"
+    if "psa" in value or any(item in value for item in ("halopsa", "connectwise", "autotask", "servicenow", "syncro")):
+        return "psa"
+    if "rmm" in value or any(
+        item in value for item in ("ninjaone", "n-central", "n-sight", "datto", "kaseya", "screenconnect")
+    ):
+        return "rmm"
+    if any(item in value for item in ("documentation", "hudu", "it glue", "confluence", "notion", "sharepoint")):
+        return "mcp"
+    return "unsupported"
+
+
+def _deployment_target(name: str) -> str:
+    normalized = name.casefold()
+    if normalized in _LOCAL_DEPLOYMENT_TARGETS:
+        return "wait_agent"
+    if "copilot" in normalized or normalized == "teams":
+        return "microsoft_copilot_studio"
+    if "power automate" in normalized:
+        return "power_automate"
+    if "power app" in normalized:
+        return "power_app"
+    if "dataverse" in normalized:
+        return "dataverse"
+    return "unsupported"
+
+
+def _normalize_name(value: str) -> str:
+    return " ".join(value.casefold().replace("/", " ").split())
+
+
+def _matching_environment(
+    system_name: str,
+    environments: Iterable[dict[str, object]],
+) -> dict[str, object] | None:
+    requested = _normalize_name(system_name)
+    for environment in environments:
+        candidates = [environment.get("name"), environment.get("connector_id")]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            normalized = _normalize_name(candidate)
+            if requested == normalized or requested in normalized or normalized in requested:
+                return environment
+    return None
+
+
+def _safe_decision_id(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9-]+", "-", _normalize_name(value).replace(" ", "-")).strip("-")
+    return normalized[:64] or "unknown"
 
 
 def _supervisor_plan(blueprint: SolutionBlueprint) -> dict[str, object]:
@@ -279,12 +628,8 @@ def parse_solution_blueprint(
     orchestration = payload.get("orchestration", "")
     if orchestration is None:
         orchestration = ""
-    if not isinstance(orchestration, str) or (
-        orchestration and orchestration not in _ORCHESTRATION_MODES
-    ):
-        raise BlueprintValidationError(
-            f"orchestration must be one of: {', '.join(sorted(_ORCHESTRATION_MODES))}"
-        )
+    if not isinstance(orchestration, str) or (orchestration and orchestration not in _ORCHESTRATION_MODES):
+        raise BlueprintValidationError(f"orchestration must be one of: {', '.join(sorted(_ORCHESTRATION_MODES))}")
 
     return SolutionBlueprint(
         id=identifier,
@@ -307,6 +652,8 @@ def parse_solution_blueprint(
         skills=skills,
         model=model,
         orchestration=cast(str, orchestration),
+        environment=_environment(payload.get("environment", []), client_id=client),
+        discovery=_discovery(payload.get("discovery", {})),
     )
 
 
@@ -350,6 +697,10 @@ def blueprint_payload(blueprint: SolutionBlueprint) -> dict[str, Any]:
         payload["model"] = blueprint.model
     if blueprint.orchestration:
         payload["orchestration"] = blueprint.orchestration
+    if blueprint.environment:
+        payload["environment"] = [dict(item) for item in blueprint.environment]
+    if blueprint.discovery:
+        payload["discovery"] = dict(blueprint.discovery)
     return payload
 
 
@@ -420,6 +771,155 @@ def _text_list(value: object, field: str) -> tuple[str, ...]:
     return tuple(_text(item, f"{field}[{index}]") for index, item in enumerate(value))
 
 
+def _environment(value: object, *, client_id: str) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list):
+        raise BlueprintValidationError("environment must be an array")
+    if len(value) > MAX_BLUEPRINT_ITEMS:
+        raise BlueprintValidationError(f"environment may contain at most {MAX_BLUEPRINT_ITEMS} items")
+    allowed = {
+        "id",
+        "name",
+        "kind",
+        "connector_id",
+        "status",
+        "evidence",
+        "limitation",
+        "tenant_scope",
+        "provider_status",
+        "http_probing_enabled",
+        "write_actions_enabled",
+    }
+    statuses = {
+        "configured",
+        "detected",
+        "reachable",
+        "authenticated",
+        "authorized",
+        "permission-limited",
+        "unavailable",
+        "not_configured",
+        "unknown",
+    }
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        item = _object(raw, f"environment[{index}]")
+        _reject_unknown(item, allowed, f"environment[{index}]")
+        identifier = _identifier(item.get("id"), f"environment[{index}].id", allow_prefix=True)
+        if identifier in seen:
+            raise BlueprintValidationError(f"environment contains duplicate id: {identifier}")
+        seen.add(identifier)
+        status = _text(item.get("status"), f"environment[{index}].status", max_length=32)
+        if status not in statuses:
+            raise BlueprintValidationError(f"environment[{index}].status is unsupported")
+        evidence = _text_list(item.get("evidence", []), f"environment[{index}].evidence")
+        normalized: dict[str, object] = {
+            "id": identifier,
+            "name": _text(item.get("name"), f"environment[{index}].name"),
+            "kind": _text(item.get("kind"), f"environment[{index}].kind", max_length=64),
+            "connector_id": _optional_text(
+                item.get("connector_id"),
+                f"environment[{index}].connector_id",
+                max_length=64,
+            ),
+            "status": status,
+            "evidence": list(evidence),
+            "limitation": _optional_text(item.get("limitation"), f"environment[{index}].limitation", max_length=500),
+        }
+        for boolean_field in ("http_probing_enabled", "write_actions_enabled"):
+            if boolean_field in item:
+                boolean_value = item[boolean_field]
+                if not isinstance(boolean_value, bool):
+                    raise BlueprintValidationError(f"environment[{index}].{boolean_field} must be boolean")
+                normalized[boolean_field] = boolean_value
+        for text_field in ("tenant_scope", "provider_status"):
+            if text_field in item:
+                text_value = _text(item[text_field], f"environment[{index}].{text_field}", max_length=128)
+                if text_field == "tenant_scope" and text_value != client_id:
+                    raise BlueprintValidationError(f"environment[{index}].tenant_scope is outside the blueprint tenant")
+                normalized[text_field] = text_value
+        result.append(normalized)
+    return tuple(result)
+
+
+def _discovery(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise BlueprintValidationError("discovery must be an object")
+    allowed = {
+        "solution_name",
+        "business_goal",
+        "users",
+        "knowledge",
+        "systems",
+        "reads",
+        "changes",
+        "approvals",
+        "failure_handling",
+        "licenses",
+        "data_location",
+        "data_leaves_tenant",
+        "current_process",
+        "owners",
+        "approvers",
+        "sensitive_operations",
+        "compliance",
+        "data_residency",
+        "existing_apis",
+        "existing_automation",
+        "channels",
+        "expected_volume",
+        "business_value",
+        "success_metrics",
+        "rollback_expectations",
+    }
+    _reject_unknown(value, allowed, "discovery")
+    list_fields = {
+        "users",
+        "knowledge",
+        "systems",
+        "reads",
+        "changes",
+        "approvals",
+        "licenses",
+        "data_location",
+        "owners",
+        "approvers",
+        "sensitive_operations",
+        "compliance",
+        "data_residency",
+        "existing_apis",
+        "existing_automation",
+        "channels",
+        "success_metrics",
+    }
+    text_fields = {
+        "solution_name",
+        "business_goal",
+        "failure_handling",
+        "current_process",
+        "expected_volume",
+        "business_value",
+        "rollback_expectations",
+    }
+    result: dict[str, object] = {}
+    for key, raw in value.items():
+        if key in list_fields:
+            normalized_list = list(_text_list(raw, f"discovery.{key}"))
+            if any(_has_forbidden_key(item) for item in normalized_list):
+                raise BlueprintValidationError("discovery evidence cannot contain secret material")
+            result[key] = normalized_list
+        elif key in text_fields:
+            normalized_text = _text(raw, f"discovery.{key}")
+            if _has_forbidden_key(normalized_text):
+                raise BlueprintValidationError("discovery evidence cannot contain secret material")
+            result[key] = normalized_text
+        elif key == "data_leaves_tenant":
+            if not isinstance(raw, bool):
+                raise BlueprintValidationError("discovery.data_leaves_tenant must be boolean")
+            result[key] = raw
+    return result
+
+
 def _business_goal(value: object) -> dict[str, str | bool | int]:
     goal = _object(value, "business_goal")
     if len(goal) > MAX_BLUEPRINT_ITEMS:
@@ -434,9 +934,7 @@ def _business_goal(value: object) -> dict[str, str | bool | int]:
         elif isinstance(item, str):
             result[identifier] = _text(item, f"business_goal.{identifier}", max_length=MAX_BLUEPRINT_GOAL_VALUE)
         else:
-            raise BlueprintValidationError(
-                f"business_goal.{identifier} must be text, integer, or boolean"
-            )
+            raise BlueprintValidationError(f"business_goal.{identifier} must be text, integer, or boolean")
     return result
 
 

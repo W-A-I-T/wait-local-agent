@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
-from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
+from wait_local_agent.evaluation import (
+    EvaluationValidationError,
+    evaluate_tool_contract,
+    execute_tool_contract,
+)
 
 
 def _case(case_id: str = "onboarding") -> dict[str, object]:
@@ -95,6 +101,45 @@ def test_evaluation_reports_grounding_and_latency_failures() -> None:
     assert result["production_readiness"] == "needs_review"
     assert result["dimensions"]["grounding"] == 0.0
     assert result["dimensions"]["latency"] == 0.0
+    assert result["cases"][0]["passed"] is False
+
+
+def test_controlled_evaluation_executes_each_case_and_captures_runtime_evidence() -> None:
+    class Runner:
+        def __init__(self) -> None:
+            self.case_ids: list[str] = []
+
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            self.case_ids.append(str(case["id"]))
+            return {
+                **_observation(),
+                "actions": [{"tool_id": "m365-user-create", "status": "pending_approval"}],
+                "execution_status": "pending_approval",
+                "run_id": 7,
+            }
+
+    runner = Runner()
+    result = execute_tool_contract([_case("first"), _case("second")], runner)
+
+    assert runner.case_ids == ["first", "second"]
+    assert result["execution_started"] is True
+    assert result["execution_mode"] == "controlled"
+    assert result["executed_case_count"] == 2
+    assert result["execution_errors"] == []
+    assert result["cases"][0]["execution"]["run_id"] == 7
+
+
+def test_controlled_evaluation_turns_provider_failure_into_failed_evidence() -> None:
+    class FailingRunner:
+        def execute(self, case: Mapping[str, object]) -> Mapping[str, object]:
+            raise RuntimeError("provider unavailable")
+
+    result = execute_tool_contract([_case()], FailingRunner())
+
+    assert result["execution_started"] is True
+    assert result["production_readiness"] == "needs_review"
+    assert result["execution_errors"] == [{"case_id": "onboarding", "error": "provider unavailable"}]
+    assert result["cases"][0]["execution"]["execution_status"] == "failed"
     assert result["cases"][0]["passed"] is False
 
 

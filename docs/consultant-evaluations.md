@@ -1,33 +1,62 @@
 # Consultant evaluation contracts
 
-WAIT exposes an observation-based evaluation contract for consultant-mode
-agents. A JSON test set declares expected and forbidden tool IDs, required
-approval tool IDs, and an observation records the tools and safety checks that
-actually occurred. The evaluator reports functional, tool-selection,
-approval-safety, tenant-isolation, and prompt-injection-safety percentages. A
-case may also require evidence for source citations (grounding), a bounded
-latency, failure handling, and regression results. Optional dimensions are
-scored only for cases that explicitly request that evidence.
+WAIT exposes a bounded evaluation contract for consultant-mode agents. A JSON
+test set declares expected and forbidden tool IDs, required approval tool IDs,
+and safety/evidence expectations. The same deterministic evaluator can score
+either supplied observations or a controlled local execution through the
+existing `AgentService`.
 
-Evaluation is a dry-run analysis surface. It does not execute an agent, invoke
-a connector, call an LLM, or treat missing observations as passing evidence.
+Observation mode is a dry-run analysis surface. Controlled mode is limited to
+local fixture execution through the existing bounded agent runtime; it does not
+call live providers, enable write actions, or treat missing observations as
+passing evidence.
 Every case must supply explicit boolean evidence for tenant isolation and
 prompt-injection blocking. Cases that set `required_citations`,
 `max_latency_ms`, `failure_expected`, or `regression_expected` must also supply
 the corresponding observation fields. Latency values are bounded to 120 seconds
 and citations are treated as opaque evidence identifiers.
 
-The API is:
+Observation mode is useful for importing evidence from an already captured
+fixture:
 
 ```text
 POST /consultant/evaluations
+{
+  "test_set": [...],
+  "observations": {...}
+}
 ```
 
-The CLI accepts a JSON file containing `test_set` and `observations`:
+Controlled execution is available only in local demo mode with writes disabled.
+It runs the tenant-scoped, enabled agent definition through the existing
+runtime, captures actual tool actions, approvals, status, run ID, and evidence,
+and reports provider failures as failed evidence:
+
+```text
+POST /consultant/evaluations
+{
+  "test_set": [...],
+  "execution": {
+    "agent_id": "onboarding-fixture",
+    "entity_id": "TCK-001",
+    "client_id": "demo-client",
+    "input": {}
+  }
+}
+```
+
+Execution never creates a second agent engine, enables write actions, bypasses
+approval, or claims a live provider deployment. A test is `pass` only when all
+requested dimensions reach 100%; missing or failed execution evidence produces
+`needs_review`. The result identifies `execution_mode` as `observation` or
+`controlled`, and controlled results set `execution_started: true`.
+
+The CLI accepts a JSON file containing `test_set` and `observations` for
+observation mode:
 
 ```bash
 wait-local-agent microsoft evaluation run evaluation.json
 ```
 
 A result is `pass` only when every bounded dimension reaches 100%; otherwise it
-is `needs_review`. The result always reports `execution_started: false`.
+is `needs_review`. Observation mode always reports `execution_started: false`.

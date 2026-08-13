@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, cast
 
-MAX_DISCOVERY_ANSWERS = 12
+from wait_local_agent.environment import EnvironmentDiscoveryError, discover_environment
+from wait_local_agent.models import ConnectorStatus
+
+MAX_DISCOVERY_ANSWERS = 28
 MAX_DISCOVERY_LIST_ITEMS = 16
 MAX_DISCOVERY_TEXT = 500
 MAX_MONTHLY_RUNS = 100_000
@@ -32,6 +35,44 @@ _QUESTION_DEFS: tuple[dict[str, object], ...] = (
     {"id": "licenses", "prompt": "Which Microsoft licenses are available?", "kind": "list", "required": False},
     {"id": "data_location", "prompt": "Where is the data located?", "kind": "list", "required": True},
     {"id": "data_leaves_tenant", "prompt": "May information leave the tenant?", "kind": "boolean", "required": True},
+    {"id": "current_process", "prompt": "What happens today, step by step?", "kind": "text", "required": False},
+    {"id": "owners", "prompt": "Who owns the process and its outcome?", "kind": "list", "required": False},
+    {
+        "id": "approvers",
+        "prompt": "Who can approve the sensitive or state-changing steps?",
+        "kind": "list",
+        "required": False,
+    },
+    {
+        "id": "sensitive_operations",
+        "prompt": "Which operations are sensitive or high impact?",
+        "kind": "list",
+        "required": False,
+    },
+    {"id": "compliance", "prompt": "Which compliance or policy requirements apply?", "kind": "list", "required": False},
+    {"id": "data_residency", "prompt": "Where must data remain?", "kind": "list", "required": False},
+    {
+        "id": "existing_apis",
+        "prompt": "Which existing APIs or connector interfaces are available?",
+        "kind": "list",
+        "required": False,
+    },
+    {"id": "existing_automation", "prompt": "What automation already exists?", "kind": "list", "required": False},
+    {"id": "channels", "prompt": "Which user or operational channels are needed?", "kind": "list", "required": False},
+    {
+        "id": "expected_volume",
+        "prompt": "What volume or frequency should the solution handle?",
+        "kind": "text",
+        "required": False,
+    },
+    {"id": "business_value", "prompt": "What business value should this create?", "kind": "text", "required": False},
+    {"id": "success_metrics", "prompt": "How will success be measured?", "kind": "list", "required": False},
+    {
+        "id": "rollback_expectations",
+        "prompt": "What must be reversible, and how should rollback work?",
+        "kind": "text",
+        "required": False,
+    },
 )
 _QUESTION_IDS = {cast(str, item["id"]) for item in _QUESTION_DEFS}
 _SECRET_TOKENS = ("key", "token", "secret", "password", "credential", "bearer")
@@ -41,7 +82,12 @@ class DiscoveryValidationError(ValueError):
     """Raised when discovery evidence is malformed or unsafe."""
 
 
-def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -> dict[str, Any]:
+def build_solution_discovery(
+    *,
+    client_id: str,
+    answers: Mapping[str, object],
+    environment: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if len(set(answers) - {"impact"}) > MAX_DISCOVERY_ANSWERS:
         raise DiscoveryValidationError(f"answers may contain at most {MAX_DISCOVERY_ANSWERS} fields")
@@ -56,24 +102,80 @@ def build_solution_discovery(*, client_id: str, answers: Mapping[str, object]) -
         and (question["id"] not in normalized or not _answer_present(normalized[cast(str, question["id"])]))
     ]
     risk = _risk_review(normalized, missing)
+    environment_view = dict(environment) if environment is not None else _not_run_environment(tenant)
+    candidate = _blueprint_candidate(normalized)
+    candidate["environment"] = list(cast(list[dict[str, object]], environment_view.get("systems", [])))
+    questions = [
+        dict(
+            question,
+            answered=question["id"] in normalized and _answer_present(normalized[cast(str, question["id"])]),
+        )
+        for question in _QUESTION_DEFS
+    ]
+    next_question = next(
+        (question for question in questions if question["required"] and not question["answered"]),
+        None,
+    )
+    if next_question is None:
+        next_question = next((question for question in questions if not question["answered"]), None)
+    unanswered = [cast(str, question["id"]) for question in questions if not question["answered"]]
     return {
         "format": "wait-local-agent.solution-discovery",
         "format_version": 1,
         "client_id": tenant,
-        "questions": [
-            dict(
-                question,
-                answered=question["id"] in normalized
-                and _answer_present(normalized[cast(str, question["id"])]),
-            )
-            for question in _QUESTION_DEFS
-        ],
+        "questions": questions,
         "answered": normalized,
         "missing_required": missing,
+        "unanswered": unanswered,
+        "next_question": next_question,
+        "assistant_message": (
+            cast(str, next_question["prompt"])
+            if next_question is not None
+            else "Discovery evidence is complete enough for architecture review."
+        ),
+        "status": "complete" if next_question is None else "active",
         "readiness": "ready_for_architecture" if not missing else "needs_discovery",
         "risk_review": risk,
         "roi_analysis": _roi_analysis(answers.get("impact")),
-        "blueprint_candidate": _blueprint_candidate(normalized),
+        "blueprint_candidate": candidate,
+        "environment": environment_view,
+        "inference_started": False,
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
+def discover_solution_environment(
+    *,
+    client_id: str,
+    systems: Sequence[object],
+    connector_statuses: Iterable[ConnectorStatus],
+    configured_client_id: str | None = None,
+) -> dict[str, Any]:
+    """Build environment evidence for a discovery request without probing."""
+
+    try:
+        return discover_environment(
+            client_id=client_id,
+            requested_systems=systems,
+            connector_statuses=connector_statuses,
+            configured_client_id=configured_client_id,
+        )
+    except EnvironmentDiscoveryError as exc:
+        raise DiscoveryValidationError(str(exc)) from exc
+
+
+def _not_run_environment(client_id: str) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.environment-discovery",
+        "format_version": 1,
+        "client_id": client_id,
+        "source": "not_requested",
+        "probe_performed": False,
+        "systems": [],
+        "unresolved": [],
+        "limitations": [{"system": "environment", "reason": "environment discovery was not requested"}],
+        "readiness": "needs_environment_verification",
         "inference_started": False,
         "execution_started": False,
         "deployment_started": False,
@@ -85,13 +187,32 @@ def _answer(field: str, value: object) -> str | bool | list[str]:
         if not isinstance(value, bool):
             raise DiscoveryValidationError("data_leaves_tenant must be boolean evidence")
         return value
-    if field in {"users", "knowledge", "systems", "reads", "changes", "approvals", "licenses", "data_location"}:
+    if field in {
+        "users",
+        "knowledge",
+        "systems",
+        "reads",
+        "changes",
+        "approvals",
+        "licenses",
+        "data_location",
+        "owners",
+        "approvers",
+        "sensitive_operations",
+        "compliance",
+        "data_residency",
+        "existing_apis",
+        "existing_automation",
+        "channels",
+        "success_metrics",
+    }:
         return _list(value, field)
     return _text(value, field, MAX_DISCOVERY_TEXT)
 
 
 def _blueprint_candidate(answers: Mapping[str, object]) -> dict[str, object]:
     return {
+        "discovery": dict(answers),
         "solution": {"name": answers.get("solution_name", "")},
         "business_goal": {"statement": answers.get("business_goal", "")},
         "users": list(cast(list[str], answers.get("users", []))),

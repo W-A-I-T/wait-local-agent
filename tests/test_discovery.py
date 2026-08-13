@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
+from wait_local_agent.discovery import (
+    DiscoveryValidationError,
+    build_solution_discovery,
+    discover_solution_environment,
+)
 
 
 def _answers() -> dict[str, object]:
@@ -47,7 +51,54 @@ def test_discovery_reports_missing_answers_without_inventing_them() -> None:
     assert result["readiness"] == "needs_discovery"
     assert "systems" in result["missing_required"]
     assert result["blueprint_candidate"]["systems"] == []
+    assert result["next_question"]["id"] == "users"
+    assert "current_process" in result["unanswered"]
     assert result["roi_analysis"]["status"] == "needs_estimates"
+
+
+def test_discovery_candidate_retains_explicit_architectural_evidence() -> None:
+    result = build_solution_discovery(
+        client_id="acme",
+        answers={
+            "business_goal": "Improve onboarding",
+            "current_process": "HR emails IT and waits for a manual checklist",
+            "owners": ["HR operations"],
+            "success_metrics": ["Time to provision"],
+        },
+    )
+
+    assert result["blueprint_candidate"]["discovery"] == result["answered"]
+    assert result["next_question"]["id"] == "users"
+
+
+def test_discovery_bounds_answer_count_and_marks_cross_tenant_risk() -> None:
+    with pytest.raises(DiscoveryValidationError, match="at most"):
+        build_solution_discovery(
+            client_id="acme",
+            answers={f"field_{index}": "value" for index in range(29)},
+        )
+
+    result = build_solution_discovery(
+        client_id="acme",
+        answers={"business_goal": "Review transfer", "data_leaves_tenant": True},
+    )
+    assert "cross_tenant_data_transfer" in result["risk_review"]["factors"]
+
+
+def test_discovery_rejects_empty_or_oversized_text() -> None:
+    with pytest.raises(DiscoveryValidationError, match="non-empty text"):
+        build_solution_discovery(client_id="acme", answers={"business_goal": ""})
+    with pytest.raises(DiscoveryValidationError, match="non-empty text"):
+        build_solution_discovery(client_id="acme", answers={"business_goal": "x" * 501})
+
+
+def test_environment_discovery_translates_environment_validation_errors() -> None:
+    with pytest.raises(DiscoveryValidationError, match="secret material"):
+        discover_solution_environment(
+            client_id="acme",
+            systems=["token=secret"],
+            connector_statuses=[],
+        )
 
 
 @pytest.mark.parametrize(

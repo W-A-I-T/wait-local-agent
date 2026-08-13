@@ -30,6 +30,7 @@ from wait_local_agent.models import (
     CollectorSource,
     ConfigDiff,
     ConfigSnapshot,
+    ConsultantDiscoverySession,
     EndUserMessage,
     EventDelivery,
     EventHistoryEntry,
@@ -166,12 +167,8 @@ class Store:
                 )
                 """
             )
-            self._ensure_column(
-                connection, "end_user_messages", "author_role", "text not null default 'requester'"
-            )
-            self._ensure_column(
-                connection, "end_user_messages", "author_id", "text not null default ''"
-            )
+            self._ensure_column(connection, "end_user_messages", "author_role", "text not null default 'requester'")
+            self._ensure_column(connection, "end_user_messages", "author_id", "text not null default ''")
             connection.execute(
                 """
                 create index if not exists idx_end_user_messages_scope
@@ -494,6 +491,26 @@ class Store:
                     created_at text not null,
                     updated_at text not null
                 )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists consultant_discovery_sessions (
+                    id text primary key,
+                    client_id text not null,
+                    principal_id text not null,
+                    status text not null default 'active',
+                    answers_json text not null,
+                    transcript_json text not null,
+                    created_at text not null,
+                    updated_at text not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                create index if not exists idx_consultant_discovery_sessions_scope
+                on consultant_discovery_sessions (client_id, principal_id, updated_at)
                 """
             )
             self._ensure_column(
@@ -988,9 +1005,7 @@ class Store:
             self._backfill_agent_revisions(connection)
 
     @staticmethod
-    def _ensure_column(
-        connection: sqlite3.Connection, table_name: str, column_name: str, definition: str
-    ) -> None:
+    def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
         rows = connection.execute(f"pragma table_info({table_name})").fetchall()
         if column_name not in {str(row["name"]) for row in rows}:
             connection.execute(f"alter table {table_name} add column {column_name} {definition}")
@@ -1008,9 +1023,7 @@ class Store:
                     created_at.astimezone(UTC) + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)
                 ).isoformat()
             except ValueError:
-                expires_at = (
-                    datetime.now(UTC) + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)
-                ).isoformat()
+                expires_at = (datetime.now(UTC) + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)).isoformat()
             connection.execute(
                 "update approval_requests set expires_at = ? where id = ?",
                 (expires_at, int(row["id"])),
@@ -1076,9 +1089,7 @@ class Store:
             _redact_json_text(str(row["payload_json"])),
             client_id,
         )
-        refreshed = connection.execute(
-            "select * from approval_requests where id = ?", (request_id,)
-        ).fetchone()
+        refreshed = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
         return refreshed or row
 
     @staticmethod
@@ -1216,9 +1227,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from tickets where id = ?", (ticket_id,)
-                ).fetchone()
+                row = connection.execute("select * from tickets where id = ?", (ticket_id,)).fetchone()
             else:
                 row = connection.execute(
                     "select * from tickets where id = ? and client_id = ?",
@@ -1226,9 +1235,7 @@ class Store:
                 ).fetchone()
         return Ticket(**dict(row)) if row else None
 
-    def get_ticket_for_client(
-        self, ticket_id: str, client_id: str | None = None
-    ) -> Ticket | None:
+    def get_ticket_for_client(self, ticket_id: str, client_id: str | None = None) -> Ticket | None:
         return self.get_ticket(ticket_id, client_id)
 
     def create_ticket_note(
@@ -1492,8 +1499,10 @@ class Store:
         safe_ticket_id = ticket_id.strip() if isinstance(ticket_id, str) and ticket_id.strip() else None
         if not safe_message or not safe_status:
             raise ValueError("technician chat messages require message and status")
-        if len(safe_message) > 4000 or len(safe_status) > 80 or (
-            safe_action_id is not None and len(safe_action_id) > 120
+        if (
+            len(safe_message) > 4000
+            or len(safe_status) > 80
+            or (safe_action_id is not None and len(safe_action_id) > 120)
         ):
             raise ValueError("technician chat message fields are too long")
         now = utc_now()
@@ -1550,11 +1559,14 @@ class Store:
         client_id: str | None = None,
         principal_id: str | None = None,
     ) -> list[TechnicianChatMessage]:
-        if self.get_technician_chat_session(
-            session_id,
-            client_id=client_id,
-            principal_id=principal_id,
-        ) is None:
+        if (
+            self.get_technician_chat_session(
+                session_id,
+                client_id=client_id,
+                principal_id=principal_id,
+            )
+            is None
+        ):
             return []
         with self._connect() as connection:
             rows = connection.execute(
@@ -1714,11 +1726,14 @@ class Store:
             raise ValueError("end-user messages require a requester identity")
         if not safe_body:
             raise ValueError("end-user messages require a body")
-        if self.get_end_user_ticket(
-            ticket_id,
-            client_id=normalized_client_id,
-            requester_id=safe_requester_id,
-        ) is None:
+        if (
+            self.get_end_user_ticket(
+                ticket_id,
+                client_id=normalized_client_id,
+                requester_id=safe_requester_id,
+            )
+            is None
+        ):
             return None
         created_at = utc_now()
         with self._connect() as connection:
@@ -1827,7 +1842,8 @@ class Store:
                 ticket_id,
                 client_id=normalized_client_id,
                 requester_id=safe_requester_id,
-            ) is None
+            )
+            is None
         ):
             return []
         with self._connect() as connection:
@@ -1842,9 +1858,7 @@ class Store:
             ).fetchall()
         return [EndUserMessage(**dict(row)) for row in rows]
 
-    def list_end_user_messages_for_operator(
-        self, ticket_id: str, *, client_id: str
-    ) -> list[EndUserMessage]:
+    def list_end_user_messages_for_operator(self, ticket_id: str, *, client_id: str) -> list[EndUserMessage]:
         normalized_client_id = _normalize_client_id(client_id)
         if not normalized_client_id or self.get_ticket(ticket_id, normalized_client_id) is None:
             return []
@@ -1860,9 +1874,7 @@ class Store:
             ).fetchall()
         return [EndUserMessage(**dict(row)) for row in rows]
 
-    def list_ticket_status_history(
-        self, ticket_id: str, *, client_id: str | None = None
-    ) -> list[dict[str, object]]:
+    def list_ticket_status_history(self, ticket_id: str, *, client_id: str | None = None) -> list[dict[str, object]]:
         normalized_client_id = _normalize_client_id(client_id)
         clauses = ["ticket_id = ?"]
         params: list[object] = [ticket_id]
@@ -1903,7 +1915,9 @@ class Store:
                        h.source, t.created_at
                 from ticket_status_history h
                 join tickets t on t.id = h.ticket_id
-                where """ + " and ".join(clauses) + " order by h.ticket_id, h.changed_at, h.id",  # nosec B608: predicates are fixed internal strings and values are parameterized
+                where """  # nosec B608: predicates are fixed internal strings and values are parameterized
+                + " and ".join(clauses)
+                + " order by h.ticket_id, h.changed_at, h.id",  # nosec B608: predicates are fixed internal strings and values are parameterized
                 params,
             ).fetchall()
         terminal = {"resolved", "closed"}
@@ -1990,16 +2004,12 @@ class Store:
 
     def get_approval(self, ticket_id: str) -> str:
         with self._connect() as connection:
-            row = connection.execute(
-                "select status from approvals where ticket_id = ?", (ticket_id,)
-            ).fetchone()
+            row = connection.execute("select status from approvals where ticket_id = ?", (ticket_id,)).fetchone()
         return str(row["status"]) if row else "pending"
 
     def get_approval_comment(self, ticket_id: str) -> str:
         with self._connect() as connection:
-            row = connection.execute(
-                "select comment from approvals where ticket_id = ?", (ticket_id,)
-            ).fetchone()
+            row = connection.execute("select comment from approvals where ticket_id = ?", (ticket_id,)).fetchone()
         return _redact_text(str(row["comment"])) if row else ""
 
     def create_approval_request(
@@ -2080,9 +2090,7 @@ class Store:
     ) -> ApprovalRequest:
         now = utc_now()
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from approval_requests where id = ?", (request_id,)
-            ).fetchone()
+            row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
             row = self._expire_approval_request(connection, row)
@@ -2141,9 +2149,7 @@ class Store:
         now = utc_now()
         payload_json = _json_dumps(payload)
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from approval_requests where id = ?", (request_id,)
-            ).fetchone()
+            row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
             row = self._expire_approval_request(connection, row)
@@ -2195,9 +2201,7 @@ class Store:
         now = utc_now()
         result_json = _json_dumps(result)
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from approval_requests where id = ?", (request_id,)
-            ).fetchone()
+            row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
             row = self._expire_approval_request(connection, row)
@@ -2239,9 +2243,7 @@ class Store:
 
     def get_approval_request(self, request_id: int) -> ApprovalRequest | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from approval_requests where id = ?", (request_id,)
-            ).fetchone()
+            row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is not None:
                 row = self._expire_approval_request(connection, row)
         if row is None:
@@ -2257,9 +2259,7 @@ class Store:
         requests: list[ApprovalRequest] = []
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from approval_requests order by id desc"
-                ).fetchall()
+                rows = connection.execute("select * from approval_requests order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from approval_requests where client_id = ? order by id desc",
@@ -2588,9 +2588,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from event_deliveries where id = ?", (delivery_id,)
-                ).fetchone()
+                row = connection.execute("select * from event_deliveries where id = ?", (delivery_id,)).fetchone()
             else:
                 row = connection.execute(
                     "select * from event_deliveries where id = ? and client_id = ?",
@@ -2602,9 +2600,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from event_deliveries order by id desc"
-                ).fetchall()
+                rows = connection.execute("select * from event_deliveries order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from event_deliveries where client_id = ? order by id desc",
@@ -2636,8 +2632,7 @@ class Store:
         params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select id from event_deliveries where {' and '.join(clauses)} "
-                "order by next_retry_at, id limit ?",  # nosec B608: static predicates only
+                f"select id from event_deliveries where {' and '.join(clauses)} order by next_retry_at, id limit ?",  # nosec B608: static predicates only
                 params,
             ).fetchall()
         return [int(row["id"]) for row in rows]
@@ -2761,9 +2756,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from workflow_runs where id = ?", (run_id,)
-                ).fetchone()
+                row = connection.execute("select * from workflow_runs where id = ?", (run_id,)).fetchone()
             else:
                 row = connection.execute(
                     "select * from workflow_runs where id = ? and client_id = ?",
@@ -2866,6 +2859,137 @@ class Store:
                 ).fetchall()
         return [_solution_blueprint_from_row(row) for row in rows]
 
+    def create_consultant_discovery_session(
+        self,
+        *,
+        client_id: str,
+        principal_id: str,
+        answers: dict[str, object],
+        transcript: list[dict[str, object]],
+    ) -> ConsultantDiscoverySession:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip())
+        if not normalized_client_id:
+            raise ValueError("consultant discovery sessions require a client scope")
+        if not safe_principal_id:
+            raise ValueError("consultant discovery sessions require a principal identity")
+        session_id = f"CDS-{uuid.uuid4().hex[:24].upper()}"
+        now = utc_now()
+        answers_json = _json_dumps_value(answers)
+        transcript_json = _json_dumps_value(transcript)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into consultant_discovery_sessions
+                  (id, client_id, principal_id, status, answers_json, transcript_json, created_at, updated_at)
+                values (?, ?, ?, 'active', ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    answers_json,
+                    transcript_json,
+                    now,
+                    now,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "consultant.discovery_session.created",
+                session_id,
+                "Consultant discovery session created",
+                client_id=normalized_client_id,
+            )
+        session = self.get_consultant_discovery_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=safe_principal_id,
+        )
+        if session is None:
+            raise RuntimeError("consultant discovery session was not persisted")
+        return session
+
+    def get_consultant_discovery_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        principal_id: str | None = None,
+    ) -> ConsultantDiscoverySession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from consultant_discovery_sessions
+                where id = ?
+                  and (? is null or client_id = ?)
+                  and (? is null or principal_id = ?)
+                """,
+                (
+                    session_id,
+                    normalized_client_id,
+                    normalized_client_id,
+                    safe_principal_id,
+                    safe_principal_id,
+                ),
+            ).fetchone()
+        return _consultant_discovery_session_from_row(row) if row else None
+
+    def update_consultant_discovery_session(
+        self,
+        session_id: str,
+        *,
+        client_id: str,
+        principal_id: str,
+        status: str,
+        answers: dict[str, object],
+        transcript: list[dict[str, object]],
+    ) -> ConsultantDiscoverySession | None:
+        normalized_client_id = _normalize_client_id(client_id)
+        if not normalized_client_id:
+            return None
+        existing = self.get_consultant_discovery_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+        if existing is None or existing.status != "active":
+            return None
+        if status not in {"active", "completed"}:
+            raise ValueError("consultant discovery session status is invalid")
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update consultant_discovery_sessions
+                set status = ?, answers_json = ?, transcript_json = ?, updated_at = ?
+                where id = ? and client_id = ? and principal_id = ?
+                """,
+                (
+                    status,
+                    _json_dumps_value(answers),
+                    _json_dumps_value(transcript),
+                    now,
+                    session_id,
+                    normalized_client_id,
+                    existing.principal_id,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "consultant.discovery_session.updated",
+                session_id,
+                f"Consultant discovery session updated: {status}",
+                client_id=normalized_client_id,
+            )
+        return self.get_consultant_discovery_session(
+            session_id,
+            client_id=normalized_client_id,
+            principal_id=principal_id,
+        )
+
     def create_template_gallery_entry(
         self,
         template: WorkflowTemplate,
@@ -2960,11 +3084,7 @@ class Store:
         existing = self.get_template_gallery_entry(entry_id, client_id)
         if existing is None:
             raise KeyError(entry_id)
-        next_name = (
-            _gallery_text(name, field="name", limit=120)
-            if name is not None
-            else existing.name
-        )
+        next_name = _gallery_text(name, field="name", limit=120) if name is not None else existing.name
         next_description = (
             _gallery_text(description, field="description", limit=2000)
             if description is not None
@@ -3082,9 +3202,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from template_gallery_entries order by name, id"
-                ).fetchall()
+                rows = connection.execute("select * from template_gallery_entries order by name, id").fetchall()
             else:
                 rows = connection.execute(
                     """
@@ -3479,9 +3597,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from agent_definitions order by name, id"
-                ).fetchall()
+                rows = connection.execute("select * from agent_definitions order by name, id").fetchall()
             else:
                 rows = connection.execute(
                     "select * from agent_definitions where client_id = ? order by name, id",
@@ -3628,9 +3744,7 @@ class Store:
         client_id: str | None = None,
     ) -> AgentBackfill:
         if not 1 <= max_concurrency <= AGENT_BACKFILL_MAX_CONCURRENCY:
-            raise ValueError(
-                f"agent backfill max_concurrency must be between 1 and {AGENT_BACKFILL_MAX_CONCURRENCY}"
-            )
+            raise ValueError(f"agent backfill max_concurrency must be between 1 and {AGENT_BACKFILL_MAX_CONCURRENCY}")
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
@@ -4040,9 +4154,7 @@ class Store:
         _smart_action_capability: object | None = None,
     ) -> SmartActionRun:
         with self._connect() as connection:
-            current = connection.execute(
-                "select * from smart_action_runs where id = ?", (run_id,)
-            ).fetchone()
+            current = connection.execute("select * from smart_action_runs where id = ?", (run_id,)).fetchone()
             if current is None:
                 raise KeyError(run_id)
             if _smart_action_capability is not SMART_ACTION_APPROVAL_CAPABILITY:
@@ -4090,15 +4202,11 @@ class Store:
             raise RuntimeError("smart action run was not persisted")
         return run
 
-    def get_smart_action_run(
-        self, run_id: int, client_id: str | None = None
-    ) -> SmartActionRun | None:
+    def get_smart_action_run(self, run_id: int, client_id: str | None = None) -> SmartActionRun | None:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from smart_action_runs where id = ?", (run_id,)
-                ).fetchone()
+                row = connection.execute("select * from smart_action_runs where id = ?", (run_id,)).fetchone()
             else:
                 row = connection.execute(
                     "select * from smart_action_runs where id = ? and client_id = ?",
@@ -4110,9 +4218,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from smart_action_runs order by id desc"
-                ).fetchall()
+                rows = connection.execute("select * from smart_action_runs order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from smart_action_runs where client_id = ? order by id desc",
@@ -4279,9 +4385,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from scheduled_jobs order by id desc"
-                ).fetchall()
+                rows = connection.execute("select * from scheduled_jobs order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from scheduled_jobs where client_id = ? order by id desc",
@@ -4472,9 +4576,7 @@ class Store:
                             "delete from knowledge_chunks_fts where chunk_id = ?",
                             (str(row["id"]),),
                         )
-                    connection.execute(
-                        "delete from knowledge_chunks where document_id = ?", (document_id,)
-                    )
+                    connection.execute("delete from knowledge_chunks where document_id = ?", (document_id,))
                     connection.execute(
                         """
                         update knowledge_documents
@@ -4563,18 +4665,14 @@ class Store:
 
     def get_knowledge_document(self, document_id: int) -> KnowledgeDocument | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from knowledge_documents where id = ?", (document_id,)
-            ).fetchone()
+            row = connection.execute("select * from knowledge_documents where id = ?", (document_id,)).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
 
     def list_knowledge_documents(self, client_id: str | None = None) -> list[KnowledgeDocument]:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from knowledge_documents order by title, path"
-                ).fetchall()
+                rows = connection.execute("select * from knowledge_documents order by title, path").fetchall()
             else:
                 rows = connection.execute(
                     "select * from knowledge_documents where client_id = ? order by title, path",
@@ -4874,9 +4972,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from collector_runs order by id desc"
-                ).fetchall()
+                rows = connection.execute("select * from collector_runs order by id desc").fetchall()
             else:
                 rows = connection.execute(
                     "select * from collector_runs where client_id = ? order by id desc",
@@ -5134,9 +5230,7 @@ class Store:
     def list_asset_observations(self, *, run_id: int | None = None) -> list[AssetObservation]:
         with self._connect() as connection:
             if run_id is None:
-                rows = connection.execute(
-                    "select * from asset_observations order by id"
-                ).fetchall()
+                rows = connection.execute("select * from asset_observations order by id").fetchall()
             else:
                 rows = connection.execute(
                     "select * from asset_observations where run_id = ? order by id",
@@ -5532,15 +5626,11 @@ class Store:
             raise RuntimeError("execution run was not persisted")
         return run
 
-    def get_execution_run(
-        self, run_id: int, client_id: str | None = None
-    ) -> ExecutionRun | None:
+    def get_execution_run(self, run_id: int, client_id: str | None = None) -> ExecutionRun | None:
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from execution_runs where id = ?", (run_id,)
-                ).fetchone()
+                row = connection.execute("select * from execution_runs where id = ?", (run_id,)).fetchone()
             else:
                 row = connection.execute(
                     "select * from execution_runs where id = ? and client_id = ?",
@@ -5548,9 +5638,7 @@ class Store:
                 ).fetchone()
         return _execution_run_from_row(row) if row else None
 
-    def find_execution_run(
-        self, run_kind: str, source_run_id: int
-    ) -> ExecutionRun | None:
+    def find_execution_run(self, run_kind: str, source_run_id: int) -> ExecutionRun | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -5562,9 +5650,7 @@ class Store:
             ).fetchone()
         return _execution_run_from_row(row) if row else None
 
-    def update_execution_run(
-        self, run_id: int, status: str, finished_at: str
-    ) -> ExecutionRun:
+    def update_execution_run(self, run_id: int, status: str, finished_at: str) -> ExecutionRun:
         with self._connect() as connection:
             cursor = connection.execute(
                 "update execution_runs set status = ?, finished_at = ? where id = ?",
@@ -5654,9 +5740,7 @@ class Store:
             if cursor.lastrowid is None:
                 raise RuntimeError("execution step insert did not return an id")
             step_id = int(cursor.lastrowid)
-            row = connection.execute(
-                "select * from execution_steps where id = ?", (step_id,)
-            ).fetchone()
+            row = connection.execute("select * from execution_steps where id = ?", (step_id,)).fetchone()
         if row is None:
             raise RuntimeError("execution step was not persisted")
         return _execution_step_from_row(row)
@@ -5721,9 +5805,7 @@ class Store:
 
     def get_execution_artifact(self, artifact_id: int) -> ExecutionArtifact | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from execution_artifacts where id = ?", (artifact_id,)
-            ).fetchone()
+            row = connection.execute("select * from execution_artifacts where id = ?", (artifact_id,)).fetchone()
         return _execution_artifact_from_row(row) if row else None
 
     def list_execution_artifacts(self, execution_run_id: int) -> list[ExecutionArtifact]:
@@ -5846,8 +5928,7 @@ class Store:
                 params,
             ).fetchall()
         return [
-            (str(row["run_kind"]), str(row["trigger_source"]), str(row["status"]), int(row["count"]))
-            for row in rows
+            (str(row["run_kind"]), str(row["trigger_source"]), str(row["status"]), int(row["count"])) for row in rows
         ]
 
     def approval_activity_counts(
@@ -6335,9 +6416,7 @@ def _approval_expiry_at(created_at: str, expires_in_seconds: int) -> str:
         or expires_in_seconds < 1
         or expires_in_seconds > MAX_APPROVAL_EXPIRY_SECONDS
     ):
-        raise ValueError(
-            f"approval expiry must be between 1 and {MAX_APPROVAL_EXPIRY_SECONDS} seconds"
-        )
+        raise ValueError(f"approval expiry must be between 1 and {MAX_APPROVAL_EXPIRY_SECONDS} seconds")
     created = datetime.fromisoformat(created_at)
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)
@@ -6372,14 +6451,10 @@ def _event_delivery_from_row(row: sqlite3.Row) -> EventDelivery:
     payload["matched_agent_count"] = int(payload["matched_agent_count"])
     payload["retry_count"] = int(payload.get("retry_count") or 0)
     raw_max_retries = payload.get("max_retries")
-    payload["max_retries"] = (
-        int(raw_max_retries) if raw_max_retries is not None else DEFAULT_EVENT_MAX_RETRIES
-    )
+    payload["max_retries"] = int(raw_max_retries) if raw_max_retries is not None else DEFAULT_EVENT_MAX_RETRIES
     raw_retry_delay = payload.get("retry_delay_seconds")
     payload["retry_delay_seconds"] = (
-        int(raw_retry_delay)
-        if raw_retry_delay is not None
-        else DEFAULT_EVENT_RETRY_DELAY_SECONDS
+        int(raw_retry_delay) if raw_retry_delay is not None else DEFAULT_EVENT_RETRY_DELAY_SECONDS
     )
     payload["next_retry_at"] = _optional_text(payload.get("next_retry_at"))
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
@@ -6400,9 +6475,7 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
     payload = dict(row)
     payload["enabled"] = bool(payload["enabled"])
     payload["run_once_per_entity"] = bool(payload["run_once_per_entity"])
-    payload["depends_on_agent_ids"] = cast(
-        list[str], _json_list_or_empty(payload.pop("depends_on_agent_ids_json"))
-    )
+    payload["depends_on_agent_ids"] = cast(list[str], _json_list_or_empty(payload.pop("depends_on_agent_ids_json")))
     payload["filters"] = _json_object_or_empty(payload.pop("filters_json"))
     payload["enabled_tools"] = cast(list[str], _json_list_or_empty(payload.pop("enabled_tools_json")))
     payload["steps"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("steps_json")))
@@ -6415,27 +6488,19 @@ def _agent_definition_from_row(row: sqlite3.Row) -> AgentDefinition:
         current_timezone = legacy_timezone
     payload["execution_window_timezone"] = str(current_timezone or "UTC")
     raw_approval_expiry = payload.get("approval_expiry_seconds")
-    payload["approval_expiry_seconds"] = (
-        int(raw_approval_expiry) if raw_approval_expiry is not None else None
-    )
+    payload["approval_expiry_seconds"] = int(raw_approval_expiry) if raw_approval_expiry is not None else None
     payload["result_aware"] = bool(payload.get("result_aware"))
-    payload["context_sources"] = cast(
-        list[str], _json_list_or_empty(payload.pop("context_sources_json"))
-    )
+    payload["context_sources"] = cast(list[str], _json_list_or_empty(payload.pop("context_sources_json")))
     payload["approval_required_tools"] = cast(
         list[str], _json_list_or_empty(payload.pop("approval_required_tools_json"))
     )
-    payload["approval_rules"] = cast(
-        list[dict[str, object]], _json_list_or_empty(payload.pop("approval_rules_json"))
-    )
+    payload["approval_rules"] = cast(list[dict[str, object]], _json_list_or_empty(payload.pop("approval_rules_json")))
     return AgentDefinition(**payload)
 
 
 def _agent_backfill_from_row(row: sqlite3.Row) -> AgentBackfill:
     payload = dict(row)
-    payload["max_concurrency"] = min(
-        max(1, int(payload.get("max_concurrency") or 1)), AGENT_BACKFILL_MAX_CONCURRENCY
-    )
+    payload["max_concurrency"] = min(max(1, int(payload.get("max_concurrency") or 1)), AGENT_BACKFILL_MAX_CONCURRENCY)
     payload["client_id"] = _normalize_client_id(payload.get("client_id"))
     payload["entity_ids_json"] = _redact_json_text(str(payload["entity_ids_json"]))
     payload["input_json"] = _redact_json_text(str(payload["input_json"]))
@@ -6606,6 +6671,15 @@ def _json_string_list(payload: object) -> list[str]:
     return [item for item in _json_list_or_empty(payload) if isinstance(item, str)]
 
 
+def _consultant_discovery_session_from_row(row: sqlite3.Row) -> ConsultantDiscoverySession:
+    payload = dict(row)
+    payload["client_id"] = _normalize_client_id(payload.get("client_id")) or ""
+    payload["principal_id"] = _redact_text(str(payload.get("principal_id", "")))
+    payload["answers_json"] = _redact_json_text(str(payload.get("answers_json", "{}")))
+    payload["transcript_json"] = _redact_json_text(str(payload.get("transcript_json", "[]")))
+    return ConsultantDiscoverySession(**payload)
+
+
 def _redact_json_text(payload_json: str) -> str:
     try:
         payload = json.loads(payload_json)
@@ -6757,7 +6831,4 @@ def _validate_event_retry_policy(max_retries: int, retry_delay_seconds: int) -> 
     if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, int):
         raise ValueError("event retry_delay_seconds must be an integer")
     if retry_delay_seconds < 1 or retry_delay_seconds > MAX_EVENT_RETRY_DELAY_SECONDS:
-        raise ValueError(
-            "event retry_delay_seconds must be between 1 and "
-            f"{MAX_EVENT_RETRY_DELAY_SECONDS} seconds"
-        )
+        raise ValueError(f"event retry_delay_seconds must be between 1 and {MAX_EVENT_RETRY_DELAY_SECONDS} seconds")

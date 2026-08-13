@@ -95,8 +95,17 @@ from wait_local_agent.consultant import (
 )
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
-from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
-from wait_local_agent.evaluation import EvaluationValidationError, evaluate_tool_contract
+from wait_local_agent.discovery import (
+    DiscoveryValidationError,
+    build_solution_discovery,
+    discover_solution_environment,
+)
+from wait_local_agent.evaluation import (
+    AgentServiceEvaluationExecutor,
+    EvaluationValidationError,
+    evaluate_tool_contract,
+    execute_tool_contract,
+)
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
@@ -447,6 +456,8 @@ class SolutionBlueprintRequest(BaseModel):
     skills: list[object] = Field(default_factory=list, max_length=32)
     model: str = Field(default="", max_length=240)
     orchestration: str = Field(default="", max_length=32)
+    environment: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    discovery: dict[str, object] = Field(default_factory=dict)
     client_id: str | None = None
     model_config = ConfigDict(extra="forbid")
 
@@ -456,9 +467,21 @@ class OpenApiConnectorRequest(BaseModel):
     definition: dict[str, object]
 
 
+class EvaluationExecutionRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=64)
+    entity_id: str = Field(min_length=1, max_length=100)
+    client_id: str = Field(min_length=1, max_length=128)
+    input: dict[str, object] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class EvaluationRequest(BaseModel):
     test_set: list[dict[str, object]]
-    observations: dict[str, object]
+    observations: dict[str, object] = Field(default_factory=dict)
+    execution: EvaluationExecutionRequest | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class GovernanceRequest(BaseModel):
@@ -487,6 +510,26 @@ class PowerAutomatePlanRequest(BaseModel):
 class DiscoveryRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoverySessionStartRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    opening_message: str | None = Field(default=None, max_length=2000)
+    answers: dict[str, object] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiscoveryTurnRequest(BaseModel):
+    field: str = Field(min_length=1, max_length=64)
+    answer: object
+    model_config = ConfigDict(extra="forbid")
+
+
+class EnvironmentDiscoveryRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    systems: list[object] = Field(default_factory=list, max_length=32)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -612,12 +655,8 @@ class AgentDefinitionRequest(BaseModel):
     execution_window_start: str | None = Field(default=None, max_length=5)
     execution_window_end: str | None = Field(default=None, max_length=5)
     execution_window_timezone: str = Field(default="UTC", min_length=1, max_length=100)
-    context_sources: list[Literal["ticket", "client", "knowledge"]] = Field(
-        default_factory=list, max_length=3
-    )
-    approval_expiry_seconds: int | None = Field(
-        default=None, ge=1, le=MAX_APPROVAL_EXPIRY_SECONDS
-    )
+    context_sources: list[Literal["ticket", "client", "knowledge"]] = Field(default_factory=list, max_length=3)
+    approval_expiry_seconds: int | None = Field(default=None, ge=1, le=MAX_APPROVAL_EXPIRY_SECONDS)
     result_aware: bool = False
     approval_required_tools: list[str] = Field(default_factory=list, max_length=8)
     approval_rules: list[AgentApprovalRuleRequest] = Field(default_factory=list, max_length=8)
@@ -854,12 +893,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and active_settings.halopsa_client_secret
                 and active_settings.halopsa_tenant
             ),
-            "hudu_configured": bool(
-                active_settings.hudu_base_url and active_settings.hudu_api_key
-            ),
-            "syncro_configured": bool(
-                active_settings.syncro_base_url and active_settings.syncro_api_token
-            ),
+            "hudu_configured": bool(active_settings.hudu_base_url and active_settings.hudu_api_key),
+            "syncro_configured": bool(active_settings.syncro_base_url and active_settings.syncro_api_token),
             "servicenow_configured": bool(
                 active_settings.servicenow_base_url
                 and active_settings.servicenow_username
@@ -871,22 +906,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and active_settings.autotask_secret
                 and active_settings.autotask_integration_code
             ),
-            "itglue_configured": bool(
-                active_settings.itglue_base_url and active_settings.itglue_api_key
-            ),
+            "itglue_configured": bool(active_settings.itglue_base_url and active_settings.itglue_api_key),
             "confluence_configured": bool(
                 active_settings.confluence_base_url
                 and active_settings.confluence_email
                 and active_settings.confluence_api_token
             ),
             "sharepoint_configured": bool(
-                active_settings.sharepoint_base_url
-                and active_settings.sharepoint_access_token
+                active_settings.sharepoint_base_url and active_settings.sharepoint_access_token
             ),
-            "m365_configured": bool(
-                active_settings.m365_graph_base_url
-                and active_settings.m365_access_token
-            ),
+            "m365_configured": bool(active_settings.m365_graph_base_url and active_settings.m365_access_token),
         }
 
     @app.get("/auth/role")
@@ -1090,10 +1119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _agent_definition_view(definition)
-            for definition in agent_service.list_definitions(scoped_client_id)
-        ]
+        return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
 
     @app.post("/agents")
     def create_agent(
@@ -1302,18 +1328,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AuthContext,
         scoped_client_id: str | None,
     ):
-        entity_ids = [
-            item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)
-        ]
+        entity_ids = [item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)]
         input_payload = _safe_json_object(backfill.input_json)
         run_ids = [
-            item for item in _safe_json_values(backfill.run_ids_json)
+            item
+            for item in _safe_json_values(backfill.run_ids_json)
             if isinstance(item, int) and not isinstance(item, bool)
         ]
         failed_entity_ids = [
-            item
-            for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         errors = [backfill.error_detail] if backfill.error_detail else []
         if definition.client_id is None and scoped_client_id is not None:
@@ -1332,6 +1355,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         processed_count = backfill.processed_count
         succeeded_count = backfill.succeeded_count
         failed_count = backfill.failed_count
+
         def run_entity(entity_id: str):
             try:
                 result = agent_service.run(
@@ -1347,9 +1371,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception as exc:  # noqa: BLE001 - continue independent entities
                 return None, redact_text(f"{entity_id}: {exc}")
 
-        max_concurrency = min(
-            max(1, backfill.max_concurrency), AGENT_BACKFILL_MAX_CONCURRENCY
-        )
+        max_concurrency = min(max(1, backfill.max_concurrency), AGENT_BACKFILL_MAX_CONCURRENCY)
         for batch_start in range(backfill.next_index, len(entity_ids), max_concurrency):
             batch = entity_ids[batch_start : batch_start + max_concurrency]
             if max_concurrency == 1:
@@ -1502,12 +1524,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 succeeded_count=backfill.succeeded_count,
                 failed_count=backfill.failed_count,
                 run_ids=[
-                    item for item in _safe_json_values(backfill.run_ids_json)
+                    item
+                    for item in _safe_json_values(backfill.run_ids_json)
                     if isinstance(item, int) and not isinstance(item, bool)
                 ],
                 failed_entity_ids=[
-                    item for item in _safe_json_values(backfill.failed_entity_ids_json)
-                    if isinstance(item, str)
+                    item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
                 ],
                 error_detail=backfill.error_detail,
             )
@@ -1542,8 +1564,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if backfill is None:
             raise HTTPException(status_code=404, detail="agent backfill not found")
         failed_entity_ids = [
-            item for item in _safe_json_values(backfill.failed_entity_ids_json)
-            if isinstance(item, str)
+            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
         ]
         if not failed_entity_ids:
             raise HTTPException(status_code=409, detail="agent backfill has no failed entities")
@@ -1739,9 +1760,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _event_dispatch_view(result)
 
     @app.get("/smart-actions/runs")
-    def smart_action_runs(
-        context: ViewerAccess, client_id: str | None = None
-    ) -> list[dict[str, object]]:
+    def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
@@ -1751,9 +1770,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/smart-actions/runs/{run_id}")
-    def smart_action_run_detail(
-        run_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def smart_action_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="smart action run not found")
@@ -1947,18 +1964,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
         return EndUserBrandingResponse(
             brand_name=_end_user_branding_text(active_settings.end_user_brand_name, "WAIT Support"),
-            brand_tagline=_end_user_branding_text(
-                active_settings.end_user_brand_tagline, "Private help desk"
-            ),
-            brand_logo_data_uri=_end_user_brand_logo_data_uri(
-                active_settings.end_user_brand_logo_data_uri
-            ),
-            brand_accent_color=_end_user_brand_color(
-                active_settings.end_user_brand_accent_color, "#1f6f55"
-            ),
-            brand_surface_color=_end_user_brand_color(
-                active_settings.end_user_brand_surface_color, "#f3f5f2"
-            ),
+            brand_tagline=_end_user_branding_text(active_settings.end_user_brand_tagline, "Private help desk"),
+            brand_logo_data_uri=_end_user_brand_logo_data_uri(active_settings.end_user_brand_logo_data_uri),
+            brand_accent_color=_end_user_brand_color(active_settings.end_user_brand_accent_color, "#1f6f55"),
+            brand_surface_color=_end_user_brand_color(active_settings.end_user_brand_surface_color, "#f3f5f2"),
         )
 
     @app.post("/end-user/tickets")
@@ -2058,9 +2067,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return []
         return [
             _operator_end_user_message_view(message)
-            for message in store.list_end_user_messages_for_operator(
-                ticket_id, client_id=scoped_client_id
-            )
+            for message in store.list_end_user_messages_for_operator(ticket_id, client_id=scoped_client_id)
         ]
 
     @app.post("/tickets/{ticket_id}/end-user-messages")
@@ -2240,10 +2247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
         scoped_client_id = _approval_client_scope(context, client_id)
-        return [
-            _approval_view(request)
-            for request in store.list_approval_requests(client_id=scoped_client_id)
-        ]
+        return [_approval_view(request) for request in store.list_approval_requests(client_id=scoped_client_id)]
 
     @app.get("/approval-requests/{request_id}")
     def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
@@ -2263,13 +2267,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if approval is None or not _approval_in_scope(context, approval):
                 raise KeyError(request_id)
             if approval.action_type.startswith("connectwise."):
-                approval = update_connectwise_approval_fields(
-                    store, request_id, request.fields, request.comment
-                )
+                approval = update_connectwise_approval_fields(store, request_id, request.fields, request.comment)
             else:
-                approval = update_halopsa_approval_fields(
-                    store, request_id, request.fields, request.comment
-                )
+                approval = update_halopsa_approval_fields(store, request_id, request.fields, request.comment)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
@@ -2319,9 +2319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     approval = store.get_approval_request(request_id) or approval
             if payload.status == "approved" and approval.action_type.startswith("connectwise."):
                 try:
-                    approval = execute_connectwise_approval_request(
-                        store, connectwise_client, request_id
-                    )
+                    approval = execute_connectwise_approval_request(store, connectwise_client, request_id)
                 except RuntimeError:
                     approval = store.get_approval_request(request_id) or approval
             if payload.status == "approved" and approval.action_type.startswith("m365."):
@@ -2427,16 +2425,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result_status": collector_run_result_status(run),
             "collection_scope": collector_run_collection_scope(run),
             "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
-            "observations": [
-                asdict(observation) for observation in store.list_asset_observations(run_id=run_id)
-            ],
-            "config_snapshots": [
-                asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)
-            ],
+            "observations": [asdict(observation) for observation in store.list_asset_observations(run_id=run_id)],
+            "config_snapshots": [asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)],
             "config_diffs": [asdict(diff) for diff in store.list_config_diffs(run_id=run_id)],
-            "restore_exercises": [
-                asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)
-            ],
+            "restore_exercises": [asdict(exercise) for exercise in store.list_restore_exercises(run_id=run_id)],
         }
 
     @app.post("/collectors/runs/{run_id}/export")
@@ -2467,10 +2459,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
         if request.period_end < request.period_start:
             raise HTTPException(status_code=400, detail="period_end must be on or after period_start")
-        estimates = {
-            manifest.action_id: manifest.estimated_minutes_saved
-            for manifest in smart_action_service.list()
-        }
+        estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         sections, metadata = build_qbr_report(
             store,
             estimates,
@@ -2498,10 +2487,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
         if request.period_end < request.period_start:
             raise HTTPException(status_code=400, detail="period_end must be on or after period_start")
-        estimates = {
-            manifest.action_id: manifest.estimated_minutes_saved
-            for manifest in smart_action_service.list()
-        }
+        estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         sections, metadata = build_automation_opportunity_report(
             store,
             estimates,
@@ -2591,9 +2577,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             rendered,
             media_type=media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="wait-report-{report_id}.{extension}"'},
         )
 
     @app.get("/audit")
@@ -2634,7 +2618,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         all_events = store.list_audit_events(client_id=client_id)
         filtered = [
-            e for e in all_events
+            e
+            for e in all_events
             if (from_ is None or datetime.fromisoformat(e.created_at) >= from_.astimezone(UTC))
             and (to_ is None or datetime.fromisoformat(e.created_at) <= to_.astimezone(UTC))
         ]
@@ -2998,11 +2983,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = connectwise_client.list_tickets(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.connectwise_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
             conditions=conditions,
         )
         return _connectwise_response("tickets.list", response)
@@ -3028,11 +3009,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = connectwise_client.list_companies(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.connectwise_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
             conditions=conditions,
         )
         return _connectwise_response("companies.list", response)
@@ -3137,11 +3114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = servicenow_client.list_incidents(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.servicenow_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
             query=query,
         )
         return _servicenow_response("incidents.list", response)
@@ -3167,11 +3140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = servicenow_client.list_companies(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.servicenow_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
             query=query,
         )
         return _servicenow_response("companies.list", response)
@@ -3210,11 +3179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = autotask_client.list_tickets(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.autotask_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
         )
         return _autotask_response("tickets.list", response)
 
@@ -3238,11 +3203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = autotask_client.list_companies(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.autotask_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
         )
         return _autotask_response("companies.list", response)
 
@@ -3273,11 +3234,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = itglue_client.list_organizations(
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.itglue_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
         )
         return _itglue_response("organizations.list", response)
 
@@ -3295,11 +3252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             organization_id,
             folder_id=folder_id,
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.itglue_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
         )
         return _itglue_response("documents.list", response)
 
@@ -3325,11 +3278,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = itglue_client.list_folders(
             organization_id,
             page=page,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.itglue_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
         )
         return _itglue_response("folders.list", response)
 
@@ -3354,11 +3303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             space_id=space_id,
             title=title,
             cursor=cursor,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.confluence_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.confluence_page_size),
         )
         return _confluence_response("pages.list", response)
 
@@ -3420,9 +3365,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403, detail="Notion data-source reads require a tenant scope"
-            )
+            raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.query_data_source(
             data_source_id,
             client_id=scoped_client_id,
@@ -3441,9 +3384,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403, detail="Notion data-source reads require a tenant scope"
-            )
+            raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.get_data_source(data_source_id, client_id=scoped_client_id)
         return _notion_data_source_response("data-sources.get", response)
 
@@ -3464,11 +3405,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = sharepoint_client.list_sites(
             cursor=cursor,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.sharepoint_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.sharepoint_page_size),
         )
         return _sharepoint_response("sites.list", response)
 
@@ -3492,11 +3429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             site_id,
             parent_item_id=parent_item_id,
             cursor=cursor,
-            page_size=(
-                page_size
-                if page_size is not None
-                else active_settings.sharepoint_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.sharepoint_page_size),
         )
         return _sharepoint_response("documents.list", response)
 
@@ -3641,9 +3574,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = m365_client.list_users(
             identity=identity,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_response("users.list", response)
 
@@ -3659,9 +3590,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = m365_client.list_groups(
             identity=identity,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_group_response("groups.list", response)
 
@@ -3687,9 +3616,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = m365_client.list_license_details(
             identity=identity,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_license_detail_response("users.license-details.list", response)
 
@@ -3705,9 +3632,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = m365_client.list_mail_folders(
             identity=identity,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_mail_folder_response("mail-folders.list", response)
 
@@ -3725,9 +3650,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             identity=identity,
             folder_id=folder_id,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_mail_message_response("mail-messages.list", response)
 
@@ -3741,9 +3664,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         response = m365_client.list_managed_devices(
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         return _m365_managed_device_response("managed-devices.list", response)
 
@@ -3770,9 +3691,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = teams_client.list_channels(
             team_id,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         _audit_m365_read("teams.channels.list", response.result.status, response.result.count)
         return {
@@ -3795,9 +3714,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             team_id,
             channel_id,
             cursor=cursor,
-            page_size=(
-                page_size if page_size is not None else active_settings.m365_page_size
-            ),
+            page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
         _audit_m365_read("teams.messages.list", response.result.status, response.result.count)
         return {
@@ -4406,10 +4323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _consultant_client_scope(context, client_id)
         if scoped_client_id is None and context.role < Role.ADMIN:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        return [
-            blueprint_view(blueprint)
-            for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)
-        ]
+        return [blueprint_view(blueprint) for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)]
 
     @app.get("/consultant/blueprints/{blueprint_id}/architecture")
     def consultant_blueprint_architecture(
@@ -4453,9 +4367,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/consultant/evaluations")
     def evaluate_consultant_contract(
         payload: EvaluationRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
+            if payload.execution is not None:
+                if not active_settings.demo_mode or active_settings.allow_write_actions:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="controlled evaluation execution requires local demo mode with writes disabled",
+                    )
+                scoped_client_id = _consultant_client_scope(context, payload.execution.client_id)
+                if scoped_client_id is None:
+                    raise HTTPException(status_code=403, detail="evaluation execution requires a tenant scope")
+                definition = agent_service.get(payload.execution.agent_id, scoped_client_id)
+                if definition is None or definition.client_id != scoped_client_id:
+                    raise HTTPException(status_code=404, detail="evaluation agent was not found in tenant scope")
+                executor = AgentServiceEvaluationExecutor(
+                    agent_service,
+                    definition,
+                    entity_id=payload.execution.entity_id,
+                    actor=context.approver_id or "evaluation",
+                    actor_role=context.role,
+                    input_payload=payload.execution.input,
+                    client_id=scoped_client_id,
+                )
+                return execute_tool_contract(payload.test_set, executor)
             return evaluate_tool_contract(payload.test_set, payload.observations)
         except EvaluationValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4508,6 +4444,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PowerAppsPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    def _consultant_discovery_result(client_id: str, answers: dict[str, object]) -> dict[str, object]:
+        preliminary = build_solution_discovery(client_id=client_id, answers=answers)
+        environment = discover_solution_environment(
+            client_id=client_id,
+            systems=cast(list[object], preliminary["answered"].get("systems", [])),
+            connector_statuses=list_connector_statuses(active_settings),
+            configured_client_id=active_settings.client_id,
+        )
+        return build_solution_discovery(client_id=client_id, answers=answers, environment=environment)
+
     @app.post("/consultant/discovery")
     def consultant_discovery(
         payload: DiscoveryRequest,
@@ -4517,7 +4463,150 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
-            return build_solution_discovery(client_id=scoped_client_id, answers=payload.answers)
+            return _consultant_discovery_result(scoped_client_id, payload.answers)
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/discovery/sessions")
+    def consultant_discovery_session_start(
+        payload: DiscoverySessionStartRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        answers = dict(payload.answers)
+        opening_message = payload.opening_message.strip() if payload.opening_message else None
+        try:
+            if opening_message:
+                build_solution_discovery(
+                    client_id=scoped_client_id,
+                    answers={"business_goal": opening_message},
+                )
+                if "business_goal" not in answers:
+                    answers["business_goal"] = opening_message
+            result = _consultant_discovery_result(scoped_client_id, answers)
+        except DiscoveryValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        principal_id = context.approver_id or "api"
+        answered = cast(dict[str, object], result["answered"])
+        transcript: list[dict[str, object]] = []
+        if opening_message:
+            transcript.append(
+                {
+                    "role": "user",
+                    "field": "business_goal",
+                    "content": answered.get("business_goal", opening_message),
+                }
+            )
+        next_question = cast(dict[str, object] | None, result.get("next_question"))
+        if next_question is not None:
+            transcript.append(
+                {
+                    "role": "assistant",
+                    "field": next_question["id"],
+                    "content": next_question["prompt"],
+                }
+            )
+        session = store.create_consultant_discovery_session(
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+            answers=answered,
+            transcript=transcript,
+        )
+        return {
+            **result,
+            "session_id": session.id,
+            "principal_scope": session.principal_id,
+            "transcript": transcript,
+            "turn_index": 0,
+        }
+
+    @app.post("/consultant/discovery/sessions/{session_id}/turn")
+    def consultant_discovery_session_turn(
+        session_id: str,
+        payload: DiscoveryTurnRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, None)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        principal_id = context.approver_id or "api"
+        session = store.get_consultant_discovery_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="discovery session not found")
+        if session.status != "active":
+            raise HTTPException(status_code=409, detail="discovery session is already complete")
+        if payload.field == "impact":
+            raise HTTPException(status_code=422, detail="impact estimates belong to stateless discovery intake")
+        try:
+            answers_value = json.loads(session.answers_json)
+            transcript_value = json.loads(session.transcript_json)
+            if not isinstance(answers_value, dict) or not isinstance(transcript_value, list):
+                raise DiscoveryValidationError("discovery session state is invalid")
+            answers = dict(cast(dict[str, object], answers_value))
+            answers[payload.field] = payload.answer
+            result = _consultant_discovery_result(scoped_client_id, answers)
+        except (DiscoveryValidationError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        answered = cast(dict[str, object], result["answered"])
+        transcript = [item for item in cast(list[object], transcript_value) if isinstance(item, dict)]
+        transcript.append(
+            {
+                "role": "user",
+                "field": payload.field,
+                "content": answered[payload.field],
+            }
+        )
+        next_question = cast(dict[str, object] | None, result.get("next_question"))
+        if next_question is not None:
+            transcript.append(
+                {
+                    "role": "assistant",
+                    "field": next_question["id"],
+                    "content": next_question["prompt"],
+                }
+            )
+        if len(transcript) > 64:
+            raise HTTPException(status_code=422, detail="discovery session has reached its turn limit")
+        status = cast(str, result["status"])
+        updated = store.update_consultant_discovery_session(
+            session_id,
+            client_id=scoped_client_id,
+            principal_id=principal_id,
+            status=status,
+            answers=answered,
+            transcript=transcript,
+        )
+        if updated is None:
+            raise HTTPException(status_code=409, detail="discovery session could not be updated")
+        return {
+            **result,
+            "session_id": updated.id,
+            "principal_scope": updated.principal_id,
+            "transcript": transcript,
+            "turn_index": (len(transcript) - 1) // 2,
+        }
+
+    @app.post("/consultant/environment-discovery")
+    def consultant_environment_discovery(
+        payload: EnvironmentDiscoveryRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return discover_solution_environment(
+                client_id=scoped_client_id,
+                systems=payload.systems,
+                connector_statuses=list_connector_statuses(active_settings),
+                configured_client_id=active_settings.client_id,
+            )
         except DiscoveryValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -4733,10 +4822,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
-        return [
-            _template_gallery_view(entry)
-            for entry in store.list_template_gallery_entries(scoped_client_id)
-        ]
+        return [_template_gallery_view(entry) for entry in store.list_template_gallery_entries(scoped_client_id)]
 
     @app.post("/workflow-templates/gallery")
     def create_template_gallery_entry(
@@ -4794,9 +4880,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 instructions=payload.instructions,
                 enabled=False,
                 definition=(
-                    payload.definition
-                    if payload.definition is not None
-                    else default_workflow_design(template)
+                    payload.definition if payload.definition is not None else default_workflow_design(template)
                 ),
             )
         except (ValueError, WorkflowDesignError) as exc:
@@ -5047,8 +5131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         params = dict(request.params)
         raw_client_id = params.get("client_id")
         if (
-            raw_client_id is None
-            or (isinstance(raw_client_id, str) and not raw_client_id.strip())
+            raw_client_id is None or (isinstance(raw_client_id, str) and not raw_client_id.strip())
         ) and ticket.client_id:
             params["client_id"] = ticket.client_id
         input_payload = params.get("input", {})
@@ -5168,22 +5251,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (item for item in list_workflow_templates() if item.id == run.template_id),
             None,
         )
-        approval = (
-            store.get_approval_request(run.approval_request_id)
-            if run.approval_request_id is not None
-            else None
-        )
+        approval = store.get_approval_request(run.approval_request_id) if run.approval_request_id is not None else None
         return {
             **asdict(run),
             "template": asdict(template) if template is not None else None,
             "approval_request": (
-                _approval_view(approval)
-                if approval is not None and _approval_in_scope(context, approval)
-                else None
+                _approval_view(approval) if approval is not None and _approval_in_scope(context, approval) else None
             ),
-            "events": [
-                asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)
-            ],
+            "events": [asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)],
         }
 
     @app.get("/workflow-runs/{run_id}/compare/{other_run_id}")
@@ -5225,9 +5300,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/executions/{execution_id}")
-    def execution_detail(
-        execution_id: int, context: ViewerAccess, client_id: str | None = None
-    ) -> dict[str, object]:
+    def execution_detail(execution_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="execution not found")
@@ -5236,13 +5309,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="execution not found")
         return {
             **_execution_run_view(run),
-            "steps": [
-                _execution_step_view(step) for step in store.list_execution_steps(run.id)
-            ],
-            "artifacts": [
-                _execution_artifact_view(artifact)
-                for artifact in store.list_execution_artifacts(run.id)
-            ],
+            "steps": [_execution_step_view(step) for step in store.list_execution_steps(run.id)],
+            "artifacts": [_execution_artifact_view(artifact) for artifact in store.list_execution_artifacts(run.id)],
         }
 
     @app.get("/executions/{execution_id}/artifacts/{artifact_id}")
@@ -5275,10 +5343,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str | None = None,
     ) -> dict[str, object]:
         scoped_client_id = _smart_action_client_scope(context, client_id)
-        estimates = {
-            manifest.action_id: manifest.estimated_minutes_saved
-            for manifest in smart_action_service.list()
-        }
+        estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         if context.role < Role.ADMIN and scoped_client_id is None:
             return _empty_analytics_summary(started_from, started_to)
         return build_analytics_summary(
@@ -5359,9 +5424,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "items": response.items,
         }
 
-    def _syncro_comments_response(
-        read_type: str, response: SyncroCommentsResponse
-    ) -> dict[str, object]:
+    def _syncro_comments_response(read_type: str, response: SyncroCommentsResponse) -> dict[str, object]:
         _audit_syncro_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -5442,9 +5505,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "next_cursor": response.next_cursor,
         }
 
-    def _notion_data_source_response(
-        read_type: str, response: NotionDataSourceResponse
-    ) -> dict[str, object]:
+    def _notion_data_source_response(read_type: str, response: NotionDataSourceResponse) -> dict[str, object]:
         _audit_notion_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -5610,11 +5671,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _approval_view(request) -> dict[str, object]:
         payload = _safe_json_object(request.payload_json)
-        workflow_run = (
-            store.get_workflow_run_for_approval(request.id)
-            if request.id is not None
-            else None
-        )
+        workflow_run = store.get_workflow_run_for_approval(request.id) if request.id is not None else None
         can_execute, block_reason = _approval_execution_state(request)
         view = asdict(request)
         view["payload_json"] = _redact_json_text(request.payload_json)
@@ -5638,10 +5695,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not active_settings.allow_write_actions:
                 return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
             if not active_settings.allow_power_platform_deployment:
-                return False, (
-                    "Power Platform deployment is blocked until "
-                    "WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
-                )
+                return False, ("Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.")
             if shutil.which("pac") is None:
                 return False, "The pac executable is not available on the local PATH."
             if not active_settings.power_platform_workspace.expanduser().is_dir():
@@ -5973,9 +6027,7 @@ def _end_user_branding_text(value: str, fallback: str) -> str:
 
 
 _END_USER_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
-_END_USER_LOGO_PATTERN = re.compile(
-    r"^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$"
-)
+_END_USER_LOGO_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$")
 
 
 def _end_user_brand_color(value: str, fallback: str) -> str:
@@ -6214,8 +6266,10 @@ def _safe_end_user_ticket_id(ticket_id: str) -> bool:
 
 
 def _safe_external_ticket_id(ticket_id: str) -> bool:
-    return bool(ticket_id.strip()) and len(ticket_id) <= 100 and all(
-        ord(character) >= 32 and character not in "/?#\x00" for character in ticket_id
+    return (
+        bool(ticket_id.strip())
+        and len(ticket_id) <= 100
+        and all(ord(character) >= 32 and character not in "/?#\x00" for character in ticket_id)
     )
 
 
@@ -6327,9 +6381,7 @@ def _dispatch_workflow_completion_event(
         )
 
 
-def _empty_analytics_summary(
-    started_from: str | None, started_to: str | None
-) -> dict[str, object]:
+def _empty_analytics_summary(started_from: str | None, started_to: str | None) -> dict[str, object]:
     return {
         "range": {"from": started_from, "to": started_to},
         "client_id": None,
@@ -6389,11 +6441,7 @@ def _approval_client_scope(context: AuthContext, requested_client_id: str | None
 def _approval_in_scope(context: AuthContext, approval) -> bool:
     scoped_client_id = _approval_client_scope(context, None)
     approval_client_id = _normalize_client_id(approval.client_id)
-    return (
-        scoped_client_id is None
-        or approval_client_id is None
-        or approval_client_id == scoped_client_id
-    )
+    return scoped_client_id is None or approval_client_id is None or approval_client_id == scoped_client_id
 
 
 def _consultant_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
@@ -6430,9 +6478,7 @@ def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
     if context.role < Role.ADMIN and scoped_client_id is None:
         raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
     job = store.get_scheduled_job(job_id)
-    if job is None or (
-        scoped_client_id is not None and _normalize_client_id(job.client_id) != scoped_client_id
-    ):
+    if job is None or (scoped_client_id is not None and _normalize_client_id(job.client_id) != scoped_client_id):
         raise HTTPException(status_code=404, detail="scheduled job not found")
     return job
 

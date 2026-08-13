@@ -51,6 +51,27 @@ workflow-template catalogs. Knowledge sources, external systems, and deployment
 targets remain explicit review items unless they are a supported local surface
 (`local`, `api`, `cli`, `agents`, or `mcp`). The response reports `ready` or
 `needs_review` and always states that execution and deployment have not started.
+It also returns deterministic `decisions` for every architecture component.
+Each decision records the selected implementation target, alternatives,
+dependencies, systems, required permissions and licenses (including explicit
+`unknown` evidence when the local catalog cannot verify them), read/write
+behavior, approvals, risk, data movement, execution boundary, complexity,
+reversibility, testing, deployment requirements, and evidence. A decision is
+not treated as ready merely because a target name is available: unresolved
+connector bindings, provider authorization, missing templates, and unsupported
+deployment surfaces remain `needs_review` or `unsupported`.
+Blueprints may also carry an optional `environment` array from
+`/consultant/environment-discovery`. Each record includes a bounded system
+identity, connector boundary when known, status, evidence, and limitations.
+`configured`, `detected`, and `permission-limited` are not equivalent to
+provider authorization; the architecture view preserves that distinction and
+requires review until provider evidence reaches a supported verified state.
+The canonical synthetic employee-onboarding fixture at
+`examples/consultant/employee-onboarding-blueprint.json` demonstrates this
+promotion boundary across discovery, environment evidence, architecture,
+controlled local evaluation, governance, delivery, and approval creation. Its
+Power Platform targets intentionally remain `needs_review`; the fixture does
+not claim live provider access or deployment.
 For blueprints with multiple agents, the same response includes a supervisor
 plan that labels each child agent and permits only bounded structured results
 within the blueprint tenant; blueprint creation still does not create or run

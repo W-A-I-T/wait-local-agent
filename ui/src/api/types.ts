@@ -310,9 +310,31 @@ export type ConsultantDiscoveryResult = {
     evidence_only?: boolean;
   };
   blueprint_candidate: Record<string, unknown>;
+  answered?: Record<string, unknown>;
+  unanswered?: string[];
+  questions?: ConsultantDiscoveryQuestion[];
+  next_question?: ConsultantDiscoveryQuestion | null;
+  assistant_message?: string;
+  status?: string;
   inference_started: boolean;
   execution_started: boolean;
   deployment_started: boolean;
+};
+
+export type ConsultantDiscoveryQuestion = {
+  id: string;
+  prompt: string;
+  kind: "text" | "list" | "boolean";
+  required: boolean;
+  answered: boolean;
+};
+
+export type ConsultantDiscoverySession = ConsultantDiscoveryResult & {
+  session_id: string;
+  principal_scope: string;
+  transcript: Array<{ role: "user" | "assistant"; field?: string; content: unknown }>;
+  turn_index: number;
+  next_question: ConsultantDiscoveryQuestion | null;
 };
 
 export type TemplateGalleryEntry = {

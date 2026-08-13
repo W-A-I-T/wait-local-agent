@@ -5630,6 +5630,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
     assert viewer_architecture.status_code == 200
     assert viewer_architecture.json()["readiness"] == "needs_review"
     assert viewer_architecture.json()["execution_started"] is False
+    assert viewer_architecture.json()["decision_engine"]["execution_started"] is False
+    assert viewer_architecture.json()["decisions"]
     assert connector_validation.status_code == 200
     assert connector_validation.json()["valid"] is True
     assert connector_generation.json()["credentials_included"] is False
@@ -5803,6 +5805,49 @@ def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -
     assert requested.json()["plan"]["approval_required_for_every_stage"] is True
     assert pending.status_code == 409
     assert missing.status_code == 404
+
+
+def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None:
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "acme",
+            "tech_token": "tech-token",
+        }
+    )
+    client = TestClient(create_app(secure_settings))
+    start = client.post(
+        "/consultant/discovery/sessions",
+        headers=_auth("tech-token"),
+        json={"client_id": "acme", "opening_message": "Reduce onboarding effort"},
+    )
+    assert start.status_code == 200
+    session_id = start.json()["session_id"]
+    assert start.json()["next_question"]["id"] == "users"
+
+    turn = client.post(
+        f"/consultant/discovery/sessions/{session_id}/turn",
+        headers=_auth("tech-token"),
+        json={"field": "users", "answer": ["HR"]},
+    )
+    assert turn.status_code == 200
+    assert turn.json()["answered"]["users"] == ["HR"]
+
+    beta_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "client_id": "beta",
+            "tech_token": "beta-token",
+        }
+    )
+    foreign = TestClient(create_app(beta_settings)).post(
+        f"/consultant/discovery/sessions/{session_id}/turn",
+        headers=_auth("beta-token"),
+        json={"field": "knowledge", "answer": ["Handbook"]},
+    )
+    assert foreign.status_code == 404
 
 
 def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:

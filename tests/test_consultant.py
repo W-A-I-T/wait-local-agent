@@ -8,6 +8,7 @@ import pytest
 
 from wait_local_agent.consultant import (
     BlueprintValidationError,
+    _decision_for_component,
     architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
@@ -73,10 +74,78 @@ def test_blueprint_validation_and_store_round_trip(tmp_path) -> None:
         event.event_type == "consultant.blueprint_created" and event.client_id == "acme"
         for event in reopened.list_audit_events(client_id="acme")
     )
-
     with pytest.raises(ValueError, match="requires a client_id"):
         reopened.create_solution_blueprint(replace(blueprint, client_id=""))
 
+
+def test_blueprint_round_trips_explicit_discovery_evidence_and_rejects_secrets() -> None:
+    discovery = {
+        "business_goal": "Reduce onboarding effort",
+        "current_process": "HR emails IT",
+        "owners": ["HR operations"],
+        "approvers": ["IT manager"],
+        "data_leaves_tenant": False,
+    }
+    blueprint = parse_solution_blueprint(
+        {**_payload(), "discovery": discovery},
+        client_id="acme",
+        created_by="architect",
+    )
+
+    assert blueprint.discovery == discovery
+    assert blueprint_payload(blueprint)["discovery"] == discovery
+    with pytest.raises(BlueprintValidationError, match="secret material"):
+        parse_solution_blueprint(
+            {**_payload(), "discovery": {"business_goal": "token=secret"}},
+            client_id="acme",
+            created_by="architect",
+        )
+
+
+def test_discovery_session_store_is_tenant_and_principal_scoped(tmp_path) -> None:
+    store = Store(tmp_path / "state.db")
+    session = store.create_consultant_discovery_session(
+        client_id="acme",
+        principal_id="technician-1",
+        answers={"business_goal": "Reduce manual work"},
+        transcript=[{"role": "user", "field": "business_goal", "content": "Reduce manual work"}],
+    )
+
+    reopened = Store(tmp_path / "state.db")
+    loaded = reopened.get_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+    )
+    assert loaded is not None
+    assert json.loads(loaded.answers_json)["business_goal"] == "Reduce manual work"
+    assert reopened.get_consultant_discovery_session(session.id, client_id="beta") is None
+    assert (
+        reopened.get_consultant_discovery_session(
+            session.id,
+            client_id="acme",
+            principal_id="technician-2",
+        )
+        is None
+    )
+    updated = reopened.update_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+        status="completed",
+        answers={"business_goal": "Reduce manual work", "users": ["HR"]},
+        transcript=[{"role": "assistant", "content": "Who uses this?"}],
+    )
+    assert updated is not None
+    assert updated.status == "completed"
+    assert reopened.update_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician-1",
+        status="active",
+        answers={},
+        transcript=[],
+    ) is None
 
 @pytest.mark.parametrize(
     ("change", "message"),
@@ -238,6 +307,241 @@ def test_architect_resolves_existing_catalogs_and_reports_open_items() -> None:
         item["kind"] == "workflow_template" and item["component_id"] == "ticket-triage"
         for item in unresolved["open_items"]
     )
+
+
+def test_blueprint_round_trip_preserves_environment_evidence_and_architecture_boundary() -> None:
+    payload = {
+        **_payload(),
+        "environment": [
+            {
+                "id": "m365",
+                "name": "Microsoft 365 / Entra",
+                "kind": "m365",
+                "connector_id": "m365",
+                "status": "configured",
+                "evidence": ["local_connector_configuration"],
+                "limitation": "provider authorization is unknown",
+                "tenant_scope": "acme",
+                "http_probing_enabled": False,
+            }
+        ],
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    assert blueprint.environment[0]["status"] == "configured"
+    environment_component = next(item for item in architecture["components"] if item["kind"] == "environment")
+    assert environment_component["status"] == "needs_review"
+    assert any(item["kind"] == "environment" for item in architecture["open_items"])
+
+
+def test_architect_decisions_resolve_verified_environment_and_remain_reviewable() -> None:
+    payload = {
+        **_payload(),
+        "knowledge": [],
+        "systems": ["Microsoft 365"],
+        "agents": [],
+        "workflows": [],
+        "deployment": ["local"],
+        "environment": [
+            {
+                "id": "m365",
+                "name": "Microsoft 365 / Entra",
+                "kind": "m365",
+                "connector_id": "m365",
+                "status": "authorized",
+                "evidence": ["provider_authorization_result"],
+                "tenant_scope": "acme",
+            }
+        ],
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+
+    assert architecture["readiness"] == "ready"
+    assert architecture["decision_engine"]["inference_started"] is False
+    assert architecture["decision_engine"]["execution_started"] is False
+    decisions = {item["component_id"]: item for item in architecture["decisions"]}
+    assert decisions["Microsoft 365"]["chosen_target"] == "microsoft_graph"
+    assert decisions["Microsoft 365"]["status"] == "ready"
+    assert decisions["local"]["chosen_target"] == "wait_agent"
+    for decision in architecture["decisions"]:
+        assert "alternatives_considered" in decision
+        assert "required_permissions" in decision
+        assert "licenses" in decision
+        assert "testing_requirements" in decision
+        assert "deployment_requirements" in decision
+
+
+def test_architect_decision_engine_maps_targets_and_unknowns() -> None:
+    payload = {
+        **_payload(),
+        "knowledge": [],
+        "systems": [],
+        "agents": [],
+        "workflows": [
+            {
+                "id": "inactive-ticket-follow-up",
+                "name": "Follow up",
+                "trigger": "schedule.daily",
+                "steps": ["Prepare follow-up"],
+            }
+        ],
+        "deployment": ["local", "Power Automate", "Power Apps", "Dataverse", "custom-cloud"],
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=list_workflow_templates(),
+    )
+    decisions = {item["component_id"]: item for item in architecture["decisions"]}
+
+    assert "communication-send" in decisions["inactive-ticket-follow-up"]["dependencies"]
+    assert "workflow_template: approval required by local template" in decisions[
+        "inactive-ticket-follow-up"
+    ]["approval_requirements"]
+    assert decisions["Power Automate"]["chosen_target"] == "power_automate"
+    assert decisions["Power Apps"]["chosen_target"] == "power_app"
+    assert decisions["Dataverse"]["chosen_target"] == "dataverse"
+    assert decisions["custom-cloud"]["status"] == "needs_review"
+
+    fallback = _decision_for_component(
+        blueprint,
+        {"id": "unknown", "kind": "unknown", "name": "Unknown", "status": "needs_review"},
+        {},
+    )
+    assert fallback["chosen_target"] == "unsupported"
+    assert fallback["status"] == "needs_review"
+
+
+def test_architect_decision_engine_maps_connector_families_and_unknown_target() -> None:
+    payload = {
+        **_payload(),
+        "knowledge": [],
+        "systems": ["ConnectWise", "NinjaOne", "Hudu", "Custom system"],
+        "agents": [],
+        "workflows": [],
+        "deployment": ["local"],
+        "environment": [
+            {
+                "id": "connectwise",
+                "name": "ConnectWise",
+                "kind": "psa",
+                "connector_id": "connectwise",
+                "status": "authorized",
+                "evidence": ["provider_authorization_result"],
+            },
+            {
+                "id": "rmm",
+                "name": "NinjaOne",
+                "kind": "rmm",
+                "connector_id": "rmm",
+                "status": "authorized",
+                "evidence": ["provider_authorization_result"],
+            },
+            {
+                "id": "hudu",
+                "name": "Hudu",
+                "kind": "documentation",
+                "connector_id": "hudu",
+                "status": "authorized",
+                "evidence": ["provider_authorization_result"],
+            },
+            {
+                "id": "custom",
+                "name": "Custom system",
+                "kind": "custom",
+                "connector_id": "custom",
+                "status": "authorized",
+                "evidence": ["provider_authorization_result"],
+            },
+        ],
+    }
+    blueprint = parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    architecture = architect_solution_blueprint(
+        blueprint,
+        available_tool_ids=[],
+        workflow_templates=[],
+    )
+    decisions = {item["component_id"]: item for item in architecture["decisions"]}
+
+    assert decisions["ConnectWise"]["chosen_target"] == "psa"
+    assert decisions["NinjaOne"]["chosen_target"] == "rmm"
+    assert decisions["Hudu"]["chosen_target"] == "mcp"
+    assert decisions["Custom system"]["status"] == "needs_review"
+
+
+def test_blueprint_environment_contract_rejects_malformed_records() -> None:
+    cases = [
+        ([{"id": "m365"}], r"environment\[0\].status"),
+        ([{"id": "m365", "name": "M365", "kind": "m365", "status": "nope"}], "unsupported"),
+        (
+            [
+                {
+                    "id": "m365",
+                    "name": "M365",
+                    "kind": "m365",
+                    "status": "configured",
+                    "evidence": [],
+                    "http_probing_enabled": "yes",
+                }
+            ],
+            "must be boolean",
+        ),
+        (
+            [
+                {"id": "m365", "name": "M365", "kind": "m365", "status": "configured"},
+                {"id": "m365", "name": "M365 again", "kind": "m365", "status": "configured"},
+            ],
+            "duplicate id",
+        ),
+        (
+            [
+                {
+                    "id": "m365",
+                    "name": "M365",
+                    "kind": "m365",
+                    "status": "configured",
+                    "tenant_scope": "beta",
+                }
+            ],
+            "outside the blueprint tenant",
+        ),
+    ]
+    for environment, message in cases:
+        payload = {**_payload(), "environment": environment}
+        with pytest.raises(BlueprintValidationError, match=message):
+            parse_solution_blueprint(payload, client_id="acme", created_by="architect")
+
+    with pytest.raises(BlueprintValidationError, match="environment must be an array"):
+        parse_solution_blueprint({**_payload(), "environment": {}}, client_id="acme", created_by="architect")
+    with pytest.raises(BlueprintValidationError, match="at most 32"):
+        oversized_environment = [
+            {
+                "id": f"env-{index}",
+                "name": "M365",
+                "kind": "m365",
+                "status": "configured",
+            }
+            for index in range(33)
+        ]
+        parse_solution_blueprint(
+            {**_payload(), "environment": oversized_environment},
+            client_id="acme",
+            created_by="architect",
+        )
 
 
 def test_architect_can_be_ready_for_empty_local_design() -> None:

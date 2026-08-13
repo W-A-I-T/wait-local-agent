@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     DeliveryPlanRequest,
     DiscoveryRequest,
+    DiscoverySessionStartRequest,
+    DiscoveryTurnRequest,
+    EnvironmentDiscoveryRequest,
+    EvaluationExecutionRequest,
+    EvaluationRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
@@ -124,6 +132,232 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert delivery["production_deployment_requires_approval"] is True
 
 
+def test_flagship_blueprint_promotes_discovery_and_environment_into_architecture(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    client = TestClient(create_app(settings))
+
+    created = client.post(
+        "/consultant/blueprints",
+        json={**payload, "client_id": "acme"},
+    )
+    assert created.status_code == 201, created.text
+    view = created.json()
+    assert view["discovery"]["business_goal"].startswith("Automate auditable")
+    assert len(view["environment"]) == 8
+
+    architecture = client.get(f"/consultant/blueprints/{view['id']}/architecture")
+    assert architecture.status_code == 200, architecture.text
+    result = architecture.json()
+    assert result["readiness"] == "needs_review"
+    assert result["open_items"] == [
+        {
+            "kind": "deployment",
+            "component_id": "Teams",
+            "detail": "deployment target is recorded but not provisioned by this local runtime",
+        },
+        {
+            "kind": "deployment",
+            "component_id": "Power Automate",
+            "detail": "deployment target is recorded but not provisioned by this local runtime",
+        },
+        {
+            "kind": "deployment",
+            "component_id": "Power Apps",
+            "detail": "deployment target is recorded but not provisioned by this local runtime",
+        },
+        {
+            "kind": "deployment",
+            "component_id": "Dataverse",
+            "detail": "deployment target is recorded but not provisioned by this local runtime",
+        },
+    ]
+    assert result["execution_started"] is False
+    assert result["deployment_started"] is False
+    assert {item["chosen_target"] for item in result["decisions"]} >= {
+        "microsoft_graph",
+        "psa",
+        "rmm",
+        "mcp",
+        "power_automate",
+        "power_app",
+        "dataverse",
+    }
+
+
+def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(settings) -> None:
+    payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
+    client = TestClient(create_app(settings))
+    created = client.post("/consultant/blueprints", json={**payload, "client_id": "acme"})
+    assert created.status_code == 201, created.text
+    blueprint = created.json()
+    architecture_response = client.get(f"/consultant/blueprints/{blueprint['id']}/architecture")
+    assert architecture_response.status_code == 200, architecture_response.text
+    architecture = architecture_response.json()
+
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    agent = service.create(
+        name="Employee onboarding supervisor fixture",
+        description="Synthetic local fixture for the employee onboarding blueprint",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+    evaluation_response = client.post(
+        "/consultant/evaluations",
+        json={
+            "test_set": [
+                {
+                    "id": "employee-onboarding-triage",
+                    "expected_tool_ids": ["ticket-triage"],
+                    "forbidden_tool_ids": [],
+                    "expected_approval_tool_ids": [],
+                }
+            ],
+            "execution": {
+                "agent_id": agent.id,
+                "entity_id": "TCK-1001",
+                "client_id": "acme",
+            },
+        },
+    )
+    assert evaluation_response.status_code == 200, evaluation_response.text
+    evaluation = evaluation_response.json()
+    assert evaluation["execution_mode"] == "controlled"
+    assert evaluation["production_readiness"] == "pass"
+    assert evaluation["cases"][0]["execution"]["execution_status"] == "completed"
+
+    governance_response = client.post(
+        "/consultant/governance/evaluate",
+        json={"architecture": architecture, "connector_artifacts": []},
+    )
+    assert governance_response.status_code == 200, governance_response.text
+    governance = governance_response.json()
+    assert governance["status"] == "needs_review"
+    assert governance["deployment_started"] is False
+
+    delivery_response = client.post(
+        "/consultant/delivery-plan",
+        json={
+            "client_id": "acme",
+            "architecture": architecture,
+            "evaluation": evaluation,
+            "governance": governance,
+            "deployment_targets": payload["deployment"],
+        },
+    )
+    assert delivery_response.status_code == 200, delivery_response.text
+    delivery = delivery_response.json()
+    assert delivery["production_readiness"] == "needs_review"
+    assert delivery["production_deployment_requires_approval"] is True
+    assert delivery["execution_started"] is False
+    assert delivery["deployment_started"] is False
+
+    approval_response = client.post(
+        "/consultant/solutions/deployment-approvals",
+        json={
+            "client_id": "acme",
+            "solution_name": "employee_onboarding",
+            "publisher_name": "WAITConsulting",
+            "publisher_prefix": "wlp",
+            "output_directory": "/tmp/wait-employee-onboarding-solution",
+            "deployment_targets": [
+                {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
+                {"name": "test", "environment_url": "https://test.crm.dynamics.com"},
+            ],
+            "stage": "dev",
+        },
+    )
+    assert approval_response.status_code == 201, approval_response.text
+    approval_result = approval_response.json()
+    assert approval_result["approval"]["status"] == "pending"
+    assert approval_result["approval"]["can_execute"] is False
+    assert approval_result["plan"]["deployment_started"] is False
+
+
+def test_guided_discovery_sessions_progress_and_preserve_scope(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            opening_message="Reduce manual onboarding effort",
+        ),
+        _technician(),
+    )
+    assert start["session_id"].startswith("CDS-")
+    assert start["answered"]["business_goal"] == "Reduce manual onboarding effort"
+    assert start["next_question"]["id"] == "users"
+    assert start["execution_started"] is False
+
+    turn = _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+        start["session_id"],
+        DiscoveryTurnRequest(field="users", answer=["HR operations"]),
+        _technician(),
+    )
+    assert turn["answered"]["users"] == ["HR operations"]
+    assert turn["transcript"][-2]["role"] == "user"
+    assert turn["transcript"][-1]["role"] == "assistant"
+
+    with pytest.raises(HTTPException) as foreign:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            start["session_id"],
+            DiscoveryTurnRequest(field="knowledge", answer=["Handbook"]),
+            _technician("beta"),
+        )
+    assert foreign.value.status_code == 404
+
+
+def test_guided_discovery_session_turn_is_bounded(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(client_id="acme", answers={"business_goal": "Review onboarding"}),
+        _technician(),
+    )
+    session_id = start["session_id"]
+    transcript = cast(
+        list[dict[str, object]],
+        [{"role": "assistant", "field": "users", "content": "Who uses this?"}] * 64,
+    )
+    Store(settings.data_path).update_consultant_discovery_session(
+        session_id,
+        client_id="acme",
+        principal_id=_technician().approver_id or "api",
+        status="active",
+        answers={"business_goal": "Review onboarding"},
+        transcript=transcript,
+    )
+
+    with pytest.raises(HTTPException) as bounded:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            session_id,
+            DiscoveryTurnRequest(field="users", answer=["HR"]),
+            _technician(),
+        )
+    assert bounded.value.status_code == 422
+
+
+def test_guided_discovery_session_rejects_impact_side_channel(settings) -> None:
+    start = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(client_id="acme"),
+        _technician(),
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            start["session_id"],
+            DiscoveryTurnRequest(field="impact", answer={"monthly_runs": 1}),
+            _technician(),
+        )
+    assert rejected.value.status_code == 422
+
+
 def test_power_platform_deployment_route_creates_approval_and_stays_gated(settings) -> None:
     request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
         PowerPlatformDeploymentRequest(
@@ -234,6 +468,81 @@ def test_supervisor_run_orders_persisted_children_and_returns_child_runs(setting
     assert result["status"] == "completed"
     assert result["supervisor"]["ordered_child_agent_ids"] == [identity.id, security.id]
     assert [child["status"] for child in result["children"]] == ["completed", "completed"]
+
+
+def test_controlled_evaluation_runs_existing_agent_in_local_fixture_mode(settings) -> None:
+    store = Store(settings.data_path)
+    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update tickets set client_id = 'acme'")
+    service = AgentService(store, settings, SmartActionService(store, settings))
+    agent = service.create(
+        name="Triage fixture",
+        description="Local evaluation fixture",
+        enabled=True,
+        trigger="manual",
+        entity_type="ticket",
+        filters={},
+        enabled_tools=["ticket-triage"],
+        steps=[{"tool_id": "ticket-triage", "payload": {}}],
+        max_steps=1,
+        execution_timeout_seconds=30,
+        client_id="acme",
+    )
+
+    result = _endpoint(settings, "/consultant/evaluations")(
+        EvaluationRequest(
+            test_set=[
+                {
+                    "id": "triage",
+                    "expected_tool_ids": ["ticket-triage"],
+                    "forbidden_tool_ids": [],
+                    "expected_approval_tool_ids": [],
+                }
+            ],
+            execution=EvaluationExecutionRequest(
+                agent_id=agent.id,
+                entity_id="TCK-1001",
+                client_id="acme",
+            ),
+        ),
+        _technician(),
+    )
+
+    assert result["execution_started"] is True
+    assert result["execution_mode"] == "controlled"
+    assert result["production_readiness"] == "pass"
+    assert result["cases"][0]["execution"]["execution_status"] == "completed"
+
+
+def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settings) -> None:
+    production_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
+    endpoint = _endpoint(production_settings, "/consultant/evaluations")
+
+    with pytest.raises(HTTPException, match="local demo mode"):
+        endpoint(
+            EvaluationRequest(
+                test_set=[{"id": "triage"}],
+                execution=EvaluationExecutionRequest(
+                    agent_id="fixture",
+                    entity_id="TCK-1",
+                    client_id="acme",
+                ),
+            ),
+            _technician(),
+        )
+
+
+def test_environment_discovery_route_returns_explicit_local_evidence(settings) -> None:
+    result = _endpoint(settings, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365", "Custom API"]),
+        _technician(),
+    )
+
+    assert result["probe_performed"] is False
+    systems = {item["name"]: item for item in result["systems"]}
+    assert systems["Microsoft 365"]["status"] == "not_configured"
+    assert systems["Custom API"]["status"] == "detected"
 
 
 def test_consultant_planning_routes_reject_foreign_tenant(settings) -> None:

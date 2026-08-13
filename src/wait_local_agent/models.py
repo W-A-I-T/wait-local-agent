@@ -495,6 +495,20 @@ class SolutionBlueprint:
     skills: tuple[str, ...] = ()
     model: str = ""
     orchestration: str = ""
+    environment: tuple[dict[str, object], ...] = ()
+    discovery: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ConsultantDiscoverySession:
+    id: str
+    client_id: str
+    principal_id: str
+    status: str
+    answers_json: str
+    transcript_json: str
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True)
