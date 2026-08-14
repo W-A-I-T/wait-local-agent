@@ -232,3 +232,88 @@ To resume this session: kimi -r session_b937c56b-0799-42e6-8393-127a95554319
   test fails.
 - Kimi’s earlier conditional pass remains applicable to the scoped design; a
   fresh cross-family review is required for these follow-up code changes.
+
+## Kimi Cross-Family Review
+
+[output byte limit applied]
+[output line limit applied]
+kimi version 0.29.2
+• Let me read the plan, review, diff, and verification evidence.The task asks me to be the fresh independent cross-family reviewer (the review.md says "a fresh cross-family review is required for these follow-up code changes"). Let me read the prepared diff, implementation.md, status.json, and the actual source files.The diff's full content of the new module is truncated. I should review the actual on-disk source files. The follow-up claims: corrected YAML empty-collection/boolean scalar emission, `credentials_included` validation gate, hardened audit exemption, PAC empty-override rejection, plus 326 lines of defensive tests and full-suite 95.01% coverage.
+
+  Let me read the core module and key integration points.The module looks solid. Let me examine for issues:
+
+  1. `_validate_value` secret-key check: `if raw_value not in (None, "", False, [], {})` — note `0 == False` in Python, so `{"password": 0}` — `0 in (None, "", False, [], {})` → True since 0 == False. So password=<redacted> passes. Bounded. Also `{"token": 1}` — 1 not in tuple → rejected. Fine.
+
+  Wait, another subtlety: `raw_value not in (None, "", False, [], {})` uses `in` with unhashable comparison — `in` uses `==`, works for dicts/lists. OK.
+
+  2. The `credentials_included` gate: special case only when `isinstance(raw_value, bool)`. If `credentials_included: "true"` (string)? `_SECRET_KEY` matches "credentials" — then falls to the falsy check: `"true" not in (None, "", False, [], {})` → True → rejected as secret-like. Good fail-closed.
+
+  But in `_validate_input_artifacts`: `if copied.get("credentials_included") is True` — rejected. OK.
+
+  3. `_validate_value` `client_id` key check: `raw_value is not None and (not isinstance(raw_value, str) or raw_value != tenant)` → reject. Good — unhashable client_id (list) rejected. Matches review claim.
+
+  4. Determinism: builder output — files dict built with iteration over normalized_artifacts; YAML sorts keys. `_add_file` collision check. Sorted file views. Canonical JSON with sort_keys. UUID5 deterministic. No clock/random. Good.
+
+  One determinism concern: `package["pac"]["commands"]` includes `output` raw text — fine.
+
+  5. `validate_power_platform_package` digest reconstruction: `expected = dict(package)` — shallow copy keeps unknown extra keys; those are included in digest, meaning any extra key changes the digest → mismatch → rejected (unless digest consistent). That's fine — digest-consistent extra keys pass validation. Note: builder package doesn't have unknown keys, so a forged package with consistent digest and extra keys would pass. Not a security issue (digest binds), just semantic.
+
+  But wait: `expected["files"] = sorted(normalized_files...)` — normalized_files entries are new dicts with keys path/media_type/digest/content. If the supplied file entries had extra keys (e.g., "extra": 1), the digest recomputation would use normalized entries without them → mismatch → rejected. Good, this means validate enforces exact file entry shape.
+
+  6. `package_validation_result` calls `package["client_id"]`, `package["file_count"]` after validation — validation confirmed both. OK.
+
+  7. Materialization:
+  - validate first; on failure return "failed" — good, before write gate check. Status "blocked" when gate off — fail-closed.
+  - `_safe_workspace` — exists and not symlink, resolve.
+  - `_reject_symlink_components(Path(raw_output).expanduser(), workspace)` — lexical check before resolution.
+  - `_confined_path` — resolves; rejects equal to workspace or outside. Note: `resolved == workspace` rejected — output can't be the workspace root. Good.
+  - `_reject_symlink_components(output, workspace)` — resolved output's components are real paths, symlinks resolved, so `is_symlink()` on resolved path components... after resolve, no symlinks remain in path components (on POSIX, resolve fully resolves). Slight redundancy, fine.
+  - The while loop in `_reject_symlink_components`: `while current != workspace and workspace in current.parents` — for lexical_target (which may not exist), parents computed lexically. OK.
+  - O_NOFOLLOW: on failure, if lexical_target.is_symlink() → symlink error; else re-raise OSError → caught → "failed". Good.
+  - Post-write: re-check symlink and digest. Good.
+
+  TOCTOU on intermediate dirs remains (noted previously, acceptable).
+
+  One question: `materialization_started: True` on success — fine, truthful (it did materialize locally).
+
+  8. `_emit_power_apps_artifact`: note that for the canvas_app check `if canvas is not None and not isinstance(canvas, Mapping)` — this check happens AFTER the table loop and file additions. Minor ordering, fine since it raises before return... but files dict was already mutated. However build aborts entirely on error, so no partial package. Fine.
+... [output lines omitted] ...
+
+• One last check — the diff truncation appeared to cut a test line mid-string; verify the actual test file is intact:
+
+• The diff file's truncated line was a diff-preparation artifact; the on-disk test is intact (and slightly different — fine).
+
+  I'm done. Compose the final review.
+
+• # Cross-Family Review: `wla-deployable-blueprint-package` (fresh, post-follow-up)
+
+  Scope: plan, review/implementation notes, prepared diff, and the on-disk sources for the core module, deployment helper, delivery plan, onboarding fixture, API, CLI, exports, audit script, docs, and tests. Read-only; nothing executed or modified.
+
+  ## Verification of prior findings (all confirmed fixed in the follow-up)
+
+  - **YAML emitter edges — fixed.** Empty collections now emit `[]`/`{}` (`power_platform_package.py:635-637, 658-660`; `missingdependencies.yml` is `[]`), and YAML 1.1 booleans plus `~` are quoted (`_yaml_scalar` exclusion set, line 695), with direct unit tests.
+  - **PAC override edge — fixed.** Explicit empty `materialization_directory` is rejected ("required", `power_platform_deployment.py:71-72`), mismatches raise "must match", and both branches are tested.
+  - **Audit exemption — hardened.** The relaxation now uses `path.is_relative_to(ROOT / "ai" / "tasks")` (scripts/public_surface_audit.py:46) — exact subtree, not the substring part-match the prior review flagged. It is still a repo-wide branding-control relaxation bundled into a feature task; it needs explicit gate acknowledgement, but its scope is now tight and the rationale (task metadata must name lanes) is legitimate.
+  - **PAC-tamper test gap — closed.** New tests re-digest a package with a tampered `pac.commands` folder and assert the digest-bound check fires; digest/PAC, caps, symlink, workspace-equality, `O_NOFOLLOW` failure, and on-disk digest-verification branches all have focused tests. The diff-preparation artifact that looked like an unterminated string in the test file is not present on disk.
+
+  ## Independent code findings
+
+  No critical or high-severity defects found. Specifically verified: deterministic builder (canonical JSON, SHA-256, UUID5, no clock/random/network/PAC), recursive tenant isolation and layered secret rejection, fail-closed write gating (`blocked` result before any filesystem touch), workspace confinement with lexical + resolved symlink checks, `O_NOFOLLOW` final-component writes, post-write digest re-verification, truthful `execution_started`/`deployment_started: false` everywhere, review bundle kept `deployable: false` with the source package linked separately, technician scope for build/validate and admin + write-gate for materialize in both API and CLI, bounded Pydantic models with `extra="forbid"`, and the exact required public entry points exported from `__init__.py`.
+
+  **Low / observations:**
+  - **Secret-source scan is line-anchored only.** `_SECRET_SOURCE` misses block-style YAML values (`password:<redacted> with the value on the next line). Not exploitable from the builder (secret keys are rejected at input by `_validate_value`), and forged packages fail digest binding — but a digest-consistent hand-crafted package with block-style secret YAML would pass validation. Bounded; worth a doc note.
+  - **Falsy exemption quirk:** `{"password": 0}` passes because `0 == False` in the exemption tuple. Harmless, conservative direction otherwise.
+  - **Validation is digest/consistency-based, not manifest-semantic:** `solutioncomponents.yml`/`rootcomponents.yml` contents are not cross-checked against the file set. Matches the letter of the acceptance tests; a self-consistent but incoherent package passes.
+  - **CLI `materialize` failed → exit-code-1 branch still appears untested** (tests cover blocked and succeeded). Two-line branch; trivial.
+  - **Residual TOCTOU** on intermediate directories between check and `os.open` (local attacker with workspace write access). Acceptable for a bounded local tool.
+  - The "PAC-packable" claim remains unverified by construction (PAC never invoked) — this is documented honestly in the docs and review.
+
+  ## Gate item
+
+  **Full-suite green + ≥95% coverage has still not been demonstrated in a single run.** The cited GitHub backend job passed 2,359 tests at **94.72% — below the 95% gate** and predating the follow-up tests; the follow-up's 95.01% figure is a *local* run with 2 known failures (docling/qdrant optional-dependency assumptions). The plan's acceptance test requires full pytest ≥95%; a post-follow-up CI run (or equivalent evidence) showing ≥95% with only the documented env-dependent failures is the one outstanding requirement.
+
+  ## Verdict for Claude's final gate
+
+  **Conditional pass.** The follow-up correctly resolved every code-level finding from both prior reviews, and I found no new bugs, regressions, or security issues. Before merge: (1) produce the post-follow-up full-suite run with the ≥95% coverage figure (94.72% on the last cited CI run does not meet the gate), and (2) explicitly acknowledge the `ai/tasks` public-surface-audit exemption, now acceptably scoped. The low-severity items above are acceptable as documented limitations of a review-grade, never-PAC-tested source handoff. This is not a claim of PAC, provider, or deployment readiness.
+
+To resume this session: kimi -r session_cf08fb74-07cb-4393-9b1e-8bf88d8d6c97
