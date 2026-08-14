@@ -19,25 +19,39 @@ agent runtime or alter approval/deployment execution contracts.
 - Added delivery-plan API/CLI linkage while keeping the review bundle
   explicitly non-deployable.
 - Added missing limit, delivery, API-scope, CLI-scope, and symlink tests.
+- Followed up on the prior YAML findings: empty collections now serialize as
+  `[]`/`{}`, YAML 1.1 boolean words are quoted, and the audit exemption is
+  restricted to the exact task-contract subtree.
+- Closed the PAC override edge case: explicit empty materialization overrides
+  are rejected rather than treated as omitted.
 
 ## Validation evidence
 
-- Focused package/onboarding/API/CLI tests: passed.
+- Focused package/deployment tests: passed with 98.84% coverage for the new
+  package module.
+- Focused onboarding/API/CLI integration tests: passed.
 - Ruff: passed.
-- Mypy: passed.
-- Bandit: passed with existing informational warnings only.
+- Mypy: passed for 93 source files.
+- Bandit: passed for application source with existing informational warnings;
+  the separate public-surface script retains three existing low-severity
+  fixed-argv subprocess findings.
 - Public-surface audit: passed.
-- Full pytest/coverage was attempted but not completed in the available run
-  window. Independent execution of the two affected knowledge tests shows
-  that optional `docling` and `qdrant` packages are installed while those
-  existing tests require the packages to be absent. The mismatch is unrelated
-  to this task and is recorded rather than hidden.
+- `uv lock --check`: passed with no dependency or lockfile changes.
+- Full pytest/coverage remains blocked by the unrelated existing agent API
+  cancellation test: a bounded single-test run exceeded 45 seconds (exit
+  124), and the full invocation was stopped after remaining silent. No
+  repository-wide coverage percentage is claimed.
 
 ## Remaining risks and boundaries
 
 - The official PAC prerequisite is documented as Microsoft.PowerApps.CLI
   2.4.1 or newer; PAC was not invoked, so pack/import/provider behavior is not
   live-verified.
+- Full-suite coverage remains an explicit final-gate requirement once the
+  unrelated cancellation-test timeout is resolved.
+- The `ai/tasks/**` exemption in `scripts/public_surface_audit.py` is
+  intentionally limited to internal task metadata and should remain an
+  explicit final-gate acknowledgement.
 - The existing UI remains outside task ownership and may need a later copy
   update to describe source as packable local material rather than deployment.
 - Cross-family re-review and the elevated final gate remain required before a
@@ -45,8 +59,8 @@ agent runtime or alter approval/deployment execution contracts.
 
 ## Verdict
 
-Implementation is ready for read-only cross-family re-review. It is not a
-claim of deployment or production readiness.
+Implementation is ready for read-only cross-family re-review and the elevated
+final gate. It is not a claim of deployment or production readiness.
 
 ## Kimi Cross-Family Review
 
@@ -207,3 +221,14 @@ kimi version 0.29.2
   **Conditional pass — approve the code, block merge on one evidence item.** No code-level security defect or regression was found, and the prior review's "broken branch" critical is stale (the current diff includes all deliverables). Before merge: (1) produce the required full-pytest run with the ≥95% coverage figure, and (2) explicitly acknowledge the `public_surface_audit` `ai/tasks` exemption. The YAML emitter edge cases and the manifest-semantic validation gap are acceptable as documented limitations of a review-grade, never-PAC-tested source handoff; this approval is not a claim of PAC, provider, or deployment readiness.
 
 To resume this session: kimi -r session_b937c56b-0799-42e6-8393-127a95554319
+
+## CI follow-up review evidence
+
+- The previously failing GitHub backend job reported 2,359 passed and 94.72%
+  coverage. The follow-up adds focused defensive tests and reaches 95.01%
+  locally across the full suite.
+- The local run still reports only the two known optional-dependency mismatch
+  tests (`docling` and `qdrant` installed while absence is expected); no package
+  test fails.
+- Kimi’s earlier conditional pass remains applicable to the scoped design; a
+  fresh cross-family review is required for these follow-up code changes.

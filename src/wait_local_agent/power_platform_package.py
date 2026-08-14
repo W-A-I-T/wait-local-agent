@@ -585,8 +585,8 @@ def _validate_value(value: object, tenant: str, field: str) -> object:
                 if raw_value is not None and (not isinstance(raw_value, str) or raw_value != tenant):
                     raise PowerPlatformPackageError("artifact is outside the requested tenant")
             if _SECRET_KEY.search(raw_key):
-                if raw_key.casefold() == "credentials_included" and raw_value is False:
-                    result[raw_key] = False
+                if raw_key.casefold() == "credentials_included" and isinstance(raw_value, bool):
+                    result[raw_key] = raw_value
                     continue
                 if raw_value not in (None, "", False, [], {}):
                     raise PowerPlatformPackageError(f"{field}.{raw_key} contains secret-like material")
@@ -625,16 +625,24 @@ def _yaml(value: object, indent: int = 0) -> str:
     lines: list[str] = []
     prefix = " " * indent
     if isinstance(value, Mapping):
+        if not value:
+            return f"{prefix}{{}}\n"
         for key in sorted(value, key=str):
             rendered_key = _yaml_scalar(str(key))
             if value[key] is None:
                 lines.append(f"{prefix}{rendered_key}:")
             elif isinstance(value[key], (Mapping, list)):
-                lines.append(f"{prefix}{rendered_key}:")
-                lines.extend(_yaml(value[key], indent + 2).splitlines())
+                if not value[key]:
+                    empty = "{}" if isinstance(value[key], Mapping) else "[]"
+                    lines.append(f"{prefix}{rendered_key}: {empty}")
+                else:
+                    lines.append(f"{prefix}{rendered_key}:")
+                    lines.extend(_yaml(value[key], indent + 2).splitlines())
             else:
                 lines.append(f"{prefix}{rendered_key}: {_yaml_scalar(value[key])}")
     elif isinstance(value, list):
+        if not value:
+            return f"{prefix}[]\n"
         for item in value:
             if isinstance(item, Mapping):
                 if not item:
@@ -647,8 +655,12 @@ def _yaml(value: object, indent: int = 0) -> str:
                     marker = f"{prefix}- " if first else f"{prefix}  "
                     first = False
                     if isinstance(item_value, (Mapping, list)):
-                        lines.append(f"{marker}{rendered_key}:")
-                        lines.extend(_yaml(item_value, indent + 4).splitlines())
+                        if not item_value:
+                            empty = "{}" if isinstance(item_value, Mapping) else "[]"
+                            lines.append(f"{marker}{rendered_key}: {empty}")
+                        else:
+                            lines.append(f"{marker}{rendered_key}:")
+                            lines.extend(_yaml(item_value, indent + 4).splitlines())
                     elif item_value is None:
                         lines.append(f"{marker}{rendered_key}:")
                     else:
@@ -680,7 +692,7 @@ def _yaml_scalar(value: object) -> str:
     numeric_string = re.fullmatch(r"[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", text) is not None
     if (
         re.fullmatch(r"[A-Za-z0-9_./:+-]+", text)
-        and text.casefold() not in {"null", "true", "false", "yes", "no"}
+        and text.casefold() not in {"null", "true", "false", "yes", "no", "on", "off", "y", "n", "~"}
         and not numeric_string
     ):
         return text

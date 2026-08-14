@@ -65,7 +65,9 @@ def build_power_platform_source_pack_plan(
         digest = validate_power_platform_package(package, client_id=client_id)
     except PowerPlatformPackageError as exc:
         raise PowerPlatformDeploymentError(str(exc)) from exc
-    raw_directory = materialization_directory or package.get("output_directory")
+    raw_directory = (
+        materialization_directory if materialization_directory is not None else package.get("output_directory")
+    )
     if not isinstance(raw_directory, (str, Path)) or not str(raw_directory).strip():
         raise PowerPlatformDeploymentError("materialization directory is required")
     folder = str(Path(raw_directory).expanduser().resolve())

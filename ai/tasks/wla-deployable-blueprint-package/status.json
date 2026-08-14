@@ -23,8 +23,8 @@
     "docs/enterprise-validation-matrix.md",
     "README.md"
   ],
-  "last_updated": "2026-08-14T03:11:36Z",
-  "next_action": "Claude final gate; human retains merge and deployment authority; coverage remains blocked by two pre-existing optional-dependency assumptions.",
+  "last_updated": "2026-08-14T05:31:02Z",
+  "next_action": "Fresh Kimi read-only cross-family review, then Claude final gate; human retains merge and deployment authority.",
   "allowed_implementer": "codex",
   "assigned_file_ownership": [
     "src/wait_local_agent/power_platform_package.py",
@@ -36,6 +36,7 @@
     "tests/test_consultant_routes.py",
     "src/wait_local_agent/cli.py",
     "tests/test_cli.py",
+    "scripts/public_surface_audit.py",
     "docs/consultant-power-platform-package.md",
     "docs/status.md",
     "ROADMAP.md",

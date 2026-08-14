@@ -66,6 +66,10 @@ internal naming but these exact entry points are required.
   public-surface audit pass. The new package module must have focused tests for
   its defensive validation/materialization/PAC branches sufficient to preserve
   the repository threshold; do not merely report the existing 94.71% total.
+  The baseline focused coverage was 79% (78 statements missed); the required
+  defensive tests now cover malformed artifacts, digest/PAC tampering, caps,
+  workspace/symlink failures, gated and successful materialization, and YAML
+  scalar/collection branches.
 
 ## Version & Compatibility Evidence
 
