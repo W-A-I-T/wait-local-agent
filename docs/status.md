@@ -8,7 +8,8 @@ reachable API, CLI, UI, test, and execution boundary exists.
 The repository currently provides review-oriented blueprint, discovery,
 architecture, evaluation, governance, workflow-design, MCP, Work IQ, and Power
 Platform preparation surfaces, including a credential-free Copilot Studio
-handoff plan. It also provides a separate staged Power Platform solution
+handoff plan and a separate deterministic, credential-free Power Platform YAML
+source package bridge. It also provides a separate staged Power Platform solution
 deployment path with explicit approval and execution records. External
 credentials, provider availability, and deployment authorization remain
 explicit prerequisites; artifact generation and planning are not deployment.
@@ -70,10 +71,12 @@ fixture. It executes only the bounded local `ticket-triage` stand-in; target
 Microsoft/PSA/RMM/documentation/Teams actions, live provider execution,
 and deployment remain explicit review or approval gates. It now generates and
 validates bounded review-only Power Apps/Dataverse, Power Automate, and Copilot
-Studio manifests and packages their redacted metadata into a deterministic
-delivery bundle with per-file digests; this is not a deployable Power Platform
-package. The bundle is an operator-review handoff only and explicitly reports
-`deployable: false`.
+Studio manifests, packages their redacted metadata into a deterministic
+delivery bundle with per-file digests, and separately produces a digest-bound
+deployable-source package in the official YAML layout. The delivery bundle is
+an operator-review handoff and explicitly reports `deployable: false`; the
+separate source package means only packable local source, not provider import
+or deployment.
 
 The same walkthrough is reachable through a tenant-scoped technician API
 endpoint and the Consultant screen in local demo mode. It resolves a selected

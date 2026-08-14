@@ -108,6 +108,72 @@ def test_microsoft_power_apps_build_cli_emits_local_artifact(monkeypatch, tmp_pa
     assert artifact["deployment_started"] is False
 
 
+def test_microsoft_power_platform_package_cli_build_validate_and_materialize(monkeypatch, tmp_path) -> None:
+    workspace = tmp_path / "power-platform"
+    workspace.mkdir()
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_POWER_PLATFORM_WORKSPACE", str(workspace))
+    source = tmp_path / "package-input.json"
+    source.write_text(
+        json.dumps(
+            {
+                "client_id": "acme",
+                "solution_name": "onboarding",
+                "publisher_name": "WAITConsulting",
+                "publisher_prefix": "wait",
+                "output_directory": str(workspace / "source"),
+                "artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    built = runner.invoke(app, ["microsoft", "package", "build", str(source)])
+    assert built.exit_code == 0, built.output
+    package = json.loads(built.output)
+    package_source = tmp_path / "package.json"
+    package_source.write_text(json.dumps(package), encoding="utf-8")
+
+    validated = runner.invoke(app, ["microsoft", "package", "validate", str(package_source)])
+    assert validated.exit_code == 0, validated.output
+    assert json.loads(validated.output)["valid"] is True
+
+    blocked = runner.invoke(app, ["microsoft", "package", "materialize", str(package_source)])
+    assert blocked.exit_code == 0, blocked.output
+    assert json.loads(blocked.output)["status"] == "blocked"
+
+    monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "true")
+    materialized = runner.invoke(app, ["microsoft", "package", "materialize", str(package_source)])
+    assert materialized.exit_code == 0, materialized.output
+    assert json.loads(materialized.output)["status"] == "succeeded"
+
+
+def test_microsoft_power_platform_package_cli_rejects_foreign_tenant(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
+    source = tmp_path / "foreign-package-input.json"
+    source.write_text(
+        json.dumps(
+            {
+                "client_id": "other",
+                "solution_name": "onboarding",
+                "publisher_name": "WAITConsulting",
+                "publisher_prefix": "wait",
+                "output_directory": str(tmp_path / "source"),
+                "artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["microsoft", "package", "build", str(source), "--token", "tech-token"])
+
+    assert result.exit_code != 0
+    assert "outside authenticated scope" in result.output
+
+
 def test_microsoft_consultant_cli_review_commands_are_reachable(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

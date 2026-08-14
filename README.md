@@ -12,7 +12,7 @@ See the [capability roadmap](ROADMAP.md), [enterprise validation matrix](docs/en
 
 WAIT Local Agent is an Apache 2.0 self-hosted runtime with a FastAPI API, Typer CLI, React dashboard, SQLite state, signed update checks, and an open-core pack loader. The public repository ships the appliance surface; paid or proprietary pack implementation stays outside this repo.
 
-The consultant surfaces in this repository are deterministic and review-oriented: blueprint discovery, architecture projections, workflow design, evaluation, governance, MCP boundaries, and Power Platform preparation produce inspectable local artifacts. They do not imply that an external provider is configured or that a design artifact has been deployed. See [docs/status.md](docs/status.md) for the current evidence-backed boundary.
+The consultant surfaces in this repository are deterministic and review-oriented: blueprint discovery, architecture projections, workflow design, evaluation, governance, MCP boundaries, and Power Platform preparation produce inspectable local artifacts. The Power Platform bridge can also emit a credential-free official YAML source tree for a later local PAC pack operation; it does not imply provider configuration, import, live verification, or deployment. See [docs/status.md](docs/status.md) and [the package contract](docs/consultant-power-platform-package.md) for the current evidence-backed boundary.
 
 > Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector connection checks must be explicitly enabled, and HaloPSA writes still require an approved draft.
 

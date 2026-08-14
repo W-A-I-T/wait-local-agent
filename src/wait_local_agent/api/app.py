@@ -199,6 +199,12 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_source,
     validate_rollback_evidence,
 )
+from wait_local_agent.power_platform_package import (
+    PowerPlatformPackageError,
+    build_power_platform_package,
+    materialize_power_platform_package,
+    package_validation_result,
+)
 from wait_local_agent.providers import (
     PROVIDER_CONFIGURATION_SCOPE,
     PROVIDER_REQUEST_CONTEXT_SCOPE,
@@ -526,6 +532,7 @@ class EmployeeOnboardingDemoRequest(BaseModel):
     entity_id: str = Field(default="TCK-1001", min_length=1, max_length=100)
     blueprint_id: str | None = Field(default=None, min_length=1, max_length=64)
     blueprint: dict[str, object] | None = Field(default=None, max_length=32)
+    output_directory: str | None = Field(default=None, min_length=1, max_length=240)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -541,6 +548,32 @@ class PowerAppsPlanRequest(BaseModel):
     entities: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     screens: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformPackageRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    solution_name: str = Field(min_length=1, max_length=64)
+    publisher_name: str = Field(min_length=1, max_length=100)
+    publisher_prefix: str = Field(min_length=2, max_length=8)
+    output_directory: str = Field(min_length=1, max_length=240)
+    artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformPackageValidationRequest(BaseModel):
+    client_id: str | None = Field(default=None, max_length=128)
+    package: dict[str, object]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PowerPlatformPackageMaterializationRequest(BaseModel):
+    client_id: str | None = Field(default=None, max_length=128)
+    package: dict[str, object]
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -629,6 +662,7 @@ class DeliveryPlanRequest(BaseModel):
     deployment_targets: list[str] = Field(min_length=1, max_length=8)
     connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
     review_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
+    deployable_package: dict[str, object] | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -4533,6 +4567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 entity_id=payload.entity_id,
                 blueprint_id=payload.blueprint_id,
                 persist_blueprint=payload.blueprint_id is None,
+                output_directory=payload.output_directory,
             )
         except EmployeeOnboardingDemoError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4665,6 +4700,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except PowerAppsPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-platform/package")
+    def build_consultant_power_platform_package(
+        payload: PowerPlatformPackageRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return build_power_platform_package(
+                client_id=scoped_client_id,
+                solution_name=payload.solution_name,
+                publisher_name=payload.publisher_name,
+                publisher_prefix=payload.publisher_prefix,
+                output_directory=payload.output_directory,
+                artifacts=payload.artifacts,
+                connector_artifacts=payload.connector_artifacts,
+            )
+        except PowerPlatformPackageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-platform/package/validate")
+    def validate_consultant_power_platform_package(
+        payload: PowerPlatformPackageValidationRequest,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
+        requested = payload.client_id
+        package_client = payload.package.get("client_id")
+        if requested is None and isinstance(package_client, str):
+            requested = package_client
+        scoped_client_id = _consultant_client_scope(context, requested)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        try:
+            return package_validation_result(payload.package, client_id=scoped_client_id)
+        except PowerPlatformPackageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/consultant/power-platform/package/materialize")
+    def materialize_consultant_power_platform_package(
+        payload: PowerPlatformPackageMaterializationRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        if context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="admin access required for package materialization")
+        requested = payload.client_id
+        package_client = payload.package.get("client_id")
+        if requested is None and isinstance(package_client, str):
+            requested = package_client
+        scoped_client_id = _consultant_client_scope(context, requested)
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        result = materialize_power_platform_package(
+            payload.package,
+            active_settings,
+            client_id=scoped_client_id,
+        )
+        if result.get("status") == "failed":
+            raise HTTPException(status_code=422, detail=result.get("message", "package materialization failed"))
+        return result
 
     def _consultant_discovery_result(client_id: str, answers: dict[str, object]) -> dict[str, object]:
         preliminary = build_solution_discovery(client_id=client_id, answers=answers)
@@ -5081,6 +5177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 deployment_targets=payload.deployment_targets,
                 connector_artifacts=payload.connector_artifacts,
                 review_artifacts=payload.review_artifacts,
+                deployable_package=payload.deployable_package,
             )
         except DeliveryPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

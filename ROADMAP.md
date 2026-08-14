@@ -104,8 +104,9 @@ credential or undocumented vendor API remains an explicit boundary.
 - Reviewable Power Apps, Power Automate, connector, Copilot Studio handoff,
   deployment, and delivery artifacts that preserve the distinction between
   plan, generate, validate, package, and deploy. The canonical onboarding
-  fixture now validates and digest-binds a local review package; it is not a
-  deployable Power Platform package.
+  fixture now validates and digest-binds a local review package and separately
+  emits a credential-free official YAML source package. The review bundle
+  remains non-deployable; the source package means packable local source only.
 
 ### Next increments
 
@@ -122,8 +123,8 @@ credential or undocumented vendor API remains an explicit boundary.
 
 - Bounded Microsoft Graph and Teams reads/actions, Work IQ read boundaries,
   Power Platform connector artifacts, Power Apps metadata/build artifacts,
-  Power Automate planning, Copilot Studio handoff planning, and
-  deployment-stage records. Planned stages remain
+  Power Automate planning, Copilot Studio handoff planning, deterministic YAML
+  source packaging, and deployment-stage records. Planned stages remain
   non-mutating; TEST and PROD approval requests require preceding-stage
   success, passing evaluation/governance, artifact digest, and rollback
   evidence.
@@ -133,9 +134,9 @@ credential or undocumented vendor API remains an explicit boundary.
 
 ### Next increments
 
-- Complete deployable blueprint-to-artifact packaging and validation across
-  supported Copilot Studio, Power Automate, Power Apps/Dataverse, connector,
-  and PAC paths; the local review-package slice is not that deployment package.
+- Expand the supported source mappings and add operator-run PAC packing only
+  behind the existing approval, workspace, and provider evidence boundaries;
+  local source packaging itself never claims deployment.
 - Complete DEV → TEST → PROD validation with live-provider result verification
   and rollback execution evidence. Promotion evidence is now bound to a
   same-tenant persisted preceding-stage approval and matching artifact digest;

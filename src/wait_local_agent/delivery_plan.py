@@ -7,6 +7,10 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from wait_local_agent.power_platform_package import (
+    PowerPlatformPackageError,
+    validate_power_platform_package,
+)
 from wait_local_agent.reports.renderers import redact_value
 
 MAX_DELIVERY_TARGETS = 8
@@ -29,6 +33,7 @@ def build_consultant_delivery_plan(
     deployment_targets: Sequence[str],
     connector_artifacts: Sequence[Mapping[str, object]] = (),
     review_artifacts: Sequence[Mapping[str, object]] = (),
+    deployable_package: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     tenant = _text(client_id, "client_id", 128)
     if architecture.get("client_id") != tenant:
@@ -75,6 +80,12 @@ def build_consultant_delivery_plan(
         deployment_targets=targets,
         review_package=review_package,
     )
+    deployable_digest: str | None = None
+    if deployable_package is not None:
+        try:
+            deployable_digest = validate_power_platform_package(deployable_package, client_id=tenant)
+        except PowerPlatformPackageError as exc:
+            raise DeliveryPlanError(str(exc)) from exc
     return {
         "format": "wait-local-agent.consultant-delivery-plan",
         "format_version": 1,
@@ -104,6 +115,9 @@ def build_consultant_delivery_plan(
         "delivery_bundle_generated": delivery_bundle is not None,
         "delivery_bundle_digest": delivery_bundle_digest,
         "delivery_bundle_status": "review_only" if delivery_bundle is not None else "not_generated",
+        "deployable_source_package": dict(deployable_package) if deployable_package is not None else None,
+        "deployable_source_package_generated": deployable_package is not None,
+        "deployable_source_package_digest": deployable_digest,
         "deployment_package_generated": False,
         "deployment_package_status": "not_generated",
         "production_deployment_requires_approval": True,

@@ -12,7 +12,11 @@ never imply provider import, live verification, or deployment success.
 
 The package must be reachable from the onboarding fixture, delivery plan, API,
 and CLI while preserving tenant isolation, secret rejection, approval/write
-gates, workspace confinement, and truthful status flags.
+gates, workspace confinement, and truthful status flags. The public module
+contract must expose `build_deployable_blueprint_package`,
+`validate_deployable_blueprint_package`, and
+`materialize_deployable_blueprint_package`; compatibility aliases may retain
+internal naming but these exact entry points are required.
 
 ## Constraints
 
@@ -48,7 +52,9 @@ gates, workspace confinement, and truthful status flags.
 - Materialization is blocked without `allow_write_actions`, succeeds inside a
   pre-created workspace when enabled, rejects workspace escapes and symlinks,
   and verifies on-disk digests.
-- The PAC plan's `--folder` is the validated materialization directory.
+- The PAC plan's `--folder` is the validated materialization directory; any
+  materialization output override must be rejected when it differs from that
+  validated path.
 - Onboarding exposes a deployable package and digest without changing its live
   provider, execution, approval, or deployment boundaries.
 - Delivery output keeps the review bundle non-deployable and links the separate
@@ -57,7 +63,9 @@ gates, workspace confinement, and truthful status flags.
   admin-only and write-gated.
 - CLI package/materialize commands emit bounded JSON and honor the same gates.
 - Targeted tests, full pytest with coverage >=95%, Ruff, mypy, Bandit, and the
-  public-surface audit pass.
+  public-surface audit pass. The new package module must have focused tests for
+  its defensive validation/materialization/PAC branches sufficient to preserve
+  the repository threshold; do not merely report the existing 94.71% total.
 
 ## Version & Compatibility Evidence
 

@@ -21,6 +21,11 @@ from urllib.parse import urlsplit
 
 from wait_local_agent.config import Settings
 from wait_local_agent.power_platform import OpenApiDefinitionError, build_solution_command_plan
+from wait_local_agent.power_platform_package import (
+    PAC_YAML_MINIMUM_VERSION,
+    PowerPlatformPackageError,
+    validate_power_platform_package,
+)
 from wait_local_agent.reports.renderers import redact_text
 
 MAX_DEPLOYMENT_TARGETS = 3
@@ -42,6 +47,46 @@ _SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 class PowerPlatformDeploymentError(ValueError):
     """Raised when a Power Platform deployment request is unsafe or malformed."""
+
+
+def build_power_platform_source_pack_plan(
+    package: Mapping[str, object],
+    *,
+    materialization_directory: str | Path | None = None,
+    client_id: str | None = None,
+) -> dict[str, object]:
+    """Build a PAC pack preview for validated local YAML source.
+
+    This is intentionally separate from deployment plans.  It only describes
+    the local ``pac solution pack`` command and never starts PAC or a provider.
+    """
+
+    try:
+        digest = validate_power_platform_package(package, client_id=client_id)
+    except PowerPlatformPackageError as exc:
+        raise PowerPlatformDeploymentError(str(exc)) from exc
+    raw_directory = materialization_directory or package.get("output_directory")
+    if not isinstance(raw_directory, (str, Path)) or not str(raw_directory).strip():
+        raise PowerPlatformDeploymentError("materialization directory is required")
+    folder = str(Path(raw_directory).expanduser().resolve())
+    expected_folder = str(Path(str(package["output_directory"])).expanduser().resolve())
+    if folder != expected_folder:
+        raise PowerPlatformDeploymentError("PAC pack folder must match the validated package output_directory")
+    solution = package.get("solution")
+    if not isinstance(solution, Mapping) or not isinstance(solution.get("unique_name"), str):
+        raise PowerPlatformDeploymentError("validated package solution metadata is missing")
+    zipfile = str(Path(folder) / f"{solution['unique_name']}.zip")
+    return {
+        "format": "wait-local-agent.power-platform.source-pack-plan",
+        "format_version": 1,
+        "package_digest": digest,
+        "folder": folder,
+        "minimum_cli_version": PAC_YAML_MINIMUM_VERSION,
+        "commands": [["pac", "solution", "pack", "--folder", folder, "--zipfile", zipfile]],
+        "zipfile": zipfile,
+        "execution_started": False,
+        "deployment_started": False,
+    }
 
 
 CommandRunner = Callable[[list[str], Path, float], subprocess.CompletedProcess[str]]
@@ -727,6 +772,7 @@ __all__ = [
     "PowerPlatformDeploymentError",
     "build_power_platform_deployment_plan",
     "build_power_platform_deployment_plan_from_payload",
+    "build_power_platform_source_pack_plan",
     "execute_power_platform_rollback",
     "execute_power_platform_stage",
     "validate_power_platform_solution_package",
