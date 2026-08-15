@@ -43,7 +43,23 @@ Do not commit `.env`, vault keys, encrypted vault files, connector credentials, 
 
 ## Reporting
 
-Please report sensitive security issues privately to the maintainers before opening public issues. Public issues are appropriate for non-sensitive hardening requests only.
+### Sensitive vulnerabilities
+
+Use GitHub's **Report a vulnerability** flow: open the repository's **Security**
+tab and choose **Report a vulnerability**. This sends the report privately to
+the repository maintainers. Private vulnerability reporting is enabled for this
+repository.
+
+Do not post secrets, exploit details, or unpatched vulnerability information in
+public issues. Public issues are appropriate for non-sensitive hardening
+requests only.
+
+## Supported Versions
+
+| Version | Supported |
+| --- | --- |
+| 1.1.x | Yes |
+| Older releases | No |
 
 ## Operator responsibilities
 

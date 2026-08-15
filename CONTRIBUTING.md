@@ -1,6 +1,9 @@
 # Contributing
 
-This repository is the public 1.0.0 surface for WAIT Local Agent. Keep changes source-accurate, local-first, and safe by default.
+WAIT Local Agent is a C$0 Community edition under the Apache 2.0 license. It
+is self-hosted and intended to provide useful local-first AI execution and
+change governance, including use across multiple client environments. Keep
+changes source-accurate, local-first, and safe by default.
 
 ## Development Environment
 
@@ -28,7 +31,7 @@ Run the full release gate before opening or updating a PR:
 ./scripts/validate_release.sh
 ```
 
-That script runs:
+That script runs exactly:
 
 1. `ruff check .`
 2. `mypy src tests`
@@ -36,9 +39,16 @@ That script runs:
 4. `pip-audit --skip-editable`
 5. `python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95`
 6. `python scripts/public_surface_audit.py`
-7. `cd ui && npm ci && npm run test && npm run build`
+7. `cd ui`
+8. `npm ci`
+9. `npm run test`
+10. `npm run build`
 
 Coverage is a release gate. Backend coverage must stay at or above `95%`.
+
+CI additionally runs `scripts/demo_consultant_mode.sh` and
+`scripts/validate_local_first.sh`. CI uses `npm install` for the UI job; the
+release script uses `npm ci`.
 
 ## Contributor Rules
 
@@ -46,6 +56,15 @@ Coverage is a release gate. Backend coverage must stay at or above `95%`.
 - Do not add AI attribution, generated-by banners, or tool-credit lines in code, commits, PR text, screenshots, or docs.
 - Keep public docs, examples, and screenshots aligned with shipped behavior only.
 - Run `scripts/public_surface_audit.py` or the full validation gate before asking for review.
+
+### AI-assisted contributions
+
+Assistance is allowed, but every contributor must fully understand and be able to explain every change they submit. Changes
+must be tested. Do not add AI attribution, generated-by banners, or tool-credit lines. Low-effort generated PRs will be
+closed.
+
+Before starting a large feature or a new connector, open a GitHub Discussion
+to describe the proposal and invite design feedback.
 
 Issue templates live under `.github/ISSUE_TEMPLATE/`.
 
