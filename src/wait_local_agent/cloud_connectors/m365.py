@@ -346,7 +346,8 @@ class M365InventoryConnector:
                         source_id,
                         exc,
                         permission_hint=(
-                            "Grant the Microsoft Graph read-only permissions listed in docs/cloud-permissions-m365.md."
+                            "Grant the Microsoft Graph read-only permissions listed in "
+                            "docs/connectors/cloud-permissions-m365.md."
                         ),
                     )
                 )

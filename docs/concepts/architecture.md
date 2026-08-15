@@ -22,6 +22,19 @@ governed by the same runtime.
 
 WAIT Local Agent is a local-first operator appliance composed of a small public core plus optional installed packs.
 
+## Product architecture context
+
+The product has two complementary layers: a provider-neutral Solutions
+Architect that turns requirements into inspectable blueprints, and the WAIT
+Local Agent runtime that applies policy, tenant scope, RBAC, approvals,
+execution, and audit evidence. MSP operations is an important vertical and
+catalog surface, not the product identity.
+
+The Apache 2.0 Community runtime is the shipped public boundary. Optional
+installed packs may add separately governed capabilities, but generated
+Power Platform output remains a source package for a later local PAC operation,
+not provider import or deployment evidence.
+
 ## Runtime
 
 - FastAPI API served by `wait-local-agent serve`

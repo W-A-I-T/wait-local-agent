@@ -109,5 +109,5 @@ walkthrough:
 scripts/demo_consultant_mode.sh
 ```
 
-See [docs/consultant-demo.md](consultant-demo.md) for the scope and synthetic
+See [the consultant demo](../consultant/consultant-demo.md) for the scope and synthetic
 inputs. It does not contact Microsoft services or deploy a solution.

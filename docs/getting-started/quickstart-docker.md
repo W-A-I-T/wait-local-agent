@@ -1,4 +1,4 @@
-# Appliance Install
+# Docker Quickstart
 
 WAIT Local Agent ships as a Docker Compose appliance with:
 

@@ -330,7 +330,8 @@ class AzureInventoryConnector:
                         source_id,
                         exc,
                         permission_hint=(
-                            "Grant the Azure read-only permissions listed in docs/cloud-permissions-azure.md."
+                            "Grant the Azure read-only permissions listed in "
+                            "docs/connectors/cloud-permissions-azure.md."
                         ),
                     )
                 )

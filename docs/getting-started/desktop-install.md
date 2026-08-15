@@ -116,7 +116,7 @@ example `wait-local-agent-server-x86_64-unknown-linux-gnu` on Linux,
 ## Existing paths remain available
 
 The Docker appliance and command-line workflows remain unchanged. Use the
-existing [README quick start](../README.md#quick-start) for Docker or local
+existing [README quick start](../../README.md#quick-start) for Docker or local
 CLI operation when a desktop installer is not the right fit.
 
 ## Release automation

@@ -519,7 +519,10 @@ class AwsCloudAdapter(CloudConnectorAdapter):
             {
                 "name": "credential_ref",
                 "label": "Vault credential",
-                "help": "Vault key containing the AWS read-only credential JSON. See docs/cloud-permissions-aws.md.",
+                "help": (
+                    "Vault key containing the AWS read-only credential JSON. "
+                    "See docs/connectors/cloud-permissions-aws.md."
+                ),
                 "type": "secret_ref",
                 "required": True,
                 "default": None,
@@ -549,7 +552,7 @@ class AwsCloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
         ),
-        permission_hint="Grant the AWS read-only permissions listed in docs/cloud-permissions-aws.md.",
+        permission_hint="Grant the AWS read-only permissions listed in docs/connectors/cloud-permissions-aws.md.",
     )
 
 
@@ -565,7 +568,10 @@ class AzureCloudAdapter(CloudConnectorAdapter):
             {
                 "name": "credential_ref",
                 "label": "Vault credential",
-                "help": "Vault key containing the Azure client credential JSON. See docs/cloud-permissions-azure.md.",
+                "help": (
+                    "Vault key containing the Azure client credential JSON. "
+                    "See docs/connectors/cloud-permissions-azure.md."
+                ),
                 "type": "secret_ref",
                 "required": True,
                 "default": None,
@@ -595,7 +601,10 @@ class AzureCloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
         ),
-        permission_hint="Grant the Azure read-only role and permissions listed in docs/cloud-permissions-azure.md.",
+        permission_hint=(
+            "Grant the Azure read-only role and permissions listed in "
+            "docs/connectors/cloud-permissions-azure.md."
+        ),
     )
 
 
@@ -611,7 +620,10 @@ class GcpCloudAdapter(CloudConnectorAdapter):
             {
                 "name": "credential_ref",
                 "label": "Vault credential",
-                "help": "Vault key containing the GCP service-account JSON. See docs/cloud-permissions-gcp.md.",
+                "help": (
+                    "Vault key containing the GCP service-account JSON. "
+                    "See docs/connectors/cloud-permissions-gcp.md."
+                ),
                 "type": "secret_ref",
                 "required": True,
                 "default": None,
@@ -649,7 +661,7 @@ class GcpCloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
         ),
-        permission_hint="Grant the GCP read-only roles listed in docs/cloud-permissions-gcp.md.",
+        permission_hint="Grant the GCP read-only roles listed in docs/connectors/cloud-permissions-gcp.md.",
     )
 
 
@@ -671,7 +683,10 @@ class M365CloudAdapter(CloudConnectorAdapter):
             {
                 "name": "credential_ref",
                 "label": "Vault credential",
-                "help": "Vault key containing the M365 client credential JSON. See docs/cloud-permissions-m365.md.",
+                "help": (
+                    "Vault key containing the M365 client credential JSON. "
+                    "See docs/connectors/cloud-permissions-m365.md."
+                ),
                 "type": "secret_ref",
                 "required": True,
                 "default": None,
@@ -702,7 +717,10 @@ class M365CloudAdapter(CloudConnectorAdapter):
                 "default": None,
             },
         ),
-        permission_hint="Grant the Microsoft Graph read-only permissions listed in docs/cloud-permissions-m365.md.",
+        permission_hint=(
+            "Grant the Microsoft Graph read-only permissions listed in "
+            "docs/connectors/cloud-permissions-m365.md."
+        ),
     )
 
 
