@@ -27,6 +27,9 @@ from wait_local_agent.api.app import (
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
+    PowerPlatformPackageMaterializationRequest,
+    PowerPlatformPackageRequest,
+    PowerPlatformPackageValidationRequest,
     SolutionBlueprintRequest,
     SupervisorRunRequest,
     TeamsMessageDraftRequest,
@@ -183,6 +186,68 @@ def test_consultant_planning_routes_are_directly_callable_and_review_only(settin
     assert copilot["target"] == "microsoft_copilot_studio"
     assert copilot["generation_status"] == "review_only"
     assert copilot["deployment_started"] is False
+
+
+def test_power_platform_package_routes_scope_roles_and_preserve_local_boundaries(settings) -> None:
+    build = _endpoint(settings, "/consultant/power-platform/package")
+    package = build(
+        PowerPlatformPackageRequest(
+            client_id="acme",
+            solution_name="onboarding",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wait",
+            output_directory="/tmp/wait-onboarding-source",
+        ),
+        _technician(),
+    )
+    assert package["deployable"] is True
+    assert package["execution_started"] is False
+    assert package["deployment_started"] is False
+
+    validate = _endpoint(settings, "/consultant/power-platform/package/validate")
+    checked = validate(PowerPlatformPackageValidationRequest(package=package), _technician())
+    assert checked["valid"] is True
+    with pytest.raises(HTTPException) as cross_tenant:
+        validate(PowerPlatformPackageValidationRequest(package=package, client_id="other"), _technician())
+    assert cross_tenant.value.status_code == 403
+
+    materialize = _endpoint(settings, "/consultant/power-platform/package/materialize")
+    with pytest.raises(HTTPException) as technician:
+        materialize(PowerPlatformPackageMaterializationRequest(package=package), _technician())
+    assert technician.value.status_code == 403
+    blocked = materialize(PowerPlatformPackageMaterializationRequest(package=package), _admin())
+    assert blocked["status"] == "blocked"
+    assert blocked["execution_started"] is False
+    assert blocked["deployment_started"] is False
+
+    delivery = _endpoint(settings, "/consultant/delivery-plan")(
+        DeliveryPlanRequest(
+            client_id="acme",
+            architecture={"client_id": "acme", "readiness": "ready", "components": [], "approval_policy": {}},
+            evaluation={"production_readiness": "pass", "case_count": 1},
+            governance={"client_id": "acme", "status": "pass"},
+            deployment_targets=["Teams"],
+            review_artifacts=[{"client_id": "acme", "credentials_included": False}],
+            deployable_package=package,
+        ),
+        _technician(),
+    )
+    assert delivery["delivery_bundle"]["manifest"]["deployable"] is False
+    assert delivery["deployable_source_package_digest"] == package["package_digest"]
+
+    with pytest.raises(HTTPException) as malformed:
+        build(
+            PowerPlatformPackageRequest(
+                client_id="acme",
+                solution_name="onboarding",
+                publisher_name="WAITConsulting",
+                publisher_prefix="wait",
+                output_directory="/tmp/wait-onboarding-source",
+                artifacts=[{"client_id": []}],
+            ),
+            _technician(),
+        )
+    assert malformed.value.status_code == 422
 
 
 def test_copilot_studio_plan_route_scopes_tenant_and_maps_validation(settings) -> None:
@@ -977,7 +1042,9 @@ def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(setti
     assert result["stages"]["artifacts"]["deployment_package_generated"] is False
     assert result["boundaries"]["live_provider_execution"] is False
     assert result["boundaries"]["artifact_generation_status"] == "review_only"
-    assert result["boundaries"]["deployable_package_generated"] is False
+    assert result["boundaries"]["deployable_package_generated"] is True
+    assert result["boundaries"]["deployable_package_status"] == "deployable_source"
+    assert result["boundaries"]["deployable_package_digest"].startswith("sha256:")
     assert result["boundaries"]["deployment_started"] is False
 
 

@@ -153,6 +153,12 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_source,
     validate_rollback_evidence,
 )
+from wait_local_agent.power_platform_package import (
+    PowerPlatformPackageError,
+    build_power_platform_package,
+    materialize_power_platform_package,
+    package_validation_result,
+)
 from wait_local_agent.providers import probe_model_providers, provider_from_settings
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.reports.builders import (
@@ -229,6 +235,7 @@ microsoft_copilot_studio_app = typer.Typer(help="Review-only Copilot Studio hand
 microsoft_discovery_app = typer.Typer(help="Bounded consultant discovery intake.")
 microsoft_supervisor_app = typer.Typer(help="Tenant-scoped supervisor delegation plans.")
 microsoft_delivery_app = typer.Typer(help="Review-only consultant delivery handoffs.")
+microsoft_package_app = typer.Typer(help="Deterministic local Power Platform YAML source packages.")
 approvals_app = typer.Typer(help="Approval queue commands.")
 events_app = typer.Typer(help="Event history commands.")
 backup_app = typer.Typer(help="SQLite backup and restore commands.")
@@ -264,6 +271,7 @@ microsoft_app.add_typer(microsoft_copilot_studio_app, name="copilot-studio")
 microsoft_app.add_typer(microsoft_discovery_app, name="discovery")
 microsoft_app.add_typer(microsoft_supervisor_app, name="supervisor")
 microsoft_app.add_typer(microsoft_delivery_app, name="delivery")
+microsoft_app.add_typer(microsoft_package_app, name="package")
 app.add_typer(microsoft_app, name="microsoft")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(events_app, name="events")
@@ -3784,6 +3792,7 @@ def plan_microsoft_delivery(source: Path) -> None:
     deployment_targets = payload["deployment_targets"]
     connector_artifacts = payload.get("connector_artifacts", [])
     review_artifacts = payload.get("review_artifacts", [])
+    deployable_package = payload.get("deployable_package")
     if (
         not isinstance(client_id, str)
         or not isinstance(architecture, dict)
@@ -3795,6 +3804,7 @@ def plan_microsoft_delivery(source: Path) -> None:
         or any(not isinstance(item, dict) for item in connector_artifacts)
         or not isinstance(review_artifacts, list)
         or any(not isinstance(item, dict) for item in review_artifacts)
+        or (deployable_package is not None and not isinstance(deployable_package, dict))
     ):
         raise typer.BadParameter("source contains invalid delivery-plan fields")
     try:
@@ -3806,10 +3816,100 @@ def plan_microsoft_delivery(source: Path) -> None:
             deployment_targets=deployment_targets,
             connector_artifacts=connector_artifacts,
             review_artifacts=review_artifacts,
+            deployable_package=deployable_package,
         )
     except DeliveryPlanError as exc:
         raise typer.BadParameter(str(exc), param_hint="source") from exc
     typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_package_app.command("build")
+def build_microsoft_power_platform_package(
+    source: Path,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    """Build a credential-free YAML source package without writing files."""
+
+    payload = _load_openapi_definition(source)
+    required = ("client_id", "solution_name", "publisher_name", "publisher_prefix", "output_directory")
+    if any(key not in payload for key in required):
+        raise typer.BadParameter(
+            "source must contain client_id, solution_name, publisher_name, publisher_prefix, and output_directory"
+        )
+    source_client_id = payload["client_id"]
+    if not isinstance(source_client_id, str):
+        raise typer.BadParameter("source client_id must be text")
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id or source_client_id)
+    if scoped_client_id != source_client_id:
+        raise typer.BadParameter("source client_id is outside authenticated scope")
+    artifacts = payload.get("artifacts", payload.get("review_artifacts", []))
+    connectors = payload.get("connector_artifacts", [])
+    if (
+        not isinstance(artifacts, list)
+        or any(not isinstance(item, dict) for item in artifacts)
+        or not isinstance(connectors, list)
+        or any(not isinstance(item, dict) for item in connectors)
+    ):
+        raise typer.BadParameter("source artifacts must contain object lists")
+    try:
+        result = build_power_platform_package(
+            client_id=source_client_id,
+            solution_name=payload["solution_name"] if isinstance(payload["solution_name"], str) else "",
+            publisher_name=payload["publisher_name"] if isinstance(payload["publisher_name"], str) else "",
+            publisher_prefix=payload["publisher_prefix"] if isinstance(payload["publisher_prefix"], str) else "",
+            output_directory=payload["output_directory"] if isinstance(payload["output_directory"], str) else "",
+            artifacts=artifacts,
+            connector_artifacts=connectors,
+        )
+    except PowerPlatformPackageError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_package_app.command("validate")
+def validate_microsoft_power_platform_package(
+    source: Path,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    package_client_id = payload.get("client_id")
+    if not isinstance(package_client_id, str):
+        raise typer.BadParameter("package client_id is required")
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.TECHNICIAN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id or package_client_id)
+    if scoped_client_id != package_client_id:
+        raise typer.BadParameter("package client_id is outside authenticated scope")
+    try:
+        result = package_validation_result(payload, client_id=scoped_client_id)
+    except PowerPlatformPackageError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source") from exc
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+
+
+@microsoft_package_app.command("materialize")
+def materialize_microsoft_power_platform_package(
+    source: Path,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    payload = _load_openapi_definition(source)
+    package_client_id = payload.get("client_id")
+    if not isinstance(package_client_id, str):
+        raise typer.BadParameter("package client_id is required")
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scoped_client_id = _cli_blueprint_client_scope(context.client_id, context.role, client_id or package_client_id)
+    if scoped_client_id != package_client_id:
+        raise typer.BadParameter("package client_id is outside authenticated scope")
+    result = materialize_power_platform_package(payload, settings, client_id=scoped_client_id)
+    typer.echo(json.dumps(result, sort_keys=True, indent=2))
+    if result.get("status") == "failed":
+        raise typer.Exit(code=1)
 
 
 @workflows_app.command("compare-runs")

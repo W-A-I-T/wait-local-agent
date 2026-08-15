@@ -28,6 +28,7 @@ from wait_local_agent.governance import evaluate_solution_governance
 from wait_local_agent.models import AgentDefinition, SolutionBlueprint
 from wait_local_agent.power_apps import build_power_apps_artifact
 from wait_local_agent.power_automate import build_power_automate_flow_plan
+from wait_local_agent.power_platform_package import build_power_platform_package
 from wait_local_agent.rbac import Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -65,6 +66,7 @@ def run_employee_onboarding_demo(
     entity_id: str = "TCK-1001",
     blueprint_id: str | None = None,
     persist_blueprint: bool = True,
+    output_directory: str | None = None,
 ) -> dict[str, Any]:
     """Run the bounded employee-onboarding scenario through existing services.
 
@@ -157,6 +159,14 @@ def run_employee_onboarding_demo(
         client_id=client_id,
         artifacts=review_artifacts,
     )
+    deployable_package = build_power_platform_package(
+        client_id=client_id,
+        solution_name="employee_onboarding",
+        publisher_name="WAITConsulting",
+        publisher_prefix="wait",
+        output_directory=output_directory or str(settings.power_platform_workspace / "employee-onboarding-source"),
+        artifacts=review_artifacts,
+    )
     delivery = build_consultant_delivery_plan(
         client_id=client_id,
         architecture=architecture,
@@ -164,6 +174,7 @@ def run_employee_onboarding_demo(
         governance=governance,
         deployment_targets=["Teams", "Power Automate", "Power Apps", "Dataverse"],
         review_artifacts=review_artifacts,
+        deployable_package=deployable_package,
     )
 
     return {
@@ -194,6 +205,9 @@ def run_employee_onboarding_demo(
                 "delivery_bundle": delivery["delivery_bundle"],
                 "delivery_bundle_digest": delivery["delivery_bundle_digest"],
                 "delivery_bundle_status": delivery["delivery_bundle_status"],
+                "deployable_source_package": deployable_package,
+                "deployable_source_package_digest": deployable_package["package_digest"],
+                "deployable_source_package_status": "deployable_source",
                 "deployment_package_generated": False,
                 "deployment_started": False,
             },
@@ -216,7 +230,9 @@ def run_employee_onboarding_demo(
             "review_package_generated": True,
             "delivery_bundle_generated": delivery["delivery_bundle_generated"],
             "delivery_bundle_status": delivery["delivery_bundle_status"],
-            "deployable_package_generated": False,
+            "deployable_package_generated": True,
+            "deployable_package_status": "deployable_source",
+            "deployable_package_digest": deployable_package["package_digest"],
             "deployment_started": False,
             "production_deployment_requires_approval": True,
             "external_systems_require_environment_verification": True,
