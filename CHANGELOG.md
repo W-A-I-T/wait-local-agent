@@ -4,6 +4,17 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Versioned SQLite schema initialization now records an idempotent baseline in
+  `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy
+  timeout, and inventories FastAPI, Typer, and MCP surfaces against a committed
+  classification manifest.
+
+### Changed
+
+- SQLite backups use a WAL-safe snapshot for plain and encrypted round trips.
+
 ## [1.1.1] - 2026-07-21
 
 ### Added
