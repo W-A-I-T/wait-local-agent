@@ -2,30 +2,44 @@
 
 ## Changed Files
 
-- List files or directories changed during implementation.
+- `ui/src/screens/WorkflowDesigner.tsx`
+- Task execution artifacts: `implementation.md`, `review.md`, and `status.json`
 
 ## Risk Areas
 
-- List highest-risk logic, integrations, migrations, or assumptions.
+- The accessible name intentionally uses the node's existing `type` and `label`
+  values. It does not change node selection, editing, persistence, graph shape,
+  or provider behavior.
+- `aria-label` overrides descendant naming, so the exact exposed name remains
+  `<type> <label>` even when jsdom changes whitespace joining rules.
 
 ## Version & Compatibility Evidence
 
-- Summarize dependency, SDK, API, framework component, model runtime, or tooling version changes.
-- Confirm the implementation used the latest compatible version or explain why the newest stable version was not compatible.
-- List any remaining compatibility risk, migration risk, or stale-version concern.
-- If the task did not touch versions or integrations, write `No version or API changes`.
+- No dependency version was changed by this implementation. The task-prescribed
+  `jsdom` range remains `^30.0.1`, and the lockfile/install resolve
+  `jsdom@30.0.1` with `vitest@4.1.5`, on Node `v24.16.0` and npm `11.13.0`.
+- `aria-label` is standard HTML and requires no package or API compatibility
+  change. The external `npm view` latest-version query timed out in this
+  environment, so no claim is made about a newer registry release; the tested
+  implementation uses the plan's pinned compatible version.
 
 ## Open Questions
 
-- List unresolved questions for the next reviewer or human.
+- None for the scoped implementation. Claude/Kimi review and human merge remain
+  required by the task workflow.
 
 ## Test Results
 
-- Verification has not run yet.
+- Focused WorkflowDesigner test: passed (1 file, 1 test).
+- Full UI tests: passed (24 files, 110 tests).
+- UI production build: passed (`tsc -b && vite build`).
+- Install audit: passed with 0 vulnerabilities reported by npm.
 
 ## Diff Summary
 
-- Provide a compact behavior-focused summary.
+- Workflow-node buttons now expose the deterministic accessible name
+  `${node.type} ${node.label}`. No test weakening, dependency reversion, or
+  unrelated component change was made.
 
 ## Requested Review Focus
 

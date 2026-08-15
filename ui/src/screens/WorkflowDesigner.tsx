@@ -219,6 +219,7 @@ export function WorkflowDesigner() {
                   type="button"
                   key={node.id}
                   className={`workflow-node ${node.id === selectedNodeId ? "selected" : ""}`}
+                  aria-label={`${node.type} ${node.label}`}
                   onClick={() => setSelectedNodeId(node.id)}
                 >
                   <span className="workflow-node-type">{node.type}</span>
