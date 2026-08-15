@@ -14,6 +14,7 @@ from wait_local_agent.rbac import (
     _principal_auth_context,
     admin_credential_configured,
     resolve_auth_context,
+    resolve_client_scope,
 )
 from wait_local_agent.store import PrincipalAuthRecord, Store, hash_credential
 
@@ -67,6 +68,44 @@ def test_generic_admin_membership_is_not_msp_admin(settings) -> None:
     assert context.role == Role.ADMIN
     assert context.client_ids == frozenset({"client-a", "client-b"})
     assert context.is_msp_admin is False
+
+
+def test_bootstrap_admin_tokens_are_cross_client_but_principals_remain_bound(settings) -> None:
+    secured = replace(
+        settings,
+        demo_mode=False,
+        client_id="client-a",
+        api_token="api-bootstrap",
+        admin_token="admin-bootstrap",
+        tech_token="tech-bootstrap",
+    )
+
+    for token in ("api-bootstrap", "admin-bootstrap"):
+        context = resolve_auth_context(secured, f"Bearer {token}")
+        assert context.role == Role.ADMIN
+        assert context.is_msp_admin is True
+        assert resolve_client_scope(context, "client-b").client_id == "client-b"
+
+    technician = resolve_auth_context(secured, "Bearer tech-bootstrap")
+    assert technician.client_ids == frozenset({"client-a"})
+    assert technician.is_msp_admin is False
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        resolve_client_scope(technician, "client-b")
+
+
+def test_bound_non_admin_principal_cannot_select_foreign_client(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_principal("technician-a", kind="staff")
+    store.add_principal_credential("technician-a", "technician-a-secret")
+    store.add_principal_client_role("technician-a", "client-a", "technician")
+    secured = replace(settings, demo_mode=False, client_id="client-a", admin_token="bootstrap-admin")
+
+    context = resolve_auth_context(secured, "Bearer technician-a-secret", store)
+
+    assert context.client_ids == frozenset({"client-a"})
+    assert context.is_msp_admin is False
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        resolve_client_scope(context, "client-b")
 
 
 def test_msp_admin_principal_can_select_any_client(settings) -> None:

@@ -392,7 +392,7 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     assert role.json()["role"] == "viewer"
     assert [ticket["id"] for ticket in filtered_tickets.json()] == ["TCK-ACME"]
     assert [request["subject_id"] for request in filtered_approvals.json()] == ["TCK-ACME"]
-    assert [request["subject_id"] for request in narrowed_approvals.json()] == ["TCK-BETA"]
+    assert narrowed_approvals.status_code == 403
     assert all(event["client_id"] == "acme" for event in filtered_audit.json())
     assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
     assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
@@ -525,8 +525,8 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
     assert execute_calls == [acme_halopsa.id]
     assert acme_detail.status_code == 200
     assert acme_update.status_code == 200
-    assert legacy_detail.status_code == 200
-    assert legacy_update.status_code == 200
+    assert legacy_detail.status_code == 404
+    assert legacy_update.status_code == 404
     assert acme_execute.status_code == 200
     assert admin_list.status_code == 200
     assert {request["subject_id"] for request in admin_list.json()} == {

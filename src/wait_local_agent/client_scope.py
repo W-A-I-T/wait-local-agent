@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from fastapi import HTTPException
+
+if TYPE_CHECKING:
+    from wait_local_agent.rbac import AuthContext
+
+
+@dataclass(frozen=True, slots=True)
+class BoundClients:
+    """A tenant scope containing one or more explicitly bound client IDs."""
+
+    client_ids: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not self.client_ids or any(not client_id for client_id in self.client_ids):
+            raise ValueError("BoundClients requires at least one non-empty client_id")
+
+    @property
+    def client_id(self) -> str | None:
+        """Return the sole client ID; singular-only consumers fail closed for multi-client scopes."""
+
+        if len(self.client_ids) != 1:
+            raise HTTPException(status_code=403, detail="operation requires a single client scope")
+        return next(iter(self.client_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class AllClients:
+    """An explicit all-client scope, created only by resolve_client_scope."""
+
+    @property
+    def client_id(self) -> None:
+        return None
+
+
+ClientScope = BoundClients | AllClients
+
+
+def resolve_client_scope(
+    context: AuthContext,
+    requested_client_id: str | None = None,
+    *,
+    allow_all: bool = False,
+) -> ClientScope:
+    """Resolve a request's client scope without treating None as an implicit wildcard.
+
+    Demo mode is the deliberate single-operator exception. MSP administrators may
+    request a specific client, or receive an all-client scope only when a list
+    call explicitly opts in with ``allow_all=True``. Every other principal is
+    restricted to its persisted client memberships.
+    """
+
+    requested = requested_client_id.strip() if requested_client_id else None
+    if requested == "":
+        requested = None
+
+    if context.demo_mode:
+        return BoundClients(frozenset({requested})) if requested else AllClients()
+
+    if context.is_msp_admin:
+        if requested:
+            return BoundClients(frozenset({requested}))
+        if allow_all:
+            return AllClients()
+        if context.client_id:
+            return BoundClients(frozenset({context.client_id}))
+        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+
+    bound_clients = frozenset(client_id.strip() for client_id in context.client_ids if client_id.strip())
+    if not bound_clients:
+        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+    if requested and requested not in bound_clients:
+        raise HTTPException(status_code=403, detail="requested tenant is outside authenticated scope")
+    return BoundClients(frozenset({requested})) if requested else BoundClients(bound_clients)

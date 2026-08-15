@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.store import Store
@@ -522,7 +523,7 @@ def build_analytics_summary(
     activity_by_workflow.sort(key=lambda item: (str(item["run_kind"]), str(item["workflow_id"])))
     model_usage = _model_usage_summary(
         store.list_execution_runs(
-            client_id,
+            client_id=client_id if client_id is not None else AllClients(),
             started_from=started_from,
             started_to=started_to,
         )

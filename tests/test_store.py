@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.models import AgentDefinition
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.workflows import get_workflow_template
@@ -346,20 +347,20 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     )
 
     assert [ticket.id for ticket in store.list_tickets(client_id="acme")] == ["TCK-1"]
-    assert [ticket.id for ticket in store.list_tickets(client_id="")] == ["TCK-1", "TCK-2"]
+    assert [ticket.id for ticket in store.list_tickets(client_id=AllClients())] == ["TCK-1", "TCK-2"]
     assert [request.id for request in store.list_approval_requests(client_id="acme")] == [acme_approval.id]
-    assert [request.id for request in store.list_approval_requests(client_id="")] == [
+    assert [request.id for request in store.list_approval_requests(client_id=AllClients())] == [
         beta_approval.id,
         acme_approval.id,
     ]
     assert any(event.subject_id == "TCK-1" for event in store.list_audit_events(client_id="acme"))
-    assert len(store.list_audit_events(client_id="")) == len(store.list_audit_events())
+    assert len(store.list_audit_events(client_id=AllClients())) == len(store.list_audit_events())
     assert all(event.client_id == "acme" for event in store.list_event_history(client_id="acme"))
-    assert len(store.list_event_history(client_id="")) == len(store.list_event_history())
+    assert len(store.list_event_history(client_id=AllClients())) == len(store.list_event_history())
     assert [run.ticket_id for run in store.list_workflow_runs(client_id="acme")] == ["TCK-1"]
-    assert [run.ticket_id for run in store.list_workflow_runs(client_id="")] == ["TCK-2", "TCK-1"]
+    assert [run.ticket_id for run in store.list_workflow_runs(client_id=AllClients())] == ["TCK-2", "TCK-1"]
     assert [document.title for document in store.list_knowledge_documents(client_id="acme")] == ["Acme"]
-    assert [document.title for document in store.list_knowledge_documents(client_id="")] == ["Acme", "Beta"]
+    assert [document.title for document in store.list_knowledge_documents(client_id=AllClients())] == ["Acme", "Beta"]
     assert len(store.list_tickets()) == 2
     assert len(store.list_approval_requests()) == 2
     assert len(store.list_workflow_runs()) == 2

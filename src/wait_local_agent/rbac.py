@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Header, HTTPException, Request, status
 
+from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
 from wait_local_agent.config import Settings
+
+__all__ = ["AllClients", "AuthContext", "BoundClients", "ClientScope", "Role", "resolve_client_scope"]
 
 if TYPE_CHECKING:
     from wait_local_agent.store import Store
@@ -32,6 +35,7 @@ class AuthContext:
     principal_id: str | None = None
     client_ids: frozenset[str] = frozenset()
     is_msp_admin: bool = False
+    demo_mode: bool = False
 
     @property
     def approver_id(self) -> str | None:
@@ -74,6 +78,7 @@ def resolve_auth_context(
             client_id=demo_client_id,
             principal_id="demo",
             client_ids=frozenset({demo_client_id}),
+            demo_mode=True,
         )
 
     token = _extract_bearer_token(authorization)
@@ -88,12 +93,13 @@ def resolve_auth_context(
             client_ids=frozenset({settings.end_user_client_id.strip()})
             if settings.end_user_client_id.strip()
             else frozenset(),
+            demo_mode=False,
         )
-    for candidate, role in (
-        (settings.api_token, Role.ADMIN),
-        (settings.admin_token, Role.ADMIN),
-        (settings.tech_token, Role.TECHNICIAN),
-        (settings.viewer_token, Role.VIEWER),
+    for candidate, role, is_msp_admin in (
+        (settings.api_token, Role.ADMIN, True),
+        (settings.admin_token, Role.ADMIN, True),
+        (settings.tech_token, Role.TECHNICIAN, False),
+        (settings.viewer_token, Role.VIEWER, False),
     ):
         if candidate and compare_digest(token, candidate):
             return AuthContext(
@@ -101,6 +107,8 @@ def resolve_auth_context(
                 presented_token=token,
                 client_id=configured_client_id,
                 client_ids=frozenset({configured_client_id}) if configured_client_id else frozenset(),
+                is_msp_admin=is_msp_admin,
+                demo_mode=False,
             )
 
     principal_store = store or _store_for_settings(settings)
@@ -174,6 +182,7 @@ def _principal_auth_context(settings: Settings, token: str, principal) -> AuthCo
         principal_id=principal.principal_id,
         client_ids=client_ids,
         is_msp_admin=is_msp_admin,
+        demo_mode=False,
     )
 
 

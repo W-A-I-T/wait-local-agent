@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Protocol
 
+from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
 from wait_local_agent.config import Settings
 from wait_local_agent.models import KnowledgeChunk
 from wait_local_agent.store import Store, _bounded_search_limit
+
+_ALL_CLIENTS = AllClients()
 
 
 class KnowledgeSearchBackend(Protocol):
@@ -16,7 +19,7 @@ class KnowledgeSearchBackend(Protocol):
         self,
         query: str,
         limit: int = 3,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> list[KnowledgeChunk]:
         """Return matching chunks."""
 
@@ -32,9 +35,13 @@ class SQLiteKnowledgeSearch:
         self,
         query: str,
         limit: int = 3,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> list[KnowledgeChunk]:
-        return self.store.search_knowledge_chunks(query, limit, client_id=client_id)
+        return self.store.search_knowledge_chunks(
+            query,
+            limit,
+            client_id=client_id if client_id is not None else AllClients(),
+        )
 
 
 class QdrantKnowledgeSearch:
@@ -108,21 +115,28 @@ class QdrantKnowledgeSearch:
         self,
         query: str,
         limit: int = 3,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> list[KnowledgeChunk]:
         bounded_limit = _bounded_search_limit(limit)
         if not query.strip():
             return []
+        if isinstance(client_id, AllClients):
+            requested_client_ids: frozenset[str] | None = None
+        elif isinstance(client_id, BoundClients):
+            requested_client_ids = client_id.client_ids
+        else:
+            if client_id is None or not client_id.strip():
+                raise ValueError("client_id must be non-empty")
+            requested_client_ids = frozenset({client_id.strip()})
         query_vector = list(next(iter(self._embedding.embed([query]))))
         hits = self._client.search(
             collection_name=self.settings.qdrant_collection,
             query_vector=query_vector,
-            limit=bounded_limit * 4 if client_id else bounded_limit,
+            limit=bounded_limit * 4 if requested_client_ids else bounded_limit,
         )
         chunks = [_chunk_from_payload(hit.payload or {}) for hit in hits]
-        if client_id is not None:
-            normalized_client_id = client_id.strip()
-            chunks = [chunk for chunk in chunks if (chunk.client_id or "") == normalized_client_id]
+        if requested_client_ids is not None:
+            chunks = [chunk for chunk in chunks if (chunk.client_id or "") in requested_client_ids]
         return chunks[:bounded_limit]
 
 

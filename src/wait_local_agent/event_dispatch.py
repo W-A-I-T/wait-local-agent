@@ -10,6 +10,7 @@ from wait_local_agent.agents import (
     SUPPORTED_EVENT_TYPES,
     AgentService,
 )
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.models import (
     DEFAULT_EVENT_MAX_RETRIES,
     DEFAULT_EVENT_RETRY_DELAY_SECONDS,
@@ -65,7 +66,10 @@ class EventDispatcher:
             idempotency_key=idempotency_key,
         )
         requested_client_id = _normalize_client_id(client_id)
-        ticket = self.store.get_ticket(entity_id, client_id=requested_client_id)
+        ticket = self.store.get_ticket(
+            entity_id,
+            client_id=requested_client_id if requested_client_id is not None else AllClients(),
+        )
         if ticket is None:
             raise LookupError(entity_id)
         effective_client_id = requested_client_id or _normalize_client_id(ticket.client_id)
@@ -216,13 +220,13 @@ class EventDispatcher:
                     agent_id=definition.id,
                     event_type=event_type,
                     entity_id=entity_id,
-                    client_id=client_id,
+                    client_id=client_id if client_id is not None else AllClients(),
                 ):
                     if self.store.has_completed_event_agent_run(
                         agent_id=definition.id,
                         event_type=event_type,
                         entity_id=entity_id,
-                        client_id=client_id,
+                        client_id=client_id if client_id is not None else AllClients(),
                     ):
                         completed_agents.add(definition.id)
                     progressed = True
@@ -235,7 +239,7 @@ class EventDispatcher:
                         agent_id=dependency_id,
                         event_type=event_type,
                         entity_id=entity_id,
-                        client_id=client_id,
+                        client_id=client_id if client_id is not None else AllClients(),
                     )
                 ]
                 if unmet:

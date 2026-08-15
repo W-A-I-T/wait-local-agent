@@ -25,6 +25,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Principal identity supports per-client roles and a global `msp_admin` role;
   principal credentials are stored as SHA-256 hashes rather than raw
   credentials.
+- Client-bearing API routes now resolve one fail-closed `ClientScope`; bootstrap
+  admin tokens and `msp_admin` principals can use explicit cross-client scopes,
+  per-client principals remain tenant-bound, and store filters reject
+  `None`/empty client IDs.
 
 ## [1.1.1] - 2026-07-21
 

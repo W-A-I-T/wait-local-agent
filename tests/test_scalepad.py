@@ -739,11 +739,12 @@ def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, mo
             "root_path": "",
         }
     )
-    scoped = route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    bootstrap_admin = AuthContext(Role.ADMIN, None, is_msp_admin=True)
+    scoped = route.endpoint(request, bootstrap_admin, "acme")
     assert scoped["result"]["status"] == "ready"
     assert scoped["total_count"] == 1
     with pytest.raises(HTTPException) as denied_error:
-        route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+        route.endpoint(request, bootstrap_admin, None)
     assert getattr(denied_error.value, "status_code", None) == 403
 
     health_route = next(
@@ -752,11 +753,11 @@ def test_scalepad_risk_summary_api_executes_scoped_and_denied_paths(settings, mo
         if getattr(route, "path", "") == "/connectors/scalepad/compliance-health"
     )
     assert isinstance(health_route, APIRoute)
-    health = health_route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    health = health_route.endpoint(request, bootstrap_admin, "acme")
     assert health["result"]["status"] == "ready"
     assert health["item"]["score"] == 82
     with pytest.raises(HTTPException) as health_denied_error:
-        health_route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+        health_route.endpoint(request, bootstrap_admin, None)
     assert getattr(health_denied_error.value, "status_code", None) == 403
 
 
@@ -800,11 +801,12 @@ def test_scalepad_goals_api_executes_scoped_and_denied_paths(settings, monkeypat
             "root_path": "",
         }
     )
-    scoped = route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    bootstrap_admin = AuthContext(Role.ADMIN, None, is_msp_admin=True)
+    scoped = route.endpoint(request, bootstrap_admin, "acme")
     assert scoped["result"]["status"] == "ready"
     assert scoped["total_count"] == 1
     with pytest.raises(HTTPException) as denied_error:
-        route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+        route.endpoint(request, bootstrap_admin, None)
     assert getattr(denied_error.value, "status_code", None) == 403
 
 
@@ -857,11 +859,12 @@ def test_scalepad_assessments_api_executes_scoped_and_denied_paths(settings, mon
             "root_path": "",
         }
     )
-    scoped = route.endpoint(request, AuthContext(Role.ADMIN, None), "acme")
+    bootstrap_admin = AuthContext(Role.ADMIN, None, is_msp_admin=True)
+    scoped = route.endpoint(request, bootstrap_admin, "acme")
     assert scoped["result"]["status"] == "ready"
     assert scoped["total_count"] == 1
     with pytest.raises(HTTPException) as denied_error:
-        route.endpoint(request, AuthContext(Role.ADMIN, None), None)
+        route.endpoint(request, bootstrap_admin, None)
     assert getattr(denied_error.value, "status_code", None) == 403
 
 

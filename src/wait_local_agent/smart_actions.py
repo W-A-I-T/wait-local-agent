@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from wait_local_agent.autotask import AutotaskReadProvider, AutotaskWriteProvider
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.communication import (
     CommunicationChannel,
     CommunicationDeliveryError,
@@ -1685,7 +1686,9 @@ class M365IdentityLookupAction:
 
         query = identity.strip().casefold()
         matches: list[dict[str, object]] = []
-        for asset in context.store.list_canonical_assets(client_id=context.client_id):
+        for asset in context.store.list_canonical_assets(
+            client_id=context.client_id if context.client_id is not None else AllClients()
+        ):
             if asset.asset_type != "m365-user":
                 continue
             try:
@@ -8294,7 +8297,9 @@ class StaleTicketSweepAction:
         now = datetime.now(UTC)
         stale: list[dict[str, object]] = []
         excluded = 0
-        for ticket in context.store.list_tickets(client_id=context.client_id):
+        for ticket in context.store.list_tickets(
+            client_id=context.client_id if context.client_id is not None else AllClients()
+        ):
             if ticket.status.strip().lower() in {"resolved", "closed"}:
                 continue
             created_at = _parse_ticket_timestamp(ticket.created_at)
@@ -9693,7 +9698,10 @@ def _ticket_from_payload(
     ticket_id = payload.get("ticket_id")
     if not isinstance(ticket_id, str) or not ticket_id.strip():
         return None
-    return store.get_ticket(ticket_id.strip(), client_id)
+    return store.get_ticket(
+        ticket_id.strip(),
+        client_id if client_id is not None else AllClients(),
+    )
 
 
 def _sources_for_ticket(context: ActionContext, ticket: Ticket) -> list[SourceReference]:

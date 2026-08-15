@@ -51,6 +51,7 @@ from wait_local_agent.backup import (
     restore_state,
     run_restore_exercise,
 )
+from wait_local_agent.client_scope import AllClients, BoundClients, resolve_client_scope
 from wait_local_agent.collectors import (
     CollectorService,
     collector_run_collection_scope,
@@ -1172,10 +1173,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/tickets")
     def tickets(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        return [asdict(ticket) for ticket in store.list_tickets(client_id=client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(ticket) for ticket in store.list_tickets(client_id=scope)]
 
     @app.get("/smart-actions")
     def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
@@ -1241,7 +1243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/agents/plan")
     def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -1260,7 +1262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
@@ -1270,7 +1272,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: AgentDefinitionRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -1303,7 +1305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/agents/{agent_id}")
     def agent_detail(agent_id: str, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent not found")
         definition = agent_service.get(agent_id, scoped_client_id)
@@ -1317,7 +1319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         definition = agent_service.get(agent_id, scoped_client_id)
@@ -1336,7 +1338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent revision not found")
         definition = agent_service.get(agent_id, scoped_client_id)
@@ -1354,7 +1356,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version: int,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent not found")
         existing = agent_service.get(agent_id, scoped_client_id)
@@ -1398,7 +1400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: AgentDefinitionRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent not found")
         existing = agent_service.get(agent_id, scoped_client_id)
@@ -1440,7 +1442,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: AgentRunStartRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         definition = agent_service.get(agent_id, scoped_client_id)
@@ -1461,7 +1463,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     def _backfill_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
-        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        scope = resolve_client_scope(context, requested_client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return scoped_client_id
@@ -1575,8 +1578,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         definition = agent_service.get(payload.agent_id, scoped_client_id)
         if definition is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        backfill_scope = AllClients() if scoped_client_id is None else scoped_client_id
         for entity_id in payload.entity_ids:
-            if store.get_ticket(entity_id, client_id=scoped_client_id) is None:
+            if store.get_ticket(entity_id, client_id=backfill_scope) is None:
                 raise HTTPException(status_code=404, detail=f"ticket not found: {entity_id}")
         backfill = store.create_agent_backfill(
             payload.agent_id,
@@ -1599,10 +1603,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         definition = agent_service.get(payload.agent_id, scoped_client_id)
         if definition is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        backfill_scope = AllClients() if scoped_client_id is None else scoped_client_id
         missing_entity_ids = [
             entity_id
             for entity_id in payload.entity_ids
-            if store.get_ticket(entity_id, client_id=scoped_client_id) is None
+            if store.get_ticket(entity_id, client_id=backfill_scope) is None
         ]
         if missing_entity_ids:
             raise HTTPException(
@@ -1732,14 +1737,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/agent-runs")
     def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [_agent_run_view(run) for run in store.list_agent_runs(scoped_client_id)]
 
     @app.get("/agent-runs/{run_id}")
     def agent_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent run not found")
         run = store.get_agent_run(run_id, scoped_client_id)
@@ -1765,7 +1770,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/agent-runs/{run_id}/resume")
     def resume_agent(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent run not found")
         run = store.get_agent_run(run_id, scoped_client_id)
@@ -1787,7 +1792,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/agent-runs/{run_id}/cancel")
     def cancel_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent run not found")
         run = store.get_agent_run(run_id, scoped_client_id)
@@ -1809,7 +1814,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/agent-runs/{run_id}/retry")
     def retry_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="agent run not found")
         run = store.get_agent_run(run_id, scoped_client_id)
@@ -1837,7 +1842,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
         idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         idempotency_key = idempotency_key_header or payload.idempotency_key
@@ -1866,14 +1871,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [_event_delivery_view(delivery) for delivery in store.list_event_deliveries(scoped_client_id)]
 
     @app.get("/automation/event-deliveries/{delivery_id}")
     def event_delivery_detail(delivery_id: int, context: ViewerAccess) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="event delivery not found")
         delivery = store.get_event_delivery(delivery_id, scoped_client_id)
@@ -1888,7 +1893,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         delivery_id: int,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="event delivery not found")
         try:
@@ -1905,7 +1910,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/smart-actions/runs")
     def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [
@@ -1915,7 +1920,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/smart-actions/runs/{run_id}")
     def smart_action_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="smart action run not found")
         run = smart_action_service.store.get_smart_action_run(run_id, client_id=scoped_client_id)
@@ -1940,7 +1945,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             manifest = smart_action_service.describe(action_id)
             if manifest.required_role.strip().lower() == "admin" and context.role < Role.ADMIN:
                 raise HTTPException(status_code=403, detail="smart action requires admin authority")
-            scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+            scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
             if context.role < Role.ADMIN and scoped_client_id is None:
                 raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
             result = smart_action_service.invoke(
@@ -1961,7 +1966,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -1986,7 +1991,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="chat sessions require a client scope")
         if payload.ticket_id and store.get_ticket(payload.ticket_id, scoped_client_id) is None:
@@ -2008,12 +2013,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
         sessions = store.list_technician_chat_sessions(
-            client_id=scoped_client_id,
+            client_id=scope,
             principal_id=principal_id,
         )
         return [_technician_chat_session_view(store, session) for session in sessions]
@@ -2025,13 +2031,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scope = resolve_client_scope(context, None)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
         session = store.get_technician_chat_session(
             session_id,
-            client_id=scoped_client_id,
+            client_id=scope,
             principal_id=principal_id,
         )
         if session is None:
@@ -2046,13 +2053,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scope = resolve_client_scope(context, None)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
         session = store.get_technician_chat_session(
             session_id,
-            client_id=scoped_client_id,
+            client_id=scope,
             principal_id=principal_id,
         )
         if session is None:
@@ -2085,13 +2093,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scope = resolve_client_scope(context, None)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
         session = store.close_technician_chat_session(
             session_id,
-            client_id=scoped_client_id,
+            client_id=scope,
             principal_id=principal_id,
         )
         if session is None:
@@ -2203,7 +2212,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: ViewerAccess,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
             ticket = store.get_ticket(ticket_id)
             scoped_client_id = ticket.client_id if ticket is not None else None
@@ -2222,7 +2231,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
             ticket = store.get_ticket(ticket_id)
             scoped_client_id = ticket.client_id if ticket is not None else None
@@ -2247,10 +2256,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(
+        scoped_client_id = resolve_client_scope(
             context,
             active_settings.client_id if context.role >= Role.ADMIN else None,
-        )
+        ).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="technician has no tenant scope")
         local_ticket = store.get_ticket(ticket_id, client_id=scoped_client_id)
@@ -2338,7 +2347,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _end_user_ticket_view(ticket)
 
     @app.get("/tickets/{ticket_id}/summary")
-    def summarize_ticket(ticket_id: str, _: ViewerAccess) -> dict[str, object]:
+    def summarize_ticket(ticket_id: str, context: ViewerAccess) -> dict[str, object]:
+        scope = resolve_client_scope(context, None)
+        if store.get_ticket(ticket_id, client_id=scope) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
         try:
             return asdict(service.summarize(ticket_id))
         except KeyError as exc:
@@ -2346,7 +2358,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/tickets/{ticket_id}/notes")
     def ticket_notes(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
             ticket = store.get_ticket(ticket_id)
             scoped_client_id = ticket.client_id if ticket is not None else None
@@ -2366,7 +2378,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/tickets/{ticket_id}/status-history")
     def ticket_status_history(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
             ticket = store.get_ticket(ticket_id)
             scoped_client_id = ticket.client_id if ticket is not None else None
@@ -2378,9 +2390,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def update_approval(
         ticket_id: str,
         request: ApprovalRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, str]:
-        if store.get_ticket(ticket_id) is None:
+        scope = resolve_client_scope(context, None)
+        if store.get_ticket(ticket_id, client_id=scope) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         store.set_approval(ticket_id, request.status, request.comment)
         return {"ticket_id": ticket_id, "status": request.status, "comment": request.comment}
@@ -2390,13 +2403,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _approval_client_scope(context, client_id)
-        return [_approval_view(request) for request in store.list_approval_requests(client_id=scoped_client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [_approval_view(request) for request in store.list_approval_requests(client_id=scope)]
 
     @app.get("/approval-requests/{request_id}")
     def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
         request = store.get_approval_request(request_id)
-        if request is None or not _approval_in_scope(context, request):
+        if request is None or not _approval_scope_visible(context, request):
             raise HTTPException(status_code=404, detail="approval request not found")
         return _approval_view(request)
 
@@ -2408,7 +2421,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_in_scope(context, approval):
+            if approval is None or not _approval_scope_visible(context, approval):
                 raise KeyError(request_id)
             if approval.action_type.startswith("connectwise."):
                 approval = update_connectwise_approval_fields(store, request_id, request.fields, request.comment)
@@ -2432,7 +2445,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             existing_approval = store.get_approval_request(request_id)
-            if existing_approval is None or not _approval_in_scope(context, existing_approval):
+            if existing_approval is None or not _approval_scope_visible(context, existing_approval):
                 raise KeyError(request_id)
             if (
                 existing_approval.action_type.startswith("m365.")
@@ -2505,7 +2518,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: CollectorConfigRequest,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         try:
             return asdict(
                 collector_service.preview(
@@ -2525,12 +2538,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: CollectorRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         try:
             run = collector_service.run(
                 module_id,
                 payload.config,
                 confirm=payload.confirm,
-                client_id=payload.client_id,
+                client_id=scoped_client_id,
                 actor_id=context.approver_id,
             )
             return {
@@ -2547,7 +2561,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/collectors/runs")
     def collector_runs(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
         return [
@@ -2556,19 +2570,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "result_status": collector_run_result_status(run),
                 "collection_scope": collector_run_collection_scope(run),
             }
-            for run in store.list_collector_runs(client_id=client_id)
+            for run in store.list_collector_runs(
+                client_id=resolve_client_scope(context, client_id, allow_all=True)
+            )
         ]
 
     @app.get("/collectors/runs/{run_id}")
-    def collector_run_detail(run_id: int, _: ViewerAccess) -> dict[str, object]:
-        run = store.get_collector_run(run_id)
+    def collector_run_detail(run_id: int, context: ViewerAccess) -> dict[str, object]:
+        scope = resolve_client_scope(context, None)
+        run = store.get_collector_run(run_id, client_id=scope)
         if run is None:
             raise HTTPException(status_code=404, detail="collector run not found")
         return {
             **asdict(run),
             "result_status": collector_run_result_status(run),
             "collection_scope": collector_run_collection_scope(run),
-            "assets": [asdict(asset) for asset in store.list_canonical_assets(run_id=run_id)],
+            "assets": [
+                asdict(asset)
+                for asset in store.list_canonical_assets(run_id=run_id, client_id=scope)
+            ],
             "observations": [asdict(observation) for observation in store.list_asset_observations(run_id=run_id)],
             "config_snapshots": [asdict(snapshot) for snapshot in store.list_config_snapshots(run_id=run_id)],
             "config_diffs": [asdict(diff) for diff in store.list_config_diffs(run_id=run_id)],
@@ -2581,6 +2601,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         report_type: ReportType = ReportType.COLLECTOR_BUNDLE,
     ) -> dict[str, object]:
+        scope = resolve_client_scope(context, None)
+        if store.get_collector_run(run_id, client_id=scope) is None:
+            raise HTTPException(status_code=404, detail="collector run not found")
         try:
             report = collector_service.export_report(
                 run_id,
@@ -2598,7 +2621,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ClientReportRequest,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _report_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
         if request.period_end < request.period_start:
@@ -2626,7 +2649,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ClientReportRequest,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _report_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
         if request.period_end < request.period_start:
@@ -2655,7 +2678,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         follow_up_after_days: int = Query(default=14, ge=1, le=90),
     ) -> dict[str, object]:
-        scoped_client_id = _report_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=400, detail="client_id is required to generate a client report")
         if request.period_end < request.period_start:
@@ -2687,7 +2710,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str = "",
         project_id: str = "",
     ) -> list[dict[str, object]]:
-        scoped_client_id = _report_client_scope(context, client_id or None)
+        scope = resolve_client_scope(context, client_id or None, allow_all=True)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=403, detail="reports require a single client or all-client scope")
+        scoped_client_id = scope.client_id
         stored = report_service.list_reports(
             report_type=report_type,
             client_id=scoped_client_id or "",
@@ -2697,7 +2723,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/reports/{report_id}")
     def report_detail(report_id: str, context: ViewerAccess) -> dict[str, object]:
-        report = report_service.get_report(report_id, client_id=_report_client_scope(context, None))
+        scope = resolve_client_scope(context, None)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        report = report_service.get_report(report_id, client_id=scope.client_id)
         if report is None:
             raise HTTPException(status_code=404, detail="report not found")
         return report_as_dict(report)
@@ -2708,11 +2737,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         export_format: Literal["json", "markdown", "pdf"] = "json",
     ) -> Response:
+        scope = resolve_client_scope(context, None)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=404, detail="report not found")
         try:
             rendered = report_service.export_report(
                 report_id,
                 ReportFormat(export_format),
-                client_id=_report_client_scope(context, None),
+                client_id=scope.client_id,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="report not found") from exc
@@ -2725,16 +2757,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/audit")
-    def audit(_: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        return [asdict(event) for event in store.list_audit_events(client_id=client_id)]
+    def audit(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(event) for event in store.list_audit_events(client_id=scope)]
 
     @app.get("/audit/export")
     def audit_export(
-        _: AdminAccess,
+        context: AdminAccess,
         export_format: Literal["json", "csv"] = "json",
         client_id: str | None = None,
     ) -> Response:
-        events = [asdict(event) for event in store.list_audit_events(client_id=client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        events = [asdict(event) for event in store.list_audit_events(client_id=scope)]
         if export_format == "csv":
             output = io.StringIO()
             fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
@@ -2754,13 +2788,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/audit-events/export")
     def audit_events_export(
-        _: AdminAccess,
+        context: AdminAccess,
         format: Literal["json", "csv"] = "json",
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to_: Annotated[datetime | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> Response:
-        all_events = store.list_audit_events(client_id=client_id)
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        all_events = store.list_audit_events(client_id=scope)
         filtered = [
             e
             for e in all_events
@@ -2786,10 +2821,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/event-history")
     def event_history(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        return [asdict(event) for event in store.list_event_history(client_id=client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(event) for event in store.list_event_history(client_id=scope)]
 
     @app.get("/connectors")
     def connectors(_: ViewerAccess) -> list[dict[str, object]]:
@@ -2918,15 +2954,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ticket_id: str,
         payload: HaloDraftRequest,
         request: Request,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> dict[str, object]:
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
+        if scoped_client_id is None and not context.demo_mode:
+            raise HTTPException(status_code=403, detail="draft actions require a client scope")
         try:
             draft = draft_halopsa_ticket_action(
                 store,
                 ticket_id,
                 payload.action_type,
                 payload.fields,
-                client_id=payload.client_id,
+                client_id=scoped_client_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2946,7 +2985,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ticket_id,
                 payload.action_type,
                 payload.fields,
-                client_id=_approval_client_scope(context, payload.client_id),
+                client_id=resolve_client_scope(context, payload.client_id).client_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2975,7 +3014,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_in_scope(context, approval):
+            if approval is None or not _approval_scope_visible(context, approval):
                 raise KeyError(request_id)
             return _approval_view(execute_halopsa_approval_request(store, halopsa_client, request_id))
         except KeyError as exc:
@@ -3021,8 +3060,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/halopsa/clients/{client_id}/assets")
     @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_client_assets(client_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = halopsa_client.list_client_assets(client_id)
+    def halopsa_client_assets(client_id: str, request: Request, context: ViewerAccess) -> dict[str, object]:
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="client scope is required")
+        response = halopsa_client.list_client_assets(scoped_client_id)
         return _halopsa_response("clients.assets", response)
 
     @app.get("/connectors/halopsa/categories")
@@ -3110,7 +3152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_in_scope(context, approval):
+            if approval is None or not _approval_scope_visible(context, approval):
                 raise KeyError(request_id)
             return _approval_view(execute_connectwise_approval_request(store, connectwise_client, request_id))
         except KeyError as exc:
@@ -3477,7 +3519,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         query: str = "",
         page_size: int | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
         response = notion_client.search_pages(
@@ -3495,7 +3537,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
         response = notion_client.get_page(page_id, client_id=scoped_client_id)
@@ -3511,7 +3553,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start_cursor: str = "",
         page_size: int | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.query_data_source(
@@ -3530,7 +3572,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.get_data_source(data_source_id, client_id=scoped_client_id)
@@ -3617,7 +3659,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="ScalePad reads require a tenant scope")
         response = scalepad_client.get_client(client_id=scoped_client_id)
@@ -3630,7 +3672,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -3646,7 +3688,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -3665,7 +3707,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title: str | None = None,
         cursor: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -3689,7 +3731,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         assessment_template_id: str | None = None,
         cursor: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -3878,7 +3920,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: AdminAccess,
     ) -> dict[str, object]:
-        client_id = _smart_action_client_scope(context, payload.client_id)
+        client_id = resolve_client_scope(context, payload.client_id).client_id
         if client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         approval = store.create_approval_request(
@@ -3907,7 +3949,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             approval is None
             or approval.action_type != "teams.message.send"
-            or not _approval_in_scope(context, approval)
+            or not _approval_scope_visible(context, approval)
         ):
             raise HTTPException(status_code=404, detail="Teams message approval request not found")
         if approval.status != "approved":
@@ -4219,7 +4261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         try:
             approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_in_scope(context, approval):
+            if approval is None or not _approval_scope_visible(context, approval):
                 raise KeyError(request_id)
             return _approval_view(
                 execute_m365_approval_request(
@@ -4246,7 +4288,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/msp/playbook-entries")
     def msp_playbook_entries(context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return [
@@ -4259,7 +4301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookEntryCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")  # pragma: no cover
         try:
@@ -4282,7 +4324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry_id: str,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         entry = store.get_msp_playbook_entry(entry_id, scoped_client_id)
@@ -4296,7 +4338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookEntryUpdateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4341,7 +4383,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry_id: str,
         context: ViewerAccess,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         if store.get_msp_playbook_entry(entry_id, scoped_client_id) is None:
@@ -4358,7 +4400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from_version: int = Query(..., ge=1),
         to_version: int = Query(..., ge=1),
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         left = store.get_msp_playbook_revision(entry_id, from_version, scoped_client_id)
@@ -4373,7 +4415,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version: int,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4387,7 +4429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/msp/playbook-subscriptions")
     def msp_playbook_subscriptions(context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return [
@@ -4400,7 +4442,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookSubscriptionCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=422, detail="client_id is required for a playbook subscription")
         try:
@@ -4423,7 +4465,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: str,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
         subscription = store.get_msp_playbook_subscription(subscription_id, scoped_client_id)
@@ -4437,7 +4479,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookSubscriptionUpdateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None:
             if context.role < Role.ADMIN:
                 raise HTTPException(status_code=404, detail="MSP playbook subscription not found")
@@ -4487,7 +4529,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4513,7 +4555,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4546,7 +4588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: SolutionBlueprintRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        client_id = _consultant_client_scope(context, payload.client_id)
+        client_id = resolve_client_scope(context, payload.client_id).client_id
         if client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4569,7 +4611,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=409,
                 detail="employee-onboarding fixture requires local demo mode with writes disabled",
             )
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        try:
+            scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
+        except HTTPException as exc:
+            if exc.detail == "authenticated principal has no tenant":
+                raise HTTPException(
+                    status_code=403,
+                    detail="employee-onboarding demo requires a tenant scope",
+                ) from exc
+            raise
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="employee-onboarding demo requires a tenant scope")
         if (payload.blueprint_id is None) == (payload.blueprint is None):
@@ -4600,7 +4650,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _consultant_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None and context.role < Role.ADMIN:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return [blueprint_view(blueprint) for blueprint in store.list_solution_blueprints(client_id=scoped_client_id)]
@@ -4611,7 +4661,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None and context.role < Role.ADMIN:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
@@ -4656,7 +4706,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         status_code=409,
                         detail="controlled evaluation execution requires local demo mode with writes disabled",
                     )
-                scoped_client_id = _consultant_client_scope(context, payload.execution.client_id)
+                scoped_client_id = resolve_client_scope(context, payload.execution.client_id).client_id
                 if scoped_client_id is None:
                     raise HTTPException(status_code=403, detail="evaluation execution requires a tenant scope")
                 definition = agent_service.get(payload.execution.agent_id, scoped_client_id)
@@ -4691,7 +4741,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: PowerAppsPlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4710,7 +4760,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: PowerAppsPlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4729,7 +4779,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: PowerPlatformPackageRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4754,7 +4804,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         package_client = payload.package.get("client_id")
         if requested is None and isinstance(package_client, str):
             requested = package_client
-        scoped_client_id = _consultant_client_scope(context, requested)
+        scoped_client_id = resolve_client_scope(context, requested).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4773,7 +4823,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         package_client = payload.package.get("client_id")
         if requested is None and isinstance(package_client, str):
             requested = package_client
-        scoped_client_id = _consultant_client_scope(context, requested)
+        scoped_client_id = resolve_client_scope(context, requested).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         result = materialize_power_platform_package(
@@ -4863,7 +4913,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoveryRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4876,7 +4926,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoveryBlueprintPromotionRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -4910,7 +4960,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoverySessionStartRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         answers = dict(payload.answers)
@@ -4964,7 +5014,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _consultant_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"
@@ -4986,7 +5036,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"
@@ -5008,7 +5058,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DiscoveryTurnRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"
@@ -5076,7 +5126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: EnvironmentDiscoveryRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5140,7 +5190,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: SupervisorPlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         definitions = agent_service.list_definitions(scoped_client_id)
@@ -5160,7 +5210,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: SupervisorRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         definitions = agent_service.list_definitions(scoped_client_id)
@@ -5188,7 +5238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: DeliveryPlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5212,7 +5262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5240,7 +5290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if promotion_evidence:
                 source_id = cast(int, promotion_evidence["source_approval_request_id"])
                 source_approval = store.get_approval_request(source_id)
-                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                if source_approval is not None and not _approval_scope_visible(context, source_approval):
                     source_approval = None
                 validate_promotion_source(
                     payload.stage,
@@ -5269,7 +5319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             approval is None
             or approval.action_type != "power_platform.solution_stage"
-            or not _approval_in_scope(context, approval)
+            or not _approval_scope_visible(context, approval)
         ):
             raise HTTPException(status_code=404, detail="deployment approval request not found")
         if approval.status != "approved":
@@ -5286,7 +5336,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if not isinstance(source_id, int) or isinstance(source_id, bool):
                     raise PowerPlatformDeploymentError("promotion evidence source approval id is invalid")
                 source_approval = store.get_approval_request(source_id)
-                if source_approval is not None and not _approval_in_scope(context, source_approval):
+                if source_approval is not None and not _approval_scope_visible(context, source_approval):
                     source_approval = None
                 validate_promotion_source(
                     stage_id,
@@ -5321,7 +5371,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
     ) -> dict[str, object]:
         del request
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5377,7 +5427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             approval is None
             or approval.action_type != "power_platform.solution_rollback"
-            or not _approval_in_scope(context, approval)
+            or not _approval_scope_visible(context, approval)
         ):
             raise HTTPException(status_code=404, detail="Power Platform rollback approval request not found")
         if approval.status != "approved":
@@ -5430,7 +5480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: PowerAutomatePlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5449,7 +5499,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: CopilotStudioPlanRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         try:
@@ -5469,7 +5519,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return build_agent_health_summary(
@@ -5484,7 +5534,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _consultant_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None and context.role < Role.ADMIN:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped_client_id)
@@ -5497,7 +5547,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [_template_gallery_view(entry) for entry in store.list_template_gallery_entries(scoped_client_id)]
@@ -5507,7 +5557,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: TemplateGalleryCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         template = get_workflow_template(payload.source_template_id)
@@ -5529,7 +5579,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-templates/gallery/{entry_id}/export")
     def export_template_gallery_entry(entry_id: str, context: ViewerAccess) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5542,7 +5592,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: TemplateGalleryImportRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         template = get_workflow_template(payload.source_template_id)
@@ -5567,7 +5617,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-templates/gallery/{entry_id}")
     def template_gallery_detail(entry_id: str, context: ViewerAccess) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
+        scoped_client_id = resolve_client_scope(context, None).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5581,7 +5631,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: TemplateGalleryUpdateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5607,7 +5657,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5626,7 +5676,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="template gallery revision not found")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5645,7 +5695,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: TemplateGalleryRestoreRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, payload.client_id)
+        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5665,7 +5715,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: WorkflowRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scope = resolve_client_scope(context, request.client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         entry = store.get_template_gallery_entry(entry_id, scoped_client_id)
@@ -5673,7 +5724,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         if not entry.enabled:
             raise HTTPException(status_code=409, detail="template gallery entry is disabled")
-        if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
+        if store.get_ticket(request.ticket_id, client_id=scope) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         source_template = get_workflow_template(entry.source_template_id)
         if source_template is None:
@@ -5706,7 +5757,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [_scheduled_job_view(job) for job in scheduler.list_jobs(client_id=scoped_client_id)]
@@ -5730,10 +5781,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         requested_client_id = request.params.get("client_id")
         if requested_client_id is not None and not isinstance(requested_client_id, str):
             raise HTTPException(status_code=422, detail="params.client_id must be a string")
-        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        scope = resolve_client_scope(context, requested_client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        ticket = store.get_ticket(ticket_id, client_id=scoped_client_id)
+        ticket = store.get_ticket(ticket_id, client_id=scope)
         if ticket is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         params = dict(request.params)
@@ -5764,7 +5816,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         requested_client_id = request.params.get("client_id")
         if requested_client_id is not None and not isinstance(requested_client_id, str):
             raise HTTPException(status_code=422, detail="params.client_id must be a string")
-        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        scope = resolve_client_scope(context, requested_client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         raw_ticket_id = request.params.get("ticket_id")
@@ -5821,7 +5874,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         requested_client_id = request.params.get("client_id")
         if requested_client_id is not None and not isinstance(requested_client_id, str):
             raise HTTPException(status_code=422, detail="params.client_id must be a string")
-        scoped_client_id = _report_client_scope(context, requested_client_id)
+        scoped_client_id = resolve_client_scope(context, requested_client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=400, detail="client_id is required for a scheduled report")
         params = dict(request.params)
@@ -5853,7 +5906,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         requested_client_id = request.params.get("client_id")
         if requested_client_id is not None and not isinstance(requested_client_id, str):
             raise HTTPException(status_code=422, detail="params.client_id must be a string")
-        scoped_client_id = _smart_action_client_scope(context, requested_client_id)
+        scope = resolve_client_scope(context, requested_client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         definition = agent_service.get(request.agent_id or "")
@@ -5864,7 +5918,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if definition.client_id is not None and definition.client_id != scoped_client_id:
             raise HTTPException(status_code=404, detail="agent not found")
         effective_client_id = definition.client_id or scoped_client_id
-        ticket = store.get_ticket(request.entity_id, client_id=effective_client_id)
+        ticket_scope = effective_client_id if effective_client_id is not None else scope
+        ticket = store.get_ticket(request.entity_id, client_id=ticket_scope)
         if ticket is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         params = dict(request.params)
@@ -5946,10 +6001,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: WorkflowRunRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, request.client_id)
+        scope = resolve_client_scope(context, request.client_id)
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        if store.get_ticket(request.ticket_id, client_id=scoped_client_id) is None:
+        if store.get_ticket(request.ticket_id, client_id=scope) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         try:
             run = run_workflow_template(
@@ -5973,17 +6029,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-runs")
     def workflow_runs(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        return [asdict(run) for run in store.list_workflow_runs(client_id=client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(run) for run in store.list_workflow_runs(client_id=scope)]
 
     @app.get("/workflow-runs/{run_id}")
     def workflow_run_detail(run_id: int, context: ViewerAccess) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=404, detail="workflow run not found")
-        run = store.get_workflow_run(run_id, client_id=scoped_client_id)
+        scope = resolve_client_scope(context, None)
+        run = store.get_workflow_run(run_id, client_id=scope)
         if run is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
         template = next(
@@ -5995,7 +6050,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             **asdict(run),
             "template": asdict(template) if template is not None else None,
             "approval_request": (
-                _approval_view(approval) if approval is not None and _approval_in_scope(context, approval) else None
+                _approval_view(approval)
+                if approval is not None and _approval_scope_visible(context, approval)
+                else None
             ),
             "events": [asdict(event) for event in store.list_event_history_for_subject(run.ticket_id)],
         }
@@ -6006,11 +6063,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         other_run_id: int,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, None)
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=404, detail="workflow run not found")
-        left = store.get_workflow_run(run_id, client_id=scoped_client_id)
-        right = store.get_workflow_run(other_run_id, client_id=scoped_client_id)
+        scope = resolve_client_scope(context, None)
+        left = store.get_workflow_run(run_id, client_id=scope)
+        right = store.get_workflow_run(other_run_id, client_id=scope)
         if left is None or right is None:
             raise HTTPException(status_code=404, detail="workflow run not found")
         return _workflow_run_comparison_view(left, right)
@@ -6024,13 +6079,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started_to: Annotated[str | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=403, detail="execution lists require a single client or all-client scope")
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             return []
         return [
             _execution_run_view(run)
             for run in store.list_execution_runs(
-                client_id=scoped_client_id,
+                client_id=scope,
                 run_kind=kind,
                 status=status,
                 started_from=started_from,
@@ -6040,10 +6098,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/executions/{execution_id}")
     def execution_detail(execution_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scope = resolve_client_scope(context, client_id)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=404, detail="execution not found")
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="execution not found")
-        run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+        run = store.get_execution_run(execution_id, client_id=scope)
         if run is None or run.id is None:
             raise HTTPException(status_code=404, detail="execution not found")
         return {
@@ -6059,10 +6120,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
         client_id: str | None = None,
     ) -> FileResponse:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scope = resolve_client_scope(context, client_id)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=404, detail="execution artifact not found")
+        scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and scoped_client_id is None:
             raise HTTPException(status_code=404, detail="execution artifact not found")
-        run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+        run = store.get_execution_run(execution_id, client_id=scope)
         if run is None or run.id is None:
             raise HTTPException(status_code=404, detail="execution artifact not found")
         artifact = store.get_execution_artifact(artifact_id)
@@ -6081,7 +6145,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started_to: Annotated[str | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = _smart_action_client_scope(context, client_id)
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        if isinstance(scope, BoundClients) and scope.client_id is None:
+            raise HTTPException(status_code=403, detail="analytics require a single client or all-client scope")
+        scoped_client_id = scope.client_id
         estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
         if context.role < Role.ADMIN and scoped_client_id is None:
             return _empty_analytics_summary(started_from, started_to)
@@ -6096,8 +6163,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/knowledge/ingest")
     def ingest_knowledge(
         request: KnowledgeIngestRequest,
-        _: TechnicianAccess,
+        context: TechnicianAccess,
     ) -> list[dict[str, object]]:
+        scoped_client_id = resolve_client_scope(context, request.client_id).client_id
+        if scoped_client_id is None and not context.demo_mode:
+            raise HTTPException(status_code=403, detail="knowledge ingestion requires a client scope")
         try:
             settings = replace(
                 active_settings,
@@ -6105,33 +6175,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allow_ocr=active_settings.allow_ocr if request.ocr is None else request.ocr,
             )
             service = ingestion_service_from_settings(store, settings)
-            documents = service.ingest_path(Path(request.path), client_id=request.client_id)
+            documents = service.ingest_path(Path(request.path), client_id=scoped_client_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [asdict(document) for document in documents]
 
     @app.get("/knowledge/documents")
     def knowledge_documents(
-        _: ViewerAccess,
+        context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        return [asdict(document) for document in store.list_knowledge_documents(client_id=client_id)]
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(document) for document in store.list_knowledge_documents(client_id=scope)]
 
     @app.get("/knowledge/search")
     def knowledge_search(
-        _: ViewerAccess,
+        context: ViewerAccess,
         q: str,
         limit: int = 3,
         backend: str | None = None,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, client_id, allow_all=True)
         try:
             settings = replace(
                 active_settings,
                 vector_backend=backend or active_settings.vector_backend,
             )
             search_backend = search_backend_from_settings(settings, store)
-            return [asdict(chunk) for chunk in search_backend.search(q, limit=limit, client_id=client_id)]
+            return [asdict(chunk) for chunk in search_backend.search(q, limit=limit, client_id=scope)]
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -7183,54 +7255,21 @@ def _empty_analytics_summary(started_from: str | None, started_to: str | None) -
     }
 
 
-def _approval_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
-    """Approval scope preserves unbound filters intentionally, unlike smart-action scope."""
+def _approval_scope_visible(context: AuthContext, approval) -> bool:
+    """Apply the same resolver to approval detail and mutation checks."""
 
-    if context.role >= Role.ADMIN:
-        return _normalize_client_id(requested_client_id)
-    bound_client_id = _normalize_client_id(context.client_id)
-    if bound_client_id is None:
-        return _normalize_client_id(requested_client_id)
-    return bound_client_id
-
-
-def _approval_in_scope(context: AuthContext, approval) -> bool:
-    scoped_client_id = _approval_client_scope(context, None)
     approval_client_id = _normalize_client_id(approval.client_id)
-    return scoped_client_id is None or approval_client_id is None or approval_client_id == scoped_client_id
-
-
-def _consultant_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
-    requested = _normalize_client_id(requested_client_id)
-    bound = _normalize_client_id(context.client_id)
-    if context.role >= Role.ADMIN:
-        return requested or bound
-    if bound is None:
-        return None
-    if requested is not None and requested != bound:
-        raise HTTPException(status_code=403, detail="requested tenant is outside authenticated scope")
-    return bound
-
-
-def _smart_action_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
-    """Return the authenticated tenant scope; only admins may choose a filter."""
-
-    if context.role >= Role.ADMIN:
-        return _normalize_client_id(requested_client_id)
-    return _normalize_client_id(context.client_id)
-
-
-def _report_client_scope(context: AuthContext, requested_client_id: str | None) -> str | None:
-    """Require a tenant for non-admin report reads and generation."""
-
-    scoped_client_id = _smart_action_client_scope(context, requested_client_id)
-    if context.role < Role.ADMIN and scoped_client_id is None:
-        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-    return scoped_client_id
+    if approval_client_id is None:
+        return context.demo_mode
+    try:
+        resolve_client_scope(context, approval_client_id)
+    except HTTPException:
+        return False
+    return True
 
 
 def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
-    scoped_client_id = _smart_action_client_scope(context, None)
+    scoped_client_id = resolve_client_scope(context, None).client_id
     if context.role < Role.ADMIN and scoped_client_id is None:
         raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
     job = store.get_scheduled_job(job_id)

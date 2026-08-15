@@ -47,6 +47,7 @@ from wait_local_agent.api.packs.loader import (
 )
 from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.collectors import (
     CollectorService,
     collector_run_collection_scope,
@@ -3922,8 +3923,9 @@ def compare_workflow_runs(
     settings = load_settings()
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
-    left = store.get_workflow_run(from_run_id, client_id=scoped_client_id)
-    right = store.get_workflow_run(to_run_id, client_id=scoped_client_id)
+    scope = scoped_client_id if scoped_client_id is not None else AllClients()
+    left = store.get_workflow_run(from_run_id, client_id=scope)
+    right = store.get_workflow_run(to_run_id, client_id=scope)
     if left is None or right is None:
         raise typer.BadParameter("workflow run not found")
     typer.echo(json.dumps(_workflow_run_comparison_payload(left, right), sort_keys=True, indent=2))
@@ -4350,7 +4352,7 @@ def list_executions(
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
     for run in store.list_execution_runs(
-        client_id=scoped_client_id,
+        client_id=scoped_client_id if scoped_client_id is not None else AllClients(),
         run_kind=run_kind,
         status=status,
         started_from=started_from,
@@ -4371,7 +4373,10 @@ def show_execution(
     settings = load_settings()
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
-    run = store.get_execution_run(execution_id, client_id=scoped_client_id)
+    run = store.get_execution_run(
+        execution_id,
+        client_id=scoped_client_id if scoped_client_id is not None else AllClients(),
+    )
     if run is None or run.id is None:
         raise typer.BadParameter("execution not found")
     payload = {
