@@ -39,7 +39,7 @@ credential or undocumented vendor API remains an explicit boundary.
 - Bounded MSP playbook composition now includes tenant-scoped published
   aggregate definitions with validated edit, enable/disable, revision compare,
   restore-as-new-version, preview, approval-aware execution, and audit evidence;
-  see [`docs/msp-playbooks.md`](docs/msp-playbooks.md). The aggregate catalog
+  see [`docs/operations/msp-playbooks.md`](docs/operations/msp-playbooks.md). The aggregate catalog
   now also covers inactive-ticket follow-up and bounded M365 password, explicit
   authentication-method, and license reviews. Richer mappings,
   historical/provider ingestion remain open;
