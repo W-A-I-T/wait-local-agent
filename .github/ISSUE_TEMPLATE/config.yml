@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support questions
+    url: https://github.com/W-A-I-T/wait-local-agent/discussions/categories/q-a
+    about: Ask how to use WAIT Local Agent in GitHub Discussions Q&A.
+  - name: Ideas and proposals
+    url: https://github.com/W-A-I-T/wait-local-agent/discussions/categories/ideas
+    about: Share product ideas and proposals in GitHub Discussions Ideas.

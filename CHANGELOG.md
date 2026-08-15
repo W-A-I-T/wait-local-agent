@@ -2,10 +2,47 @@
 
 All notable changes to WAIT Local Agent will be documented in this file.
 
-## Unreleased
+## [Unreleased]
 
-- Linux draft release checksum publishing now includes RPM (`.rpm`) artifacts in `SHA256SUMS`.
-- Version bumped to `1.1.1` across API, Python package, desktop package, and UI/package metadata.
+## [1.1.1] - 2026-07-21
+
+### Added
+
+- Connector coverage now includes bounded ConnectWise, Syncro, ServiceNow,
+  Autotask, RMM, cloud inventory, identity, and documentation read paths, with
+  explicit opt-ins and approval-gated writes where supported.
+- Consultant and Microsoft 365 surfaces add deterministic blueprint,
+  governance, evaluation, identity, and bounded live Graph context workflows.
+- Scheduled workflows, event-triggered agents, bounded retries, cancellation,
+  backfills, revision history, rollback, reports, and tenant-scoped run
+  evidence are available through the existing runtime.
+
+### Changed
+
+- The API, CLI, dashboard, and desktop app now expose role-scoped operations
+  across tickets, approvals, workflows, agents, analytics, reports, and audit
+  history.
+- Workflow and agent previews, galleries, comparisons, imports, and exports
+  remain local, bounded, redacted, and approval-safe.
+- Linux release checksum publishing now includes RPM (`.rpm`) artifacts in
+  `SHA256SUMS`.
+- Version metadata is aligned at `1.1.1` across the API, Python package,
+  desktop package, and UI package.
+
+### Security
+
+- Bearer-token RBAC, client tenancy filters, approval identity capture, and
+  expanded secret redaction cover the public API and operator surfaces.
+- Signed update checks, encrypted backup and restore, conservative connector
+  defaults, explicit outbound controls, and approval-before-write guard live
+  execution.
+
+### Operations
+
+- Scheduled jobs persist pause, resume, reschedule, cancellation, and audit
+  history; active agent runs support bounded cancellation and retry.
+- The local demo, desktop installer, pack discovery, founder routes, and
+  release validation paths are documented for the public surface.
 
 ## [1.0.0] - 2026-07-08
 
