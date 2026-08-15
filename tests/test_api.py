@@ -1493,7 +1493,7 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
 
     request = Request({"type": "http", "method": "POST", "path": "/secrets", "headers": []})
     response = app_module._request_validation_error_handler(request, ValidationStub())
-    body = json.loads(response.body)
+    body = json.loads(bytes(response.body))
     assert body["detail"][0]["input"] == "[redacted]"
     assert body["detail"][1]["input"] == {"license": "[redacted]"}
     assert "input" not in body["detail"][2]
@@ -1501,7 +1501,7 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
         request, app_module.FounderPackContractError("contract rejected")
     )
     assert contract_response.status_code == 502
-    assert json.loads(contract_response.body)["detail"] == "contract rejected"
+    assert json.loads(bytes(contract_response.body))["detail"] == "contract rejected"
     monkeypatch.setattr(app_module, "_rate_limit_exceeded_handler", lambda *_args: Response(status_code=429))
     assert app_module._rate_limit_handler(request, Exception()).status_code == 429
     unbound_technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token")
@@ -5774,7 +5774,6 @@ def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -
         }
     )
     client = TestClient(create_app(secure_settings))
-    tech = {"headers": _auth("tech-token")}
 
     invalid_calls = [
         ("/consultant/connectors/openapi/generate", {"connector_id": "bad", "definition": {}}),
@@ -5859,7 +5858,7 @@ def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -
         ),
     ]
     for path, payload in invalid_calls:
-        response = client.post(path, json=payload, **tech)
+        response = client.post(path, json=payload, headers=_auth("tech-token"))
         assert response.status_code == 422, (path, response.text)
 
     assert client.get("/consultant/blueprints/missing", headers=_auth("viewer-token")).status_code == 404
@@ -5885,7 +5884,6 @@ def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -
         }
     )
     client = TestClient(create_app(secure_settings))
-    tech = {"headers": _auth("tech-token")}
     deployment = {
         "client_id": "acme",
         "solution_name": "onboarding",
@@ -5903,8 +5901,12 @@ def test_consultant_api_builds_review_artifacts_and_gates_deployment(settings) -
         "actions": [{"id": "lookup", "connector_id": "m365", "method": "GET"}],
     }
 
-    built = client.post("/consultant/power-apps/build", json=power_apps, **tech)
-    requested = client.post("/consultant/solutions/deployment-approvals", json=deployment, **tech)
+    built = client.post("/consultant/power-apps/build", json=power_apps, headers=_auth("tech-token"))
+    requested = client.post(
+        "/consultant/solutions/deployment-approvals",
+        json=deployment,
+        headers=_auth("tech-token"),
+    )
     request_id = requested.json()["approval"]["id"]
     pending = client.post(
         f"/consultant/solutions/deployment-approvals/{request_id}/execute",
