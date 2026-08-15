@@ -301,6 +301,60 @@ def test_collect_maps_all_supported_resource_types_to_canonical_assets() -> None
     }
 
 
+@pytest.mark.parametrize(
+    "security_group",
+    [
+        SimpleNamespace(
+            id=NSG_ID,
+            name="web-nsg",
+            location="canadacentral",
+            security_rules=[SimpleNamespace(name="https"), SimpleNamespace(name="ssh")],
+        ),
+        SimpleNamespace(
+            id=NSG_ID,
+            name="web-nsg",
+            location="canadacentral",
+            properties=SimpleNamespace(
+                security_rules=[
+                    SimpleNamespace(name="https"),
+                    SimpleNamespace(name="ssh"),
+                    SimpleNamespace(name="rdp"),
+                ]
+            ),
+        ),
+    ],
+    ids=["flat-sdk-model", "hybrid-sdk-model"],
+)
+def test_network_security_group_records_support_flat_and_hybrid_models(security_group: Any) -> None:
+    session = SimpleNamespace(
+        client=lambda service_name: SimpleNamespace(
+            network_security_groups=SimpleNamespace(list_all=lambda: [security_group])
+        )
+    )
+
+    records = _connector()._network_security_group_records(session)
+
+    expected_count = 2 if not hasattr(security_group, "properties") else 3
+    assert records[0]["attributes"]["security_rule_count"] == expected_count
+
+
+def test_azure_value_prefers_top_level_and_falls_back_one_properties_level() -> None:
+    connector = _connector()
+
+    assert connector._value({"name": "top", "properties": {"name": "nested"}}, "name") == "top"
+    assert connector._value(SimpleNamespace(name="top", properties=SimpleNamespace(name="nested")), "name") == "top"
+    assert connector._value({"name": None, "properties": {"name": "nested"}}, "name", "missing") is None
+    assert connector._value({"properties": {"security_rules": [1, 2]}}, "security_rules") == [1, 2]
+    assert (
+        connector._value(
+            SimpleNamespace(properties=SimpleNamespace(properties=SimpleNamespace(name="too-deep"))),
+            "name",
+            "missing",
+        )
+        == "missing"
+    )
+
+
 def test_collect_emits_one_observation_per_asset_attribute() -> None:
     result = _connector().collect({"session": FakeSession()})
     virtual_machine_observations = _items_by_id(result)[f"azure:compute:{VM_ID_1}"]["observations"]

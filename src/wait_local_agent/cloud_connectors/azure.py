@@ -426,9 +426,22 @@ class AzureInventoryConnector:
 
     @staticmethod
     def _value(source: Any, key: str, default: Any = "") -> Any:
+        missing = object()
         if isinstance(source, Mapping):
-            return source.get(key, default)
-        return getattr(source, key, default)
+            value = source.get(key, missing)
+            properties = source.get("properties")
+        else:
+            value = getattr(source, key, missing)
+            properties = getattr(source, "properties", None)
+
+        if value is not missing:
+            return value
+
+        if isinstance(properties, Mapping):
+            value = properties.get(key, missing)
+        else:
+            value = getattr(properties, key, missing)
+        return default if value is missing else value
 
 
 class _AzureSdkSession:
