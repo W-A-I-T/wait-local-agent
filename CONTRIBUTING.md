@@ -1,9 +1,15 @@
 # Contributing
 
-WAIT Local Agent is a C$0 Community edition under the Apache 2.0 license. It
-is self-hosted and intended to provide useful local-first AI execution and
-change governance, including use across multiple client environments. Keep
-changes source-accurate, local-first, and safe by default.
+WAIT Local Agent is currently a C$0 Community edition under the Apache 2.0
+license. It is self-hosted and intended to provide useful local-first AI
+execution and change governance, including use across multiple client
+environments. Keep changes source-accurate, local-first, and safe by default.
+
+WAIT is planning a future major-version dual-licensing transition. That plan
+does not alter the license currently stated in [`LICENSE`](LICENSE). Review
+[`docs/legal/README.md`](docs/legal/README.md) and the transition checklist
+before proposing licensing, attribution, contributor-rights, commercial-pack,
+or WAIT-Sync migration changes.
 
 ## Development Environment
 
@@ -56,12 +62,39 @@ release script uses `npm ci`.
 - Do not add AI attribution, generated-by banners, or tool-credit lines in code, commits, PR text, screenshots, or docs.
 - Keep public docs, examples, and screenshots aligned with shipped behavior only.
 - Run `scripts/public_surface_audit.py` or the full validation gate before asking for review.
+- Identify copied, adapted, generated, or externally sourced material and confirm that WAIT may distribute it under the repository's effective license.
+
+## Licensing transition and contributor rights
+
+Contributions are governed by the license effective for the branch and version
+to which they are accepted. A proposed future license does not retroactively
+change the current Apache-2.0 terms.
+
+Dual licensing requires WAIT to control sufficient rights to offer the same
+code under Community and Commercial terms. Until a counsel-approved CLA,
+copyright assignment, or equivalent contributor-rights process is published:
+
+- maintainers may defer or decline outside contributions intended for the
+  future dual-licensed major version;
+- contributors must not assume that ordinary PR submission grants WAIT rights
+  beyond the currently effective repository terms;
+- maintainers must not assert that WAIT can commercially relicense an outside
+  contribution without a documented legal basis; and
+- code with uncertain authorship, copied expression, incompatible licensing,
+  or unclear contractor/employment ownership must not be merged.
+
+The required review is tracked in
+[`docs/legal/PROVENANCE_REVIEW.md`](docs/legal/PROVENANCE_REVIEW.md).
 
 ### AI-assisted contributions
 
 Assistance is allowed, but every contributor must fully understand and be able to explain every change they submit. Changes
 must be tested. Do not add AI attribution, generated-by banners, or tool-credit lines. Low-effort generated PRs will be
 closed.
+
+AI-assisted code is not exempt from provenance review. The contributor remains
+responsible for checking that the submission does not reproduce protected
+third-party code, text, assets, credentials, or confidential material.
 
 Before starting a large feature or a new connector, open a GitHub Discussion
 to describe the proposal and invite design feedback.
@@ -104,6 +137,7 @@ Before review:
 2. Run `./scripts/validate_release.sh`.
 3. Confirm docs reflect the exact shipped surface for any user-facing change.
 4. Confirm `scripts/public_surface_audit.py` passes.
+5. Confirm licensing and provenance documentation is updated when a change affects dependencies, bundled assets, public/private boundaries, attribution, packaging, or commercial entitlements.
 
 Public-surface changes should call out:
 
@@ -111,3 +145,4 @@ Public-surface changes should call out:
 - new or changed env vars
 - new or changed API routes
 - any security, RBAC, tenancy, backup, scheduler, update-channel, or pack-loader effects
+- any dependency, attribution, license-metadata, branding, or distribution effects
