@@ -34,11 +34,9 @@ def backup_state(
         fernet = _backup_fernet(settings)
         destination.write_bytes(fernet.encrypt(_store_bytes(store)))
         return destination
-    if store.path.exists():
-        shutil.copy2(store.path, destination)
-    else:
+    if not store.path.exists():
         Store(store.path)
-        shutil.copy2(store.path, destination)
+    _backup_sqlite(store.path, destination)
     return destination
 
 
@@ -60,10 +58,12 @@ def restore_state(
             raise BackupEncryptionError(
                 "Encrypted backup could not be decrypted with the configured WAIT_BACKUP_FERNET_KEY."
             ) from exc
+        _remove_sqlite_files(store.path)
         store.path.write_bytes(payload)
         Store(store.path)
         return store.path
-    shutil.copy2(source, store.path)
+    _remove_sqlite_files(store.path)
+    _restore_sqlite(source, store.path)
     Store(store.path)
     return store.path
 
@@ -229,7 +229,35 @@ def _utc_now() -> str:
 def _store_bytes(store: Store) -> bytes:
     if not store.path.exists():
         Store(store.path)
-    return store.path.read_bytes()
+    return _snapshot_bytes(store.path)
+
+
+def _backup_sqlite(source_path: Path, destination_path: Path) -> None:
+    """Copy a SQLite database, including committed pages still in its WAL."""
+
+    snapshot = _snapshot_bytes(source_path)
+    _remove_sqlite_files(destination_path)
+    destination_path.write_bytes(snapshot)
+
+
+def _restore_sqlite(source_path: Path, destination_path: Path) -> None:
+    """Restore a SQLite database without copying an incomplete WAL sidecar."""
+
+    destination_path.write_bytes(_snapshot_bytes(source_path))
+
+
+def _remove_sqlite_files(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    for suffix in ("-wal", "-shm"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+def _snapshot_bytes(source_path: Path) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="wait-sqlite-snapshot-") as directory:
+        snapshot_path = Path(directory) / "snapshot.db"
+        with sqlite3.connect(source_path) as source:
+            source.execute("vacuum into ?", (str(snapshot_path),))
+        return snapshot_path.read_bytes()
 
 
 def _backup_fernet(settings: Settings | None) -> Fernet:

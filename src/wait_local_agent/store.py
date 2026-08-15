@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
+from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
@@ -86,951 +87,962 @@ class Store:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
+        connection.execute("pragma foreign_keys = on")
+        connection.execute("pragma busy_timeout = 5000")
+        connection.execute("pragma journal_mode = wal")
         return connection
 
     def _init_schema(self) -> None:
         with self._connect() as connection:
-            connection.execute(
-                """
-                create table if not exists tickets (
-                    id text primary key,
-                    client text not null,
-                    subject text not null,
-                    body text not null,
-                    priority text not null,
-                    status text not null,
-                    client_id text,
-                    requester_id text,
-                    created_at text not null default '',
-                    updated_at text not null default ''
-                )
-                """
-            )
-            self._ensure_column(connection, "tickets", "client_id", "text")
-            self._ensure_column(connection, "tickets", "requester_id", "text")
-            self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
-            self._ensure_column(connection, "tickets", "updated_at", "text not null default ''")
-            connection.execute(
-                """
-                create table if not exists ticket_status_history (
-                    id integer primary key autoincrement,
-                    ticket_id text not null,
-                    client_id text,
-                    from_status text not null default '',
-                    to_status text not null,
-                    changed_at text not null,
-                    source text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create index if not exists idx_ticket_status_history_scope
-                on ticket_status_history (client_id, changed_at, ticket_id)
-                """
-            )
-            connection.execute(
-                """
-                insert into ticket_status_history
-                  (ticket_id, client_id, from_status, to_status, changed_at, source)
-                select t.id, t.client_id, '', t.status,
-                       case when t.created_at <> '' then t.created_at else t.updated_at end,
-                       'existing_snapshot'
-                from tickets t
-                where not exists (
-                    select 1 from ticket_status_history h where h.ticket_id = t.id
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists ticket_notes (
-                    id integer primary key autoincrement,
-                    ticket_id text not null,
-                    client_id text not null,
-                    author text not null,
-                    body text not null,
-                    created_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists end_user_messages (
-                    id integer primary key autoincrement,
-                    ticket_id text not null,
-                    client_id text not null,
-                    requester_id text not null,
-                    author_role text not null default 'requester',
-                    author_id text not null default '',
-                    body text not null,
-                    created_at text not null
-                )
-                """
-            )
-            self._ensure_column(connection, "end_user_messages", "author_role", "text not null default 'requester'")
-            self._ensure_column(connection, "end_user_messages", "author_id", "text not null default ''")
-            connection.execute(
-                """
-                create index if not exists idx_end_user_messages_scope
-                on end_user_messages (client_id, requester_id, ticket_id, id)
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists approvals (
-                    ticket_id text primary key,
-                    status text not null,
-                    comment text not null default '',
-                    updated_at text not null
-                )
-                """
-            )
-            self._ensure_column(connection, "approvals", "comment", "text not null default ''")
-            connection.execute(
-                """
-                create table if not exists audit_events (
-                    id integer primary key autoincrement,
-                    event_type text not null,
-                    subject_id text not null,
-                    detail text not null,
-                    created_at text not null,
-                    client_id text,
-                    approver_id text
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists technician_chat_sessions (
-                    id text primary key,
-                    client_id text not null,
-                    principal_id text not null,
-                    status text not null default 'active',
-                    ticket_id text,
-                    created_at text not null,
-                    updated_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists technician_chat_messages (
-                    id integer primary key autoincrement,
-                    session_id text not null,
-                    role text not null,
-                    message text not null,
-                    action_id text,
-                    status text not null,
-                    ticket_id text,
-                    created_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create index if not exists idx_technician_chat_sessions_scope
-                on technician_chat_sessions (client_id, principal_id, updated_at)
-                """
-            )
-            connection.execute(
-                """
-                create index if not exists idx_technician_chat_messages_session
-                on technician_chat_messages (session_id, id)
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists approval_requests (
-                    id integer primary key autoincrement,
-                    subject_id text not null,
-                    action_type text not null,
-                    payload_json text not null,
-                    status text not null,
-                    comment text not null,
-                    created_at text not null,
-                    updated_at text not null,
-                    execution_status text not null default 'not_started',
-                    execution_message text not null default '',
-                    executed_at text not null default '',
-                    execution_result_json text not null default '{}',
-                    client_id text,
-                    approver_id text,
-                    expires_at text
-                )
-                """
-            )
-            self._ensure_column(
-                connection,
-                "approval_requests",
-                "execution_status",
-                "text not null default 'not_started'",
-            )
-            self._ensure_column(
-                connection,
-                "approval_requests",
-                "execution_message",
-                "text not null default ''",
-            )
-            self._ensure_column(
-                connection,
-                "approval_requests",
-                "executed_at",
-                "text not null default ''",
-            )
-            self._ensure_column(
-                connection,
-                "approval_requests",
-                "execution_result_json",
-                "text not null default '{}'",
-            )
-            connection.execute(
-                """
-                create table if not exists event_history (
-                    id integer primary key autoincrement,
-                    event_type text not null,
-                    subject_id text not null,
-                    status text not null,
-                    message text not null,
-                    payload_json text not null,
-                    created_at text not null,
-                    client_id text
-                )
-                """
-            )
-            self._ensure_column(connection, "event_history", "client_id", "text")
-            connection.execute(
-                """
-                create table if not exists event_deliveries (
-                    id integer primary key autoincrement,
-                    idempotency_key text not null unique,
-                    event_type text not null,
-                    entity_type text not null,
-                    entity_id text not null,
-                    payload_json text not null,
-                    status text not null,
-                    matched_agent_count integer not null default 0,
-                    agent_ids_json text not null default '[]',
-                    run_ids_json text not null default '[]',
-                    matched_playbook_count integer not null default 0,
-                    playbook_ids_json text not null default '[]',
-                    playbook_run_ids_json text not null default '[]',
-                    playbook_attempts_json text not null default '{}',
-                    error_detail text not null default '',
-                    received_at text not null,
-                    processed_at text not null default '',
-                    client_id text,
-                    agent_attempts_json text not null default '{}',
-                    retry_count integer not null default 0,
-                    max_retries integer not null default 3,
-                    retry_delay_seconds integer not null default 60,
-                    next_retry_at text not null default ''
-                )
-                """
-            )
-            self._ensure_column(connection, "event_deliveries", "matched_playbook_count", "integer not null default 0")
-            self._ensure_column(connection, "event_deliveries", "playbook_ids_json", "text not null default '[]'")
-            self._ensure_column(connection, "event_deliveries", "playbook_run_ids_json", "text not null default '[]'")
-            self._ensure_column(connection, "event_deliveries", "playbook_attempts_json", "text not null default '{}'")
-            connection.execute(
-                """
-                create table if not exists workflow_runs (
-                    id integer primary key autoincrement,
-                    template_id text not null,
-                    ticket_id text not null,
-                    status text not null,
-                    message text not null,
-                    approval_request_id integer,
-                    client_id text,
-                    created_at text not null,
-                    updated_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists smart_action_runs (
-                    id integer primary key autoincrement,
-                    action_id text not null,
-                    actor text not null,
-                    status text not null,
-                    payload_digest text not null,
-                    output_json text not null,
-                    evidence_json text not null,
-                    approval_id integer,
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text,
-                    error_detail text not null default ''
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists rmm_execution_scopes (
-                    execution_id text not null,
-                    provider_id text not null,
-                    script_id text not null,
-                    device_id text not null,
-                    client_id text not null,
-                    created_at text not null,
-                    primary key (execution_id, provider_id, client_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists template_gallery_entries (
-                    id text primary key,
-                    source_template_id text not null,
-                    name text not null,
-                    trigger text not null,
-                    description text not null,
-                    action_type text not null,
-                    approval_required integer not null,
-                    risk_level text not null,
-                    preview_fields_json text not null,
-                    provenance text not null,
-                    version integer not null default 1,
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists template_gallery_revisions (
-                    id integer primary key autoincrement,
-                    gallery_id text not null,
-                    version integer not null,
-                    definition_json text not null,
-                    created_at text not null,
-                    client_id text,
-                    unique(gallery_id, version)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists msp_playbook_entries (
-                    id text primary key,
-                    source_playbook_id text not null,
-                    definition_json text not null,
-                    provenance text not null,
-                    enabled integer not null default 1,
-                    version integer not null default 1,
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists msp_playbook_revisions (
-                    id integer primary key autoincrement,
-                    playbook_id text not null,
-                    version integer not null,
-                    snapshot_json text not null,
-                    created_at text not null,
-                    client_id text,
-                    unique(playbook_id, version)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists msp_playbook_subscriptions (
-                    id text primary key,
-                    playbook_id text not null,
-                    event_type text not null,
-                    client_id text not null,
-                    input_mapping_json text not null default '{}',
-                    enabled integer not null default 1,
-                    created_at text not null,
-                    updated_at text not null,
-                    unique(playbook_id, event_type, client_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists scheduled_jobs (
-                    id integer primary key autoincrement,
-                    template_id text not null,
-                    cron text not null,
-                    params_json text not null,
-                    paused integer not null default 0,
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text,
-                    job_kind text not null default 'workflow',
-                    agent_id text,
-                    entity_id text,
-                    schedule_type text not null default 'cron',
-                    interval_seconds integer,
-                    run_at text,
-                    timezone text not null default 'UTC'
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists agent_definitions (
-                    id text primary key,
-                    name text not null,
-                    description text not null,
-                    enabled integer not null default 1,
-                    trigger text not null,
-                    entity_type text not null,
-                    filters_json text not null,
-                    enabled_tools_json text not null,
-                    steps_json text not null,
-                    max_steps integer not null,
-                    execution_timeout_seconds real not null,
-                    client_id text,
-                    version integer not null default 1,
-                    created_at text not null,
-                    updated_at text not null,
-                    run_once_per_entity integer not null default 1,
-                    depends_on_agent_ids_json text not null default '[]',
-                    execution_window_start text,
-                    execution_window_end text,
-                    execution_window_timezone text not null default 'UTC',
-                    context_sources_json text not null default '[]',
-                    approval_expiry_seconds integer,
-                    result_aware integer not null default 0,
-                    approval_required_tools_json text not null default '[]',
-                    approval_rules_json text not null default '[]'
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists solution_blueprints (
-                    id text primary key,
-                    client_id text not null,
-                    created_by text not null,
-                    payload_json text not null,
-                    created_at text not null,
-                    updated_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists consultant_discovery_sessions (
-                    id text primary key,
-                    client_id text not null,
-                    principal_id text not null,
-                    status text not null default 'active',
-                    answers_json text not null,
-                    transcript_json text not null,
-                    blueprint_id text,
-                    created_at text not null,
-                    updated_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create index if not exists idx_consultant_discovery_sessions_scope
-                on consultant_discovery_sessions (client_id, principal_id, updated_at)
-                """
-            )
-            self._ensure_column(connection, "consultant_discovery_sessions", "blueprint_id", "text")
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "context_sources_json",
-                "text not null default '[]'",
-            )
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "approval_required_tools_json",
-                "text not null default '[]'",
-            )
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "approval_rules_json",
-                "text not null default '[]'",
-            )
-            connection.execute(
-                """
-                create table if not exists agent_definition_revisions (
-                    id integer primary key autoincrement,
-                    agent_id text not null,
-                    version integer not null,
-                    definition_json text not null,
-                    created_at text not null,
-                    client_id text,
-                    unique(agent_id, version)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists agent_runs (
-                    id integer primary key autoincrement,
-                    agent_id text not null,
-                    entity_id text not null,
-                    actor text not null,
-                    status text not null,
-                    current_step integer not null default 0,
-                    state_json text not null,
-                    started_at text not null,
-                    finished_at text not null,
-                    revision_version integer,
-                    client_id text
-                )
-                """
-            )
-            self._ensure_column(connection, "agent_runs", "revision_version", "integer")
-            connection.execute(
-                """
-                create table if not exists agent_backfills (
-                    id integer primary key autoincrement,
-                    agent_id text not null,
-                    entity_ids_json text not null,
-                    input_json text not null,
-                    max_concurrency integer not null default 1,
-                    status text not null,
-                    next_index integer not null default 0,
-                    processed_count integer not null default 0,
-                    succeeded_count integer not null default 0,
-                    failed_count integer not null default 0,
-                    run_ids_json text not null default '[]',
-                    failed_entity_ids_json text not null default '[]',
-                    actor text not null,
-                    error_detail text not null default '',
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text
-                )
-                """
-            )
-            self._ensure_column(connection, "agent_backfills", "max_concurrency", "integer not null default 1")
-            connection.execute(
-                """
-                create table if not exists knowledge_documents (
-                    id integer primary key autoincrement,
-                    path text not null unique,
-                    title text not null,
-                    kind text not null,
-                    checksum text not null,
-                    modified_at text not null,
-                    chunk_count integer not null,
-                    indexed_at text not null,
-                    client_id text
-                )
-                """
-            )
-            self._ensure_column(connection, "tickets", "client_id", "text")
-            self._ensure_column(connection, "audit_events", "client_id", "text")
-            self._ensure_column(connection, "audit_events", "approver_id", "text")
-            self._ensure_column(connection, "approval_requests", "client_id", "text")
-            self._ensure_column(connection, "approval_requests", "approver_id", "text")
-            self._ensure_column(connection, "approval_requests", "expires_at", "text")
-            self._backfill_approval_expiry(connection)
-            self._ensure_column(connection, "workflow_runs", "client_id", "text")
-            self._ensure_column(connection, "workflow_runs", "template_version", "integer")
-            self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
-            self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
-            self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
-            self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
-            self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
-            self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
-            self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
-            self._ensure_column(
-                connection,
-                "scheduled_jobs",
-                "timezone",
-                "text not null default 'UTC'",
-            )
-            self._ensure_column(
-                connection,
-                "event_deliveries",
-                "agent_attempts_json",
-                "text not null default '{}'",
-            )
-            self._ensure_column(
-                connection,
-                "event_deliveries",
-                "retry_count",
-                "integer not null default 0",
-            )
-            self._ensure_column(
-                connection,
-                "event_deliveries",
-                "max_retries",
-                f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
-            )
-            self._ensure_column(
-                connection,
-                "event_deliveries",
-                "retry_delay_seconds",
-                f"integer not null default {DEFAULT_EVENT_RETRY_DELAY_SECONDS}",
-            )
-            self._ensure_column(
-                connection,
-                "event_deliveries",
-                "next_retry_at",
-                "text not null default ''",
-            )
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "run_once_per_entity",
-                "integer not null default 1",
-            )
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "depends_on_agent_ids_json",
-                "text not null default '[]'",
-            )
-            self._ensure_column(connection, "agent_definitions", "execution_window_start", "text")
-            self._ensure_column(connection, "agent_definitions", "execution_window_end", "text")
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "execution_window_timezone",
-                "text not null default 'UTC'",
-            )
-            self._ensure_column(connection, "agent_definitions", "approval_expiry_seconds", "integer")
-            self._ensure_column(
-                connection,
-                "agent_definitions",
-                "result_aware",
-                "integer not null default 0",
-            )
-            self._ensure_column(connection, "knowledge_documents", "client_id", "text")
-            self._ensure_column(connection, "smart_action_runs", "client_id", "text")
-            self._ensure_column(connection, "smart_action_runs", "error_detail", "text not null default ''")
-            self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
-            self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
-            self._ensure_column(connection, "template_gallery_entries", "definition_json", "text not null default '{}'")
-            self._backfill_template_gallery_revisions(connection)
-            connection.execute(
-                """
-                create table if not exists knowledge_chunks (
-                    id integer primary key autoincrement,
-                    document_id integer not null
-                      references knowledge_documents(id) on delete cascade,
-                    chunk_index integer not null,
-                    text text not null,
-                    excerpt text not null,
-                    unique(document_id, chunk_index)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create virtual table if not exists knowledge_chunks_fts
-                using fts5(chunk_id unindexed, title, path unindexed, text)
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists reports (
-                    id text primary key,
-                    report_type text not null,
-                    title text not null,
-                    created_at text not null,
-                    created_by text not null default '',
-                    client_id text not null default '',
-                    project_id text not null default '',
-                    sections_json text not null,
-                    metadata_json text not null default '{}'
-                )
-                """
-            )
-            self._ensure_column(connection, "reports", "evidence_status", "text not null default 'not_run'")
-            connection.execute(
-                """
-                create table if not exists founder_config (
-                    id integer primary key check (id = 1),
-                    lp_base_url text not null,
-                    lp_project_id text not null,
-                    token_vault_ref text not null,
-                    created_at text not null,
-                    updated_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists founder_artifacts (
-                    artifact_id text primary key,
-                    project_id text not null,
-                    bundle_hash text not null,
-                    bundle_json text not null,
-                    created_at text not null,
-                    previewed_at text not null default '',
-                    uploaded_at text not null default '',
-                    remote_scan_id text not null default '',
-                    remote_scan_status text not null default '',
-                    remote_scan_json text not null default '{}',
-                    latest_report_reference text not null default '',
-                    latest_report_json text not null default '{}',
-                    polling_status text not null default ''
-                )
-                """
-            )
-            self._ensure_column(connection, "founder_artifacts", "previewed_at", "text not null default ''")
-            self._ensure_column(connection, "founder_artifacts", "uploaded_at", "text not null default ''")
-            self._ensure_column(connection, "founder_artifacts", "remote_scan_id", "text not null default ''")
-            self._ensure_column(connection, "founder_artifacts", "remote_scan_status", "text not null default ''")
-            self._ensure_column(connection, "founder_artifacts", "remote_scan_json", "text not null default '{}'")
-            self._ensure_column(
-                connection,
-                "founder_artifacts",
-                "latest_report_reference",
-                "text not null default ''",
-            )
-            self._ensure_column(connection, "founder_artifacts", "latest_report_json", "text not null default '{}'")
-            self._ensure_column(connection, "founder_artifacts", "polling_status", "text not null default ''")
-            connection.execute(
-                """
-                create table if not exists founder_artifact_previews (
-                    artifact_id text primary key,
-                    previewed_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists collector_sources (
-                    id integer primary key autoincrement,
-                    module_id text not null,
-                    name text not null,
-                    config_json text not null,
-                    config_hash text not null,
-                    created_at text not null,
-                    updated_at text not null,
-                    client_id text,
-                    unique(module_id, config_hash, client_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists collector_runs (
-                    id integer primary key autoincrement,
-                    module_id text not null,
-                    source_id integer references collector_sources(id),
-                    status text not null,
-                    mode text not null,
-                    scope_json text not null,
-                    preview_json text not null,
-                    result_json text not null default '{}',
-                    started_at text not null,
-                    completed_at text not null default '',
-                    client_id text,
-                    actor_id text,
-                    report_id text
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists canonical_assets (
-                    id integer primary key autoincrement,
-                    canonical_id text not null unique,
-                    asset_type text not null,
-                    display_name text not null,
-                    client_id text,
-                    owner text not null default '',
-                    source_module text not null default '',
-                    source_id text not null default '',
-                    confidence real not null default 1.0,
-                    first_seen text not null,
-                    last_seen text not null,
-                    attributes_json text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists asset_observations (
-                    id integer primary key autoincrement,
-                    asset_id integer not null references canonical_assets(id),
-                    run_id integer not null references collector_runs(id),
-                    source_id integer references collector_sources(id),
-                    observed_at text not null,
-                    observation_type text not null,
-                    payload_json text not null,
-                    confidence real not null default 1.0
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists config_snapshots (
-                    id integer primary key autoincrement,
-                    run_id integer not null references collector_runs(id),
-                    asset_id integer references canonical_assets(id),
-                    source_id integer references collector_sources(id),
-                    snapshot_type text not null,
-                    checksum text not null,
-                    payload_json text not null,
-                    created_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists config_diffs (
-                    id integer primary key autoincrement,
-                    baseline_snapshot_id integer references config_snapshots(id),
-                    candidate_snapshot_id integer references config_snapshots(id),
-                    asset_id integer references canonical_assets(id),
-                    diff_type text not null,
-                    severity text not null,
-                    summary text not null,
-                    payload_json text not null,
-                    created_at text not null
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists restore_exercises (
-                    id integer primary key autoincrement,
-                    run_id integer references collector_runs(id),
-                    asset_id integer references canonical_assets(id),
-                    source_id integer references collector_sources(id),
-                    exercise_id text not null,
-                    status text not null,
-                    target text not null,
-                    backup_artifact_id text not null,
-                    validation_json text not null,
-                    evidence_json text not null,
-                    started_at text not null,
-                    completed_at text not null,
-                    client_id text
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists hardening_runs (
-                    id integer primary key autoincrement,
-                    status text not null,
-                    expected_check_count integer not null,
-                    started_at text not null,
-                    completed_at text not null default ''
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists hardening_check_results (
-                    id integer primary key autoincrement,
-                    run_id integer not null references hardening_runs(id) on delete cascade,
-                    check_id text not null,
-                    title text not null,
-                    scope text not null,
-                    severity text not null,
-                    status text not null,
-                    evidence_json text not null,
-                    remediation_hint text,
-                    unique(run_id, check_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists execution_runs (
-                    id integer primary key autoincrement,
-                    run_kind text not null,
-                    source_run_id integer,
-                    actor text not null,
-                    client_id text,
-                    status text not null,
-                    started_at text not null,
-                    finished_at text not null,
-                    trigger_source text not null default '',
-                    metadata_json text not null default '{}'
-                )
-                """
-            )
-            for column_name, definition in (
-                ("run_kind", "text not null default 'workflow'"),
-                ("source_run_id", "integer"),
-                ("actor", "text not null default 'system'"),
-                ("client_id", "text"),
-                ("status", "text not null default 'unknown'"),
-                ("started_at", "text not null default ''"),
-                ("finished_at", "text not null default ''"),
-                ("trigger_source", "text not null default ''"),
-                ("metadata_json", "text not null default '{}'"),
-            ):
-                self._ensure_column(connection, "execution_runs", column_name, definition)
-            connection.execute(
-                """
-                create table if not exists execution_steps (
-                    id integer primary key autoincrement,
-                    execution_run_id integer not null
-                      references execution_runs(id) on delete cascade,
-                    ordinal integer not null,
-                    kind text not null,
-                    name text not null,
-                    status text not null,
-                    started_at text not null,
-                    finished_at text not null,
-                    input_digest text not null,
-                    output_digest text not null,
-                    input_json text not null,
-                    output_json text not null,
-                    error_detail text not null default ''
-                )
-                """
-            )
-            for column_name, definition in (
-                ("execution_run_id", "integer"),
-                ("ordinal", "integer not null default 0"),
-                ("kind", "text not null default 'unknown'"),
-                ("name", "text not null default ''"),
-                ("status", "text not null default 'unknown'"),
-                ("started_at", "text not null default ''"),
-                ("finished_at", "text not null default ''"),
-                ("input_digest", "text not null default ''"),
-                ("output_digest", "text not null default ''"),
-                ("input_json", "text not null default '{}'"),
-                ("output_json", "text not null default '{}'"),
-                ("error_detail", "text not null default ''"),
-            ):
-                self._ensure_column(connection, "execution_steps", column_name, definition)
-            connection.execute(
-                """
-                create table if not exists execution_artifacts (
-                    id integer primary key autoincrement,
-                    execution_run_id integer not null
-                      references execution_runs(id) on delete cascade,
-                    step_ordinal integer,
-                    name text not null,
-                    media_type text not null,
-                    byte_size integer not null,
-                    sha256 text not null,
-                    storage_path text not null
-                )
-                """
-            )
-            for column_name, definition in (
-                ("execution_run_id", "integer"),
-                ("step_ordinal", "integer"),
-                ("name", "text not null default ''"),
-                ("media_type", "text not null default 'application/octet-stream'"),
-                ("byte_size", "integer not null default 0"),
-                ("sha256", "text not null default ''"),
-                ("storage_path", "text not null default ''"),
-            ):
-                self._ensure_column(connection, "execution_artifacts", column_name, definition)
-            self._backfill_agent_revisions(connection)
+            MigrationRunner(connection).run(
+                (Migration(0, "baseline", self._apply_baseline_migration),)
+            )
+            self._apply_startup_repairs(connection)
+
+    def _apply_baseline_migration(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists tickets (
+                id text primary key,
+                client text not null,
+                subject text not null,
+                body text not null,
+                priority text not null,
+                status text not null,
+                client_id text,
+                requester_id text,
+                created_at text not null default '',
+                updated_at text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists ticket_status_history (
+                id integer primary key autoincrement,
+                ticket_id text not null,
+                client_id text,
+                from_status text not null default '',
+                to_status text not null,
+                changed_at text not null,
+                source text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_ticket_status_history_scope
+            on ticket_status_history (client_id, changed_at, ticket_id)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists ticket_notes (
+                id integer primary key autoincrement,
+                ticket_id text not null,
+                client_id text not null,
+                author text not null,
+                body text not null,
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists end_user_messages (
+                id integer primary key autoincrement,
+                ticket_id text not null,
+                client_id text not null,
+                requester_id text not null,
+                author_role text not null default 'requester',
+                author_id text not null default '',
+                body text not null,
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_end_user_messages_scope
+            on end_user_messages (client_id, requester_id, ticket_id, id)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists approvals (
+                ticket_id text primary key,
+                status text not null,
+                comment text not null default '',
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists audit_events (
+                id integer primary key autoincrement,
+                event_type text not null,
+                subject_id text not null,
+                detail text not null,
+                created_at text not null,
+                client_id text,
+                approver_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists technician_chat_sessions (
+                id text primary key,
+                client_id text not null,
+                principal_id text not null,
+                status text not null default 'active',
+                ticket_id text,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists technician_chat_messages (
+                id integer primary key autoincrement,
+                session_id text not null,
+                role text not null,
+                message text not null,
+                action_id text,
+                status text not null,
+                ticket_id text,
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_technician_chat_sessions_scope
+            on technician_chat_sessions (client_id, principal_id, updated_at)
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_technician_chat_messages_session
+            on technician_chat_messages (session_id, id)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists approval_requests (
+                id integer primary key autoincrement,
+                subject_id text not null,
+                action_type text not null,
+                payload_json text not null,
+                status text not null,
+                comment text not null,
+                created_at text not null,
+                updated_at text not null,
+                execution_status text not null default 'not_started',
+                execution_message text not null default '',
+                executed_at text not null default '',
+                execution_result_json text not null default '{}',
+                client_id text,
+                approver_id text,
+                expires_at text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists event_history (
+                id integer primary key autoincrement,
+                event_type text not null,
+                subject_id text not null,
+                status text not null,
+                message text not null,
+                payload_json text not null,
+                created_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists event_deliveries (
+                id integer primary key autoincrement,
+                idempotency_key text not null unique,
+                event_type text not null,
+                entity_type text not null,
+                entity_id text not null,
+                payload_json text not null,
+                status text not null,
+                matched_agent_count integer not null default 0,
+                agent_ids_json text not null default '[]',
+                run_ids_json text not null default '[]',
+                matched_playbook_count integer not null default 0,
+                playbook_ids_json text not null default '[]',
+                playbook_run_ids_json text not null default '[]',
+                playbook_attempts_json text not null default '{}',
+                error_detail text not null default '',
+                received_at text not null,
+                processed_at text not null default '',
+                client_id text,
+                agent_attempts_json text not null default '{}',
+                retry_count integer not null default 0,
+                max_retries integer not null default 3,
+                retry_delay_seconds integer not null default 60,
+                next_retry_at text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists workflow_runs (
+                id integer primary key autoincrement,
+                template_id text not null,
+                ticket_id text not null,
+                status text not null,
+                message text not null,
+                approval_request_id integer,
+                client_id text,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists smart_action_runs (
+                id integer primary key autoincrement,
+                action_id text not null,
+                actor text not null,
+                status text not null,
+                payload_digest text not null,
+                output_json text not null,
+                evidence_json text not null,
+                approval_id integer,
+                created_at text not null,
+                updated_at text not null,
+                client_id text,
+                error_detail text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists rmm_execution_scopes (
+                execution_id text not null,
+                provider_id text not null,
+                script_id text not null,
+                device_id text not null,
+                client_id text not null,
+                created_at text not null,
+                primary key (execution_id, provider_id, client_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists template_gallery_entries (
+                id text primary key,
+                source_template_id text not null,
+                name text not null,
+                trigger text not null,
+                description text not null,
+                action_type text not null,
+                approval_required integer not null,
+                risk_level text not null,
+                preview_fields_json text not null,
+                provenance text not null,
+                version integer not null default 1,
+                created_at text not null,
+                updated_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists template_gallery_revisions (
+                id integer primary key autoincrement,
+                gallery_id text not null,
+                version integer not null,
+                definition_json text not null,
+                created_at text not null,
+                client_id text,
+                unique(gallery_id, version)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists msp_playbook_entries (
+                id text primary key,
+                source_playbook_id text not null,
+                definition_json text not null,
+                provenance text not null,
+                enabled integer not null default 1,
+                version integer not null default 1,
+                created_at text not null,
+                updated_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists msp_playbook_revisions (
+                id integer primary key autoincrement,
+                playbook_id text not null,
+                version integer not null,
+                snapshot_json text not null,
+                created_at text not null,
+                client_id text,
+                unique(playbook_id, version)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists msp_playbook_subscriptions (
+                id text primary key,
+                playbook_id text not null,
+                event_type text not null,
+                client_id text not null,
+                input_mapping_json text not null default '{}',
+                enabled integer not null default 1,
+                created_at text not null,
+                updated_at text not null,
+                unique(playbook_id, event_type, client_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists scheduled_jobs (
+                id integer primary key autoincrement,
+                template_id text not null,
+                cron text not null,
+                params_json text not null,
+                paused integer not null default 0,
+                created_at text not null,
+                updated_at text not null,
+                client_id text,
+                job_kind text not null default 'workflow',
+                agent_id text,
+                entity_id text,
+                schedule_type text not null default 'cron',
+                interval_seconds integer,
+                run_at text,
+                timezone text not null default 'UTC'
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists agent_definitions (
+                id text primary key,
+                name text not null,
+                description text not null,
+                enabled integer not null default 1,
+                trigger text not null,
+                entity_type text not null,
+                filters_json text not null,
+                enabled_tools_json text not null,
+                steps_json text not null,
+                max_steps integer not null,
+                execution_timeout_seconds real not null,
+                client_id text,
+                version integer not null default 1,
+                created_at text not null,
+                updated_at text not null,
+                run_once_per_entity integer not null default 1,
+                depends_on_agent_ids_json text not null default '[]',
+                execution_window_start text,
+                execution_window_end text,
+                execution_window_timezone text not null default 'UTC',
+                context_sources_json text not null default '[]',
+                approval_expiry_seconds integer,
+                result_aware integer not null default 0,
+                approval_required_tools_json text not null default '[]',
+                approval_rules_json text not null default '[]'
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists solution_blueprints (
+                id text primary key,
+                client_id text not null,
+                created_by text not null,
+                payload_json text not null,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists consultant_discovery_sessions (
+                id text primary key,
+                client_id text not null,
+                principal_id text not null,
+                status text not null default 'active',
+                answers_json text not null,
+                transcript_json text not null,
+                blueprint_id text,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_consultant_discovery_sessions_scope
+            on consultant_discovery_sessions (client_id, principal_id, updated_at)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists agent_definition_revisions (
+                id integer primary key autoincrement,
+                agent_id text not null,
+                version integer not null,
+                definition_json text not null,
+                created_at text not null,
+                client_id text,
+                unique(agent_id, version)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists agent_runs (
+                id integer primary key autoincrement,
+                agent_id text not null,
+                entity_id text not null,
+                actor text not null,
+                status text not null,
+                current_step integer not null default 0,
+                state_json text not null,
+                started_at text not null,
+                finished_at text not null,
+                revision_version integer,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists agent_backfills (
+                id integer primary key autoincrement,
+                agent_id text not null,
+                entity_ids_json text not null,
+                input_json text not null,
+                max_concurrency integer not null default 1,
+                status text not null,
+                next_index integer not null default 0,
+                processed_count integer not null default 0,
+                succeeded_count integer not null default 0,
+                failed_count integer not null default 0,
+                run_ids_json text not null default '[]',
+                failed_entity_ids_json text not null default '[]',
+                actor text not null,
+                error_detail text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists knowledge_documents (
+                id integer primary key autoincrement,
+                path text not null unique,
+                title text not null,
+                kind text not null,
+                checksum text not null,
+                modified_at text not null,
+                chunk_count integer not null,
+                indexed_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists knowledge_chunks (
+                id integer primary key autoincrement,
+                document_id integer not null
+                  references knowledge_documents(id) on delete cascade,
+                chunk_index integer not null,
+                text text not null,
+                excerpt text not null,
+                unique(document_id, chunk_index)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create virtual table if not exists knowledge_chunks_fts
+            using fts5(chunk_id unindexed, title, path unindexed, text)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists reports (
+                id text primary key,
+                report_type text not null,
+                title text not null,
+                created_at text not null,
+                created_by text not null default '',
+                client_id text not null default '',
+                project_id text not null default '',
+                sections_json text not null,
+                metadata_json text not null default '{}'
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists founder_config (
+                id integer primary key check (id = 1),
+                lp_base_url text not null,
+                lp_project_id text not null,
+                token_vault_ref text not null,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists founder_artifacts (
+                artifact_id text primary key,
+                project_id text not null,
+                bundle_hash text not null,
+                bundle_json text not null,
+                created_at text not null,
+                previewed_at text not null default '',
+                uploaded_at text not null default '',
+                remote_scan_id text not null default '',
+                remote_scan_status text not null default '',
+                remote_scan_json text not null default '{}',
+                latest_report_reference text not null default '',
+                latest_report_json text not null default '{}',
+                polling_status text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists founder_artifact_previews (
+                artifact_id text primary key,
+                previewed_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists collector_sources (
+                id integer primary key autoincrement,
+                module_id text not null,
+                name text not null,
+                config_json text not null,
+                config_hash text not null,
+                created_at text not null,
+                updated_at text not null,
+                client_id text,
+                unique(module_id, config_hash, client_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists collector_runs (
+                id integer primary key autoincrement,
+                module_id text not null,
+                source_id integer references collector_sources(id),
+                status text not null,
+                mode text not null,
+                scope_json text not null,
+                preview_json text not null,
+                result_json text not null default '{}',
+                started_at text not null,
+                completed_at text not null default '',
+                client_id text,
+                actor_id text,
+                report_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists canonical_assets (
+                id integer primary key autoincrement,
+                canonical_id text not null unique,
+                asset_type text not null,
+                display_name text not null,
+                client_id text,
+                owner text not null default '',
+                source_module text not null default '',
+                source_id text not null default '',
+                confidence real not null default 1.0,
+                first_seen text not null,
+                last_seen text not null,
+                attributes_json text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists asset_observations (
+                id integer primary key autoincrement,
+                asset_id integer not null references canonical_assets(id),
+                run_id integer not null references collector_runs(id),
+                source_id integer references collector_sources(id),
+                observed_at text not null,
+                observation_type text not null,
+                payload_json text not null,
+                confidence real not null default 1.0
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists config_snapshots (
+                id integer primary key autoincrement,
+                run_id integer not null references collector_runs(id),
+                asset_id integer references canonical_assets(id),
+                source_id integer references collector_sources(id),
+                snapshot_type text not null,
+                checksum text not null,
+                payload_json text not null,
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists config_diffs (
+                id integer primary key autoincrement,
+                baseline_snapshot_id integer references config_snapshots(id),
+                candidate_snapshot_id integer references config_snapshots(id),
+                asset_id integer references canonical_assets(id),
+                diff_type text not null,
+                severity text not null,
+                summary text not null,
+                payload_json text not null,
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists restore_exercises (
+                id integer primary key autoincrement,
+                run_id integer references collector_runs(id),
+                asset_id integer references canonical_assets(id),
+                source_id integer references collector_sources(id),
+                exercise_id text not null,
+                status text not null,
+                target text not null,
+                backup_artifact_id text not null,
+                validation_json text not null,
+                evidence_json text not null,
+                started_at text not null,
+                completed_at text not null,
+                client_id text
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists hardening_runs (
+                id integer primary key autoincrement,
+                status text not null,
+                expected_check_count integer not null,
+                started_at text not null,
+                completed_at text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists hardening_check_results (
+                id integer primary key autoincrement,
+                run_id integer not null references hardening_runs(id) on delete cascade,
+                check_id text not null,
+                title text not null,
+                scope text not null,
+                severity text not null,
+                status text not null,
+                evidence_json text not null,
+                remediation_hint text,
+                unique(run_id, check_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists execution_runs (
+                id integer primary key autoincrement,
+                run_kind text not null,
+                source_run_id integer,
+                actor text not null,
+                client_id text,
+                status text not null,
+                started_at text not null,
+                finished_at text not null,
+                trigger_source text not null default '',
+                metadata_json text not null default '{}'
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists execution_steps (
+                id integer primary key autoincrement,
+                execution_run_id integer not null
+                  references execution_runs(id) on delete cascade,
+                ordinal integer not null,
+                kind text not null,
+                name text not null,
+                status text not null,
+                started_at text not null,
+                finished_at text not null,
+                input_digest text not null,
+                output_digest text not null,
+                input_json text not null,
+                output_json text not null,
+                error_detail text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists execution_artifacts (
+                id integer primary key autoincrement,
+                execution_run_id integer not null
+                  references execution_runs(id) on delete cascade,
+                step_ordinal integer,
+                name text not null,
+                media_type text not null,
+                byte_size integer not null,
+                sha256 text not null,
+                storage_path text not null
+            )
+            """
+        )
+
+    def _apply_startup_repairs(self, connection: sqlite3.Connection) -> None:
+        """Apply additive compatibility repairs and data backfills on every startup."""
+        self._ensure_column(connection, "tickets", "client_id", "text")
+        self._ensure_column(connection, "tickets", "requester_id", "text")
+        self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
+        self._ensure_column(connection, "tickets", "updated_at", "text not null default ''")
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            select t.id, t.client_id, '', t.status,
+                   case when t.created_at <> '' then t.created_at else t.updated_at end,
+                   'existing_snapshot'
+            from tickets t
+            where not exists (
+                select 1 from ticket_status_history h where h.ticket_id = t.id
+            )
+            """
+        )
+        self._ensure_column(connection, "end_user_messages", "author_role", "text not null default 'requester'")
+        self._ensure_column(connection, "end_user_messages", "author_id", "text not null default ''")
+        self._ensure_column(connection, "approvals", "comment", "text not null default ''")
+        self._ensure_column(
+            connection,
+            "approval_requests",
+            "execution_status",
+            "text not null default 'not_started'",
+        )
+        self._ensure_column(
+            connection,
+            "approval_requests",
+            "execution_message",
+            "text not null default ''",
+        )
+        self._ensure_column(
+            connection,
+            "approval_requests",
+            "executed_at",
+            "text not null default ''",
+        )
+        self._ensure_column(
+            connection,
+            "approval_requests",
+            "execution_result_json",
+            "text not null default '{}'",
+        )
+        self._ensure_column(connection, "event_history", "client_id", "text")
+        self._ensure_column(connection, "event_deliveries", "matched_playbook_count", "integer not null default 0")
+        self._ensure_column(connection, "event_deliveries", "playbook_ids_json", "text not null default '[]'")
+        self._ensure_column(connection, "event_deliveries", "playbook_run_ids_json", "text not null default '[]'")
+        self._ensure_column(connection, "event_deliveries", "playbook_attempts_json", "text not null default '{}'")
+        self._ensure_column(connection, "consultant_discovery_sessions", "blueprint_id", "text")
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "context_sources_json",
+            "text not null default '[]'",
+        )
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "approval_required_tools_json",
+            "text not null default '[]'",
+        )
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "approval_rules_json",
+            "text not null default '[]'",
+        )
+        self._ensure_column(connection, "agent_runs", "revision_version", "integer")
+        self._ensure_column(connection, "agent_backfills", "max_concurrency", "integer not null default 1")
+        self._ensure_column(connection, "audit_events", "client_id", "text")
+        self._ensure_column(connection, "audit_events", "approver_id", "text")
+        self._ensure_column(connection, "approval_requests", "client_id", "text")
+        self._ensure_column(connection, "approval_requests", "approver_id", "text")
+        self._ensure_column(connection, "approval_requests", "expires_at", "text")
+        self._backfill_approval_expiry(connection)
+        self._ensure_column(connection, "workflow_runs", "client_id", "text")
+        self._ensure_column(connection, "workflow_runs", "template_version", "integer")
+        self._ensure_column(connection, "scheduled_jobs", "client_id", "text")
+        self._ensure_column(connection, "scheduled_jobs", "job_kind", "text not null default 'workflow'")
+        self._ensure_column(connection, "scheduled_jobs", "agent_id", "text")
+        self._ensure_column(connection, "scheduled_jobs", "entity_id", "text")
+        self._ensure_column(connection, "scheduled_jobs", "schedule_type", "text not null default 'cron'")
+        self._ensure_column(connection, "scheduled_jobs", "interval_seconds", "integer")
+        self._ensure_column(connection, "scheduled_jobs", "run_at", "text")
+        self._ensure_column(
+            connection,
+            "scheduled_jobs",
+            "timezone",
+            "text not null default 'UTC'",
+        )
+        self._ensure_column(
+            connection,
+            "event_deliveries",
+            "agent_attempts_json",
+            "text not null default '{}'",
+        )
+        self._ensure_column(
+            connection,
+            "event_deliveries",
+            "retry_count",
+            "integer not null default 0",
+        )
+        self._ensure_column(
+            connection,
+            "event_deliveries",
+            "max_retries",
+            f"integer not null default {DEFAULT_EVENT_MAX_RETRIES}",
+        )
+        self._ensure_column(
+            connection,
+            "event_deliveries",
+            "retry_delay_seconds",
+            f"integer not null default {DEFAULT_EVENT_RETRY_DELAY_SECONDS}",
+        )
+        self._ensure_column(
+            connection,
+            "event_deliveries",
+            "next_retry_at",
+            "text not null default ''",
+        )
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "run_once_per_entity",
+            "integer not null default 1",
+        )
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "depends_on_agent_ids_json",
+            "text not null default '[]'",
+        )
+        self._ensure_column(connection, "agent_definitions", "execution_window_start", "text")
+        self._ensure_column(connection, "agent_definitions", "execution_window_end", "text")
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "execution_window_timezone",
+            "text not null default 'UTC'",
+        )
+        self._ensure_column(connection, "agent_definitions", "approval_expiry_seconds", "integer")
+        self._ensure_column(
+            connection,
+            "agent_definitions",
+            "result_aware",
+            "integer not null default 0",
+        )
+        self._ensure_column(connection, "knowledge_documents", "client_id", "text")
+        self._ensure_column(connection, "smart_action_runs", "client_id", "text")
+        self._ensure_column(connection, "smart_action_runs", "error_detail", "text not null default ''")
+        self._ensure_column(connection, "template_gallery_entries", "instructions", "text not null default ''")
+        self._ensure_column(connection, "template_gallery_entries", "enabled", "integer not null default 1")
+        self._ensure_column(connection, "template_gallery_entries", "definition_json", "text not null default '{}'")
+        self._backfill_template_gallery_revisions(connection)
+        self._ensure_column(connection, "reports", "evidence_status", "text not null default 'not_run'")
+        self._ensure_column(connection, "founder_artifacts", "previewed_at", "text not null default ''")
+        self._ensure_column(connection, "founder_artifacts", "uploaded_at", "text not null default ''")
+        self._ensure_column(connection, "founder_artifacts", "remote_scan_id", "text not null default ''")
+        self._ensure_column(connection, "founder_artifacts", "remote_scan_status", "text not null default ''")
+        self._ensure_column(connection, "founder_artifacts", "remote_scan_json", "text not null default '{}'")
+        self._ensure_column(
+            connection,
+            "founder_artifacts",
+            "latest_report_reference",
+            "text not null default ''",
+        )
+        self._ensure_column(connection, "founder_artifacts", "latest_report_json", "text not null default '{}'")
+        self._ensure_column(connection, "founder_artifacts", "polling_status", "text not null default ''")
+        for column_name, definition in (
+            ("run_kind", "text not null default 'workflow'"),
+            ("source_run_id", "integer"),
+            ("actor", "text not null default 'system'"),
+            ("client_id", "text"),
+            ("status", "text not null default 'unknown'"),
+            ("started_at", "text not null default ''"),
+            ("finished_at", "text not null default ''"),
+            ("trigger_source", "text not null default ''"),
+            ("metadata_json", "text not null default '{}'"),
+        ):
+            self._ensure_column(connection, "execution_runs", column_name, definition)
+        for column_name, definition in (
+            ("execution_run_id", "integer"),
+            ("ordinal", "integer not null default 0"),
+            ("kind", "text not null default 'unknown'"),
+            ("name", "text not null default ''"),
+            ("status", "text not null default 'unknown'"),
+            ("started_at", "text not null default ''"),
+            ("finished_at", "text not null default ''"),
+            ("input_digest", "text not null default ''"),
+            ("output_digest", "text not null default ''"),
+            ("input_json", "text not null default '{}'"),
+            ("output_json", "text not null default '{}'"),
+            ("error_detail", "text not null default ''"),
+        ):
+            self._ensure_column(connection, "execution_steps", column_name, definition)
+        for column_name, definition in (
+            ("execution_run_id", "integer"),
+            ("step_ordinal", "integer"),
+            ("name", "text not null default ''"),
+            ("media_type", "text not null default 'application/octet-stream'"),
+            ("byte_size", "integer not null default 0"),
+            ("sha256", "text not null default ''"),
+            ("storage_path", "text not null default ''"),
+        ):
+            self._ensure_column(connection, "execution_artifacts", column_name, definition)
+        self._backfill_agent_revisions(connection)
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
