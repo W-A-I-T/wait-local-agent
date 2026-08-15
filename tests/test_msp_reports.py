@@ -200,7 +200,13 @@ def test_report_generation_rejects_invalid_period_and_unbound_viewer(settings) -
     )
     assert invalid.status_code == 400
 
-    secured = replace(settings, demo_mode=False, viewer_token="viewer-token", client_id="")
+    secured = replace(
+        settings,
+        demo_mode=False,
+        admin_token="admin-token",
+        viewer_token="viewer-token",
+        client_id="",
+    )
     unbound = TestClient(create_app(secured)).post(
         "/reports/qbr",
         headers={"Authorization": "Bearer viewer-token"},

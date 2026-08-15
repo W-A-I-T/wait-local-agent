@@ -14,6 +14,17 @@ All notable changes to WAIT Local Agent will be documented in this file.
 ### Changed
 
 - SQLite backups use a WAL-safe snapshot for plain and encrypted round trips.
+- Non-demo appliances now default to `WAIT_DEMO_MODE=false` and refuse startup
+  without `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active `msp_admin`
+  principal credential.
+
+### Security
+
+- Explicit demo mode is bounded: provider writes and deployments remain
+  disabled, and `/secrets` returns HTTP 403.
+- Principal identity supports per-client roles and a global `msp_admin` role;
+  principal credentials are stored as SHA-256 hashes rather than raw
+  credentials.
 
 ## [1.1.1] - 2026-07-21
 

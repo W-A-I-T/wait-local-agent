@@ -135,7 +135,7 @@ class Settings:
     screenconnect_client_sessions_map_json: str = ""
     screenconnect_script_catalog_json: str = ""
     client_id: str = ""
-    demo_mode: bool = True
+    demo_mode: bool = False
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
     power_platform_workspace: Path = Path(".wait-local-agent/power-platform")
@@ -453,7 +453,7 @@ def load_settings() -> Settings:
             "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON", ""
         ),
         client_id=os.getenv("WAIT_CLIENT_ID", "").strip(),
-        demo_mode=_bool_env("WAIT_DEMO_MODE", True),
+        demo_mode=_bool_env("WAIT_DEMO_MODE", False),
         secrets_backend=backend,
         vault_path=vault_path,
         power_platform_workspace=Path(

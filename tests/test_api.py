@@ -554,6 +554,7 @@ def test_workflow_run_detail_hides_foreign_approval_payload(settings) -> None:
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
@@ -623,6 +624,7 @@ def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
@@ -688,6 +690,7 @@ def test_bound_technician_can_patch_in_scope_approval_payload(settings) -> None:
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
@@ -727,6 +730,7 @@ def test_bound_non_admin_approval_list_without_filter_is_tenant_scoped(settings)
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
@@ -840,9 +844,7 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
     assert connectors.status_code == 200
     assert connectors.json()[0]["id"] == "halopsa"
     assert any(connector["id"] == "hudu" for connector in connectors.json())
-    assert secrets.status_code == 200
-    assert any(secret["key"] == "WAIT_HALOPSA_BASE_URL" for secret in secrets.json())
-    assert any(secret["key"] == "WAIT_HUDU_API_KEY" for secret in secrets.json())
+    assert secrets.status_code == 403
     assert templates.status_code == 200
     assert len(templates.json()) == 24
     assert any(item["tool_id"] == "ticket-quality" for item in templates.json())
@@ -971,6 +973,7 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
             "demo_mode": False,
             "scheduler_enabled": True,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1012,6 +1015,7 @@ def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
             "demo_mode": False,
             "scheduler_enabled": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1125,6 +1129,7 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_i
             "demo_mode": False,
             "scheduler_enabled": True,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1571,6 +1576,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
             "demo_mode": False,
             "scheduler_enabled": True,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1925,6 +1931,7 @@ def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> No
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "beta",
+            "admin_token": "admin-token",
             "tech_token": "beta-token",
         }
     )
@@ -2174,6 +2181,7 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -2361,6 +2369,7 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -2643,6 +2652,7 @@ def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -2846,6 +2856,7 @@ def test_event_history_filters_by_client_id(settings) -> None:
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "viewer_token": "viewer-token",
             "tech_token": "tech-token",
         }
@@ -2975,6 +2986,7 @@ def test_nsight_task_run_now_is_exposed_and_approval_gated(settings) -> None:
     secure_settings = replace(
         settings,
         demo_mode=False,
+        admin_token="admin-token",
         tech_token="tech-token",
         viewer_token="viewer-token",
         client_id="acme",
@@ -3745,7 +3757,7 @@ def test_servicenow_connector_read_routes_and_audit(settings, monkeypatch) -> No
 
 
 def test_servicenow_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/servicenow/health")
     assert response.status_code == 401
 
@@ -3814,7 +3826,7 @@ def test_autotask_connector_read_routes_and_audit(settings, monkeypatch) -> None
 
 
 def test_autotask_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/autotask/health")
     assert response.status_code == 401
 
@@ -3878,7 +3890,7 @@ def test_itglue_connector_read_routes_and_audit(settings, monkeypatch) -> None:
 
 
 def test_itglue_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/itglue/health")
     assert response.status_code == 401
 
@@ -3926,7 +3938,7 @@ def test_confluence_connector_read_routes_and_audit(settings, monkeypatch) -> No
 
 
 def test_confluence_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/confluence/health")
     assert response.status_code == 401
 
@@ -4005,7 +4017,7 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
 
 
 def test_notion_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/notion/health")
     assert response.status_code == 401
 
@@ -4075,7 +4087,7 @@ def test_sharepoint_connector_read_routes_and_audit(settings, monkeypatch) -> No
 
 
 def test_sharepoint_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     response = TestClient(create_app(settings)).get("/connectors/sharepoint/health")
     assert response.status_code == 401
 
@@ -4270,7 +4282,7 @@ def test_m365_graph_identity_routes_and_audit(settings, monkeypatch) -> None:
 
 
 def test_m365_graph_routes_keep_viewer_auth_boundary(settings) -> None:
-    settings = replace(settings, demo_mode=False, viewer_token="viewer-secret")
+    settings = replace(settings, demo_mode=False, admin_token="admin-token", viewer_token="viewer-secret")
     client = TestClient(create_app(settings))
     assert client.get("/connectors/m365/health").status_code == 401
     assert client.get("/connectors/m365/groups").status_code == 401
@@ -6154,6 +6166,7 @@ def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
         }
     )
@@ -6180,6 +6193,7 @@ def test_guided_discovery_api_persists_turns_with_tenant_scope(settings) -> None
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "beta",
+            "admin_token": "admin-token",
             "tech_token": "beta-token",
         }
     )
@@ -6283,6 +6297,7 @@ def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(set
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }

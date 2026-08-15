@@ -163,19 +163,27 @@ alerts, script discovery, and command polling remain unavailable.
 
 ## API authentication
 
-Current implementation:
-
-- `WAIT_DEMO_MODE=true` and empty `WAIT_API_TOKEN` keeps the local demo path open.
-- Setting `WAIT_DEMO_MODE=false` requires `WAIT_API_TOKEN`.
-- Any configured token requires `Authorization: Bearer <token>` for API requests.
-- Missing or invalid tokens return HTTP 401.
+`WAIT_DEMO_MODE` defaults to `false`. A non-demo appliance fails during startup
+unless at least one admin credential is available: `WAIT_ADMIN_TOKEN`,
+`WAIT_API_TOKEN`, or an active persisted `msp_admin` principal credential.
+Missing or invalid request credentials return HTTP 401.
 
 Production-like local installs should set:
 
 ```text
 WAIT_DEMO_MODE=false
-WAIT_API_TOKEN=<strong-local-token>
+WAIT_ADMIN_TOKEN=<strong-local-admin-token>
 ```
+
+`WAIT_API_TOKEN` remains an admin-equivalent bootstrap credential. Instead of
+an environment token, an operator may provision a principal credential with
+per-client roles. A principal may also have the global `msp_admin` role; only
+that global role grants cross-client administration. Principal credentials are
+stored as SHA-256 hashes, never as raw bearer credentials.
+
+When `WAIT_DEMO_MODE=true` is explicitly selected, the runtime uses a bounded
+demo client. Provider writes and Power Platform deployments remain disabled,
+and both `/secrets` endpoints return HTTP 403.
 
 End-user support requires a separate token and explicit fixed scope:
 

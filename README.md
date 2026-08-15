@@ -136,7 +136,7 @@ an external system is unavailable or rejects the request.
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
 cd wait-local-agent
-docker compose up --build
+WAIT_DEMO_MODE=true docker compose up --build
 ```
 
 Open the dashboard at `http://127.0.0.1:5173`. The local demo keeps probing,
@@ -166,6 +166,18 @@ For the deterministic, credential-free walkthrough, run
 The CLI and Docker paths use the same local data model. You can start with the
 demo, inspect the API and dashboard, and then move to a configured install
 without creating a second runtime or migrating your workflow definitions.
+
+### Operator authentication boundary
+
+`WAIT_DEMO_MODE` defaults to `false`. A non-demo appliance fails to start
+unless it has `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active persisted
+`msp_admin` principal credential. Explicit demo mode is bounded to the demo
+client: provider writes and deployments are disabled, and `/secrets` returns
+HTTP 403.
+
+The identity model supports principals with roles assigned per client and a
+global `msp_admin` role for cross-client administration. Principal credentials
+are stored as SHA-256 hashes; raw credentials are not persisted.
 
 ## Connectors
 
@@ -231,7 +243,8 @@ specific environment. [Read the open-core boundary](docs/concepts/open-core-boun
 > Safety default: fresh installs are read-first and local-first. Live connector writes require `WAIT_ALLOW_WRITE_ACTIONS=true`, outbound connector connection checks must be explicitly enabled, and HaloPSA writes still require an approved draft.
 
 These defaults are part of the product boundary, not a substitute for testing
-your own provider configuration. Generated Power Platform output is a
+your own provider configuration. Non-demo startup also requires an admin
+credential as described above. Generated Power Platform output is a
 credential-free source package for a later local operation; it is not provider
 import, live verification, or deployment evidence.
 

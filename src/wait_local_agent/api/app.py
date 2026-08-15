@@ -214,6 +214,7 @@ from wait_local_agent.providers import (
 from wait_local_agent.rbac import (
     AuthContext,
     Role,
+    admin_credential_configured,
     require_end_user,
     require_role,
     resolve_auth_context,
@@ -894,7 +895,18 @@ class SecretSetRequest(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
+    if active_settings.demo_mode:
+        active_settings = replace(
+            active_settings,
+            allow_write_actions=False,
+            allow_power_platform_deployment=False,
+        )
     store = Store(active_settings.data_path)
+    if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
+        raise RuntimeError(
+            "refusing non-demo startup without an admin credential; configure WAIT_ADMIN_TOKEN or "
+            "WAIT_API_TOKEN, or provision an active msp_admin principal credential"
+        )
     service = TicketIntelligenceService(
         store=store,
         settings=active_settings,
@@ -1045,6 +1057,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "role": context.role.label(),
             "client_id": context.client_id,
+            "client_ids": sorted(context.client_ids),
+            "principal_id": context.principal_id,
+            "is_msp_admin": context.is_msp_admin,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
         }
@@ -1197,7 +1212,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=400, content={"detail": "MCP request must be JSON"})
         request_id = message.get("id") if isinstance(message, dict) else None
         try:
-            context = resolve_auth_context(active_settings, request.headers.get("authorization"))
+            context = resolve_auth_context(
+                active_settings,
+                request.headers.get("authorization"),
+                store,
+            )
             protocol_header = request.headers.get("mcp-protocol-version")
             if protocol_header and protocol_header not in {MCP_PROTOCOL_VERSION, "2025-03-26"}:
                 raise McpProtocolError(-32600, "unsupported MCP protocol version")
@@ -2778,10 +2797,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/secrets")
     def secrets(_: AdminAccess) -> list[dict[str, object]]:
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="secrets are unavailable in demo mode")
         return [asdict(secret) for secret in list_secret_records(active_settings)]
 
     @app.post("/secrets")
     def set_secret(payload: SecretSetRequest, _: AdminAccess) -> dict[str, str]:
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="secrets are unavailable in demo mode")
         try:
             SecretVault.initialize(active_settings.vault_path).set(payload.name, payload.value)
         except (SecretVaultError, ValueError) as exc:

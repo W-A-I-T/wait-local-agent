@@ -96,7 +96,7 @@ def test_demo_mode_with_no_tokens_preserves_existing_access(settings) -> None:
     export = client.get("/audit-events/export")
 
     assert health.status_code == 200
-    assert secrets.status_code == 200
+    assert secrets.status_code == 403
     assert export.status_code == 200
 
 

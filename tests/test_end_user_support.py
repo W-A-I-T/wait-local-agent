@@ -30,6 +30,7 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         end_user_brand_accent_color="#123456",
         end_user_brand_surface_color="#abcdef",
         client_id="acme",
+        admin_token="admin-token",
         tech_token="tech-token",
     )
     client = TestClient(create_app(enabled))
@@ -122,6 +123,7 @@ def test_end_user_branding_rejects_remote_assets_and_invalid_colors(settings) ->
         end_user_token="end-user-token",
         end_user_client_id="acme",
         end_user_user_id="user-1",
+        admin_token="admin-token",
         end_user_brand_logo_data_uri="https://example.com/logo.png",
         end_user_brand_accent_color="red",
         end_user_brand_surface_color="var(--unsafe)",
@@ -237,6 +239,7 @@ def test_end_user_halopsa_sync_rejects_invalid_or_out_of_scope_targets(settings,
         end_user_client_id="acme",
         end_user_user_id="user-1",
         client_id="acme",
+        admin_token="admin-token",
         tech_token="tech-token",
         halopsa_client_map_json='{"acme":"halo-acme"}',
     )
@@ -317,6 +320,7 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
         end_user_token="end-user-token",
         end_user_client_id="acme",
         end_user_user_id="user-1",
+        admin_token="admin-token",
     )
     client = TestClient(create_app(enabled))
     created = client.post(
@@ -426,6 +430,7 @@ def test_end_user_messages_do_not_expose_internal_ticket_notes(settings) -> None
         end_user_token="end-user-token",
         end_user_client_id="acme",
         end_user_user_id="user-1",
+        admin_token="admin-token",
     )
     client = TestClient(create_app(enabled))
     created = client.post(
