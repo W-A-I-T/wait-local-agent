@@ -83,11 +83,13 @@ Do not tag a public release if any critical validation command fails, secrets ar
 
 Before publishing a release, public branch, or public pull request, run the
 release script or its backend and UI checks separately, then confirm that
-`.env.example`, the README, status, roadmap, and architecture documentation
-match the shipped interface. Keep optional OCR and Qdrant behavior clearly
-optional and disabled by default, keep Hudu read-only, and verify that
-approval payload preview/edit/approve/reject behavior matches the runtime.
+`.env.example`, the README, CHANGELOG, roadmap, and architecture documentation
+match the shipped interface. Keep optional Docling OCR and Qdrant behavior
+clearly optional and disabled by default, keep Hudu read-only, and verify that
+approval payload preview/edit/approve/reject behavior, API authentication, and
+the local vault documentation match the runtime.
 
 Review docs, workflows, issue templates, release notes, and public text for
 secrets, client data, unsupported capability claims, and implementation
-attribution. Changes to dependencies also require a license inventory.
+attribution. Confirm that no generated footer or implementation credit line is
+present. Changes to dependencies also require a license inventory.

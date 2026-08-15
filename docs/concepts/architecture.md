@@ -35,6 +35,38 @@ installed packs may add separately governed capabilities, but generated
 Power Platform output remains a source package for a later local PAC operation,
 not provider import or deployment evidence.
 
+The runtime serves two related lanes without creating separate execution
+engines: MSP operators use tenant-scoped ticket, knowledge, connector, and
+workflow surfaces, while founder and consultant routes provide bounded local
+project and solution artifacts. Optional pack implementations may extend those
+contracts, but the public core remains usable and inspectable on its own.
+
+## Provider and model policy
+
+- Provider and model configuration is appliance-wide configuration, not a
+  tenant authorization mechanism. Requests carrying tenant data remain
+  tenant-scoped before a provider is called.
+- Deterministic local behavior is the default. Local OpenAI-compatible
+  inference and remote fallback require explicit operator configuration and
+  opt-in flags; offline mode denies remote calls.
+- Provider input is bounded and redacted. Credentials, tenant authority, hidden
+  reasoning, and arbitrary tool commands are not passed to model providers.
+- Provider health is readiness evidence for the configured endpoint, not an
+  uptime, authorization, or service-level claim. Malformed or unavailable
+  providers remain explicit failures, and retries/fallbacks are bounded.
+
+HTTP probing, live writes, model inference, cloud fallback, and OCR are disabled
+by default. Enabling a flag does not bypass tenant scope, redaction, or the
+approval requirement for writes.
+
+## Connector contract
+
+Connector adapters expose bounded health and read operations, plus draft/action
+surfaces where a documented write is supported. Provider credentials and
+provider-scope identifiers are resolved by the guarded adapter boundary rather
+than accepted in action payloads. Any mutation still passes the shared
+approval, write-flag, tenant, redaction, and audit controls.
+
 ## Runtime
 
 - FastAPI API served by `wait-local-agent serve`

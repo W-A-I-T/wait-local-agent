@@ -174,8 +174,9 @@ preserved and extended through the shared runtime.
 - Complete technician notifications, optional end-user support, and
   white-label flows without a second chat or execution backend.
 
-The NeoAgent parity matrix is retained as an **MSP Operations capability
-comparison** and evidence index. It is not the master product roadmap.
+MSP Operations capability evidence remains distributed across the code-derived
+connector pages, architecture documentation, and focused tests. This roadmap
+is the product-direction source, not an evidence ledger.
 
 ## Evaluation / Governance
 
@@ -240,6 +241,5 @@ before they are represented as shipped capability.
 
 Every increment should identify the affected source paths, interface, tests,
 security boundaries, external prerequisites, and unsupported cases. The
-repository is coherent when `README.md`, this roadmap, `docs/status.md`, the
-architecture documents, the parity comparison, issue backlog, and live CI all
-describe the same verified behavior.
+repository is coherent when `README.md`, this roadmap, `CHANGELOG.md`, the
+architecture documents, and live CI all describe the same verified behavior.
