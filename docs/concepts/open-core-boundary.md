@@ -27,6 +27,19 @@ Do not add paid or proprietary pack internals here. That includes:
 
 Private pack work belongs in `W-A-I-T/wait-local-agent-packs` (https://github.com/W-A-I-T/wait-local-agent-packs — private) or another private repository.
 
+## Editions
+
+Community is the C$0 Apache 2.0 edition in this repository. It is genuinely
+useful for local-first execution and change governance, including use across
+multiple client environments; Apache licensing does not require payment for
+that multi-client use.
+
+Professional, MSP, and Enterprise are product framing for separately governed
+commercial packaging, support, deployment, or integration choices. They do not
+change the Community license or turn this repository's open-core runtime into
+an MSP-only product. Commercial availability, provider reach, and compliance
+readiness must be verified separately from this boundary document.
+
 ## Local install directory
 
 `packs/` is gitignored. It is reserved for local proprietary pack installs and should not be committed.

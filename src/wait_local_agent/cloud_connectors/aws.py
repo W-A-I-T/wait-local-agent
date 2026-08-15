@@ -319,7 +319,10 @@ class AwsInventoryConnector:
                     provider_outcome(
                         source_id,
                         exc,
-                        permission_hint="Grant the AWS read-only permissions listed in docs/cloud-permissions-aws.md.",
+                        permission_hint=(
+                            "Grant the AWS read-only permissions listed in "
+                            "docs/connectors/cloud-permissions-aws.md."
+                        ),
                     )
                 )
             else:

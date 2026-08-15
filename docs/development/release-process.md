@@ -1,4 +1,4 @@
-# Launch Checklist
+# Release Process
 
 Use this checklist before a public release tag or launch announcement.
 
@@ -64,11 +64,11 @@ gitleaks detect --source . --log-opts HEAD
 ## Launch assets
 
 - [x] README explains ready-now scope and staged roadmap.
-- [x] `docs/local-demo.md` is accurate.
-- [x] `docs/appliance-install.md` is accurate.
-- [x] `docs/security-model.md` reflects implemented auth, vault, redaction, and audit export.
-- [x] `docs/connector-setup.md` describes HaloPSA/Hudu setup without enabling writes by default.
-- [x] `docs/open-core-boundary.md` states public vs proprietary boundaries.
+- [x] `docs/getting-started/local-demo.md` is accurate.
+- [x] `docs/getting-started/quickstart-docker.md` is accurate.
+- [x] `docs/concepts/security-model.md` reflects implemented auth, vault, redaction, and audit export.
+- [x] `docs/connectors/README.md` and provider pages describe connector safety without enabling writes by default.
+- [x] `docs/concepts/open-core-boundary.md` states public vs proprietary boundaries.
 - [x] `CHANGELOG.md` includes the release entry.
 - [x] GitHub issue templates are present.
 - [x] Synthetic demo data is present under `demo/`.
@@ -78,3 +78,16 @@ gitleaks detect --source . --log-opts HEAD
 ## Release decision
 
 Do not tag a public release if any critical validation command fails, secrets are detected, or the open-core boundary is crossed.
+
+## Publication checks
+
+Before publishing a release, public branch, or public pull request, run the
+release script or its backend and UI checks separately, then confirm that
+`.env.example`, the README, status, roadmap, and architecture documentation
+match the shipped interface. Keep optional OCR and Qdrant behavior clearly
+optional and disabled by default, keep Hudu read-only, and verify that
+approval payload preview/edit/approve/reject behavior matches the runtime.
+
+Review docs, workflows, issue templates, release notes, and public text for
+secrets, client data, unsupported capability claims, and implementation
+attribution. Changes to dependencies also require a license inventory.

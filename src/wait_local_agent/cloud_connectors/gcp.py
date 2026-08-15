@@ -353,7 +353,10 @@ class GCPInventoryConnector:
                     provider_outcome(
                         "resourcemanager:projects",
                         exc,
-                        permission_hint="Grant the GCP read-only roles listed in docs/cloud-permissions-gcp.md.",
+                        permission_hint=(
+                            "Grant the GCP read-only roles listed in "
+                            "docs/connectors/cloud-permissions-gcp.md."
+                        ),
                     )
                 )
         project_ids = self._project_ids(config, project_records)
@@ -387,7 +390,10 @@ class GCPInventoryConnector:
                         provider_outcome(
                             f"{source_id}:{project_id}",
                             exc,
-                            permission_hint="Grant the GCP read-only roles listed in docs/cloud-permissions-gcp.md.",
+                            permission_hint=(
+                                "Grant the GCP read-only roles listed in "
+                                "docs/connectors/cloud-permissions-gcp.md."
+                            ),
                         )
                     )
         records.sort(key=lambda record: str(record["asset_id"]))

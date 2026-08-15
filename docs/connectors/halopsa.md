@@ -1,4 +1,9 @@
-# Connector Setup
+# HaloPSA and Connector Safety Setup
+
+This file retains the original connector setup guide's detailed safety and
+provider notes. Provider-specific entry points are also available in the
+neighboring files in this directory; the status matrix in
+[`README.md`](README.md) is the code-derived summary.
 
 WAIT Local Agent keeps connector surfaces conservative by default.
 

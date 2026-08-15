@@ -182,7 +182,7 @@ def test_update_status_route_requires_admin_and_caches_results(settings, monkeyp
 
 
 def test_doc_example_matches_implementation(settings) -> None:
-    doc = Path("docs/update-channel.md").read_text(encoding="utf-8")
+    doc = Path("docs/operations/updates.md").read_text(encoding="utf-8")
     match = re.search(r"```json\n(\{.*?\})\n```", doc, re.DOTALL)
     assert match is not None
     document = match.group(1).encode("utf-8")
