@@ -1475,7 +1475,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from tickets where {client_predicate} order by id",
+                f"select * from tickets where {client_predicate} order by id",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
@@ -1484,7 +1484,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from tickets where id = ? and {client_predicate}",
+                f"select * from tickets where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (ticket_id, *client_params),
             ).fetchone()
         return Ticket(**dict(row)) if row else None
@@ -1619,7 +1619,7 @@ class Store:
                 where id = ?
                   and {client_predicate}
                   and (? is null or principal_id = ?)
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
                     session_id,
                     *client_params,
@@ -1644,7 +1644,7 @@ class Store:
                 where {client_predicate}
                   and (? is null or principal_id = ?)
                 order by updated_at desc, id desc
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
                     *client_params,
                     safe_principal_id,
@@ -2513,7 +2513,7 @@ class Store:
         requests: list[ApprovalRequest] = []
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from approval_requests where {client_predicate} order by id desc",
+                f"select * from approval_requests where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
             for row in rows:
@@ -2611,7 +2611,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from audit_events where {client_predicate} order by id desc",
+                f"select * from audit_events where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
@@ -2620,7 +2620,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from event_history where {client_predicate} order by id desc",
+                f"select * from event_history where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [_event_history_from_row(row) for row in rows]
@@ -2916,7 +2916,7 @@ class Store:
                 where event_type = ? and entity_id = ?
                   and status in ('completed', 'failed')
                   and {client_predicate}
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (event_type, entity_id, *client_params),
             ).fetchall()
         return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
@@ -2936,7 +2936,7 @@ class Store:
                 select agent_ids_json from event_deliveries
                 where event_type = ? and entity_id = ? and status = 'completed'
                   and {client_predicate}
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (event_type, entity_id, *client_params),
             ).fetchall()
         return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
@@ -3019,7 +3019,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from workflow_runs where id = ? and {client_predicate}",
+                f"select * from workflow_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (run_id, *client_params),
             ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
@@ -3028,7 +3028,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from workflow_runs where {client_predicate} order by id desc",
+                f"select * from workflow_runs where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
@@ -3211,7 +3211,7 @@ class Store:
                 where id = ?
                   and {client_predicate}
                   and (? is null or principal_id = ?)
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
                     session_id,
                     *client_params,
@@ -5103,7 +5103,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from knowledge_documents where {client_predicate} order by title, path",
+                f"select * from knowledge_documents where {client_predicate} order by title, path",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [KnowledgeDocument(**dict(row)) for row in rows]
@@ -5144,7 +5144,7 @@ class Store:
                   and {client_predicate}
                 order by rank, d.title, c.chunk_index
                 limit ?
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (fts_query, *client_params, bounded_limit),
             ).fetchall()
         return [
@@ -5392,7 +5392,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from collector_runs where id = ? and {client_predicate}",
+                f"select * from collector_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (run_id, *client_params),
             ).fetchone()
         return CollectorRun(**dict(row)) if row else None
@@ -5401,7 +5401,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from collector_runs where {client_predicate} order by id desc",
+                f"select * from collector_runs where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 client_params,
             ).fetchall()
         return [CollectorRun(**dict(row)) for row in rows]
@@ -5599,7 +5599,7 @@ class Store:
                     select * from canonical_assets
                     where {client_predicate}
                     order by display_name, canonical_id
-                    """,
+                    """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                     client_params,
                 ).fetchall()
             else:
@@ -5614,7 +5614,7 @@ class Store:
                     where (o.run_id = ? or s.run_id = ? or r.run_id = ?)
                       and {client_predicate}
                     order by a.display_name, a.canonical_id
-                    """,
+                    """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                     (run_id, run_id, run_id, *client_params),
                 ).fetchall()
         return [CanonicalAsset(**dict(row)) for row in rows]
@@ -6060,7 +6060,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from execution_runs where id = ? and {client_predicate}",
+                f"select * from execution_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (run_id, *client_params),
             ).fetchone()
         return _execution_run_from_row(row) if row else None
