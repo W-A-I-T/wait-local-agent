@@ -45,6 +45,13 @@ from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 
 
+@pytest.fixture(autouse=True)
+def cli_defaults_to_explicit_demo_mode(monkeypatch) -> None:
+    """Keep legacy local CLI scenarios explicit after demo_mode defaulted to false."""
+
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
+
+
 def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()

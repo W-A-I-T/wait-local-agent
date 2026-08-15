@@ -1241,8 +1241,9 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
                 message="done",
                 result={},
             )
+        headers = {"Authorization": "Bearer admin-token"} if not app_settings.demo_mode else {}
         return TestClient(app_module.create_app(app_settings)).get(
-            f"/approval-requests/{approval.id}"
+            f"/approval-requests/{approval.id}", headers=headers
         ).json()
 
     assert detail("teams.message.send", execution_status="succeeded")["block_reason"] == (
@@ -1257,7 +1258,13 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
     assert blocked["block_reason"] == "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
     deployment_blocked = detail(
         "power_platform.solution_stage",
-        app_settings=replace(settings, allow_write_actions=True),
+        app_settings=replace(
+            settings,
+            demo_mode=False,
+            api_token="admin-token",
+            allow_write_actions=True,
+            allow_power_platform_deployment=False,
+        ),
     )
     assert deployment_blocked["block_reason"] == (
         "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true."
@@ -1266,6 +1273,8 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
         "power_platform.solution_stage",
         app_settings=replace(
             settings,
+            demo_mode=False,
+            api_token="admin-token",
             allow_write_actions=True,
             allow_power_platform_deployment=True,
             power_platform_workspace=tmp_path,

@@ -9,8 +9,13 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.rbac import Role, resolve_auth_context
-from wait_local_agent.store import Store, hash_credential
+from wait_local_agent.rbac import (
+    Role,
+    _principal_auth_context,
+    admin_credential_configured,
+    resolve_auth_context,
+)
+from wait_local_agent.store import PrincipalAuthRecord, Store, hash_credential
 
 
 def test_principals_migration_is_additive_and_credentials_are_hashed(tmp_path: Path) -> None:
@@ -64,6 +69,83 @@ def test_generic_admin_membership_is_not_msp_admin(settings) -> None:
     assert context.is_msp_admin is False
 
 
+def test_msp_admin_principal_can_select_any_client(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_principal("msp", kind="staff")
+    store.add_principal_credential("msp", "msp-secret")
+    store.add_principal_client_role("msp", "client-a", "viewer")
+    store.add_principal_client_role("msp", "client-b", "technician")
+    store.add_principal_global_role("msp")
+    secured = replace(settings, demo_mode=False, client_id="client-b", admin_token="bootstrap-admin")
+
+    context = resolve_auth_context(secured, "Bearer msp-secret", store)
+
+    assert context.role == Role.ADMIN
+    assert context.client_id == "client-b"
+    assert context.client_ids == frozenset({"client-a", "client-b"})
+    assert context.is_msp_admin is True
+
+
+def test_principal_resolution_rejects_invalid_memberships_and_roles(settings) -> None:
+    secured = replace(settings, demo_mode=False, client_id="client-a", admin_token="bootstrap-admin")
+
+    customer_without_membership = Store(settings.data_path)
+    customer_without_membership.create_principal("customer-empty")
+    customer_without_membership.add_principal_credential("customer-empty", "empty-secret")
+    with pytest.raises(HTTPException, match="invalid client membership"):
+        resolve_auth_context(secured, "Bearer empty-secret", customer_without_membership)
+
+    customer_with_multiple_memberships = Store(settings.data_path)
+    customer_with_multiple_memberships.create_principal("customer-many")
+    customer_with_multiple_memberships.add_principal_credential("customer-many", "many-secret")
+    customer_with_multiple_memberships.add_principal_client_role("customer-many", "client-a", "viewer")
+    customer_with_multiple_memberships.add_principal_client_role("customer-many", "client-b", "viewer")
+    with pytest.raises(HTTPException, match="invalid client membership"):
+        resolve_auth_context(secured, "Bearer many-secret", customer_with_multiple_memberships)
+
+    staff_without_membership = Store(settings.data_path)
+    staff_without_membership.create_principal("staff-empty", kind="staff")
+    staff_without_membership.add_principal_credential("staff-empty", "staff-empty-secret")
+    with pytest.raises(HTTPException, match="no client membership"):
+        resolve_auth_context(secured, "Bearer staff-empty-secret", staff_without_membership)
+
+    invalid_role = PrincipalAuthRecord(
+        principal_id="invalid-role",
+        principal_kind="staff",
+        client_roles=(("client-a", "not-a-role"),),
+        global_roles=frozenset(),
+    )
+    with pytest.raises(HTTPException, match="invalid role"):
+        _principal_auth_context(secured, "invalid-role-secret", invalid_role)
+
+
+@pytest.mark.parametrize(
+    ("api_token", "admin_token", "persisted_msp_admin", "expected"),
+    [
+        ("", "", False, False),
+        ("api-token", "", False, True),
+        ("", "admin-token", False, True),
+        ("", "", True, True),
+    ],
+)
+def test_admin_credential_configured_checks_bootstrap_and_persisted_credentials(
+    settings,
+    api_token: str,
+    admin_token: str,
+    persisted_msp_admin: bool,
+    expected: bool,
+) -> None:
+    store = Store(settings.data_path)
+    if persisted_msp_admin:
+        store.create_principal("msp", kind="staff")
+        store.add_principal_credential("msp", "msp-secret")
+        store.add_principal_global_role("msp")
+
+    secured = replace(settings, api_token=api_token, admin_token=admin_token)
+
+    assert admin_credential_configured(secured, store) is expected
+
+
 def test_non_demo_startup_requires_admin_credential(settings) -> None:
     with pytest.raises(RuntimeError, match="without an admin credential"):
         create_app(replace(settings, demo_mode=False))
@@ -93,4 +175,5 @@ def test_demo_mode_is_bounded_and_disables_writes(settings) -> None:
     assert context.client_ids == frozenset({"demo-client"})
     assert context.is_msp_admin is False
     assert app.state.settings.allow_write_actions is False
+    assert app.state.settings.allow_power_platform_deployment is False
     assert secrets.status_code == 403
