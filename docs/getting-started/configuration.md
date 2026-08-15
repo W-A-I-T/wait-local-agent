@@ -13,6 +13,7 @@ WAIT_ALLOW_HTTP_PROBING=false
 WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
 WAIT_OFFLINE_MODE=false
+WAIT_DEMO_MODE=false
 WAIT_VECTOR_BACKEND=sqlite
 WAIT_CONNECTOR_TIMEOUT_SECONDS=20
 WAIT_SCHEDULER_ENABLED=true
@@ -26,14 +27,19 @@ source-of-truth warning and `.env.example` pointer.
 
 ## Authentication and demo mode
 
-Demo mode is local convenience behavior. When `WAIT_DEMO_MODE=true`, the
-runtime resolves requests as local admin for the demo path. Shared or
-production-style use should set `WAIT_DEMO_MODE=false` and configure
-`WAIT_ADMIN_TOKEN`, `WAIT_TECH_TOKEN`, and `WAIT_VIEWER_TOKEN`; the legacy
-`WAIT_API_TOKEN` remains admin-equivalent. End-user support has a separate
-fixed-scope token and client/user mapping.
+`WAIT_DEMO_MODE` defaults to `false`. A non-demo appliance fails to start
+without `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active persisted
+`msp_admin` principal credential. `WAIT_TECH_TOKEN` and `WAIT_VIEWER_TOKEN`
+provide additional role-scoped access but do not replace the required admin
+credential.
+
+When `WAIT_DEMO_MODE=true` is explicitly selected, the runtime is bounded to a
+demo client rather than acting as an unrestricted administrator. Provider
+writes and deployments are disabled, and `/secrets` returns HTTP 403. The
+principal model supports per-client roles and a global `msp_admin` role;
+principal credentials are stored as SHA-256 hashes. End-user support has a
+separate fixed-scope token and client/user mapping.
 
 Outbound connector calls require `WAIT_ALLOW_HTTP_PROBING=true`. Live
 mutations also require `WAIT_ALLOW_WRITE_ACTIONS=true`, a supported action, and
 the relevant approval gate.
-

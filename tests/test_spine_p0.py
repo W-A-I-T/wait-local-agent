@@ -26,7 +26,8 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
         migration_columns = [str(row[1]) for row in connection.execute("pragma table_info(schema_migrations)")]
         assert migration_columns == ["version", "name", "applied_at"]
         assert [tuple(row) for row in connection.execute("select version, name from schema_migrations")] == [
-            (0, "baseline")
+            (0, "baseline"),
+            (1, "principals"),
         ]
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
@@ -34,7 +35,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
 
     Store(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 1
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 2
 
 
 def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> None:

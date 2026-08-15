@@ -403,6 +403,7 @@ def test_api_report_routes_require_bearer_token_outside_demo_mode(settings) -> N
 
 def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     service = ReportService(Store(tmp_path / "state.db"))
     report = service.create_report(ReportType.QBR, "CLI Report", _sections(), client_id="acme")
     runner = CliRunner()
@@ -459,6 +460,7 @@ def test_cli_reports_list_show_and_export(monkeypatch, tmp_path) -> None:
 def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:
     data_path = tmp_path / "state.db"
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     store = Store(data_path)
     store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001

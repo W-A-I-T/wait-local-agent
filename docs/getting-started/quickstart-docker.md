@@ -6,7 +6,9 @@ WAIT Local Agent ships as a Docker Compose appliance with:
 - Vite-proxied dashboard on `5173`
 - SQLite state in the `wait-local-agent-data` volume
 
-The compose stack is local-first by default. You turn on auth, connector probing, live writes, encrypted backups, paid packs, and update checks explicitly.
+The compose stack is local-first by default. Non-demo startup requires an
+admin credential; connector probing, live writes, encrypted backups, paid
+packs, and update checks remain explicit opt-ins.
 
 ## Requirements
 
@@ -29,7 +31,8 @@ The helper:
 2. Copies `.env.example` to `.env` when `.env` is missing.
 3. Starts `docker compose up --build`.
 
-Demo mode also works without a `.env` file because the Compose stack treats `.env` as optional and falls back to the demo-safe defaults in `docker-compose.yml`.
+Without a `.env` file, Compose uses `WAIT_DEMO_MODE=false`; provide an admin
+credential or explicitly set `WAIT_DEMO_MODE=true` for the bounded local demo.
 
 ### Manual
 
@@ -47,7 +50,9 @@ Open:
 
 The dashboard is the Vite UI. API requests are proxied from the dashboard container to the API container.
 
-`scripts/install.sh` generates `.env` from `.env.example` when it is missing. If you are just running the shipped demo stack, `docker compose up` also works without a `.env` file.
+`scripts/install.sh` generates `.env` from `.env.example` when it is missing.
+For the shipped demo stack, set `WAIT_DEMO_MODE=true` explicitly before
+starting Compose.
 
 ## Production `.env` Setup
 
@@ -56,7 +61,7 @@ Start from `.env.example` and fill in only the values you need. For a production
 ```text
 WAIT_DEMO_MODE=false
 WAIT_API_TOKEN=
-WAIT_ADMIN_TOKEN=
+WAIT_ADMIN_TOKEN=<strong-local-admin-token>
 WAIT_TECH_TOKEN=
 WAIT_VIEWER_TOKEN=
 WAIT_SECRETS_BACKEND=fernet
@@ -73,8 +78,12 @@ Role guidance:
 - `WAIT_ADMIN_TOKEN` is the preferred admin token.
 - `WAIT_TECH_TOKEN` should be used for approval execution and workflow operations.
 - `WAIT_VIEWER_TOKEN` is for read-only dashboard/API access.
+- An active persisted principal credential with the global `msp_admin` role can
+  be used instead of an environment admin token.
 
-If you set any bearer tokens, also set `WAIT_DEMO_MODE=false`.
+Non-demo startup fails unless an admin credential is configured. Explicit demo
+mode disables provider writes and deployments and returns HTTP 403 from
+`/secrets`.
 
 ## Secrets Vault
 

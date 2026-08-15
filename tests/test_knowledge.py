@@ -233,13 +233,14 @@ def install_fake_docling(monkeypatch: pytest.MonkeyPatch, document_converter: ty
     monkeypatch.setitem(sys.modules, "docling.document_converter", converter_module)
 
 
-def test_docling_parser_missing_dependency_errors_cleanly(settings, tmp_path) -> None:
+def test_docling_parser_missing_dependency_errors_cleanly(settings, tmp_path, monkeypatch) -> None:
     doc_root = tmp_path / "docs"
     doc_root.mkdir()
     pdf_path = doc_root / "runbook.pdf"
     write_text_pdf(pdf_path, "Text that Docling would parse")
     active_settings = replace(settings, allowed_doc_root=doc_root, document_parser="docling")
     service = ingestion_service_from_settings(Store(active_settings.data_path), active_settings)
+    monkeypatch.setitem(sys.modules, "docling.datamodel.base_models", None)
 
     with pytest.raises(ValueError, match="Docling parser requires"):
         service.ingest_path(pdf_path)
@@ -379,8 +380,9 @@ def test_qdrant_remote_url_requires_http_probing(settings) -> None:
         search_backend_from_settings(active_settings, Store(active_settings.data_path))
 
 
-def test_qdrant_local_backend_missing_dependency_errors(settings) -> None:
+def test_qdrant_local_backend_missing_dependency_errors(settings, monkeypatch) -> None:
     active_settings = replace(settings, vector_backend="qdrant")
+    monkeypatch.setitem(sys.modules, "fastembed", None)
 
     with pytest.raises(ValueError, match="optional dependencies"):
         search_backend_from_settings(active_settings, Store(active_settings.data_path))

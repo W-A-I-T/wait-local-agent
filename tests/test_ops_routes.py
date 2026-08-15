@@ -42,10 +42,7 @@ def test_sidecar_ops_routes_wrap_existing_logic(settings, tmp_path: Path) -> Non
     assert update_check.status_code == 200
     assert update_check.json()["status"] == "unknown"
     assert update_check.json()["detail"] == "disabled"
-    assert secret.status_code == 200
-    assert secret.json() == {"name": "WAIT_TEST_SECRET", "status": "stored"}
-    assert "value-must-not-echo" not in secret.text
-    assert SecretVault(active_settings.vault_path).get("WAIT_TEST_SECRET") == "value-must-not-echo"
+    assert secret.status_code == 403
     assert backup.status_code == 200
     assert backup.json() == {"backup": str(backup_path), "encrypted": False}
     assert backup_path.exists()
@@ -77,13 +74,20 @@ def test_sidecar_ops_routes_map_precondition_errors_to_4xx(settings, tmp_path: P
 
 def test_validation_errors_do_not_echo_secret_inputs(settings, tmp_path: Path) -> None:
     active_settings = settings.__class__(
-        **{**settings.__dict__, "vault_path": tmp_path / "vault"}
+        **{
+            **settings.__dict__,
+            "vault_path": tmp_path / "vault",
+            "demo_mode": False,
+            "admin_token": "admin-token",
+        }
     )
     client = TestClient(create_app(active_settings))
+    headers = {"Authorization": "Bearer admin-token"}
 
-    secret = client.post("/secrets", json={"value": "validation-secret"})
+    secret = client.post("/secrets", headers=headers, json={"value": "validation-secret"})
     pack = client.post(
         "/packs/install",
+        headers=headers,
         json={"license_key": "validation-license"},
     )
 

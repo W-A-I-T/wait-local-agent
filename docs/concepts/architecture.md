@@ -80,7 +80,10 @@ approval, write-flag, tenant, redaction, and audit controls.
 - Bearer-token roles: viewer, technician, and admin
 - Tokens configured through `WAIT_VIEWER_TOKEN`, `WAIT_TECH_TOKEN`, `WAIT_ADMIN_TOKEN`
 - Legacy `WAIT_API_TOKEN` remains an admin-equivalent token
-- Demo mode bypass for local walkthroughs when `WAIT_DEMO_MODE=true`
+- Explicit `WAIT_DEMO_MODE=true` is a bounded local walkthrough with provider
+  writes, deployments, and `/secrets` disabled
+- Principals carry per-client roles and may carry the global `msp_admin` role;
+  principal credentials are stored as SHA-256 hashes
 - Role enforcement on API surfaces through the RBAC module
 
 ## Data and Tenancy

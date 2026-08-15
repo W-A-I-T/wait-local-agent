@@ -1799,6 +1799,7 @@ def test_collector_preview_tool_reuses_api_rbac_and_redacts_config(settings) -> 
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1845,6 +1846,7 @@ def test_sentiment_and_escalation_tools_are_tenant_scoped_and_technician_gated(s
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -1884,6 +1886,7 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -2197,6 +2200,7 @@ def test_connector_read_tools_reuse_existing_clients_and_tenant_scope(settings, 
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }
@@ -2747,6 +2751,7 @@ def test_agent_revision_restore_requires_tenant_for_authenticated_technicians(se
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }

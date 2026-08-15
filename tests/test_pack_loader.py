@@ -91,6 +91,7 @@ def test_pack_routes_inherit_viewer_auth(settings, monkeypatch) -> None:
         **{
             **settings.__dict__,
             "demo_mode": False,
+            "admin_token": "admin-token",
             "viewer_token": "viewer-token",
         }
     )

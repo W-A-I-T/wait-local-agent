@@ -59,9 +59,13 @@ api_auth_required=false
 demo_mode=true
 ```
 
+The demo is bounded to a demo client. Provider writes and deployments are
+disabled, and `/secrets` returns HTTP 403.
+
 ## Demo auth model
 
-Demo mode is open only when the appliance stays in its local demo configuration:
+Demo mode is an explicit opt-in and is open only when the appliance stays in its
+local demo configuration:
 
 ```text
 WAIT_DEMO_MODE=true
@@ -71,7 +75,9 @@ WAIT_TECH_TOKEN=
 WAIT_VIEWER_TOKEN=
 ```
 
-If you set role tokens for a shared test, also set `WAIT_DEMO_MODE=false`.
+If you set role tokens for a shared test, also set `WAIT_DEMO_MODE=false` and
+configure `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active persisted
+`msp_admin` principal credential before startup.
 
 ## Synthetic launch data
 
@@ -93,11 +99,12 @@ wait-local-agent tickets summarize DEMO-1001
 
 ## Optional API token demo
 
-Demo mode allows local unauthenticated access only when `WAIT_DEMO_MODE=true` and `WAIT_API_TOKEN` is empty. To test the production gate locally:
+Demo mode allows local unauthenticated access only when `WAIT_DEMO_MODE=true`.
+To test the non-demo startup and request gate locally:
 
 ```bash
-WAIT_DEMO_MODE=false WAIT_API_TOKEN=local-token wait-local-agent serve
-curl -H 'Authorization: Bearer local-token' http://127.0.0.1:8788/health
+WAIT_DEMO_MODE=false WAIT_ADMIN_TOKEN=local-admin-token wait-local-agent serve
+curl -H 'Authorization: Bearer local-admin-token' http://127.0.0.1:8788/health
 ```
 
 ## Consultant mode demo

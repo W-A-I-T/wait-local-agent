@@ -36,7 +36,7 @@ def _expected_default_api_service() -> dict[str, object]:
         "environment": {
             "WAIT_ALLOWED_DOC_ROOT": "/app/examples/sample_docs",
             "WAIT_DATA_PATH": "/data/state.db",
-            "WAIT_DEMO_MODE": "true",
+            "WAIT_DEMO_MODE": "false",
             "WAIT_SECRETS_BACKEND": "env",
             "WAIT_VAULT_PATH": "/data/vault",
         },
@@ -52,7 +52,15 @@ def _expected_default_api_service() -> dict[str, object]:
             "retries": 5,
         },
         "networks": {"default": None},
-        "ports": [{"mode": "ingress", "target": 8788, "published": "8788", "protocol": "tcp"}],
+        "ports": [
+            {
+                "mode": "ingress",
+                "host_ip": "127.0.0.1",
+                "target": 8788,
+                "published": "8788",
+                "protocol": "tcp",
+            }
+        ],
         "volumes": [
             {
                 "type": "volume",

@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -59,7 +59,6 @@ from wait_local_agent.models import (
     WorkflowTemplate,
     utc_now,
 )
-from wait_local_agent.workflow_designer import normalize_workflow_design
 
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
@@ -76,6 +75,22 @@ if TYPE_CHECKING:
 
 MAX_SEARCH_LIMIT = 25
 MAX_TECHNICIAN_CHAT_MESSAGES = 200
+
+
+@dataclass(frozen=True)
+class PrincipalAuthRecord:
+    principal_id: str
+    principal_kind: str
+    client_roles: tuple[tuple[str, str], ...]
+    global_roles: frozenset[str]
+
+
+def hash_credential(credential: str) -> str:
+    """Return the one-way digest used for persisted bearer credentials."""
+
+    if not isinstance(credential, str) or not credential.strip():
+        raise ValueError("credential must be a non-empty string")
+    return hashlib.sha256(credential.encode("utf-8")).hexdigest()
 
 
 class Store:
@@ -95,9 +110,194 @@ class Store:
     def _init_schema(self) -> None:
         with self._connect() as connection:
             MigrationRunner(connection).run(
-                (Migration(0, "baseline", self._apply_baseline_migration),)
+                (
+                    Migration(0, "baseline", self._apply_baseline_migration),
+                    Migration(1, "principals", self._apply_principals_migration),
+                )
             )
             self._apply_startup_repairs(connection)
+
+    def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists principals (
+                principal_id text primary key,
+                kind text not null check (kind in ('customer', 'staff')),
+                display_name text not null default '',
+                active integer not null default 1 check (active in (0, 1)),
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists principal_credentials (
+                principal_id text not null references principals(principal_id) on delete cascade,
+                credential_hash text primary key,
+                active integer not null default 1 check (active in (0, 1)),
+                created_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists principal_client_roles (
+                principal_id text not null references principals(principal_id) on delete cascade,
+                client_id text not null,
+                role text not null check (role in ('end_user', 'viewer', 'technician', 'admin')),
+                primary key (principal_id, client_id, role)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists principal_global_roles (
+                principal_id text not null references principals(principal_id) on delete cascade,
+                role text not null check (role = 'msp_admin'),
+                primary key (principal_id, role)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_principal_credentials_active
+            on principal_credentials (credential_hash, active)
+            """
+        )
+
+    def create_principal(
+        self,
+        principal_id: str,
+        *,
+        kind: str = "customer",
+        display_name: str = "",
+    ) -> str:
+        normalized_id = principal_id.strip()
+        normalized_kind = kind.strip().lower()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_kind not in {"customer", "staff"}:
+            raise ValueError("principal kind must be customer or staff")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into principals (principal_id, kind, display_name, created_at)
+                values (?, ?, ?, ?)
+                """,
+                (normalized_id, normalized_kind, _redact_text(display_name.strip()), utc_now()),
+            )
+        return normalized_id
+
+    def add_principal_credential(self, principal_id: str, credential: str) -> str:
+        normalized_id = principal_id.strip()
+        credential_hash = hash_credential(credential)
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            connection.execute(
+                """
+                insert into principal_credentials (principal_id, credential_hash, created_at)
+                values (?, ?, ?)
+                """,
+                (normalized_id, credential_hash, utc_now()),
+            )
+        return credential_hash
+
+    def add_principal_client_role(self, principal_id: str, client_id: str, role: str) -> None:
+        normalized_id = principal_id.strip()
+        normalized_client_id = _normalize_client_id(client_id)
+        normalized_role = _principal_role_label(role)
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
+        if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
+            raise ValueError("unsupported principal client role")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            connection.execute(
+                """
+                insert into principal_client_roles (principal_id, client_id, role)
+                values (?, ?, ?)
+                """,
+                (normalized_id, normalized_client_id, normalized_role),
+            )
+
+    def add_principal_global_role(self, principal_id: str, role: str = "msp_admin") -> None:
+        normalized_id = principal_id.strip()
+        normalized_role = role.strip().lower()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_role != "msp_admin":
+            raise ValueError("unsupported principal global role")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            connection.execute(
+                "insert into principal_global_roles (principal_id, role) values (?, ?)",
+                (normalized_id, normalized_role),
+            )
+
+    def find_principal_by_credential_hash(self, credential_hash: str) -> PrincipalAuthRecord | None:
+        with self._connect() as connection:
+            principal = connection.execute(
+                """
+                select p.principal_id, p.kind
+                from principals p
+                join principal_credentials pc on pc.principal_id = p.principal_id
+                where p.active = 1 and pc.active = 1 and pc.credential_hash = ?
+                """,
+                (credential_hash,),
+            ).fetchone()
+            if principal is None:
+                return None
+            client_roles = tuple(
+                (str(row[0]), str(row[1]))
+                for row in connection.execute(
+                    """
+                    select client_id, role
+                    from principal_client_roles
+                    where principal_id = ?
+                    order by client_id, role
+                    """,
+                    (principal["principal_id"],),
+                )
+            )
+            global_roles = frozenset(
+                str(row[0])
+                for row in connection.execute(
+                    "select role from principal_global_roles where principal_id = ?",
+                    (principal["principal_id"],),
+                )
+            )
+        return PrincipalAuthRecord(
+            principal_id=str(principal["principal_id"]),
+            principal_kind=str(principal["kind"]),
+            client_roles=client_roles,
+            global_roles=global_roles,
+        )
+
+    def has_msp_admin_credential(self) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                select 1
+                from principals p
+                join principal_credentials pc on pc.principal_id = p.principal_id
+                join principal_global_roles pgr on pgr.principal_id = p.principal_id
+                where p.active = 1 and pc.active = 1 and pgr.role = 'msp_admin'
+                limit 1
+                """
+            ).fetchone() is not None
 
     def _apply_baseline_migration(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -6829,6 +7029,8 @@ def _template_gallery_definition_json(
 def _workflow_definition_json(definition: dict[str, object] | None) -> str:
     if definition is None:
         return "{}"
+    from wait_local_agent.workflow_designer import normalize_workflow_design
+
     return _json_dumps_value(normalize_workflow_design(definition))
 
 
@@ -7066,6 +7268,12 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _principal_role_label(role: str) -> str:
+    if hasattr(role, "label"):
+        return str(role.label()).strip().lower()
+    return str(role).strip().lower()
 
 
 def _validate_event_retry_policy(max_retries: int, retry_delay_seconds: int) -> None:

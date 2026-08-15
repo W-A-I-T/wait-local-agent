@@ -35,6 +35,7 @@ def _secure_settings(settings):
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "acme",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }

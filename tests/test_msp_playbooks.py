@@ -635,6 +635,7 @@ def test_api_exposes_playbook_catalog_preview_and_run(settings) -> None:
             **settings.__dict__,
             "demo_mode": False,
             "client_id": "",
+            "admin_token": "admin-token",
             "tech_token": "tech-token",
             "viewer_token": "viewer-token",
         }

@@ -19,10 +19,15 @@ WAIT_ALLOW_CLOUD_FALLBACK=false
 WAIT_ALLOW_LLM_INFERENCE=false
 WAIT_OFFLINE_MODE=false
 WAIT_SECRETS_BACKEND=env
-WAIT_DEMO_MODE=true
+WAIT_DEMO_MODE=false
 ```
 
 Keep credentials in the environment or configured local vault. Do not place
 secrets, bearer tokens, provider credentials, or client data in action payloads,
 docs, or audit examples.
 
+In non-demo mode, startup requires `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an
+active persisted `msp_admin` principal credential. Explicit demo mode is
+bounded: provider writes and deployments are disabled and `/secrets` returns
+HTTP 403. Principal credentials are persisted as SHA-256 hashes and principals
+carry per-client roles plus an optional global `msp_admin` role.
